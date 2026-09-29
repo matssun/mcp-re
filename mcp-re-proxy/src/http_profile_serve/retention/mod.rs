@@ -26,6 +26,7 @@ use mcp_re_http_profile::rejection::ExecutionDisposition;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 
+use self::fault_report::Fault;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::refusal::Refusal;
@@ -94,7 +95,7 @@ impl Retention {
     /// RETENTION-COMMITTED — record the crossing of the execution threshold.
     ///
     /// ```text
-    /// ensures   Ok  => the crossing of the execution threshold is itself durable
+    /// ensures   Ok  => the crossing of the execution threshold is durable, or nothing is retained
     ///           Err => `pre_dispatch_refusal`, bound
     /// forbids   running the backend
     /// refusal   THE LAST FREE ONE
@@ -132,29 +133,19 @@ impl Retention {
     fn pre_dispatch_refusal(error: &RetentionError, attempted: &str) -> Refusal {
         let unavailable =
             |status| Refusal::after_admission(McpReError::EvidenceRetentionUnavailable, status);
-        match error {
-            RetentionError::Unresolved(_) => {
-                eprintln!(
-                    "evidence retention could not {attempted}: the exchange did NOT dispatch \
-                     and the store's record of it cannot be stated: {error}"
-                );
-                unavailable(500).refining(ExecutionDisposition::NothingExecutedRetentionUnresolved)
+        let (fault, refusal) = match error {
+            RetentionError::Unresolved(_) => (
+                Fault::Unresolved,
+                unavailable(500).refining(ExecutionDisposition::NothingExecutedRetentionUnresolved),
+            ),
+            RetentionError::StoreRetired(_) => (Fault::Retired, unavailable(500)),
+            RetentionError::Store(_) => (Fault::Backpressure, unavailable(503)),
+            RetentionError::Malformed(_) | RetentionError::AlreadyCompleted => {
+                (Fault::Unusable, unavailable(500))
             }
-            RetentionError::StoreRetired(_) => {
-                eprintln!(
-                    "evidence retention could not {attempted}, and this replica will not \
-                     accept the next one either: {error}"
-                );
-                unavailable(500)
-            }
-            _ => {
-                eprintln!(
-                    "evidence retention could not {attempted}, refusing before dispatch: \
-                     {error}"
-                );
-                unavailable(503)
-            }
-        }
+        };
+        fault_report::report(fault, attempted, error);
+        refusal
     }
 
     /// Discharge the obligation with the terminal response this exchange will actually
@@ -183,16 +174,14 @@ impl Retention {
         match store.complete(crossing, response).await {
             Ok(_) => RetentionOutcome::Retained,
             Err(e) => {
-                eprintln!(
-                    "evidence retention failed AFTER the call executed; the exchange is \
-                     indeterminate and MUST NOT be blindly retried: {e}"
-                );
+                fault_report::report_after_dispatch(&e);
                 RetentionOutcome::Failed
             }
         }
     }
 }
 
+mod fault_report;
 mod outcome;
 
 pub(in crate::http_profile_serve) use outcome::RetentionOutcome;
@@ -207,6 +196,23 @@ mod tests {
             target_uri: "https://example.test/mcp".into(),
             headers: vec![],
             body: b"{}".to_vec(),
+        }
+    }
+
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("mcp-re-retention-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            TempDir(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 
@@ -253,6 +259,17 @@ mod tests {
             unresolved.execution_refinement,
             Some(ExecutionDisposition::NothingExecutedRetentionUnresolved)
         );
+
+        // A record this exchange cannot form will not form on retry, and a completion
+        // already taken is not a pre-dispatch state: both fail closed.
+        for unusable in [
+            RetentionError::Malformed("fixture"),
+            RetentionError::AlreadyCompleted,
+        ] {
+            let refusal = Retention::pre_dispatch_refusal(&unusable, "accept the exchange");
+            assert_eq!(refusal.status, 500);
+            assert!(refusal.execution_refinement.is_none());
+        }
     }
 
     /// Every pre-dispatch refusal is free, whichever fault produced it.
@@ -267,6 +284,8 @@ mod tests {
             RetentionError::Store(io(std::io::ErrorKind::WouldBlock)),
             RetentionError::StoreRetired(io(std::io::ErrorKind::BrokenPipe)),
             RetentionError::Unresolved(io(std::io::ErrorKind::Other)),
+            RetentionError::Malformed("fixture"),
+            RetentionError::AlreadyCompleted,
         ] {
             let refusal = Retention::pre_dispatch_refusal(&error, "accept the exchange");
             assert_eq!(
@@ -329,5 +348,60 @@ mod tests {
             "a failed completion leaves the crossing standing; its marker is the true answer"
         );
         assert_ne!(RetentionOutcome::Retained, RetentionOutcome::NotConfigured);
+    }
+
+    #[tokio::test]
+    async fn a_store_fault_at_reserve_is_refused_not_waved_through() {
+        let dir = TempDir::new("reserve-fault");
+        let mut store = EvidenceRetention::open(&dir.0).expect("open");
+        store.retire_writer_for_test();
+        let result = Retention::to(Arc::new(store)).reserve(&request()).await;
+        let Err(refusal) = result else {
+            panic!("a retired store must refuse the reservation");
+        };
+        assert_eq!(refusal.status, 500);
+    }
+
+    #[tokio::test]
+    async fn a_store_fault_at_commit_is_refused_not_waved_through() {
+        let dir = TempDir::new("commit-fault");
+        let mut store = EvidenceRetention::open(&dir.0).expect("open");
+        let reservation = store.reserve(&request()).await.expect("reserve");
+        store.retire_writer_for_test();
+        let store = Arc::new(store);
+        let result = Retention::to(Arc::clone(&store))
+            .commit(PreDispatchRetention::Reserved { store, reservation })
+            .await;
+        let Err(refusal) = result else {
+            panic!("a retired store must refuse the commitment");
+        };
+        assert_eq!(refusal.status, 500);
+    }
+
+    #[tokio::test]
+    async fn a_failed_completion_is_failed_not_retained() {
+        let dir = TempDir::new("completion-fault");
+        let store = Arc::new(EvidenceRetention::open(&dir.0).expect("open"));
+        let retention = Retention::to(store);
+        let mut progress = crate::exchange_state::ExchangeProgress::new();
+        let accepted = retention.reserve(&request()).await.expect("reserve");
+        let Ok(committed) = retention.commit(accepted).await else {
+            panic!("a live store commits");
+        };
+        let disposition = progress.establish(committed);
+        let response = HttpResponse {
+            status: 200,
+            headers: vec![],
+            body: b"{}".to_vec(),
+        };
+        assert_eq!(
+            retention.complete(&disposition, &response).await,
+            RetentionOutcome::Retained
+        );
+        assert_eq!(
+            retention.complete(&disposition, &response).await,
+            RetentionOutcome::Failed,
+            "a completion already taken is a failure, never a second retention"
+        );
     }
 }

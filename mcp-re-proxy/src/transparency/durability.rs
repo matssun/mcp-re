@@ -161,7 +161,7 @@ impl EvidenceRetention {
     /// `#[cfg(test)]`, so it is not a production surface. It exists because the terminal
     /// fault is otherwise reachable only by making the writer thread panic, and a test that
     /// panicked a thread to reach it would be measuring the panic rather than the answer.
-    fn retire_writer_for_test(&mut self) {
+    pub(crate) fn retire_writer_for_test(&mut self) {
         let (orphaned, receiver) = std::sync::mpsc::sync_channel(1);
         drop(receiver);
         self.jobs = orphaned;
