@@ -40,8 +40,12 @@ FILTER='^//,-^//mcp-re-test-paths[/:]'
 IGNORE='(^|/)external/|^/rustc/|(^|/)(tests|examples|benches)/|mcp-re-proxy/src/main\.rs'
 FLAGS=(--instrumentation_filter="$FILTER")
 # The serve-path harness starts its Redis fleet with the host's `docker` CLI, which the test
-# sandbox's minimal PATH does not reach, and which reads its daemon context from HOME.
-FLAGS+=(--test_env=PATH --test_env=HOME)
+# sandbox's minimal PATH does not reach, and which reads its daemon context from HOME. Only
+# docker's own directory is added, after the system ones: the host PATH would put other
+# tools ahead of the ones Bazel's test-runner scripts expect.
+if docker_bin="$(command -v docker 2>/dev/null)"; then
+  FLAGS+=(--test_env=PATH="/usr/bin:/bin:/usr/sbin:/sbin:$(dirname "$docker_bin")" --test_env=HOME)
+fi
 [[ -n "${DOCKER_HOST:-}" ]] && FLAGS+=(--test_env=DOCKER_HOST)
 
 GATED=1
