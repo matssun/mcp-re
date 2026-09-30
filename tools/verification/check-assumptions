@@ -168,6 +168,13 @@ def declared_seam_sites() -> set[str]:
     declares the item the key names. A renamed or moved item stops resolving and is
     reported as stale, exactly as a Verus site is. The key is the one `site_key` derives,
     so an enum variant (not an item) is named by its enum.
+
+    WHAT THIS ESTABLISHES, AND NOTHING MORE: that a file at the registered path declares an
+    item of the registered name. It does not establish that the premise holds (a
+    `trusted-seam` is by definition not checked by any code), nor that the item still does
+    what the premise's justification says, nor that a renamed successor is the same seam. A
+    passing site is a location, never a proof; the premise stays `assumed` or
+    `external-boundary` in the registry.
     """
     declared: dict[str, set[str]] = {}
     resolved: set[str] = set()
@@ -585,7 +592,10 @@ def main() -> int:
         )
         return 1
 
-    print("\ncheck-assumptions: PASS — every SITE is registered")
+    print(
+        "\ncheck-assumptions: PASS — every SITE is registered; a `none:` site is confirmed "
+        "only as a declared item at its registered location, never as a proved premise"
+    )
     print("VERDICT: PASS")
     return 0
 
