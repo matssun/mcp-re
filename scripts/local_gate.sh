@@ -144,6 +144,8 @@ stage_static() {
     && python3 scripts/test_inventory_gate.py \
     && python3 scripts/no_cargo_execution_gate.py --selftest \
     && python3 scripts/no_cargo_execution_gate.py \
+    && python3 scripts/crate_spec_parity_gate.py --selftest \
+    && python3 scripts/crate_spec_parity_gate.py \
     && python3 scripts/extraction_image_gate.py --selftest \
     && python3 scripts/extraction_image_gate.py \
     && python3 scripts/lifecycle_purity_gate.py --selftest \

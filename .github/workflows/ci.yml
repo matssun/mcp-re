@@ -270,6 +270,18 @@ jobs:
           python3 scripts/no_cargo_execution_gate.py --selftest
           python3 scripts/no_cargo_execution_gate.py
 
+      # Bazel builds from `bazel/crates.lock` and `MODULE.bazel`'s `crate.spec` entries, and
+      # reads no Cargo file; the Cargo manifests and locks remain as the crates' published
+      # description. A dependency change that lands in one and not the other (a Dependabot
+      # bump in a Cargo.lock, a feature added to a member's manifest) builds the OLD version
+      # into every Bazel artifact while every Cargo-side check stays green. This job runs on
+      # every pull request, Dependabot's included, so a lockfile change cannot merge without
+      # the Bazel lock following it.
+      - name: Crate-spec parity gate (Cargo locks and manifests, MODULE.bazel, bazel/crates.lock)
+        run: |
+          python3 scripts/crate_spec_parity_gate.py --selftest
+          python3 scripts/crate_spec_parity_gate.py
+
       # The extraction image consumes pinned Aeneas/Charon release binaries and builds
       # neither. Stated as what the definition may contain, because a tool it built from
       # source would run Cargo behind an upstream Makefile no word scanner can see.
