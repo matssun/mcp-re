@@ -49,14 +49,16 @@ file and runs the whole gate in one call per phase.
   file carries no uncommitted change, so the diff judged afterwards is yours
   alone; it refuses (exit 1) otherwise — report that as your `problem` and stop.
 - **`check.py post`** — appends your `fix` event, runs prescan over every
-  touched file's src root, then `cargo_gate.py`: clippy `-D warnings` in every
-  lane that compiles the file (default, and the `local_gate.sh` feature lane
-  when the crate has those features; the related files' crates too above the
-  `local` tier), the module-size ratchet, the file's own unit tests, and each
-  `--it` integration test you pass. Then it appends `gate` — and `gate-failed`
+  touched file's src root, then `rust_gate.py`: `bazel build --config=lint`
+  (clippy under the workspace lint policy, warnings as errors) over every Bazel
+  target that compiles the file — each library flavor is its own target, so every
+  feature configuration it is built in — and, above the `local` tier, the related
+  files' targets too; the module-size ratchet; the file's own unit tests in the
+  unit-test targets built from those libraries; and each `--it` test target you
+  pass. Then it appends `gate` — and `gate-failed`
   exactly when the verdict is `new-failures`, after saving your change as a
   patch and REVERTING it so the next writer starts on a clean tree. Do not call
-  `progress.py`, `cargo_gate.py`, cargo or prescan yourself.
+  `progress.py`, `rust_gate.py`, Bazel or prescan yourself.
 
 What you pass it and must get right:
 
@@ -64,8 +66,9 @@ What you pass it and must get right:
 - **`--tests-added`** — test functions you wrote that pin a behaviour-changing
   fix. Zero is right for a comment move and wrong for a new refusal: a refusal
   shipped with `tests_added=0` is an unpinned guard.
-- **`--it`** — the integration-test targets (`tests/<name>.rs` → `<name>`) your
-  accept criteria name. Without it the gate runs only the file's own unit tests.
+- **`--it`** — the Bazel test targets (`//pkg:name`, as the package's
+  `prepare.py` output names them) your accept criteria name. Without it the gate
+  runs only the file's own unit tests.
 - **`--applied` / `--not-applied`** — your real counts.
 
 ## The verdict
@@ -75,7 +78,7 @@ What you pass it and must get right:
 | verdict | meaning | terminal event |
 |---|---|---|
 | `new-failures` | a lint, a compile error, a failed test, or a module grown past its ratchet baseline | `gate-failed`, written by `check.py`; your change is reverted, the patch path is in the output; the reviewer is skipped |
-| `infra` | cargo never judged the code (toolchain or lock failure; a selection that ran 0 tests although the file has tests) | none — the reviewer closes the attempt |
+| `infra` | Bazel never judged the code (analysis, fetch or toolchain failure; a selection that ran 0 tests although the file has tests) | none — the reviewer closes the attempt |
 | `ok` | every gate passed | none — the reviewer closes the attempt |
 
 `infra` is NOT terminal: the reviewer's read of the diff is the only signal

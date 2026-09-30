@@ -227,7 +227,7 @@ judgment — that is where the turns belong.
      passes;
    - prefer a probe that reads structure over one that reads text: a named
      `#[test]` that fails on the old code and passes on the new is the strongest
-     accept criterion there is, and a compile failure (`cargo check` refusing a
+     accept criterion there is, and a compile failure (`bazel build` refusing a
      now-private constructor) proves a seal in a way no grep can.
 
 7. **Order the items** so a change that subsumes others comes first, and note any

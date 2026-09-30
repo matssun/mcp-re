@@ -1,0 +1,21 @@
+load("//bazel:defs.bzl", "nt_rust_library")
+
+# The ADR-MCPRE-061 §6 thresholds, as the label scripts/clippy_ratchet_gate.py hands the
+# clippy aspect (`--@rules_rust//rust/settings:clippy.toml`).
+exports_files([".clippy.toml"])
+
+# The gate's negative controls. `manual`: each exists to be linted under the ratchet's
+# flags by the gate that owns it, never by a `//...` lane.
+nt_rust_library(
+    name = "nest_probe",
+    srcs = ["probes/nest.rs"],
+    crate_root = "probes/nest.rs",
+    tags = ["manual"],
+)
+
+nt_rust_library(
+    name = "activation_probe",
+    srcs = ["probes/activation.rs"],
+    crate_root = "probes/activation.rs",
+    tags = ["manual"],
+)

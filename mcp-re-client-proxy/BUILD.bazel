@@ -35,6 +35,7 @@ nt_rust_library(
 # A battery needing the fixtures takes the whole chain from this flavor.
 nt_rust_library(
     name = "mcp_re_client_proxy_pre052",
+    testonly = True,
     srcs = glob(["src/**/*.rs"]),
     crate_name = "mcp_re_client_proxy",
     edition = "2021",
@@ -47,14 +48,11 @@ nt_rust_library(
 
 # Inline crate unit tests. Currently the `manifest_floor` #[cfg(test)] module (the
 # ADR-MCPRE-052 durable trust-anchor rollback floor: durability across reopen,
-# monotonicity, fail-closed on a corrupt floor). This crate had no test target at all
-# while it had no inline tests, so adding the module without adding this would have
-# left them running under cargo and invisible to `bazel test //...`.
+# monotonicity, fail-closed on a corrupt floor). Without this target `bazel test //...`
+# runs none of them.
 nt_rust_test(
     name = "mcp_re_client_proxy_test",
     crate = ":mcp_re_client_proxy",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         "//mcp-re-client-core:mcp_re_client_core",

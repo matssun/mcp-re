@@ -28,24 +28,25 @@ matching inputs is an empty mapping — measured, and empty — which is a diffe
 
 Encoding v4 measures the EFFECTIVE TEST EVIDENCE, not merely its label. Until v3 the only
 test component was `test_evidence_definition` — the sorted `test://` URIs — so a battery
-could fall from 67 declared controls to 5, or move to a different Cargo package, with the
-URI and therefore the fingerprint unchanged. Four components now answer "what did the test
-lane actually measure":
+could fall from 67 declared controls to 5, or move to a different project, with the URI and
+therefore the fingerprint unchanged. Four components now answer "what did the test lane
+actually measure":
 
   * `test_evidence_definition`  the `test://` URIs, as before — WHAT is claimed
-  * `test_selection`            the resolved package, the exact sorted symbols, and the
-                                Cargo features they resolve under — WHICH tests were
-                                selected
+  * `test_selection`            the resolved project, the exact sorted symbols, and each
+                                Rust test target's row in the build graph — its crate root
+                                and the crate features it compiles under — WHICH tests were
+                                selected, in which configuration
   * `test_sources`              the bytes of the integration-test targets those selectors
-                                run. In-crate (`lib#`, `doc#`, `bin/<name>#`) selectors are
-                                NOT here: they execute code inside the unit's declared
-                                `paths`, which `source_inputs` already digests, and the
-                                manifest loader REFUSES an in-crate selector whose module is
-                                not declared, so that is a checked fact rather than a hope.
+                                run. A selector on a target built from a crate is NOT here:
+                                it executes code inside the unit's declared `paths`, which
+                                `source_inputs` already digests, and the manifest loader
+                                REFUSES one whose module is not declared, so that is a
+                                checked fact rather than a hope.
   * `test_lane_identity`        the selector mechanism itself — `verify-tests` and the
-                                manifest logic it reads. The meaning of `doc#…`, and of
-                                `test_package`, is decided by that code; if the measuring
-                                instrument changes, what the measurement MEANS changed.
+                                manifest logic it reads. What a selector names is decided by
+                                that code; if the measuring instrument changes, what the
+                                measurement MEANS changed.
 
 Encoding v5 extends the same rule to the MUTATION evidence. A `mutation://` URI puts the
 probe suite inside the attestation closure — `attest` refuses a unit with no mutation PASS
@@ -112,7 +113,7 @@ fingerprints to record an absence:
 
 `generated_inputs` was in the equation from the start and was computed from the unit's
 declared paths ∩ `verification/lean/generated/`. No unit lists a path there — 0 of 244 — and
-none should, because a `.lean` path in a Cargo unit collapses its ecosystem. So the rule
+none should, because a `.lean` path in a Rust unit collapses its ecosystem. So the rule
 `generated-model drift -> DIRTY_EVIDENCE` was wired to an empty population. It is now
 derived from the same extraction declaration.
 
@@ -120,10 +121,10 @@ derived from the same extraction declaration.
 `ENCODING_VERSION`, which is what a change of MEANING here must move; hashing the file
 would additionally invalidate every unit for a comment.
 
-The measured cone is the cone the LANE measures, not the paths the unit lists. `cargo verus
-verify -p <crate>` verifies the whole crate and compiles its `verify`-feature dependency
-closure, so a formal unit's `source_inputs` covers every `.rs` file in the crate its paths
-name and its `proof_dependencies` covers the workspace crates that crate depends on. A
+The measured cone is the cone the LANE measures, not the paths the unit lists. The Verus
+lane verifies the whole crate against its first-party dependencies, so a formal unit's
+`source_inputs` covers every `.rs` file in the crate its paths name and its
+`proof_dependencies` covers the first-party crates that crate depends on. A
 fingerprint narrower than the verified cone lets source the proof stands on change while
 the graph still answers FRESH.
 
@@ -141,11 +142,13 @@ import tomllib
 from functools import lru_cache
 
 from _ecosystems import build_configuration_patterns
-from _ecosystems import CARGO
+from _ecosystems import RUST
+from _ecosystems import test_project_for
 from _ecosystems import formal_source_patterns
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 from _lean_sources import generated_model_paths, LAKEFILE, theorem_source_paths
+import _rust_targets
 from _manifest import (
     claims_lean_evidence,
     claims_verus_evidence,
@@ -153,7 +156,6 @@ from _manifest import (
     claims_mutation_evidence,
     claims_structural_evidence,
     claims_test_evidence,
-    test_package_for,
     expand_paths,
     FORMAL_CLASSES,
     load_trust_boundaries,
@@ -163,12 +165,12 @@ from _manifest import (
 # Every attestation carrying an earlier version is UNKNOWN from the moment this moves, which
 # is the intended cost: an attestation computed over a narrower set of inputs cannot answer
 # whether one of the inputs it never saw has since changed.
-ENCODING_VERSION = 9
+ENCODING_VERSION = 10
 
-#: Build inputs that decide what the verified crate IS, for every unit. A dependency swap,
-#: a lockfile bump or a toolchain channel change alters what a theorem is about without
-#: touching a line of the source the unit declares.
-WORKSPACE_BUILD_INPUTS = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
+#: Build inputs that decide what the verified crate IS, for every Rust unit. A dependency
+#: swap, a lockfile bump or a toolchain pin change alters what a theorem is about without
+#: touching a line of the source the unit declares. Bazel's, because Bazel builds it.
+WORKSPACE_BUILD_INPUTS = RUST.workspace_inputs
 
 #: Where extraction deposits machine-generated proof input. Units do not declare paths here
 #: — see `_generated_inputs`, which derives the population from the lakefile instead.
@@ -196,33 +198,9 @@ def _unit_crates(unit: dict) -> list[str]:
     Derived from the paths rather than configured, for the reason `verify-verus` derives
     its `-p` argument the same way: a unit whose source moves to another project must not
     keep fingerprinting the one it left. Which build system decides what a project IS is
-    `_ecosystems`' (issue #745), so this is no longer a Cargo-only answer.
+    `_ecosystems`' (issue #745).
     """
     return unit_projects(unit)
-
-
-def _path_dependencies(crate: str, seen: set[str]) -> set[str]:
-    """Workspace crates reachable from `crate` by path dependency, transitively.
-
-    The `verify` feature travels down this closure — `mcp-re-http-profile/verify` turns on
-    `mcp-re-core/verify` — so the prover compiles and checks these crates as part of the
-    run whose result the unit claims.
-    """
-    manifest = REPO_ROOT / crate / "Cargo.toml"
-    if crate in seen or not manifest.is_file():
-        return seen
-    seen.add(crate)
-    with manifest.open("rb") as handle:
-        doc = tomllib.load(handle)
-    for spec in doc.get("dependencies", {}).values():
-        if not isinstance(spec, dict) or "path" not in spec:
-            continue
-        resolved = (manifest.parent / spec["path"]).resolve()
-        try:
-            _path_dependencies(resolved.relative_to(REPO_ROOT).as_posix(), seen)
-        except ValueError:
-            continue
-    return seen
 
 
 def _crate_sources(crates: list[str]) -> dict[str, str]:
@@ -287,8 +265,8 @@ def _build_configuration(unit: dict, formal_closure: list[str]) -> dict[str, str
     """The dependency and configuration inputs that decide what this unit's source IS.
 
     Ecosystem-supplied (`build_configuration_patterns`), because a Python project's
-    `pyproject.toml` and `uv.lock` bear exactly the weight a crate's `Cargo.toml` and the
-    workspace `Cargo.lock` bear: a dependency swap or a lockfile bump alters what a claim is
+    `pyproject.toml` and `uv.lock` bear exactly the weight a crate's `BUILD.bazel` and the
+    module lock bear: a dependency swap or a lockfile bump alters what a claim is
     about without touching a declared source line. Absent alternatives — `poetry.lock` where
     a project uses `uv` — contribute nothing rather than an error.
 
@@ -302,7 +280,7 @@ def _build_configuration(unit: dict, formal_closure: list[str]) -> dict[str, str
     """
     patterns = build_configuration_patterns(unit)
     for project in formal_closure:
-        patterns.extend(f"{project}/{name}" for name in CARGO.project_inputs)
+        patterns.extend(f"{project}/{name}" for name in RUST.project_inputs)
     return _digest_tracked(patterns)
 
 
@@ -380,23 +358,30 @@ def _trusted_assumptions(unit_id: str, assumptions: dict) -> dict[str, str]:
 
 
 def _test_selection(unit: dict) -> dict:
-    """WHICH tests were selected: the resolved package and the exact symbols.
+    """WHICH tests were selected: the resolved project, the exact symbols, and each Rust
+    test target as the build graph states it.
 
     Empty for a unit with no `test://` evidence — measured, and empty, which is a different
     claim from "not accounted for".
+
+    The target rows are the build configuration the selection resolves in. A feature-gated
+    control does not merely fail to run without its feature — it does not EXIST, so the same
+    symbol under a target whose features changed is a different selection, and a target
+    re-rooted at another crate selects different code. The label alone would not move when
+    either happened; its row does.
     """
     if not claims_test_evidence(unit):
         return {}
+    labels = sorted({str(s).partition("#")[0] for s in unit.get("tested_symbols", [])})
     return {
-        "package": test_package_for(unit),
+        "project": test_project_for(unit),
         "symbols": sorted(str(s) for s in unit.get("tested_symbols", [])),
-        # The build configuration the selection resolves in. A feature-gated control does
-        # not merely fail to run without its feature — it does not EXIST, so the same
-        # symbol list under two feature sets is two different selections. Encoding v7 adds
-        # it because a unit could otherwise drop a feature, lose the controls that only
-        # compile under it, and keep its fingerprint: the battery would shrink to what the
-        # default lane happens to contain, which is the v3 defect one level down.
-        "features": sorted(str(f) for f in unit.get("test_features", [])),
+        "targets": {
+            label: {"root": row["root"], "features": row["features"]}
+            for label in labels
+            for row in [_rust_targets.target(label)]
+            if label.startswith("//") and row is not None
+        },
     }
 
 
@@ -411,17 +396,14 @@ def test_source_patterns(unit: dict) -> list[str]:
     """
     if not claims_test_evidence(unit):
         return []
-    package = test_package_for(unit)
-    if package is None:
-        return []
     patterns: set[str] = set()
     for symbol in unit.get("tested_symbols", []):
-        target, _, _ = str(symbol).partition("#")
-        if not target.startswith("tests/") or not target[6:]:
-            continue
-        name = target[6:]
-        patterns.add(f"{package}/tests/{name}.rs")
-        patterns.add(f"{package}/tests/{name}/**/*.rs")
+        label = str(symbol).partition("#")[0]
+        row = _rust_targets.target(label) if label.startswith("//") else None
+        # A target built from a crate runs code in the unit's own `paths`; an integration
+        # target's sources are its own, and the build graph lists them.
+        if row is not None and not row["crate"]:
+            patterns.update(row["srcs"])
     return sorted(patterns)
 
 
@@ -446,6 +428,9 @@ TEST_LANE_INPUTS = (
     # change to it changes what the recorded evidence means — the same argument that put
     # the lane itself here (issue #745).
     "tools/verification/_ecosystems.py",
+    # What a Rust label resolves to — its crate root, sources and features — is read from
+    # the build-graph table through this module.
+    "tools/verification/_rust_targets.py",
 )
 
 
@@ -630,7 +615,7 @@ def _generated_inputs(unit: dict) -> dict[str, str]:
     Declared paths under `GENERATED_ROOT`, UNION the extracted modules the Lean package
     actually elaborates. The paths half alone was a component with an empty population: no
     unit lists a file under `verification/lean/generated/`, and none should — a `.lean` path
-    in a Cargo unit's `paths` collapses `unit_ecosystem` to None and takes the test lane's
+    in a Rust unit's `paths` collapses `unit_ecosystem` to None and takes the test lane's
     target resolution with it. So the declared invalidation rule `generated-model drift ->
     DIRTY_EVIDENCE` was wired to nothing, and measured 0 of 244 units.
 
@@ -731,7 +716,7 @@ def fingerprint_unit(
     if formal:
         closure: set[str] = set()
         for crate in crates:
-            _path_dependencies(crate, closure)
+            closure |= _rust_targets.dependency_closure(crate)
         formal_closure = sorted(closure - set(crates))
         proof_dependencies = _crate_sources(formal_closure)
     components = {
@@ -798,7 +783,7 @@ def fingerprint_unit(
     # ADR-MCPRE-068 Phase 1. The rules of a gate control are the production carrier of the
     # proposition it defends, so softening one is a reduction in evidence exactly as
     # deleting a runtime check is. The scripts cannot go in `paths` — a `.py` path in a
-    # cargo unit collapses `unit_ecosystem` to None and takes the test lane's target
+    # Rust unit collapses `unit_ecosystem` to None and takes the test lane's target
     # resolution with it — so they are digested as their own component instead.
     #
     # ADDED ONLY WHEN THE UNIT DECLARES ONE. A key present-but-empty on every other unit

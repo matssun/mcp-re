@@ -1,4 +1,4 @@
-load("//bazel:defs.bzl", "nt_rust_library")
+load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,14 +12,22 @@ filegroup(
 
 exports_files(["src/lib.rs"])
 
-# Test-only helper: resolve child-process binaries and data fixtures under
-# Bazel runfiles OR a plain Cargo build. The Bazel branch is a no-op pass-
-# through (env vars are already set by the test target); the cargo-fallback
-# branches activate only under `cargo test`. Pure std-only library.
+# Test-only helper: resolve child-process binaries and data fixtures under Bazel runfiles.
+# Each test target sets the env keys it reads to `$(rlocationpath ...)`. Pure std-only.
 nt_rust_library(
     name = "mcp_re_test_paths",
     srcs = glob(["src/**/*.rs"]),
     crate_name = "mcp_re_test_paths",
     edition = "2021",
     deps = [],
+)
+
+nt_rust_test(
+    name = "mcp_re_test_paths_test",
+    crate = ":mcp_re_test_paths",
+    data = ["src/lib.rs"],
+    env = {
+        "MCP_RE_TEST_PATHS_MISSING": "_main/mcp-re-test-paths/no-such-file",
+        "MCP_RE_TEST_PATHS_PROBE": "$(rlocationpath src/lib.rs)",
+    },
 )

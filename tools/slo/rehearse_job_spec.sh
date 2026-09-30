@@ -65,7 +65,13 @@ kubectl get ns "$NAMESPACE" >/dev/null 2>&1 \
 # it is 3 GB and only this rehearsal needs it.
 if [[ "${REBUILD_BENCH:-0}" == 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "building $IMAGE (deploy/docker/Dockerfile.bench)"
-  docker build -f deploy/docker/Dockerfile.bench -t "$IMAGE" . || fail "the bench image did not build"
+  case "$(docker info --format '{{.Architecture}}' 2>/dev/null)" in
+    aarch64|arm64) arch=arm64 ;;
+    *) arch=amd64 ;;
+  esac
+  scripts/stage_image_binaries.sh --arch "$arch" || fail "the bench binaries did not build"
+  docker build -f deploy/docker/Dockerfile.bench --build-arg "DIST=deploy/docker/dist/$arch" \
+    -t "$IMAGE" . || fail "the bench image did not build"
 fi
 
 # imagePullPolicy is Never for PROVIDER=kind, so the image has to be side-loaded: a kind

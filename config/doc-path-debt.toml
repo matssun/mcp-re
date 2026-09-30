@@ -56,11 +56,6 @@ status = "reviewed-exception"
 review_ref = "DP-001 in docs/architecture/review-dispositions.md"
 
 [[debt]]
-path = ".github/workflows/verification.yml"
-dead_tokens = 6
-status = "unreviewed"
-
-[[debt]]
 path = "BUILD.bazel"
 dead_tokens = 1
 status = "reviewed-exception"
@@ -153,6 +148,11 @@ status = "unreviewed"
 [[debt]]
 path = "docs/architecture/semantic-altitude-sweep.md"
 dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/bench/adr-051-baseline-local.json"
+dead_tokens = 2
 status = "unreviewed"
 
 [[debt]]

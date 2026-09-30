@@ -35,12 +35,20 @@ mod flags;
 #[derive(Debug, Clone)]
 pub struct RegistrationTarget {
     base_url: String,
+    // Read only by the transport. Without `scitt_registration` the target is still
+    // constructed and validated — an unusable budget or protocol is refused in every
+    // build — but `register` refuses before reading it.
+    #[cfg_attr(not(feature = "scitt_registration"), allow(dead_code))]
     policy: RegistrationPolicy,
     /// WHICH contract the operator said this endpoint speaks.
     ///
     /// Named, never inferred from the URL: reaching a service by coincidence of shape
     /// while calling a different contract by another's name is the laundering the
     /// mechanism-leaf boundary exists to prevent.
+    // Read only by the transport. Without `scitt_registration` the target is still
+    // constructed and validated — an unusable budget or protocol is refused in every
+    // build — but `register` refuses before reading it.
+    #[cfg_attr(not(feature = "scitt_registration"), allow(dead_code))]
     protocol: RegistrationProtocol,
 }
 

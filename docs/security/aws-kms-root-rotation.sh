@@ -111,8 +111,9 @@ export MCP_RE_AWS_ROOT_B_KEY_ID="$ROOT_B"
 
 echo "aws-kms-root-rotation: running the live root-rotation lane..." >&2
 rc=0
-cargo test -p mcp-re-proxy --features aws_kms_keysource \
-  --test aws_kms_root_rotation_live_test -- --ignored --nocapture || rc=$?
+scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results \
+  //mcp-re-proxy:integration_live_test \
+  --test_arg=--ignored --test_arg=--nocapture --test_arg=aws_kms_root_rotation_live_test:: || rc=$?
 
 echo "aws-kms-root-rotation: lane exited rc=$rc." >&2
 exit "$rc"

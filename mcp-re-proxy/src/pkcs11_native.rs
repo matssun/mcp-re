@@ -3,7 +3,7 @@
 //!
 //! # Why this exists
 //! The high-level `cryptoki` crate transitively pulls the UNMAINTAINED `paste` crate
-//! (RUSTSEC-2024-0436), which fails the cargo-deny gate; `cryptoki-sys` carries only the
+//! (RUSTSEC-2024-0436), which fails the supply-chain gate; `cryptoki-sys` carries only the
 //! raw PKCS#11 bindings and depends solely on `libloading`. This module is the SMALL safe
 //! surface [`crate::pkcs11_keysource`] needs over them: load+initialize a module,
 //! enumerate token slots and read their labels, open an RW session, log in as the User,

@@ -285,7 +285,7 @@ function workPrompt(item, i, model) {
       ' --touched <comma-separated files you edited> --applied <n> --not-applied <n> --tests-added <n>' +
       (item.file.endsWith('.rs') ? ' --it <comma-separated integration-test targets (tests/<name>.rs) your accept criteria name; omit when none>' : ''),
     '  It prints `gate_verdict` (new-failures > infra > no-baseline > ok), each gate\'s result, and any prescan hit on a touched or related file. Judge a prescan hit yourself: it may predate your change.',
-    '  Do NOT call `progress.py`, `bazel_gate.py`, `cargo_gate.py`, cargo, pyright or prescan separately.',
+    '  Do NOT call `progress.py`, `bazel_gate.py`, `rust_gate.py`, Bazel, pyright or prescan separately.',
     '  On `new-failures` check.py has ALREADY saved your change as a patch and reverted it; the tree is clean. Report and stop — do not re-apply.',
     '',
     'Copy `gate_verdict` and `gate_exit` from its output into your structured result — `gate_verdict` is REQUIRED and is what the lane branches on. The gate evidence is in the journal, written by check.py; do not restate it.',

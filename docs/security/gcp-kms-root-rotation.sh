@@ -100,8 +100,9 @@ export MCP_RE_ROOT_B_KEY_VERSION="$(kv 2)"
 export MCP_RE_GCP_ACCESS_TOKEN="${MCP_RE_GCP_ACCESS_TOKEN:-$(gcloud auth print-access-token --project "$PROJECT_ID")}"
 
 echo "gcp-kms-root-rotation: running the live root-rotation lane..." >&2
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_root_rotation_live_test -- --ignored --nocapture
+scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results \
+  //mcp-re-proxy:integration_live_test \
+  --test_arg=--ignored --test_arg=--nocapture --test_arg=gcp_kms_root_rotation_live_test::
 rc=$?
 
 echo "gcp-kms-root-rotation: lane exited rc=$rc." >&2

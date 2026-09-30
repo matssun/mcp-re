@@ -77,5 +77,3 @@ mcp-re-http-profile = { path = ".", features = ["pre_052_fixtures"] }
 name = "mcp_re_http_profile"
 path = "src/lib.rs"
 
-[lints]
-workspace = true

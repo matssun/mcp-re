@@ -31,27 +31,26 @@ schema_version = 1
 id = "MSR-0001"
 unit = "conformance.verdict_vocabulary_scope"
 protocol = [
-  "cargo",
+  "bazel",
   "test",
-  "-p",
-  "mcp-re-conformance",
-  "--test",
-  "audit_vocabulary_guard_test",
-  "--",
-  "--exact",
-  "exactly_two_files_decide_what_a_verdict_token_says",
+  "//mcp-re-conformance:audit_vocabulary_guard_test",
+  "--nocache_test_results",
+  "--test_output=streamed",
+  "--test_arg=--exact",
+  "--test_arg=exactly_two_files_decide_what_a_verdict_token_says",
   # The SCOPE IDENTITY control runs WITH the measurement rather than beside it: it derives
   # the scanned crate set from the workspace manifest, which is what makes the number a
   # statement about the workspace instead of about a hand-list someone last edited.
-  "the_scanned_crate_set_is_the_workspace",
+  "--test_arg=the_scanned_crate_set_is_the_workspace",
   # Without this the `MEASURED:` lines never reach the lane and the artifact is empty —
   # which the lane refuses as an apparatus that did not run, rather than reporting a green
   # measurement of nothing.
-  "--nocapture",
+  "--test_arg=--nocapture",
 ]
 scope = """
-Every crate in the workspace with a source tree, derived from the root Cargo.toml at compile
-time; production halves only, with test regions excluded by `rust_source::production_half`.
+Every first-party crate package the build graph compiles, both SDK bindings included, derived
+from the committed target table at compile time; the clippy activation probes are the one named
+exclusion. Production halves only, with test regions excluded by `rust_source::production_half`.
 Measured on whatever host runs the lane, which does not bound the result: the corpus is the
 tree, not the machine.
 """
@@ -59,16 +58,14 @@ artifact = "verdict-vocabulary-scope.txt"
 artifact_pattern = "^MEASURED: "
 control_kind = "sensitivity"
 control = [
-  "cargo",
+  "bazel",
   "test",
-  "-p",
-  "mcp-re-conformance",
-  "--test",
-  "audit_vocabulary_guard_test",
-  "--",
-  "--exact",
-  "the_measurement_moves_when_the_scanned_set_shrinks",
-  "--nocapture",
+  "//mcp-re-conformance:audit_vocabulary_guard_test",
+  "--nocache_test_results",
+  "--test_output=streamed",
+  "--test_arg=--exact",
+  "--test_arg=the_measurement_moves_when_the_scanned_set_shrinks",
+  "--test_arg=--nocapture",
 ]
 note = """
 ADR-MCPRE-068 §12.2. The apparatus was already written and filed under `tested`, because

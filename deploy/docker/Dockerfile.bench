@@ -6,7 +6,14 @@
 # in-process echo backend over mTLS) on a DECLARED GKE machine class, and prints
 # the machine-readable report between markers so a K8s Job can surface it via logs.
 #
-#   docker build -f deploy/docker/Dockerfile.bench -t mcp-re-slo-bench:0.17.0 .
+#   scripts/stage_image_binaries.sh --arch amd64
+#   docker build -f deploy/docker/Dockerfile.bench \
+#     --build-arg DIST=deploy/docker/dist/amd64 -t mcp-re-slo-bench:0.17.0 .
+#
+# The image compiles nothing: the bench and the proxy it spawns are the Bazel-built
+# release binaries scripts/stage_image_binaries.sh staged — the bench from
+# //mcp-re-proxy:tls_load_harness_bench, the proxy from the deploy flavor the proxy image
+# ships, so the Job measures the artifact that is deployed.
 #
 # Drive per run with env: MCP_RE_LOADGEN_HW_CLASS (the machine class label),
 # MCP_RE_LOADGEN_CORES (1 then N for the scaling curve). The canonical v2 envelope
@@ -16,28 +23,17 @@
 #
 # Run the LOCAL lane before ever building or scheduling this image:
 # scripts/local_gate.sh (docs/dev/local-gate-order.md). Same envelope, no cost.
-FROM rust:1.94.1-slim-bookworm AS bench
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential perl pkg-config libssl-dev ca-certificates \
+FROM debian:bookworm-slim AS bench
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-WORKDIR /build
-COPY . .
-# Warm the target so the runtime `cargo test` runs the bench with no recompile.
-#
-# `--release`, and it is NOT optional. Without it this image measured a DEBUG build while
-# the local §7 lane measured a release one, so the two were never comparable: the same
-# 128/8000 cold-mTLS envelope reported ~15,400 rps locally and ~65-400 rps here, a ~240x
-# gap that reads as a hardware or topology story and is neither. Debug Rust is an order of
-# magnitude slower in general and far worse for the Ed25519/P-256/SHA-256 that dominates a
-# cold handshake. Every GKE §7 number recorded before this — and the 250 rps production
-# floor derived from them — is an unoptimised-build number.
-RUN cargo test --release -p mcp-re-proxy --features async_serve,redis_replay --test tls_load_harness_bench --no-run
+ARG DIST=deploy/docker/dist/amd64
+COPY ${DIST}/tls_load_harness_bench /usr/local/bin/tls_load_harness_bench
+COPY ${DIST}/mcp-re-proxy /usr/local/bin/mcp-re-proxy
+ENV MCP_RE_PROXY_CLI=/usr/local/bin/mcp-re-proxy
 ENV MCP_RE_LOADGEN_OUT=/tmp/slo_report.json
 # `--exact`, NEVER `--ignored`: this bench is not an #[ignore] test (the whole file is
 # gated to the redis_replay feature lane), so `--ignored` selects ZERO tests, exits 0
-# and writes no report — a Job that measures nothing and reports success. The features
-# must match the warm-build above, AND so must `--release`, or the runtime `cargo test`
-# recompiles from scratch in the other profile. The
+# and writes no report — a Job that measures nothing and reports success. The
 # `1 passed` check is the guard that makes a non-measurement impossible to mistake for
 # a result. Needs a shared Redis at MCP_RE_LOADGEN_REDIS_URL (the Job supplies sidecars).
-ENTRYPOINT ["bash","-lc","set -o pipefail; cargo test --release -p mcp-re-proxy --features async_serve,redis_replay --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture | tee /tmp/bench.log; grep -q 'test result: ok. 1 passed' /tmp/bench.log || { echo 'SLO BENCH DID NOT RUN — zero tests selected, nothing measured' >&2; exit 1; }; echo '===REPORT_JSON_BEGIN===' && cat \"$MCP_RE_LOADGEN_OUT\" && echo '===REPORT_JSON_END==='"]
+ENTRYPOINT ["bash","-c","set -o pipefail; tls_load_harness_bench tls_load_harness_bench --exact --nocapture | tee /tmp/bench.log; grep -q 'test result: ok. 1 passed' /tmp/bench.log || { echo 'SLO BENCH DID NOT RUN — zero tests selected, nothing measured' >&2; exit 1; }; echo '===REPORT_JSON_BEGIN===' && cat \"$MCP_RE_LOADGEN_OUT\" && echo '===REPORT_JSON_END==='"]

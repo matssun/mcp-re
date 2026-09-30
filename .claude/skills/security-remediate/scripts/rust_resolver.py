@@ -65,18 +65,29 @@ def expand_use_tree(tree: str) -> list[list[str]]:
     return out
 
 
+#: One Rust library target's attribute block in a BUILD file.
+_LIBRARY = re.compile(r"^(?:nt_)?rust_library\((.*?)^\)", re.M | re.S)
+
+
 class RustResolver:
     def __init__(self, root: str) -> None:
         self.root = root
-        self.crates: dict[str, str] = {}      # crate ident -> crate dir (repo-relative)
-        p = subprocess.run(["git", "ls-files", "*Cargo.toml"], cwd=root,
+        # crate ident -> crate dir (repo-relative), read from the Bazel library targets:
+        # a library's crate is its `crate_name` (or its target name), rooted at its
+        # package's `src/lib.rs`. Every flavor of one library names the same crate.
+        self.crates: dict[str, str] = {}
+        p = subprocess.run(["git", "ls-files", "*BUILD.bazel", "*BUILD"], cwd=root,
                            capture_output=True, text=True)
-        for manifest in p.stdout.split():
-            text = open(os.path.join(root, manifest), encoding="utf-8").read()
-            m = re.search(r'^\[package\][^\[]*?^name\s*=\s*"([^"]+)"', text, re.M | re.S)
-            d = os.path.dirname(manifest)
-            if m and os.path.isfile(os.path.join(root, d, "src", "lib.rs")):
-                self.crates[m.group(1).replace("-", "_")] = d
+        for build in p.stdout.split():
+            d = os.path.dirname(build)
+            if not os.path.isfile(os.path.join(root, d, "src", "lib.rs")):
+                continue
+            text = open(os.path.join(root, build), encoding="utf-8").read()
+            for block in _LIBRARY.findall(text):
+                m = re.search(r'\bcrate_name\s*=\s*"([^"]+)"', block) or \
+                    re.search(r'\bname\s*=\s*"([^"]+)"', block)
+                if m:
+                    self.crates.setdefault(m.group(1).replace("-", "_"), d)
         self._reexports: dict[str, dict[str, list[str]]] = {}
 
     def crate_of(self, path: str) -> str | None:

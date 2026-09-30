@@ -31,13 +31,13 @@ nt_rust_library(
 # ADR-MCPS-048 / #220 (feature-flavor handling, cf. MCPS-69): a `test-fixtures`-enabled
 # flavor of the SAME crate. FixedClock / SeededNonceSource are cfg'd behind
 # `#[cfg(any(test, feature = "test-fixtures"))]` (audit #81 — kept off the production
-# surface). In-workspace demo/test targets that consume those deterministic fixtures
-# depend on THIS flavor, matching the Cargo `mcp-re-host = { features = ["test-fixtures"] }`
-# dev-dep. Same `crate_name`, so consumers still `use mcp_re_host::…`; a target links
-# EITHER this or `:mcp_re_host`, never both (one crate name). The plain `:mcp_re_host`
-# stays fixture-free for production consumers.
+# surface). Test targets that consume those deterministic fixtures depend on THIS flavor,
+# and `testonly` makes Bazel refuse any other consumer. Same `crate_name`, so consumers
+# still `use mcp_re_host::…`; a target links EITHER this or `:mcp_re_host`, never both
+# (one crate name). The plain `:mcp_re_host` stays fixture-free for production consumers.
 nt_rust_library(
     name = "mcp_re_host_test_fixtures",
+    testonly = True,
     srcs = glob(["src/**/*.rs"]),
     crate_features = ["test-fixtures"],
     crate_name = "mcp_re_host",
@@ -54,15 +54,13 @@ nt_rust_library(
 # was four files and zero tests in BOTH lanes, and a crate with no test target is a crate the
 # Bazel lane says nothing about. Built as the `test-fixtures` flavor because the controls
 # compare the production source against the fixtures it gates — under `cfg(test)` the gate is
-# satisfied either way, and the SOURCE-shape and MANIFEST controls are what establish the
+# satisfied either way, and the SOURCE-shape and BUILD controls are what establish the
 # boundary for a production build.
 nt_rust_test(
     name = "mcp_re_host_test",
     crate = ":mcp_re_host_test_fixtures",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     compile_data = [
-        "Cargo.toml",
+        "BUILD.bazel",
         "src/clock.rs",
         "src/nonce.rs",
     ],

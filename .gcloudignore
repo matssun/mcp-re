@@ -46,3 +46,6 @@ work/
 .aws/
 .gcloud/
 .kube/
+
+# Bazel's output-tree symlinks: the build step stages its own binaries.
+bazel-*

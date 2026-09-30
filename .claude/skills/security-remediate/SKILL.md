@@ -79,7 +79,7 @@ python3 $S/progress.py reconcile --log <log> --files "<batch files>"     # the r
 python3 $S/finalize.py --results <workflow result saved as JSON> \
     --ledger docs/security/finding-ledger.jsonl --work-dir $R/work \
     --trailer "Co-Authored-By: ..."                                       # commits + `fixed`
-python3 $S/batch_gate.py --crates "<cargo packages the batch touched>" --work-dir $R/work
+python3 $S/batch_gate.py --files "<files the batch touched>" --work-dir $R/work
 ```
 
 **The workspace clippy ratchet is authorized at an integration boundary, not by starting a
@@ -116,8 +116,8 @@ clock. The gate is therefore split by what can be attributed to one writer:
 
 | when | what | why there |
 |---|---|---|
-| per file (`check.py post` → `cargo_gate.py`) | clippy `-D warnings` in every lane that compiles the file (default + the `local_gate.sh` `FEATURES` lane when the crate has them; plus the related files' crates above `local`), the module-size ratchet, the file's own unit tests (`--lib -- <module>::`), each `--it` target the package named | attributable, and seconds-to-a-minute on a warm cache |
-| per batch (`batch_gate.py`) | clippy ratchet, module-size, bazel-srcs, unit-closure, verification-trigger, mutation-lane self-test, the ADR-MCPRE-069 control-census ratchet and `control-census --gate`; `cargo test -p` of every touched crate in both lanes | minutes, and the same answer after one fix or six |
+| per file (`check.py post` → `rust_gate.py`) | `bazel build --config=lint` over every target that compiles the file (each library flavor is its own target, so every feature configuration; plus the related files' targets above `local`), the module-size ratchet, the file's own unit tests in the unit-test targets built from those libraries (`--test_arg=<module>::`), each `--it` test target the package named | attributable, and seconds-to-a-minute on a warm cache |
+| per batch (`batch_gate.py`) | clippy ratchet, module-size, bazel-srcs, unit-closure, verification-trigger, mutation-lane self-test, the ADR-MCPRE-069 control-census ratchet and `control-census --gate`; the touched closure — every Rust target that depends on a touched file, under `--config=lint`, and every non-manual test target in it |  minutes, and the same answer after one fix or six |
 | pre-handover (`scripts/local_gate.sh`) | `bazel test //...` (the only lane that runs the `async_serve` drain tests), the SLO lane | not claimed by this skill |
 
 A red per-file gate saves the change as a patch and reverts it, so the next writer

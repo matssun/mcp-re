@@ -33,6 +33,21 @@ module(
 
 bazel_dep(name = "rules_rust", version = "0.70.0")
 bazel_dep(name = "rules_python", version = "1.7.0")
+# The Python SDK's native module (`mcp_re_sdk._core`) is a PyO3 extension.
+bazel_dep(name = "rules_rust_pyo3", version = "0.70.0")
+
+# The interpreter the PyO3 toolchain configures the SDK's native module against. The
+# module is abi3, so this names the build interpreter, not the set it runs on.
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = "3.12",
+)
+
+register_toolchains(
+    "//bazel/pyo3:rust_pyo3_toolchain",
+    "//bazel/pyo3:pyo3_toolchain",
+)
 bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "platforms", version = "1.0.0")
 # `build_test`: compiles a `manual` target on every `bazel test //...` without running it.
@@ -75,13 +90,39 @@ use_repo(
 # Rust toolchain — pinned to the workspace's required version
 ########################################
 
+# The pinned Verus release, for the Verus lane (//bazel/verus). Read from the toolchain lock,
+# which is the one statement of the pin; only the `manual` `verus_verify` targets use it.
+verus_install = use_repo_rule("//bazel/verus:repo.bzl", "verus_install")
+
+verus_install(
+    name = "verus",
+    lock = "//:verification/policy/toolchains.lock.toml",
+)
+
+# The extraction container's Charon, for the Lean extraction lane (//bazel/charon); only
+# the `manual` `charon_llbc` targets use it, inside that container.
+charon_install = use_repo_rule("//bazel/charon:repo.bzl", "charon_install")
+
+charon_install(name = "charon")
+
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",
-    versions = ["1.97.1"],
-    # Cross-compile the production proxy artifact to the linux/amd64 image
-    # platform from the darwin host (OCI packaging, Phase 1).
-    extra_target_triples = ["x86_64-unknown-linux-gnu"],
+    # 1.97.1 builds everything. The nightly is the extraction lane's alone (//bazel/charon):
+    # Charon's driver is built against it, so the crates it reads must be too. It is
+    # selected only by `--@rules_rust//rust/toolchain/channel=nightly`, which nothing but
+    # that lane sets.
+    versions = [
+        "1.97.1",
+        "nightly/2026-08-18",
+    ],
+    # Cross-compile the image binaries to Linux from a darwin host: amd64 for the
+    # registry images, arm64 for the local kind fleet on Apple Silicon
+    # (scripts/stage_image_binaries.sh).
+    extra_target_triples = [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+    ],
 )
 
 ########################################
@@ -311,9 +352,74 @@ crate.spec(
     version = "1",
     repositories = ["crates_mcp_re"],
 )
+# The Python SDK's native module (sdk/python). `abi3-py39` builds ONE extension every
+# CPython from 3.9 loads. The build scripts of pyo3-build-config and pyo3-ffi read the
+# interpreter configuration from the PyO3 toolchain (//bazel/pyo3), never from whatever
+# `python` a build host happens to have. The toolchain is named by its CANONICAL repository
+# (`@@rules_rust_pyo3+`): the crate repositories cannot see the apparent name, and
+# MODULE.bazel has no `Label()` to resolve it.
+crate.spec(
+    package = "pyo3",
+    version = "0.29",
+    features = [
+        "abi3-py39",
+        "extension-module",
+    ],
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "pyo3-introspection",
+    version = "0.29",
+    repositories = ["crates_mcp_re"],
+)
+
+[
+    crate.annotation(
+        build_script_data = ["@@rules_rust_pyo3+//:current_pyo3_toolchain"],
+        build_script_env = {
+            "PYO3_CROSS": "$(PYO3_CROSS)",
+            "PYO3_CROSS_LIB_DIR": "$(PYO3_CROSS_LIB_DIR)",
+            "PYO3_CROSS_PYTHON_IMPLEMENTATION": "$(PYO3_CROSS_PYTHON_IMPLEMENTATION)",
+            "PYO3_CROSS_PYTHON_VERSION": "$(PYO3_CROSS_PYTHON_VERSION)",
+            "PYO3_NO_PYTHON": "$(PYO3_NO_PYTHON)",
+            "PYO3_PYTHON": "$(PYO3_PYTHON)",
+        },
+        build_script_toolchains = ["@@rules_rust_pyo3+//:current_pyo3_toolchain"],
+        crate = name,
+        repositories = ["crates_mcp_re"],
+    )
+    for name in ("pyo3-build-config", "pyo3-ffi")
+]
+
+# The TypeScript SDK's Node addon (sdk/typescript). napi-rs without its tokio runtime: the
+# binding is synchronous. napi-derive also writes the type definitions
+# `//sdk/typescript:native_type_defs` collects.
+crate.spec(
+    package = "napi",
+    version = "3",
+    default_features = False,
+    features = ["napi8"],
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "napi-derive",
+    version = "3",
+    repositories = ["crates_mcp_re"],
+)
+
+# The platforms MCP-RE builds for. A dependency the crates declare only for another
+# target (the `windows-*` family, `wasi`) is not in the build graph, so it is neither
+# compiled nor assessed by the supply-chain gate (scripts/supply_chain_gate.py), which
+# reads the graph `bazel query` reports.
 crate.from_specs(
     name = "crates_mcp_re",
     cargo_lockfile = "//bazel:crates.lock",
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+    ],
 )
 use_repo(crate, "crates_mcp_re")
 

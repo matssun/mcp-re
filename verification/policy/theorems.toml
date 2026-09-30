@@ -3147,7 +3147,7 @@ how two readers of one message come to disagree about what it says.
 It establishes nothing about what the server's result MEANS beyond its classification, and
 nothing about replies that never verified: those do not reach this composition at all.
 
-Executable, class V0, measured in the default cargo lane. Every control performs a real
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`). Every control performs a real
 delegated signing round trip and takes its `VerifiedDelegatedResponse` from
 `verify_delegated_response`; none assembles one.
 
@@ -3156,7 +3156,7 @@ producer in the workspace — and NOT of the type. `VerifiedDelegatedResponse` a
 verified-response types carry `pub` fields deliberately, for the prover, and
 `VerifiedMcpResponse::from_block` says so in its own words: a convenience, not a seal. A caller
 outside this workspace could assemble one, and nothing here claims otherwise. Sealing that
-chain is `client.response_signer_authorization`'s question, not this claim's.
+chain has no owning verification unit today and is not this claim's.
 """
 owner = "client.verified_outcome"
 review_requirement = "Owner security-specification review"
@@ -3199,7 +3199,7 @@ that bound is `client.local_leg_declaration`'s.
 NOT AN AVAILABILITY CLAIM. It says nothing about the refresher continuing to make progress
 under a wedged filesystem.
 
-Executable, class V0, measured in the default cargo lane over the shipped
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`) over the shipped
 `serve_until_shutdown` itself.
 """
 owner = "client.serving_lifetime"
@@ -4330,7 +4330,7 @@ exist was the claim. The same shape as the replay omission THM-0079 closed.
 Two halves. The VOCABULARY half is the owner's own: which bodies are messages, which answers
 correlate, and the two ways a correlation could be faked — a null id, and a reply that is also
 a request. The SINGLE-DECISION half lives in a second unit,
-because the two halves are in different Cargo packages and a unit's test lane runs in one —
+because the two halves are in different Bazel packages and a unit's test lane runs in one —
 a split the authorities agree with, since the vocabulary is the profile's and the single
 decision is the serving path's. It is evidence rather than unconstructibility: `outstanding_id` is a published API with legitimate
 callers on the client side and in the response validator, so it cannot be deleted to make a
@@ -5050,8 +5050,8 @@ direct_consequence_severity = "critical"
 scope = """
 The SHIPPED path, and that is the whole point of registering it. THM-0057 through THM-0061
 establish what the client-core verifier does with an expectation and a response; every one of
-them takes the PAIRING as given, and `client.response_binding_disposition`'s scope says so explicitly —
-pairing an expectation with the request it describes is the caller's obligation.
+them takes the PAIRING as given: pairing an expectation with the request it describes is the
+caller's obligation, stated on `ResponseExpectation::new`.
 
 For a raw FFI caller that is the honest boundary and it stays there: `ResponseExpectation::new`
 is public precisely so a binding that rebuilt the request from scalars can supply one, and
@@ -5709,7 +5709,7 @@ enforces it. The bound on a live connection's age is enforced in
 re-check of the leaf's validity and span is THM-0032's; that a connection is in fact closed
 at the configured age is an OBLIGATION this theorem names and does not establish — that
 code has no test and belongs to no unit, and it lives in the `async_serve` feature lane, so
-a plain `cargo test --workspace` says nothing about it. The claim "a connection cannot
+the default-feature targets say nothing about it. The claim "a connection cannot
 outlive the credential that authenticated it" is therefore stated here at the level of the
 values a deployment chose, not at the level of the socket.
 
@@ -5969,7 +5969,7 @@ OUTSIDE EVERY ROOT'S CLOSURE, deliberately and on THM-0012's precedent. THM-0092
 that an unestablished replay state does not dispatch; it does not require the account that
 decides WHICH actor gets to establish one. An edge asserted for tidiness would move that
 root's fingerprint, and every ancestor's, for support the root does not need. Executable,
-class V0, measured in the default cargo lane.
+class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "proxy.async_replay_retention"
 review_requirement = "Owner security-specification review"
@@ -6041,8 +6041,8 @@ The `WAIT` conjunct governs the tier the store was BUILT with. That the tier a d
 DECLARED is the tier the store was built with is `app.rs`'s composition and THM-0092's
 subject, not this one's.
 
-Measured in the `redis_replay` feature lane named by the owning unit — a plain
-`cargo test --workspace` compiles these files to zero tests. Executable, class V0.
+Measured in the `redis_replay` feature lane named by the owning unit — the crate's
+default-feature test targets compile these files to zero tests. Executable, class V0.
 """
 owner = "proxy.redis_replay_adapter"
 review_requirement = "Owner security-specification review"
@@ -6115,8 +6115,8 @@ reads the reply it claims to read, and fails closed on everything else — not t
 cluster answers as the protocol says. A live-cluster exercise is separate evidence and is not
 claimed here.
 
-Measured in the `cpstore_etcd` feature lane named by the owning unit — a plain
-`cargo test --workspace` compiles these files to zero tests. Executable, class V0.
+Measured in the `cpstore_etcd` feature lane named by the owning unit — the crate's
+default-feature test targets compile these files to zero tests. Executable, class V0.
 """
 owner = "proxy.etcd_replay_adapter"
 review_requirement = "Owner security-specification review"
@@ -6201,7 +6201,7 @@ The three distinctions that owner draws — unreadable bytes, a well-formed key 
 algorithm, a non-canonical encoding — are rendered into the message rather than lost, because
 this vocabulary has one variant for all three.
 
-Executable, class V0, measured in the default cargo lane. Outside every root's closure: no
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`). Outside every root's closure: no
 root's response-signing claim is stated at this seam, and the delegated-signing terminal that
 roots consume is `proxy.delegated_signing_credential`'s.
 """
@@ -6265,7 +6265,7 @@ the signing that happens above this layer — this crate is transport-only and d
 Nothing here says the configured server CA is the RIGHT one; that is the operator's trust
 decision, and this theorem is about honouring it rather than about choosing it.
 
-Executable, class V0, measured in the default cargo lane. Outside every root's closure: the
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`). Outside every root's closure: the
 client transport is not on the proxy's serving path, and no §2 root is stated about it.
 """
 owner = "client.transport_server_identity"
@@ -6322,7 +6322,7 @@ THE BOUNDS ARE CONFIGURED VALUES. What is claimed is that a ceiling and a deadli
 and that exceeding either refuses; which numbers a deployment chose is its own decision, and
 no number here is asserted as sufficient.
 
-Executable, class V0, measured in the default cargo lane. Outside every root's closure for the
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`). Outside every root's closure for the
 same reason as THM-0109: no §2 root is stated about the client transport.
 """
 owner = "client.transport_message_hygiene"
@@ -6384,16 +6384,16 @@ validate against. The JSON-RPC envelope separates them by `data.policy`, and the
 has no production producer on this tree. Left as measured rather than corrected: the tokens are
 frozen, and re-spelling one is an ADR.
 
-SCOPED TO THE CARGO/BAZEL WORKSPACE. `sdk/python` and `sdk/typescript` are separate Cargo
-workspaces with no Bazel target, so they cannot be delivered as runfiles and a cargo-only scan
-would make this lane measure two different things in its two lanes. They are thin wrappers over
-`mcp_re_client_core::build_authorization`, and the refusal they render is covered directly by
-the producer check on the file they render THROUGH.
+SCOPED TO THE FIRST-PARTY RUST CRATE ESTATE: the Rust sources of every crate package the build
+graph compiles, both SDK Rust bindings included. It is not a claim over the repository's
+TypeScript or Python sources, which spell the tokens they receive. `config/clippy-strict`, the
+lint gate's activation-probe package, is excluded by name, and the corpus-completeness control
+requires every Bazel crate package to be scanned or named as excluded.
 
 DOES NOT ESTABLISH the correctness of either frozen taxonomy, nor that a refusal reaches the
 audit boundary — THM-0046, THM-0069 and THM-0071 are those propositions.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured by `//mcp-re-conformance:audit_vocabulary_guard_test`.
 """
 owner = "conformance.verdict_vocabulary_scope"
 review_requirement = "Owner security-specification review"
@@ -6427,8 +6427,10 @@ magnitudes `i64` cannot represent it reports `i64::MIN` — the most-before-the-
 rather than wrapping into a future time.
 
 The deterministic fixtures, `SeededNonceSource` and `FixedClock`, are compiled only under
-`cfg(test)` or the explicit `test-fixtures` feature; the feature is not a default one and is
-enabled for this crate's own tests as a dev-dependency only.
+`cfg(test)` or the explicit `test-fixtures` feature. The fixture flavor may be deliberately
+built as a `testonly` target, but it cannot enter the dependency closure of any non-testonly —
+production — target: the plain production library carries no fixture feature, every target
+that does carry it is `testonly`, and the graph-wide gate enforces that condition.
 """
 security_consequence = """
 A predictable nonce is strictly worse than no nonce: the request is still well-formed, still
@@ -6438,9 +6440,10 @@ single failure mode that must never be recovered from — and why the fixture's 
 ENFORCED boundary rather than a doc note (audit #81). A production binary that could construct
 a `SeededNonceSource` could be given predictable nonces by configuration alone.
 
-The gate on each item is only half of that boundary. `default = ["test-fixtures"]` would
-satisfy every `#[cfg]` in the crate with no source line changing, and a non-dev dependency
-enabling it would do the same for every downstream consumer. Both halves are controlled.
+The gate on each item is only part of that boundary. `crate_features = ["test-fixtures"]` on
+the production library would satisfy every `#[cfg]` in the crate with no source line changing,
+and a production target depending on the fixture flavor would do the same for every downstream
+consumer. All three parts are controlled.
 
 A fabricated timestamp is accepted where a faithful one is refused. A clock clamped to zero,
 or wrapped, reports a plausible instant that a verifier's freshness window admits; the
@@ -6464,7 +6467,7 @@ says nothing about a third party's.
 NOT A CLAIM ABOUT `HostSigner`. It is dormant — no consumer anywhere in the tree — and is
 excluded from this unit for that reason.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured by `//mcp-re-host:mcp_re_host_test`.
 """
 owner = "host.request_freshness_inputs"
 review_requirement = "Owner security-specification review"
@@ -6527,7 +6530,7 @@ NOT A BOUND ON WHAT A COVERED CREDENTIAL COSTS. The exposure of a retained beare
 real and is managed by an external retention policy, which ADR-MCPRE-054 says is a deployment
 concern this module deliberately does not try to be.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "proxy.retained_record_content"
 review_requirement = "Owner security-specification review"
@@ -6589,7 +6592,7 @@ service returns are outside this seam entirely.
 NOT A CUSTODY CLAIM ABOUT THE ISSUING KEY. `sign` is a caller-supplied closure; which key it
 is and where it lives is the caller's, and the KMS seam's own theorems are about that.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "proxy.evidence_attestation"
 review_requirement = "Owner security-specification review"
@@ -6647,7 +6650,7 @@ gcp_kms_keysource)` and two of its members are `gcp_kms_keysource`-only, so the 
 realizations are different types and a green result under one is not evidence about the other.
 The AWS-alone arm is `proxy.remote_signer_call_aws` and the Cloud-KMS arm — which adds the
 chained-cause control the bearer-token retry needs — is `proxy.remote_signer_call_gcp`. Neither
-lane is the default one; a plain `cargo test --workspace` compiles this module to nothing.
+lane is the default one; the crate's default-feature test targets compile this module to nothing.
 
 NOT A CLAIM ABOUT EITHER ADAPTER'S CUSTODY. Which key signs, where it lives, and whether the
 signature is re-verified before emission are THM-0108's and the provider adapters' own.
@@ -6725,7 +6728,7 @@ THM-0108's, and the seam's re-verification is kept as defence in depth beneath t
 own.
 
 THREE LANES, MEASURED SEPARATELY. Each adapter exists only under its own non-default feature;
-a plain `cargo test --workspace` compiles all three to zero tests, so each is its own unit
+the crate's default-feature test targets compile all three to zero tests, so each is its own unit
 naming its own lane.
 
 Executable, class V0, measured in the three named feature lanes.
@@ -6868,7 +6871,7 @@ clock is the caller's. What a principal may OCCUPY is the async tier's, which is
 `composite_replay_key`. This claim is about which requests collide, not about who pays for
 the collision space.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "core.replay_seam"
 review_requirement = "Owner security-specification review"
@@ -6900,14 +6903,13 @@ key id — which is a key confusion at the point the whole pipeline decides who 
 direct_consequence_severity = "medium"
 scope = """
 THE SEAM AND THE REFERENCE IMPLEMENTATION. Nothing here is about the runtime trust plane's
-tiers, its caching windows, or its revocation channel — those are THM-0097 through THM-0100's,
-over `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`.
+tiers, its caching windows, or its revocation channel — those are THM-0097 through THM-0100's.
 
 NOT A CLAIM ABOUT WHICH KEYS A DEPLOYMENT TRUSTS. The resolver answers from what it was given;
 where the bindings came from and whether they were authorized is the trust document's
 authority.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "core.trust_resolver_seam"
 review_requirement = "Owner security-specification review"
@@ -6952,7 +6954,7 @@ cadence's; nothing here asserts a number.
 NOT A CLAIM ABOUT THE PUBLISHER. That the manifest an org published is the one on disk is
 outside this boundary entirely.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "client.anchor_refresh"
 review_requirement = "Owner security-specification review"
@@ -7019,7 +7021,7 @@ version means, are `client.trust_manifest_lifecycle`'s under THM-0057.
 
 NOT WHAT A DEPLOYMENT DOES WITH THE ANSWER. That is `client.anchor_refresh`'s under THM-0120.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "client.manifest_floor"
 review_requirement = "Owner security-specification review"
@@ -7071,7 +7073,7 @@ THE TREE-WIDE HALF IS THM-0111'S. That exactly two files in the workspace decide
 `mcp-re.*` verdict token says is measured there; what is established here is what the audit
 layer may say with them.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "core.audit_vocabulary"
 review_requirement = "Owner security-specification review"
@@ -7124,7 +7126,7 @@ NOT THE REMOTE LEG. What is sent, how it is signed, and whether the answer verif
 NOT A NUMBER. The ceiling and the deadlines are configured values; what is claimed is that
 they are applied and that exceeding one refuses, never that any value is sufficient.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "client.local_serving_pipeline"
 review_requirement = "Owner security-specification review"
@@ -7177,7 +7179,7 @@ this unit, but what makes a bind scope legitimate is the ingress authority's.
 NOT A CLAIM THAT THE VALUES ARE WISE. A skew inside the profile bound and a cadence that is
 bounded are both still deployment choices.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "client.deployment_config"
 review_requirement = "Owner security-specification review"
@@ -7231,7 +7233,7 @@ is that a request with none, or with one this seam cannot build, does not go out
 NOT KEY CUSTODY. Which key signs and where it lives is the caller's; what is claimed about
 custody is only that the two classes are indistinguishable in the emitted bytes.
 
-Executable, class V0, measured in the default cargo lane.
+Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
 owner = "client.request_construction"
 review_requirement = "Owner security-specification review"

@@ -39,15 +39,17 @@ TWO KINDS, ONE MECHANISM
 The class is one thing — the compiler refusing an illegal inhabitant — and the kinds differ
 only in WHERE the hostile construction has to live:
 
-  * `crate-boundary-compile-fail` — outside the owner's crate. The construction is injected
-    as an integration test file, which cargo compiles as a SEPARATE crate linking the
-    library, so it sees exactly what a downstream consumer sees.
-  * `in-crate-source-injection` — inside it, as a sibling module in the owner's own crate.
-    `docs/dev/sealed-owners.md` is right that no such file can exist in the tree, because
-    it would not build; the scratch copy is the only place it can.
+  * `crate-boundary-compile-fail` — outside the owner's crate. The construction is its own
+    test crate, in a Bazel package that exists only in the scratch copy, depending on the
+    owner's library target — so it sees exactly what a downstream consumer sees.
+  * `in-crate-source-injection` — inside it, as a module of the owner's own crate, written
+    inline into the parent module that declares it: the same place in the module tree, the
+    same privacy, and a file the owner's target already compiles. `docs/dev/sealed-owners.md`
+    is right that no such module can exist in the tree, because it would not build; the
+    scratch copy is the only place it can.
 
-Both then run one mechanism: inject, `cargo check --message-format=json`, adjudicate the
-diagnostics. **Deliberately not rustdoc.** The repository's existing ```compile_fail
+Both then run one mechanism: inject, build the target with rustc's JSON diagnostics,
+adjudicate them. **Deliberately not rustdoc.** The repository's existing ```compile_fail
 doctests witness the boundary case, and rustdoc can annotate one with an expected error
 code — but that annotation is checked only on nightly, so on the pinned stable toolchain it
 is inert. A probe whose declared error code nothing compares is the configured-but-enforcing-
@@ -65,6 +67,7 @@ import tomllib
 from pathlib import Path
 
 from _manifest import ManifestError
+import _rust_targets
 
 #: The two probe kinds — ADR-MCPRE-068 §12.1.
 KINDS = ("crate-boundary-compile-fail", "in-crate-source-injection")
@@ -87,24 +90,25 @@ _COMMON_KEYS = {
     "kind",
     "invariant",
     "producer_paths",
-    "package",
-    "insertion_path",
+    "crate",
     "construction",
     "marker",
     "error_code",
-    "features",
     "note",
+    "relaxation",
 }
 #: What a boundary probe adds: the documented case it corresponds to. Provenance, not
 #: execution — the lane compiles `construction`, and `doc_item` says which ```compile_fail
 #: doctest states the same refusal in the source a reader will find first.
-_BOUNDARY_KEYS = {"doc_path", "doc_item"}
-#: What an in-crate probe adds: how the injected module is reached. A file dropped into
-#: `src/` that no `mod` declaration names is not compiled at all, and a lane that did not
-#: notice would report "no error" — the finding that means the boundary is OPEN — about a
-#: file the compiler never read.
-_INCRATE_KEYS = {"insertion_parent", "insertion_declaration"}
-_OPTIONAL = {"note", "features"}
+_BOUNDARY_KEYS = {"doc_path", "doc_item", "insertion_path"}
+#: What an in-crate probe adds: the module the construction is written into. It must be a
+#: source the owner's target compiles, or the lane would report "no error" — the finding
+#: that means the boundary is OPEN — about a module the compiler never read.
+_INCRATE_KEYS = {"insertion_parent"}
+_OPTIONAL = {"note", "relaxation"}
+
+#: The keys of one `relaxation` edit.
+_RELAXATION_KEYS = {"path", "old", "new"}
 
 
 def _keys_for(kind: str) -> set[str]:
@@ -164,30 +168,112 @@ def _validate(where: str, probe: dict, seen: set[str]) -> None:
         )
     _validate_marker(where, probe)
     _validate_site(where, probe)
+    _validate_relaxation(where, probe)
 
 
-#: Where each kind's construction must be injected, and what that placement MEANS.
-#:
-#: Cargo compiles `tests/*.rs` as separate crates linking the library, so a construction
-#: there sees exactly what a downstream consumer sees; a construction under `src/` is a
-#: sibling module inside the owner's own crate. The two witness different propositions, and
-#: a probe injected into the wrong one would answer a question it did not ask — a boundary
-#: probe in `src/` would claim the in-crate seal it never attacked.
-_SITE = {
-    "crate-boundary-compile-fail": "tests/",
-    "in-crate-source-injection": "src/",
-}
+def _validate_relaxation(where: str, probe: dict) -> None:
+    """The negative control: edits to the owner's source that OPEN the boundary.
+
+    A refusal with the declared code on the marker line says the compiler refused the
+    construction; it does not say the refusal is the boundary's. Under the relaxation the
+    same construction must compile — so a probe that would be refused for some other reason
+    (a missing field, a type it cannot name) fails its own control rather than reading as
+    evidence. Each edit replaces text that occurs exactly once in a source the owner's
+    target compiles.
+    """
+    edits = probe.get("relaxation")
+    if edits is None:
+        return
+    if not isinstance(edits, list) or not edits:
+        raise ManifestError(f"{where}: `relaxation` must be a non-empty array of edits")
+    row = _rust_targets.target(str(probe["crate"])) or {"srcs": []}
+    for index, edit in enumerate(edits, 1):
+        if not isinstance(edit, dict) or set(edit) != _RELAXATION_KEYS:
+            raise ManifestError(
+                f"{where}: `relaxation` edit #{index} must have exactly {sorted(_RELAXATION_KEYS)}"
+            )
+        if str(edit["path"]) not in row["srcs"]:
+            raise ManifestError(
+                f"{where}: `relaxation` edit #{index} names {edit['path']!r}, which "
+                f"{probe['crate']} does not compile. A relaxation that edits nothing the "
+                f"owner builds opens no boundary, and the construction would still be refused."
+            )
+        if not str(edit["old"]) or edit["old"] == edit["new"]:
+            raise ManifestError(f"{where}: `relaxation` edit #{index} changes nothing")
+
+
+def relax(text: str, path: str, edits: list[dict]) -> str:
+    """`text` of `path` with every relaxation edit naming it applied.
+
+    Each `old` must occur exactly once: an ambiguous one could open a boundary other than
+    the one the probe attacks, and an absent one has drifted from the source.
+    """
+    for edit in edits:
+        if edit["path"] != path:
+            continue
+        count = text.count(str(edit["old"]))
+        if count != 1:
+            raise ManifestError(
+                f"STALE — relaxation text occurs {count} times in {path}, expected exactly 1: "
+                f"{str(edit['old'])[:80]!r}"
+            )
+        text = text.replace(str(edit["old"]), str(edit["new"]))
+    return text
+
+
+def relaxation_verdict(probe: dict, diagnostics: list[dict]) -> str | None:
+    """Why the relaxed tree does not admit the construction, or None when it does."""
+    errors = [d for d in diagnostics if d.get("level") == "error"]
+    if not errors:
+        return None
+    seen = sorted(
+        {f"{(d.get('code') or {}).get('code') or '<none>'}: {d.get('message', '')}" for d in errors}
+    )
+    return (
+        f"the negative control failed: with the boundary relaxed the construction is still "
+        f"refused ({'; '.join(seen)}), so the declared refusal is not attributable to the "
+        f"boundary this probe attacks."
+    )
+
+
+#: Where a boundary probe's own crate lives: a package under the owner's, holding nothing
+#: but the probes, that exists only in the scratch copy.
+PROBE_PACKAGE = "structural_probes"
+
+
+def probe_module(probe: dict) -> str:
+    """The name the construction's module or crate is given."""
+    return f"structural_probe_{str(probe['id']).lower()}"
 
 
 def _validate_site(where: str, probe: dict) -> None:
-    parts = Path(str(probe["insertion_path"])).parts
-    wanted = _SITE[probe["kind"]]
-    if len(parts) < 2 or f"{parts[1]}/" != wanted:
+    """The placement decides which proposition the probe attacks, so it is checked.
+
+    A construction outside the owner's crate sees what a downstream consumer sees; one
+    inside it is a module of the owner's own crate. The two witness different propositions,
+    and a probe injected into the wrong one would answer a question it did not ask — a
+    boundary probe inside the crate would claim the in-crate seal it never attacked.
+    """
+    row = _rust_targets.target(str(probe["crate"]))
+    if row is None or row["kind"] not in ("rust_library", "rust_binary"):
         raise ManifestError(
-            f"{where}: kind {probe['kind']!r} must inject under `<crate>/{wanted}`, but "
-            f"`insertion_path` is {probe['insertion_path']!r}. Cargo compiles `tests/` as a "
-            f"SEPARATE crate and `src/` as part of the owner's own, so the placement is "
-            f"what decides which proposition the probe attacks."
+            f"{where}: `crate` {probe['crate']!r} is not a Rust library or binary in the build "
+            f"graph, so the probe names no owner to attack."
+        )
+    if probe["kind"] == "crate-boundary-compile-fail":
+        path = Path(str(probe["insertion_path"]))
+        if path.parent.as_posix() != f"{row['package']}/{PROBE_PACKAGE}" or path.suffix != ".rs":
+            raise ManifestError(
+                f"{where}: a boundary probe's construction is its own crate at "
+                f"`{row['package']}/{PROBE_PACKAGE}/<name>.rs`, but `insertion_path` is "
+                f"{probe['insertion_path']!r}."
+            )
+        return
+    if str(probe["insertion_parent"]) not in row["srcs"]:
+        raise ManifestError(
+            f"{where}: `insertion_parent` {probe['insertion_parent']!r} is not a source "
+            f"{probe['crate']} compiles, so a construction written into it would be read by "
+            f"no compiler, and its silence would read as an open boundary."
         )
 
 
@@ -228,7 +314,7 @@ def marker_line(probe: dict) -> int | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def adjudicate(probe: dict, diagnostics: list[dict], relative_path: str) -> str | None:
+def adjudicate(probe: dict, diagnostics: list[dict], relative_path: str, line: int) -> str | None:
     """Why this compiler output does not refuse the hostile construction, or None.
 
     THREE OUTCOMES, AND ONLY ONE IS EVIDENCE.
@@ -239,6 +325,10 @@ def adjudicate(probe: dict, diagnostics: list[dict], relative_path: str) -> str 
     * It failed with a DIFFERENT error, or at a different line. The lane could not say the
       boundary refused anything; it watched something else break. A measurement failure.
     * It failed with the declared code, on the marker line. Evidence.
+
+    `line` is where the marker landed in `relative_path` once injected — the construction's
+    own line for a probe that is its own file, offset by the parent's length for one
+    written into a parent module.
     """
     errors = [d for d in diagnostics if d.get("level") == "error"]
     if not errors:
@@ -248,7 +338,6 @@ def adjudicate(probe: dict, diagnostics: list[dict], relative_path: str) -> str 
             f"the value is not proof of the invariant."
         )
     wanted = str(probe["error_code"])
-    line = marker_line(probe)
     for diagnostic in errors:
         code = (diagnostic.get("code") or {}).get("code")
         if code != wanted:

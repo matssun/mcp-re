@@ -13,9 +13,9 @@ lane runs on one machine. What that left unsaid is that the local image store is
 copy of an artifact this repository cannot rebuild.
 
 It cannot rebuild it because the build is not reproducible, and that is measured rather than
-feared: the Dockerfile resolves apt package versions and opam library versions at build time,
-and the opam libraries are linked into the Aeneas binary. A rebuild is a DIFFERENT
-instrument. So an artifact identity plus a disposable store is a claim that stays
+feared: the Dockerfile resolves apt package versions, the rustup installer and the mathlib
+cache at build time, and the rustc and mathlib they yield are what the pipeline runs and
+proves against. A rebuild is a DIFFERENT instrument. So an artifact identity plus a disposable store is a claim that stays
 *identifiable* and stops being *reproducible* the moment the cache is cleared — the lock
 would name an environment nothing on earth could execute again.
 
@@ -46,13 +46,14 @@ UNAVAILABLE, never a silent rebuild — and moving them between hosts is an oper
 # What is NOT claimed
 
 That the artifact can be reconstructed from the Dockerfile indefinitely. It cannot, for the
-reason in the first section, and the residual unpinned apt/opam inputs are a measured
+reason in the first section, and the residual unpinned apt, rustup and cache inputs are a measured
 limitation rather than an unnoticed one. What a preserved artifact establishes is the
 honest, weaker thing:
 
     this theorem was checked against THIS exact preserved extraction artifact.
 
-Pinning the complete Debian and opam dependency closure would raise that to a reconstruction
+Pinning the complete Debian package closure, the nightly's components and the mathlib cache
+would raise that to a reconstruction
 claim. That is future assurance work, and it is deliberately not a precondition here.
 """
 
@@ -137,8 +138,7 @@ def record_problems(toolchains: dict) -> list[str]:
                 f"{where} is resolved but records no `{field}`, which names {what}. "
                 "Without it a run would execute whatever the local image cache happens to "
                 "hold, and the cache is disposable while this image cannot be rebuilt: "
-                "apt and opam resolve versions nothing pins, and the opam libraries are "
-                "linked into the Aeneas binary."
+                "apt, rustup and the mathlib cache resolve inputs nothing pins."
             )
         elif not _SHA256.match(str(value)):
             problems.append(
@@ -193,8 +193,8 @@ def preservation(toolchains: dict, root: Path | None = None) -> Preservation | N
             path,
             f"the preserved extraction artifact for {image} is not on this host "
             f"(expected at {path}). The lane cannot run, and a rebuild is not the remedy: "
-            "this definition resolves apt and opam versions at build time and the opam "
-            "libraries build the Aeneas binary, so a rebuild is a DIFFERENT instrument "
+            "this definition resolves apt packages, the rustup installer and the mathlib "
+            "cache at build time, so a rebuild is a DIFFERENT instrument "
             "under the same declared pins. Copy the artifact from a host that holds it, or "
             "build, preserve, and move the pin onto the new identity in a reviewed commit.",
         )

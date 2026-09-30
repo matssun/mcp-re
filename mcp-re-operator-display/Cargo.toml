@@ -22,5 +22,3 @@ description = "The one projection of an operator-configured locator for human ey
 
 [dependencies]
 
-[lints]
-workspace = true

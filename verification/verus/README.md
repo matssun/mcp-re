@@ -39,8 +39,8 @@ does not keep one Rust implementation for production and a second, easier-to-pro
 Verus. The proof must constrain the code that matters. An abstraction layer is acceptable
 only when production uses that same layer as its authoritative boundary.
 
-**`cargo verus focus` is never authoritative** (Operational Rule 5). It is a local
-productivity tool. The merge and release gates run full verification for the selected
+**A partial Verus run is never authoritative** (Operational Rule 5). Verifying one module
+(`verus --verify-module`) is a local productivity tool. The merge and release gates run full verification for the selected
 scope. A local `focus` pass followed by a full-verify failure is a CI failure, and a full
 verify that was not run at all is also a failure — not an absence of evidence.
 

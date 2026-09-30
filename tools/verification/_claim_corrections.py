@@ -86,7 +86,14 @@ _OPTIONAL = {"severity_justification", "dependency_correction"}
 
 #: The authorities a record may claim, CLOSED. A record naming anything else is refused
 #: rather than read as some default — "authorized by something" is not an authority.
-AUTHORITIES = {"adr-068-phase1"}
+#:
+#:   adr-068-phase1               the 2026-09-18 Phase-1 ruling quoted above: precision and
+#:                                dependency corrections that leave the promise intact.
+#:   bazel-lane-wording-2026-09-29  the owner's Bazel-only-migration ruling: a claim's naming
+#:                                of the lane that MEASURES it moved from Cargo to Bazel, and
+#:                                nothing else in the proposition or its scope did — directly,
+#:                                or through a premise that moved only so.
+AUTHORITIES = {"adr-068-phase1", "bazel-lane-wording-2026-09-29"}
 
 #: What the gate may be asked to accept a correction over. `theorem_review_requirement` is
 #: deliberately absent: relaxing WHO must review a claim is not a precision correction, and a

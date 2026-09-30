@@ -129,12 +129,11 @@ $NODE_SELECTOR
         - name: bench
           image: $BENCH_IMG
           imagePullPolicy: $PULL_POLICY
-          workingDir: /build
-          # The image ENTRYPOINT uses a login shell that drops cargo from PATH; override
-          # with an explicit PATH. Wait for the two replicas to report online (so WAIT 2
-          # is satisfiable), then run ONLY tls_load_harness_bench (the file's other tests
-          # need Docker) built WITH redis_replay, and emit the report between markers.
-          command: ["bash","-c","export PATH=/usr/local/cargo/bin:\$PATH && sleep 8 && cargo test --release -p mcp-re-proxy --features async_serve,redis_replay --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture && echo && echo '===REPORT_JSON_BEGIN===' && cat \"\$MCP_RE_LOADGEN_OUT\" && echo && echo '===REPORT_JSON_END==='"]
+          # Wait for the two replicas to report online (so WAIT 2 is satisfiable), then run
+          # ONLY the tls_load_harness_bench test (the file's other tests need Docker) and
+          # emit the report between markers. The image's bench binary is the Bazel-built
+          # release harness; `1 passed` is the guard that it measured something.
+          command: ["bash","-c","set -o pipefail && sleep 8 && tls_load_harness_bench tls_load_harness_bench --exact --nocapture | tee /tmp/bench.log && grep -q 'test result: ok. 1 passed' /tmp/bench.log && echo && echo '===REPORT_JSON_BEGIN===' && cat \"\$MCP_RE_LOADGEN_OUT\" && echo && echo '===REPORT_JSON_END==='"]
           env:
             - { name: MCP_RE_LOADGEN_REDIS_URL, value: "redis://127.0.0.1:6379" }
             - { name: MCP_RE_LOADGEN_HW_CLASS, value: "$HW" }

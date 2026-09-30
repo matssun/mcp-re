@@ -53,17 +53,21 @@ source = [
   "mcp-re-client-core/src",
 ]
 
-# What compiles it. `Cargo.lock` is the reason a dependency bump is not invisible here, and
-# `rust-toolchain.toml` is why a compiler change is not either.
+# What compiles it: Bazel. The crate lock is the reason a dependency bump is not invisible
+# here, MODULE.bazel (the toolchain pin) why a compiler change is not either, and each
+# package's BUILD file why a change of sources, features or flags is not.
 build_configuration = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "rust-toolchain.toml",
-  "mcp-re-proxy/Cargo.toml",
-  "mcp-re-core/Cargo.toml",
-  "mcp-re-policy/Cargo.toml",
-  "mcp-re-http-profile/Cargo.toml",
-  "mcp-re-client-core/Cargo.toml",
+  "MODULE.bazel",
+  "MODULE.bazel.lock",
+  "bazel/crates.lock",
+  ".bazelrc",
+  ".bazelversion",
+  "bazel/defs.bzl",
+  "mcp-re-proxy/BUILD.bazel",
+  "mcp-re-core/BUILD.bazel",
+  "mcp-re-policy/BUILD.bazel",
+  "mcp-re-http-profile/BUILD.bazel",
+  "mcp-re-client-core/BUILD.bazel",
 ]
 
 # The instrument. A harness change is not a code regression, but it absolutely changes the

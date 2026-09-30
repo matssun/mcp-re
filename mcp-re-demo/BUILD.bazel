@@ -1,4 +1,4 @@
-load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -38,8 +38,6 @@ nt_rust_library(
 nt_rust_test(
     name = "mcp_re_demo_test",
     crate = ":mcp_re_demo",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
 )
 
@@ -52,8 +50,6 @@ nt_rust_test(
 nt_rust_test(
     name = "demo_fixtures_test",
     srcs = ["tests/demo_fixtures_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_demo",
@@ -62,5 +58,17 @@ nt_rust_test(
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# Writes the demo mTLS material and signing seed to a directory, for the kind fleet proofs
+# (`scripts/local_gate.sh` stage 5): `bazel run //mcp-re-demo:emit_mtls_fixtures -- <dir>`.
+nt_rust_binary(
+    name = "emit_mtls_fixtures",
+    srcs = ["examples/emit_mtls_fixtures.rs"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_demo",
+        "//mcp-re-core:mcp_re_core",
     ],
 )

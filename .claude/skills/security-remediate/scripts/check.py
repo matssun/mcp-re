@@ -25,9 +25,10 @@ Two phases, because a baseline is only honest if it is taken BEFORE the edit:
              this change's business
           2. Python: whole-repo pyright (`wide`/`platform`), error count vs the
              baseline, and `bazel_gate.py check` per tree.
-             Rust: `cargo_gate.py` — clippy in every lane that compiles the file
-             (plus the related files' crates above `local`), the module-size gate,
-             the file's own unit tests and any `--it` integration test.
+             Rust: `rust_gate.py` — `bazel build --config=lint` over every target
+             that compiles the file (plus the related files' targets above `local`),
+             the module-size gate, the file's own unit tests in the unit-test targets
+             built from those libraries, and any `--it` integration test target.
         and append `gate` (plus `gate-failed` when a gate BLAMES the change).
         Prints one verdict: new-failures > infra > no-baseline > ok. On
         new-failures the change is saved as a patch and reverted, so the next
@@ -63,7 +64,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import bazel_gate  # noqa: E402
-import cargo_gate  # noqa: E402
+import rust_gate  # noqa: E402
 import progress  # noqa: E402
 
 GATE_SCRIPT = os.path.join(HERE, "bazel_gate.py")
@@ -248,7 +249,7 @@ def cmd_post(a) -> int:
     pre = _prescan(a, touched, related)
     parts: list[dict] = []
     if a.file.endswith(".rs"):
-        parts = cargo_gate.gate(a.file, related if a.tier != "local" else [], _ids(a.it), a.work_dir)
+        parts = rust_gate.gate(a.file, related if a.tier != "local" else [], _ids(a.it), a.work_dir)
     else:
         if a.tier != "local":
             parts.append(dict(_pyright(a), gate="pyright"))
@@ -258,7 +259,7 @@ def cmd_post(a) -> int:
     raw_exit = max((p.get("exit") or 0 for p in parts), default=0)
 
     def summary(p: dict) -> str:
-        if p["gate"] in ("clippy", "test", "module-size", "cargo"):
+        if p["gate"] in ("clippy", "test", "module-size", "targets"):
             what = p.get("lane") or p.get("target") or ""
             bad = p.get("errors_head") or p.get("failed") or p.get("head") or p.get("why") or ""
             return "%s%s %s%s" % (p["gate"], (":" + what) if what else "", p["verdict"],
@@ -317,7 +318,7 @@ def main() -> int:
             p.add_argument("--epoch", default="")
             p.add_argument("--note", default="", help="one line for the `fix` event")
             p.add_argument("--pyright-baseline-errors", type=int, default=0)
-            p.add_argument("--it", default="", help="Rust: integration test targets the package named")
+            p.add_argument("--it", default="", help="Rust: integration test targets (Bazel labels) the package named")
             p.add_argument("--keep-on-fail", action="store_true",
                            help="leave a new-failures change in the tree instead of reverting it")
             p.add_argument("--pyright-cmd", default=".venv/bin/pyright", help=argparse.SUPPRESS)

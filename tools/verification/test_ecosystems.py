@@ -1,16 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The review-unit abstraction is not Cargo — ADR-MCPRE-059 §2, issue #745.
+"""The review-unit abstraction belongs to no build system — ADR-MCPRE-059 §2, issue #745.
 
 A `[[unit]]` is *the smallest semantic authority whose source, assumptions, evidence and
-review can be fingerprinted*, and the implementation had that concept welded to one build
-system: the project was the first path segment holding a `Cargo.toml`, the test package was
-a Cargo package, and the build configuration was the Rust workspace's manifests. No unit
-could own `sdk/python/python/mcp_re_sdk/` or `sdk/typescript/src/`, so the SDK roots were
-unevidenceable — and an unevidenceable root reads as coverage while being none.
+review can be fingerprinted*. A unit may own Rust that Bazel builds, `sdk/python/python/
+mcp_re_sdk/` or `sdk/typescript/src/`, and an unevidenceable root reads as coverage while
+being none.
 
-These are the controls for the seam that fixes it. Each one is a property the platform must
-have for a NON-Rust unit and already had for a Rust one, and every one of them is stated so
-it fails if the neutrality is bolted on rather than built in.
+These are the controls for the seam. Each one is a property the platform must have for
+every ecosystem it adapts, and every one of them is stated so it fails if the neutrality is
+bolted on rather than built in.
 
 Run: python3 tools/verification/test_ecosystems.py
 """
@@ -24,7 +22,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from _ecosystems import (  # noqa: E402
-    CARGO,
+    RUST,
     ReportUnreadable,
     PYTHON,
     TYPESCRIPT,
@@ -107,10 +105,10 @@ def test_no_unit_names_a_language():
 
 
 def test_the_file_decides_the_ecosystem_not_the_directory():
-    """`sdk/python` holds a `Cargo.toml` AND a `pyproject.toml` — the wheel is a Rust
+    """`sdk/python` holds a `BUILD.bazel` AND a `pyproject.toml` — the wheel carries a Rust
     extension module — so no directory-level rule can say which project a file belongs to.
     The suffix can, and does."""
-    assert ecosystem_for_path("sdk/python/src/lib.rs") is CARGO
+    assert ecosystem_for_path("sdk/python/src/lib.rs") is RUST
     assert ecosystem_for_path("sdk/python/python/mcp_re_sdk/transport.py") is PYTHON
     assert ecosystem_for_path("sdk/typescript/src/correlation.ts") is TYPESCRIPT
     # And a path no ecosystem claims is not an error: it is measured source that names no
@@ -124,7 +122,7 @@ def test_a_project_is_the_nearest_manifest_not_the_first_path_segment():
     manifest at all."""
     assert project_of("sdk/python/python/mcp_re_sdk/transport.py", PYTHON) == "sdk/python"
     assert project_of("sdk/typescript/src/correlation.ts", TYPESCRIPT) == "sdk/typescript"
-    assert project_of("mcp-re-proxy/src/lib.rs", CARGO) == "mcp-re-proxy"
+    assert project_of("mcp-re-proxy/src/lib.rs", RUST) == "mcp-re-proxy"
     assert unit_projects(PY_UNIT) == ["sdk/python"]
     assert test_project_for(PY_UNIT) == "sdk/python"
 
@@ -146,7 +144,7 @@ def test_changing_owned_python_source_dirties_the_unit():
 def test_the_dependency_manifest_and_the_lockfile_are_measured():
     """A dependency swap or a lockfile bump alters what a claim is about without touching a
     declared source line. `package.json` and `package-lock.json` bear exactly the weight the
-    Rust unit's `Cargo.toml` and the workspace `Cargo.lock` bear.
+    Rust unit's `BUILD.bazel` and the module lock bear.
 
     THE PYTHON HALF WAS A FINDING AND IS NOW REPAIRED. `sdk/python/uv.lock` was
     `.gitignore`d as a maturin by-product, so this control asserted its ABSENCE and recorded
@@ -182,17 +180,25 @@ def test_an_absent_lockfile_alternative_contributes_nothing_rather_than_failing(
     assert "sdk/python/poetry.lock" not in build
 
 
-def test_the_rust_build_configuration_is_unchanged_by_the_seam():
-    """The neutrality must not be paid for by moving every existing Rust fingerprint's
-    meaning. A crate's inputs are still the workspace manifests plus its own."""
+def test_the_rust_build_configuration_is_what_bazel_builds_from():
+    """A Rust unit's build inputs are Bazel's: the module and its lock (the toolchain pin and
+    every external crate), the workspace build settings and house macros, and the package's
+    own BUILD file. A Cargo manifest decides nothing about what Bazel compiles, so it is
+    not among them."""
     unit = next(u for u in DOC["unit"] if u["id"] == "http_profile.replay_key")
     build = fingerprint(unit)["components"]["build_configuration"]
     assert set(build) == {
-        "Cargo.toml",
-        "Cargo.lock",
-        "rust-toolchain.toml",
-        "mcp-re-http-profile/Cargo.toml",
+        "MODULE.bazel",
+        "MODULE.bazel.lock",
+        "bazel/crates.lock",
+        ".bazelrc",
+        ".bazelversion",
+        "bazel/BUILD.bazel",
+        "bazel/defs.bzl",
+        "bazel/version.bzl",
+        "mcp-re-http-profile/BUILD.bazel",
     }
+    assert not any(name.endswith(("Cargo.toml", "Cargo.lock")) for name in build)
 
 
 # --- fail closed ---------------------------------------------------------------
@@ -201,7 +207,7 @@ def test_the_rust_build_configuration_is_unchanged_by_the_seam():
 def test_a_closure_spanning_two_ecosystems_has_no_test_project():
     """No single lane covers the source, and answering with either would name a project
     that does not cover it. The same answer the platform already gives a path outside every
-    Cargo package: no project, so no battery, so no evidence."""
+    project: no project, so no battery, so no evidence."""
     mixed = dict(PY_UNIT)
     mixed["paths"] = PY_UNIT["paths"] + ["mcp-re-proxy/src/lib.rs"]
     assert unit_ecosystem(mixed) is None
@@ -223,14 +229,18 @@ def test_an_unknown_target_is_malformed_rather_than_skipped():
     """A selector nothing executes is a declared control that establishes nothing. The lane
     refuses in both directions, so an unrunnable target must be refused rather than dropped
     from the selection."""
-    assert valid_target(CARGO, "lib")
-    assert valid_target(CARGO, "tests/full_profile_test")
-    assert not valid_target(CARGO, "pytest")
-    # A DEPLOYABLE's own crate is not its library: what running means is decided in the
-    # binary crate, and a lane that can select only `lib` can state nothing about it.
-    assert valid_target(CARGO, "bin/mcp-re-client")
-    assert not valid_target(CARGO, "bin/")
-    assert not valid_target(CARGO, "bin/a/b")
+    # A Rust target is a Bazel TEST target in the build graph: a unit-test flavor, an
+    # integration target, a binary's own tests, a doctest target.
+    assert valid_target(RUST, "//mcp-re-proxy:proxy_unit_test")
+    assert valid_target(RUST, "//mcp-re-http-profile:full_profile_test")
+    assert valid_target(RUST, "//mcp-re-client:mcp_re_client_cli_test")
+    assert valid_target(RUST, "//mcp-re-http-profile:mcp_re_http_profile_doc_test")
+    # A library, a binary or a label nothing defines runs no battery.
+    assert not valid_target(RUST, "//mcp-re-proxy:mcp_re_proxy")
+    assert not valid_target(RUST, "//mcp-re-client:mcp_re_client_cli")
+    assert not valid_target(RUST, "//mcp-re-proxy:no_such_target")
+    assert not valid_target(RUST, "lib")
+    assert not valid_target(RUST, "pytest")
     assert valid_target(PYTHON, "pytest")
     assert not valid_target(PYTHON, "lib")
     assert valid_target(TYPESCRIPT, "vitest")
@@ -254,22 +264,24 @@ def test_each_ecosystem_selects_exactly_the_declared_symbols():
     """Exact selection is the property, not a convenience: a runner matching by substring
     would let a battery grow silently, and one running the whole suite would report a pass
     for symbols nobody declared."""
-    assert test_argv(CARGO, "mcp-re-proxy", "lib", ["a::b"]) == [
-        "cargo", "test", "-p", "mcp-re-proxy", "--lib", "--", "--exact", "a::b",
+    # A Rust battery is its Bazel test target, run fresh and streamed so libtest's own
+    # result lines reach the lane, with each declared name passed to libtest as `--exact`.
+    assert test_argv(RUST, None, "//mcp-re-proxy:proxy_unit_test", ["a::b", "c::d"]) == [
+        "bazel", "test", "//mcp-re-proxy:proxy_unit_test",
+        "--nocache_test_results", "--test_output=streamed",
+        "--test_arg=--exact", "--test_arg=a::b", "--test_arg=c::d",
     ]
-    assert test_argv(CARGO, "p", "tests/x", ["a"]) == [
-        "cargo", "test", "-p", "p", "--test", "x", "--", "--exact", "a",
-    ]
-    assert test_argv(CARGO, "mcp-re-client", "bin/mcp-re-client", ["startup::tests::t"]) == [
-        "cargo", "test", "-p", "mcp-re-client", "--bin", "mcp-re-client",
-        "--", "--exact", "startup::tests::t",
+    # A doctest's reported name embeds its line, so its target runs whole and the lane
+    # matches the declared items against what ran.
+    assert test_argv(RUST, None, "//mcp-re-http-profile:mcp_re_http_profile_doc_test", ["x::Y"]) == [
+        "bazel", "test", "//mcp-re-http-profile:mcp_re_http_profile_doc_test",
+        "--nocache_test_results", "--test_output=streamed",
     ]
     # pytest selects by exact node id, in the PREPARED environment for the runtime named —
     # the interpreter a battery ran on is part of what the record describes, and the lane
     # neither resolves nor syncs one (issue #746).
     py = test_argv(
-        PYTHON, "sdk/python", "pytest", ["tests/test_correlation.py::test_probe"], None,
-        "3.12.13",
+        PYTHON, "sdk/python", "pytest", ["tests/test_correlation.py::test_probe"], "3.12.13",
     )
     assert py[:3] == [".venv-cp312/bin/python", "-m", "pytest"]
     assert py[-1] == "tests/test_correlation.py::test_probe"
@@ -282,7 +294,6 @@ def test_each_ecosystem_selects_exactly_the_declared_symbols():
         "sdk/typescript",
         "vitest",
         ["test/x.test.ts > a probe", "test/x.test.ts > another", "test/y.test.ts > third"],
-        None,
         "22.23.2",
     )
     assert ts[:4] == [
@@ -319,14 +330,14 @@ def test_every_runners_report_is_read_in_one_vocabulary():
     """The lane's rule is ONE rule — a declared symbol that did not report success is a
     failure, whether it failed, was skipped, or never ran — so each runner's own words are
     translated where the adapter is, not where the rule is applied."""
-    assert parse_results(CARGO, "test a::b ... ok\ntest c::d ... FAILED\ntest e ... ignored") == {
+    assert parse_results(RUST, "test a::b ... ok\ntest c::d ... FAILED\ntest e ... ignored") == {
         "a::b": "ok",
         "c::d": "FAILED",
         "e": "ignored",
     }
     # The measured false RED: a child process writing to the real fd 2 lands its bytes
     # between the name and the status, and the status is still read from the end.
-    assert parse_results(CARGO, "test a::b ... mcp-re-proxy: noise ok") == {"a::b": "ok"}
+    assert parse_results(RUST, "test a::b ... mcp-re-proxy: noise ok") == {"a::b": "ok"}
 
     pytest_out = (
         "tests/test_correlation.py::test_probe PASSED\n"
@@ -380,7 +391,7 @@ def test_a_skipped_test_is_not_evidence_in_any_ecosystem():
     also establish. The lane's rule already says so; this pins that no adapter launders a
     skip into a pass on the way to it."""
     for eco, text in (
-        (CARGO, "test a ... ignored"),
+        (RUST, "test a ... ignored"),
         (PYTHON, "tests/t.py::a SKIPPED"),
         (
             TYPESCRIPT,
@@ -401,7 +412,7 @@ def test_owner_dependency_and_assumption_views_derive_for_a_non_rust_unit():
     components = fingerprint(PY_UNIT)["components"]
     rust = fingerprint(next(u for u in DOC["unit"] if u["id"] == "http_profile.replay_key"))
     assert set(components) == set(rust["components"])
-    assert components["test_selection"]["package"] == "sdk/python"
+    assert components["test_selection"]["project"] == "sdk/python"
     assert components["test_selection"]["symbols"] == PY_UNIT["tested_symbols"]
     assert components["trusted_assumptions"] == {}
     assert components["mutation_probes"] == {}

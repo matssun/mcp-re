@@ -38,5 +38,3 @@ path = "src/lib.rs"
 # the whole invocation, which would put the fixtures back into the production closure.
 mcp-re-http-profile = { path = "../mcp-re-http-profile", features = ["pre_052_fixtures"] }
 
-[lints]
-workspace = true

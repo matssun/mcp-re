@@ -6,9 +6,9 @@ What is pinned here, each refusal beside its positive control:
     1. `crate::` / `super::` / child-module / workspace-crate paths and `use`
        trees resolve to the defining file, THROUGH a `pub use` re-export — and a
        path into a foreign crate or a test region resolves to nothing
-  cargo_gate.py
-    2. a clippy diagnostic and a failed test are `new-failures` (naming the
-       test); a cargo failure with no diagnostic is `infra`; a selection that ran
+  rust_gate.py
+    2. a lint diagnostic and a failed test are `new-failures` (naming the
+       test); a Bazel failure with no diagnostic is `infra`; a selection that ran
        0 tests is `infra` when the file HAS tests and `ok` when it has none
   check.py
     3. a red change is saved as a patch and reverted — tracked edits and new
@@ -40,7 +40,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(os.path.dirname(HERE), "scripts")
 sys.path.insert(0, SCRIPTS)
 
-import cargo_gate  # noqa: E402
+import rust_gate  # noqa: E402
 import check  # noqa: E402
 import finalize  # noqa: E402
 import ledger  # noqa: E402
@@ -63,7 +63,7 @@ def _git_repo(root: str) -> None:
 
 
 def _workspace(root: str) -> None:
-    _write(root, "alpha/Cargo.toml", '[package]\nname = "alpha"\n')
+    _write(root, "alpha/BUILD.bazel", ALPHA_BUILD)
     _write(root, "alpha/src/lib.rs", """\
         pub mod keys;
         pub mod plane;
@@ -83,7 +83,7 @@ def _workspace(root: str) -> None:
         pub struct Verdict;
         pub fn f() { let _ = super::super::keys::Signer; let _ = serde::Value; }
         """)
-    _write(root, "beta/Cargo.toml", '[package]\nname = "beta"\n')
+    _write(root, "beta/BUILD.bazel", 'nt_rust_library(\n    name = "beta",\n)\n')
     _write(root, "beta/src/lib.rs", "use alpha::Signer;\n")
 
 
@@ -101,66 +101,92 @@ def test_resolver_paths_and_reexports() -> None:
     print("  resolver: crate/super/child/workspace paths, through re-exports; test region ignored  OK")
 
 
-def _fake_cargo(td: str, clippy_out: str, clippy_rc: int, test_out: str, test_rc: int) -> list[str]:
-    script = os.path.join(td, "cargo")
-    with open(script, "w") as fh:
-        fh.write("#!/bin/sh\ncase \"$1\" in\n"
-                 "  clippy) printf '%%b\\n' %s; exit %d;;\n"
-                 "  test) printf '%%b\\n' %s; exit %d;;\nesac\n"
-                 % (json.dumps(clippy_out), clippy_rc, json.dumps(test_out), test_rc))
-    os.chmod(script, 0o755)
-    return [script]
+FAKE_BAZEL = """#!/usr/bin/env python3
+import json, os, sys
+cfg = json.load(open(os.environ["FAKE_BAZEL_CONFIG"]))
+cmd, rest = sys.argv[1], sys.argv[2:]
+if cmd == "query":
+    expr = rest[-1]
+    for needle, labels in cfg["query"]:
+        if needle in expr:
+            print("\\n".join(labels))
+            break
+    sys.exit(0)
+if cmd == "build":
+    print(cfg["build"]["out"])
+    sys.exit(cfg["build"]["rc"])
+if cmd == "test":
+    for label, text in cfg["test"].get("logs", {}).items():
+        pkg, name = label[2:].split(":", 1)
+        os.makedirs(os.path.join("bazel-testlogs", pkg, name), exist_ok=True)
+        open(os.path.join("bazel-testlogs", pkg, name, "test.log"), "w").write(text)
+    print(cfg["test"]["out"])
+    sys.exit(cfg["test"]["rc"])
+sys.exit(2)
+"""
+
+UNIT = "//alpha:alpha_test"
+ALPHA_BUILD = 'nt_rust_library(\n    name = "alpha",\n    crate_name = "alpha",\n)\n'
 
 
-def _gate(td: str, src: str, **cargo) -> list[dict]:
+def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int) -> list[dict]:
     root = os.path.join(td, "ws")
-    _write(root, "alpha/Cargo.toml", '[package]\nname = "alpha"\n')
+    _write(root, "alpha/BUILD.bazel", ALPHA_BUILD)
     _write(root, "alpha/src/lib.rs", "pub mod keys;\n")
     _write(root, "alpha/src/keys.rs", src)
     _write(root, "scripts/module_size_gate.py", "import sys; sys.exit(0)\n")
     if not os.path.isdir(os.path.join(root, ".git")):
         _git_repo(root)
-    cargo_gate.cargo.cache_clear()
-    orig, cwd = cargo_gate.cargo, os.getcwd()
-    cargo_gate.cargo = lambda: _fake_cargo(td, **cargo)  # type: ignore[assignment]
+    fake = os.path.join(td, "bazel")
+    with open(fake, "w") as fh:
+        fh.write(FAKE_BAZEL)
+    config = os.path.join(td, "fake-bazel.json")
+    with open(config, "w") as fh:
+        json.dump({"query": [["rdeps(", ["//alpha:alpha"]], ["attr(crate", [UNIT]],
+                             ['kind("^rust_test rule$", set(', []], ["attr(tags", []]],
+                   "build": {"out": lint_out, "rc": lint_rc},
+                   "test": {"out": "", "rc": test_rc, "logs": {UNIT: log}}}, fh)
+    orig, cwd, env = rust_gate.bazel, os.getcwd(), os.environ.get("FAKE_BAZEL_CONFIG")
+    rust_gate.bazel = lambda: [sys.executable, fake]  # type: ignore[assignment]
+    os.environ["FAKE_BAZEL_CONFIG"] = config
     try:
         os.chdir(root)
         os.makedirs("w", exist_ok=True)
-        return cargo_gate.gate("alpha/src/keys.rs", [], [], "w", RustResolver("."))
+        return rust_gate.gate("alpha/src/keys.rs", [], [], "w", RustResolver("."))
     finally:
         os.chdir(cwd)
-        cargo_gate.cargo = orig  # type: ignore[assignment]
+        rust_gate.bazel = orig  # type: ignore[assignment]
+        if env is None:
+            os.environ.pop("FAKE_BAZEL_CONFIG", None)
+        else:
+            os.environ["FAKE_BAZEL_CONFIG"] = env
 
 
 def _verdicts(parts: list[dict]) -> dict[str, str]:
     return {p["gate"]: p["verdict"] for p in parts}
 
 
-def test_cargo_gate_verdicts() -> None:
-    passed = "test result: ok. 3 passed; 0 failed; 0 ignored"
+def test_rust_gate_verdicts() -> None:
+    passed = "running 3 tests\ntest result: ok. 3 passed; 0 failed; 0 ignored"
+    has_tests = "pub struct S;\n#[cfg(test)]\nmod tests { #[test] fn t() {} }\n"
     with tempfile.TemporaryDirectory() as td:
-        ok = _gate(td, "pub struct S;\n#[cfg(test)]\nmod tests { #[test] fn t() {} }\n",
-                   clippy_out="", clippy_rc=0, test_out=passed, test_rc=0)
+        ok = _gate(td, has_tests, "", 0, passed, 0)
         assert _verdicts(ok) == {"clippy": "ok", "module-size": "ok", "test": "ok"}, ok
-        lint = _gate(td, "pub struct S;\n", clippy_out="alpha/src/keys.rs:1:1: error: unused", clippy_rc=101,
-                     test_out=passed, test_rc=0)
+        lint = _gate(td, "pub struct S;\n", "error: unused variable", 1, passed, 0)
         assert _verdicts(lint)["clippy"] == "new-failures" and "test" not in _verdicts(lint), lint
-        red = _gate(td, "pub struct S;\n#[cfg(test)]\nmod tests { #[test] fn t() {} }\n",
-                    clippy_out="", clippy_rc=0,
-                    test_out="---- keys::tests::t stdout ----\ntest result: FAILED. 0 passed; 1 failed;",
-                    test_rc=101)
+        red = _gate(td, has_tests, "", 0,
+                    "running 1 test\n---- keys::tests::t stdout ----\n"
+                    "test result: FAILED. 0 passed; 1 failed;", 3)
         t = [p for p in red if p["gate"] == "test"][0]
         assert t["verdict"] == "new-failures" and t["failed"] == ["keys::tests::t"], t
-        infra = _gate(td, "pub struct S;\n", clippy_out="could not acquire lock", clippy_rc=101,
-                      test_out=passed, test_rc=0)
+        infra = _gate(td, "pub struct S;\n", "ERROR: no such package '@@x//'", 1, passed, 0)
         assert _verdicts(infra)["clippy"] == "infra", infra
-        none = "test result: ok. 0 passed; 0 failed; 0 ignored"
-        empty_has = _gate(td, "pub struct S;\n#[cfg(test)]\nmod tests { #[test] fn t() {} }\n",
-                          clippy_out="", clippy_rc=0, test_out=none, test_rc=0)
+        none = "running 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 7 filtered out"
+        empty_has = _gate(td, has_tests, "", 0, none, 0)
         assert _verdicts(empty_has)["test"] == "infra", empty_has
-        empty_none = _gate(td, "pub struct S;\n", clippy_out="", clippy_rc=0, test_out=none, test_rc=0)
+        empty_none = _gate(td, "pub struct S;\n", "", 0, none, 0)
         assert _verdicts(empty_none)["test"] == "ok", empty_none
-    print("  cargo gate: lint/test failures blamed, silent cargo = infra, 0 tests judged by the file  OK")
+    print("  rust gate: lint/test failures blamed, a silent build = infra, 0 tests judged by the file  OK")
 
 
 def test_revert_on_fail_restores_tree() -> None:
@@ -305,12 +331,19 @@ def test_prepare_finds_integration_tests_through_root_reexports() -> None:
         _git_repo(td)
         cwd = os.getcwd()
         os.chdir(td)
+        # The build graph answers which test target compiles a file; stubbed to the graph
+        # this fixture would have, `tests/suite/` compiled into `//alpha:suite`.
+        graph = (rust_gate.compiling_targets, rust_gate.query)
+        rust_gate.compiling_targets = lambda files: (  # type: ignore[assignment]
+            ["//alpha:suite"] if "/suite/" in files[0] else [])
+        rust_gate.query = lambda expr: ["//alpha:live", "//alpha:suite"]  # type: ignore[assignment]
         try:
             got = test_candidates("alpha/src/keys.rs")
         finally:
             os.chdir(cwd)
+            rust_gate.compiling_targets, rust_gate.query = graph  # type: ignore[assignment]
         assert got == ["alpha/tests/live.rs [every test #[ignore]d — measures nothing in a local gate]",
-                       "alpha/tests/suite/signer_test.rs [--it suite]"], got
+                       "alpha/tests/suite/signer_test.rs [--it //alpha:suite]"], got
     print("  prepare: integration tests found through root re-exports, target named, all-ignored flagged  OK")
 
 

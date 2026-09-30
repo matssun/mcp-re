@@ -85,8 +85,18 @@ jobs:
           done
           redis-cli -p 6380 info replication | grep -q 'master_link_status:up'
 
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
+      # The Bazel targets these lanes run carry the PKCS#11 feature, whose `cryptoki-sys`
+      # FFI bindings are generated with bindgen, which needs libclang at runtime. The runner
+      # image ships Clang; point bindgen at it.
+      - name: libclang for bindgen
+        run: |
+          set -euo pipefail
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              echo "LIBCLANG_PATH=$dir" >> "$GITHUB_ENV"; exit 0
+            fi
+          done
+          echo "no libclang on the runner image" >&2; exit 1
 
       # Provision an INDEPENDENT OpenSSL test OCSP responder + a good/revoked leaf
       # pair. This follows the recipe documented in
@@ -175,17 +185,17 @@ jobs:
       # and MCP_RE_REQUIRE_LIVE_INFRA=1 would have made nothing binding after all.
       - name: Run live-infra e2e (Redis replay + OCSP revocation)
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features async_serve,redis_replay,online_ocsp
-          --test integration_ext
-          -- redis_replay_e2e_test:: redis_trust_epoch_e2e_test:: ocsp_e2e_test::
-          redis_continuation_e2e_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_ext_test
+          --test_arg=redis_replay_e2e_test:: --test_arg=redis_trust_epoch_e2e_test:: --test_arg=ocsp_e2e_test:: --test_arg=redis_continuation_e2e_test::
 
+      # The target compiles every backend's race lanes, and this job stands up Redis only,
+      # so the etcd lanes — which REQUIRE_LIVE_INFRA makes binding — are the etcd job's.
       - name: Run live-infra e2e (Redis replay race through the serving path)
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features async_serve,redis_replay,online_ocsp
-          --test integration_async -- replay_race_harness_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_async_ext_test
+          --test_arg=replay_race_harness_test:: --test_arg=--skip=etcd
 
       - name: Stop OpenSSL OCSP responder
         if: always()
@@ -234,8 +244,18 @@ jobs:
           done
           curl -fsS http://127.0.0.1:2379/version || { echo "etcd did not become healthy; log:"; cat etcd.log; exit 1; }
 
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
+      # The Bazel targets these lanes run carry the PKCS#11 feature, whose `cryptoki-sys`
+      # FFI bindings are generated with bindgen, which needs libclang at runtime. The runner
+      # image ships Clang; point bindgen at it.
+      - name: libclang for bindgen
+        run: |
+          set -euo pipefail
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              echo "LIBCLANG_PATH=$dir" >> "$GITHUB_ENV"; exit 0
+            fi
+          done
+          echo "no libclang on the runner image" >&2; exit 1
 
       # `cpstore_etcd` compiles the etcd stores + their gated tests; `async_serve`
       # compiles the async replay-race lanes. MCP_RE_REQUIRE_LIVE_INFRA=1 turns a
@@ -244,12 +264,14 @@ jobs:
       # serving `HttpProfileProxy` (MCPRE-117 AC).
       - name: Run live-infra e2e (etcd replay)
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features async_serve,cpstore_etcd
-          --test integration_ext -- cpstore_etcd_e2e_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_ext_test
+          --test_arg=cpstore_etcd_e2e_test::
 
+      # The target compiles every backend's race lanes, and this job stands up etcd only,
+      # so the Redis lanes are the Redis job's.
       - name: Run live-infra e2e (etcd replay race through the serving path)
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features async_serve,cpstore_etcd
-          --test integration_async -- replay_race_harness_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_async_ext_test
+          --test_arg=replay_race_harness_test:: --test_arg=--skip=redis

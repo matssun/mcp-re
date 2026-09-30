@@ -271,8 +271,8 @@ expensive stage is now worth running.
 
 27 agents, one source file each, 56 findings. What the round established:
 
-**Agents must not run cargo.** They share one working tree and one target directory, so
-any cargo result an agent gets is contaminated by its siblings' half-written edits — and,
+**Agents must not run the build or the tests.** They share one working tree and one Bazel
+output base, so any build result an agent gets is contaminated by its siblings' half-written edits — and,
 more importantly, an agent that cannot run a test cannot report a green it did not measure.
 Compilation and tests are CENTRAL, after the fleet lands. This removes the exact failure
 mode that killed earlier rounds (agents claiming fixes they had not made) by construction
@@ -295,7 +295,7 @@ agent to state the exact one-line mutation (not just "I added a test") is what m
 report checkable without re-reading the diff.
 
 **Name the feature lane in the report.** Three of 27 files were behind non-default features
-(`online_ocsp`, `redis_replay`, `async_serve`); a plain `cargo test --workspace` compiles
+(`online_ocsp`, `redis_replay`, `async_serve`); a test target built without them compiles
 their tests to zero and exits 0. Agents caught this themselves when told the rule.
 
 ### The finding class to expect

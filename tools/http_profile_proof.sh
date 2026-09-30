@@ -53,12 +53,14 @@ else
 fi
 
 # 2. Build + launch the HTTP-profile proxy front.
-cargo build -q -p mcp-re-proxy --features redis_replay --example http_profile_proxy --example http_profile_client
+bazel build //mcp-re-proxy:http_profile_proxy //mcp-re-proxy:http_profile_client
+HPP_PROXY="$(bazel cquery --output=files //mcp-re-proxy:http_profile_proxy 2>/dev/null)"
+HPP_CLIENT="$(bazel cquery --output=files //mcp-re-proxy:http_profile_client 2>/dev/null)"
 echo "proxy: starting http_profile_proxy on ${FRONT}"
-./target/debug/examples/http_profile_proxy >/tmp/hpp_proxy.log 2>&1 &
+"$HPP_PROXY" >/tmp/hpp_proxy.log 2>&1 &
 pids+=($!)
 wait_port "${FRONT}" || { echo "ERROR: proxy did not bind"; cat /tmp/hpp_proxy.log; exit 1; }
 
 # 3. Drive the proof (happy path + replay rejection).
 echo "----- client -----"
-./target/debug/examples/http_profile_client
+"$HPP_CLIENT"

@@ -17,5 +17,3 @@ thiserror = { workspace = true }
 name = "mcp_re_policy"
 path = "src/lib.rs"
 
-[lints]
-workspace = true

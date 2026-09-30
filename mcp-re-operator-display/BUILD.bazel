@@ -31,8 +31,6 @@ nt_rust_library(
 nt_rust_test(
     name = "mcp_re_operator_display_test",
     crate = ":mcp_re_operator_display",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [],
 )

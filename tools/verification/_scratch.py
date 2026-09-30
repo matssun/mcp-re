@@ -25,8 +25,10 @@ reasons that are each a measurement error avoided:
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -59,3 +61,32 @@ def copy_tracked_tree(destination: Path, repo_root: Path | None = None) -> int:
         shutil.copy2(source, out)
         copied += 1
     return copied
+
+
+def lane_scratch(lane: str, repo_root: Path | None = None) -> Path:
+    """The scratch directory a hostile-edit lane copies the tree into, stable per lane.
+
+    STABLE, because the lanes build the copy with Bazel, and Bazel keys its output base by
+    the workspace's path: a fresh temporary directory per run would be a cold build of the
+    whole graph every time, and an output base left behind per run. At one path per lane
+    and repository, every run after the first rebuilds only what the weakening touched. The
+    COPY is still fresh — `copy_tracked_tree` refills it each run, after `release` removed
+    the last one — so nothing measured is carried over; only Bazel's content-addressed
+    cache is.
+    """
+    root = (repo_root or REPO_ROOT).resolve()
+    tag = hashlib.sha256(str(root).encode()).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / f"mcp-re-lane-{tag}" / lane
+
+
+def release(scratch: Path) -> None:
+    """Stop the Bazel server a lane started in its scratch tree, then remove the copy.
+
+    The server is stopped first: it holds the tree as its workspace, and one left running
+    over a deleted directory is a server that answers the next run about files that are
+    gone.
+    """
+    tree = scratch / "tree"
+    if (tree / "MODULE.bazel").is_file():
+        subprocess.run(["bazel", "shutdown"], cwd=tree, capture_output=True, check=False)
+    shutil.rmtree(scratch, ignore_errors=True)

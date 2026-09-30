@@ -1,7 +1,4 @@
-# Rust build output
-target/
-
-# napi-rs native artifacts (rebuilt by `napi build`; the .node is platform-specific)
+# The staged native addon (`npm run build:native`; the .node is platform-specific)
 native/*.node
 
 # TypeScript build output

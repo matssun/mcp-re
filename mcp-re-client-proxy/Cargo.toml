@@ -26,5 +26,3 @@ mcp-re-http-profile = { path = "../mcp-re-http-profile" }
 name = "mcp_re_client_proxy"
 path = "src/lib.rs"
 
-[lints]
-workspace = true

@@ -1,51 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# MCP-RE continuous integration. The Rust toolchain is pinned by the committed
-# rust-toolchain.toml (1.97.1, matching the Bazel build), so rustup installs and
-# selects it automatically on the first cargo invocation — CI and local dev share
-# one toolchain.
+# MCP-RE continuous integration. Bazel is the Rust build and test authority: every
+# Rust compile, lint and test below is a Bazel action, under the toolchain MODULE.bazel
+# pins. Nothing here invokes Cargo.
 #
 # Gating policy:
-#   - BLOCKING: the workspace's tests run in the `bazel` job (`bazel test //...`),
-#     the conformance suite and its drift guard among them. That job holds every
-#     test `cargo test --workspace` compiles, under the features cargo compiles it
-#     with; `scripts/test_inventory_parity.py` (weekly) keeps that true. The cargo
-#     job still runs `mcp-re-test-paths`' own tests: they check the cargo-side
-#     fixture table the remaining cargo test lanes resolve through.
-#     The feature-gated suites are Bazel targets too, each built with the features
-#     its tests need (the ext flavors, dev_env_key_source, async_serve), so the
-#     same `bazel test //...` runs what cargo's all-features lane ran: the Redis
-#     WAIT-quorum harness, the PKCS#11 sign loop against a Bazel-built mock token,
-#     the OCSP AIA-SSRF parser, the env-key-source contract. Live-infra e2e tests
-#     skip themselves while their MCP_RE_TEST_* variables are unset.
+#   - BLOCKING: the `bazel` job — the BUILD semantic-drift gate, `bazel test //...`
+#     (every non-manual test target, the conformance suite and its drift guard among
+#     them, the feature-gated suites each in the flavor its tests need), the lint lane
+#     (clippy under //bazel:workspace_lints, warnings as errors), the format lane, the
+#     workspace-lints membership gate and its probe, and the ADR-MCPRE-061 clippy debt
+#     ratchet. Live-infra e2e tests skip themselves while their MCP_RE_TEST_* variables
+#     are unset.
 #   - BLOCKING: the `release-gates` job runs the ADR-MCPRE-051 §7 release gates as
-#     named lanes under Bazel, the load harness's Docker tests, and the
-#     saturation rig's liveness check, built and run as Bazel binaries.
-#   - BLOCKING: `cargo fmt --check` and `cargo clippy -D warnings`. The tree carries
-#     zero warnings, so any new one is a build failure rather than a line of scroll-
-#     back nobody reads. Both run over EVERY cargo universe (the root workspace, the
-#     two SDK crates, the mock-PKCS#11 crate) and clippy additionally runs the
-#     non-default feature lane — the advisory form linted only the root default
-#     features, which left `etcd_store.rs`, `redis_store.rs` and mock-pkcs11 entirely
-#     unlinted and hid 19 of the 60 warnings the cleanup had to fix.
-#     A `rust-toolchain.toml` bump ships new lints, so bump it in a commit that
-#     re-runs `scripts/local_gate.sh` and clears whatever the new lints find.
-#   - BLOCKING (ADR-MCPS-048 / MCPS-70): the `bazel` job gates the OTHER build
-#     system. Bazel was ungated, which is exactly how #220 (Bazel/cargo drift)
-#     happened. Two steps: (1) the semantic-drift gate — gazelle_rust as a drift
-#     DETECTOR (not a byte-authority): fails if the Cargo graph has a target/edge
-#     the committed BUILD omits, modulo the script's allowlist; (2) `bazel test
-#     //...`, the workspace test lane.
-#   - BLOCKING (ADR-MCPS-048 / MCPS-71): the `sdk-python` and `sdk-typescript`
-#     jobs make "downloaders skip Bazel" a VERIFIED path, not a rotting side
-#     artifact. Each builds the ecosystem-native artifact (maturin wheel / napi
-#     package) from the SAME source, installs it into a clean environment
-#     (fresh venv / empty npm project — wheel/tarball only, no editable, no
-#     workspace on sys.path), and runs the SDK test suite. Neither job installs
-#     or invokes Bazel; the e2e suites that need the built Rust binaries
-#     self-skip cleanly (their guards check for the target/{debug,release}
-#     binaries + cargo), so the clean-env lane exercises the unit surface. The
-#     cargo jobs above are the third downloader path (pure `cargo`, no Bazel).
+#     named Bazel test lanes, the load harness's Docker tests, and the saturation rig's
+#     liveness check.
+#   - BLOCKING: the `cargo` job (its id and check name are what the branch ruleset
+#     requires) runs the repository's structural gates; it builds nothing.
+#   - BLOCKING (ADR-MCPS-048 / MCPS-71): the `sdk-python` and `sdk-typescript` jobs
+#     build each SDK's published artifact — the wheel, the npm package — with its native
+#     module from Bazel, install it into a clean environment (fresh venv / empty npm
+#     project), and run the SDK test suite against it.
 name: CI
 
 on:
@@ -62,8 +37,8 @@ permissions:
   contents: read
 
 jobs:
-  cargo:
-    name: cargo build + test (1.97.1)
+  rust:
+    name: Bazel build + test (Rust 1.97.1)
     runs-on: ubuntu-latest
     steps:
       # Full history: the module-size ratchet checks DISPOSITION TRANSITIONS against
@@ -265,16 +240,55 @@ jobs:
           python3 scripts/conformance_claims_gate.py --selftest
           python3 scripts/conformance_claims_gate.py
 
-      # Named release-gate lanes are a table of test-binary names, and consolidating
-      # the proxy suites broke 24 of them across four workflows and two example
+      # Named release-gate lanes are a table of test-target labels, and consolidating
+      # the proxy suites once broke 24 of them across four workflows and two example
       # scripts. Only four went red — the cloud-KMS and several live-infra lanes are
       # gated, so their breakage would have surfaced the next time someone ran a
-      # billed nightly. This asserts every `--test` names a real target and every
-      # `module::` filter names a real module, before either is invoked.
-      - name: Cargo test-target gate
+      # billed nightly. This asserts every `bazel test` label is a test target of the
+      # build graph and every `module::` filter names a real module, before either is
+      # invoked.
+      - name: Test-target gate
         run: |
-          python3 scripts/cargo_test_target_gate.py --selftest
-          python3 scripts/cargo_test_target_gate.py
+          python3 scripts/test_target_gate.py --selftest
+          python3 scripts/test_target_gate.py
+
+      # Every `#[test]` in the tree is reachable from a crate root some Bazel `rust_test`
+      # compiles: a `tests/*.rs` with no target, or a module no root declares, holds tests
+      # nothing ever runs while every lane stays green. The compiled half — a test a
+      # `cfg(feature)` compiles out of every flavor — is test-inventory.yml, weekly.
+      - name: Test-inventory gate (static)
+        run: |
+          python3 scripts/test_inventory_gate.py --selftest
+          python3 scripts/test_inventory_gate.py
+
+      # Rust build and test execution is Bazel's. A workflow step, script, hook, lane,
+      # harness or maintained command that invokes `cargo` — directly, or through a
+      # wrapper such as `maturin build` or `charon cargo` — is a second execution authority
+      # whose results the Bazel graph never sees.
+      - name: No-Cargo-execution gate
+        run: |
+          python3 scripts/no_cargo_execution_gate.py --selftest
+          python3 scripts/no_cargo_execution_gate.py
+
+      # Bazel builds from `bazel/crates.lock` and `MODULE.bazel`'s `crate.spec` entries, and
+      # reads no Cargo file; the Cargo manifests and locks remain as the crates' published
+      # description. A dependency change that lands in one and not the other (a Dependabot
+      # bump in a Cargo.lock, a feature added to a member's manifest) builds the OLD version
+      # into every Bazel artifact while every Cargo-side check stays green. This job runs on
+      # every pull request, Dependabot's included, so a lockfile change cannot merge without
+      # the Bazel lock following it.
+      - name: Crate-spec parity gate (Cargo locks and manifests, MODULE.bazel, bazel/crates.lock)
+        run: |
+          python3 scripts/crate_spec_parity_gate.py --selftest
+          python3 scripts/crate_spec_parity_gate.py
+
+      # The extraction image consumes pinned Aeneas/Charon release binaries and builds
+      # neither. Stated as what the definition may contain, because a tool it built from
+      # source would run Cargo behind an upstream Makefile no word scanner can see.
+      - name: Extraction-image gate
+        run: |
+          python3 scripts/extraction_image_gate.py --selftest
+          python3 scripts/extraction_image_gate.py
 
       # Lifecycle purity (ADR-MCPRE-056/057): `runtime_state.rs` and `exchange_state.rs`
       # are values, not behaviour. A `use` of a production module would let "is this
@@ -638,84 +652,12 @@ jobs:
 
       # The clippy ratchet needs the toolchain, so it runs with the clippy lanes below.
 
-      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections live in ONE
-      # `[workspace.lints]` table in the root Cargo.toml — thirteen copies of the same
-      # deny block grew six files already registered in config/module-size-debt.toml.
-      # A workspace table reaches a member only through that member's `[lints]
-      # workspace = true`, so a member added without it is silently exempt and nothing
-      # else in the build reports it. `--probe` runs after the toolchain is selected
-      # (below, with the clippy lanes) because proving the table is ENFORCED needs a
-      # build; a table that is merely present is the configuration-enforces-nothing
-      # failure this repo has already hit twice.
-      - name: Workspace-lints gate (every member opts into the one lint authority)
-        run: python3 scripts/workspace_lints_gate.py
-
       # The SCITT service-key fetcher refuses a plaintext redirect hop. `build_opener`
       # installs the permissive default redirect handler unless it is passed a
       # subclass, so a guard class that exists but is never consulted leaves the
       # downgrade open — the selftest asserts the wiring, not just the class.
       - name: SCITT service-key fetch guards
         run: python3 tools/scitt_fetch_service_key.py --selftest
-
-      # cryptoki-sys (declared non-optional for Bazel target exposure) builds its
-      # FFI bindings with libclang; install it defensively so the cargo closure
-      # links on a clean runner.
-      - name: System build dependencies
-        # The bounds on the fallback are not decoration; they are what the two earlier
-        # attempts at this step were. With no bound at all, six jobs across four branches
-        # sat in `apt-get update` for 28-58 minutes each reporting `pending` — which says
-        # strictly less than a red would. With only `update` bounded, the `install` hung
-        # instead. `Acquire::http::Timeout` does not help either: it bounds INACTIVITY,
-        # and a transfer dribbling at 32 kB/s is never inactive.
-        #
-        # Nothing here is weakened. If the image ever stops shipping Clang the fallback
-        # installs it exactly as before; a package that genuinely cannot be installed
-        # still fails the step, and every gate below is untouched.
-        run: |
-          set -euo pipefail
-          # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
-          # RUNTIME — the shared object, not the headers. The ubuntu-24.04 runner image
-          # already ships Clang 18.1.3, so `libclang-dev` was re-downloading a library
-          # the box already had: 28.8 MB fetched and ~292 MB unpacked, on every one of
-          # three jobs, every run.
-          #
-          # That download is also the single least reliable thing in this workflow.
-          # Measured on 2026-08-19 against the same Azure mirror, same file: 64.0 kB/s,
-          # then 43.1 kB/s, then 32.1 kB/s — 14min 57s for the fetch alone, with the
-          # unpack pushing past a 20-minute cap. Raising the cap is a race against a
-          # mirror that keeps getting slower; not needing the file wins it outright.
-          #
-          # So: find what is already installed and point bindgen at it. apt is the
-          # FALLBACK, not the default, and it keeps its bounds for the case where the
-          # image stops shipping Clang.
-          found=""
-          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
-            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
-              found="$dir"
-              break
-            fi
-          done
-
-          if [ -n "$found" ]; then
-            echo "LIBCLANG_PATH=$found" >> "$GITHUB_ENV"
-            echo "using the runner image's libclang in $found:"
-            ls -1 "$found"/libclang*.so* | sed 's/^/  /'
-          else
-            echo "no libclang on the image — falling back to apt (bounded)"
-            timeout 300 sudo apt-get update \
-              || echo "apt-get update did not finish in 300s; using the runner image's package index"
-            sudo apt-get install -y --no-install-recommends \
-              -o Acquire::Retries=3 \
-              -o Acquire::http::Timeout=30 \
-              libclang-dev
-          fi
-
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
-
-      # Bazel resolves external crates from MODULE.bazel's crate.spec entries and
-      # bazel/crates.lock. Cargo manifests remain for local development and SDK builds
-      # (which are out of scope per ADR-MCPS-048/71), but Cargo is not used in CI.
 
       # MCPRE-427 (#415 rev 2 §12.2). The hash/digest checks themselves run inside
       # the `bazel` job's `bazel test //...` (corpus_pinning_test + the frozen runners,
@@ -738,11 +680,6 @@ jobs:
               echo "| \`$c\` | \`$manifest_sha\` | \`$corpus_dig\` |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
-
-      # All linting (rustfmt, clippy, lint ratchets) runs locally before pushing.
-      # Developers use pre-commit hooks to enforce `cargo fmt` and `cargo clippy`.
-      # Bazel build enforces rustc warnings via `-D warnings` on all targets.
-      # This keeps CI focused on tests and builds (all Bazel), reducing cycle time.
 
   rfc9421-cross-verify:
     name: RFC 9421 third-party cross-verification (no-merge gate)
@@ -789,7 +726,7 @@ jobs:
             bazel-${{ runner.os }}-
 
       # Direction 2: the externally produced signature verifies under the Rust
-      # MCP-RE verifier. Run under Bazel instead of cargo.
+      # MCP-RE verifier.
       - name: Cross-verify (external → us) under the Rust verifier
         run: >-
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
@@ -808,7 +745,7 @@ jobs:
           git diff --exit-code mcp-re-conformance/tests/vectors/delegation-profile/external_delegation_kat.json
 
       # Direction 2: the externally produced credential verifies under the Rust
-      # MCP-RE delegation verifier. Run under Bazel instead of cargo.
+      # MCP-RE delegation verifier.
       - name: Cross-verify delegation (external → us) under the Rust verifier
         run: >-
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
@@ -832,7 +769,7 @@ jobs:
       # Direction 2: statements and receipts BUILT by the independent implementation
       # must verify under the Rust verifier, and each refusal a conforming verifier owes
       # must be refused — including a draft-labelled receipt, so a regression to those
-      # labels fails here instead of shipping. Run under Bazel instead of cargo.
+      # labels fails here instead of shipping.
       - name: Cross-verify SCITT (external → us) under the Rust verifier
         run: >-
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
@@ -843,7 +780,7 @@ jobs:
       # tree, its proof encoder, its CBOR) verified offline here, plus the mutations of
       # that receipt MCP-RE must refuse. No network and no peer install: the corpus is
       # committed octets, which is what makes the offline claim reproducible.
-      # Run under Bazel instead of cargo.
+      #
       - name: Third-party SCITT interoperability corpus (offline verification)
         run: >-
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
@@ -860,7 +797,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # cryptoki-sys builds its FFI bindings with libclang (see the `cargo` job).
+      # cryptoki-sys's build script generates its FFI bindings with bindgen, which needs
+      # libclang.
       - name: System build dependencies
         # The bounds on the fallback are not decoration; they are what the two earlier
         # attempts at this step were. With no bound at all, six jobs across four branches
@@ -1084,10 +1022,47 @@ jobs:
       - name: BUILD semantic-drift gate (gazelle as drift detector)
         run: python3 scripts/bazel_gazelle_gate.py
 
-      # (2) The workspace test lane. It holds every test `cargo test --workspace`
-      # compiles; scripts/test_inventory_parity.py measures that weekly.
+      # The assurance platform reads the build graph through a committed table — which Rust
+      # targets exist, each one's crate root, sources and features — so the census, the
+      # manifest and the lanes can run where no Bazel server does. This is its freshness
+      # control: a table that no longer matches `bazel query` would send them to crates
+      # Bazel does not build.
+      - name: Rust target table matches the build graph
+        run: tools/verification/rust-targets --check
+
+      # (2) The workspace test lane: every non-manual test target.
       - name: Bazel test parity (//...)
         run: bazel test //... --test_output=errors
+
+      # The Rust lint lane: clippy over every first-party target under the workspace lint
+      # policy (//bazel:workspace_lints) and .clippy.toml, warnings as errors.
+      - name: Rust lint lane (bazel build --config=lint //...)
+        run: bazel build --config=lint //...
+
+      # rustfmt over every first-party target, check-only: a mis-formatted file fails.
+      - name: Rust format lane (bazel build --config=rustfmt //...)
+        run: bazel build --config=rustfmt //...
+
+      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections are ONE
+      # `rust_lint_config`, which every `nt_rust_*` target carries by default. A target that
+      # overrides it, or is written with a raw rule, is silently exempt, so the gate checks
+      # every first-party Rust target in the graph; `--probe` proves the policy is ENFORCED
+      # by compiling a deliberate violation of each half. A policy merely attached is the
+      # configuration-enforces-nothing failure this repo has already hit twice.
+      - name: Workspace-lints gate (every Rust target carries the one lint authority)
+        run: |
+          python3 scripts/workspace_lints_gate.py
+          python3 scripts/workspace_lints_gate.py --probe
+
+      # ADR-MCPRE-061 §6.4. The adopted lints run over every production library and binary
+      # flavor, and each crate's count may only fall (config/clippy-debt.toml). The probes
+      # prove the lints are switched on and the nesting threshold sits where CLAUDE.md says.
+      - name: Clippy debt ratchet (ADR-MCPRE-061 §6)
+        run: |
+          python3 scripts/clippy_ratchet_gate.py --selftest
+          python3 scripts/clippy_ratchet_gate.py --activation-probe
+          python3 scripts/clippy_ratchet_gate.py --nesting-probe
+          python3 scripts/clippy_ratchet_gate.py
 
       # After a green run on main only: what the next PR restores. Saving on success
       # alone keeps a cache from a run that failed halfway out of the chain.
@@ -1101,94 +1076,49 @@ jobs:
           key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
 
   sdk-python:
-    name: downloader — Python maturin wheel (no Bazel)
+    name: downloader — Python SDK wheel (Bazel)
     runs-on: ubuntu-latest
-    # ADR-MCPS-048 / MCPS-71 — the pip downloader path. sdk/python is its OWN
-    # Cargo workspace (empty [workspace] table) linking the audited
-    # mcp-re-client-core / mcp-re-core via path deps; the pyo3 layer is abi3-py39, so
-    # ONE wheel serves any CPython >= 3.9. No cryptoki/openssl in the SDK closure,
-    # so no libclang is needed. Bazel is neither installed nor invoked.
-    defaults:
-      run:
-        working-directory: sdk/python
     steps:
       - uses: actions/checkout@v7
 
-      # Inside the package's declared range, and it has to be: this job INSTALLS the built
-      # wheel, so an interpreter outside `requires-python` is refused by pip rather than
-      # producing a weaker result. It was "3.12" until the 2026-09-05 narrowing to
-      # `>=3.14.5,<3.15`, and the failure was the correct one —
-      # `Package 'mcp-re-sdk' requires a different Python: 3.12.14 not in '<3.15,>=3.14.5'`.
-      #
-      # This job stays INDEPENDENT evidence over the installed artifact on a second OS, and
-      # that independence is unaffected: what makes it independent is the OS, the installed
-      # wheel and the directory-based selection, never the interpreter differing from the
-      # one the authoritative matrix pins.
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
-      # The pinned Rust toolchain (rust-toolchain.toml at the repo root) applies
-      # here too — rustup walks up to it — so the wheel is built with the same
-      # compiler as the cargo/bazel gates.
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
-
-      - name: Install maturin
-        run: pip install "maturin>=1.5,<2.0"
-
-      - name: Build the release wheel
-        run: maturin build --release --out dist
+      # The wheel is Bazel's: the PyO3 binding is built by the same Rust toolchain and crate
+      # universe as every other target, and packaged by rules_python's py_wheel.
+      - name: Build the SDK wheel (bazel build //sdk/python:wheel)
+        run: |
+          bazel build //sdk/python:wheel
+          echo "WHEEL=$PWD/$(bazel cquery --output=files //sdk/python:wheel 2>/dev/null | head -1)" >> "$GITHUB_ENV"
 
       - name: Regenerated parity oracle must match the committed one
-        # The frozen cross-language oracle (sdk/fixtures/parity_vectors.json) is what
-        # pins the Python and TypeScript bindings to the same bytes. If regenerating it
-        # changes anything, a binding drifted from the core — fail rather than ship.
-        working-directory: ${{ github.workspace }}
         run: |
           python -m venv /tmp/oracle
-          /tmp/oracle/bin/pip install --quiet sdk/python/dist/*.whl 2>/dev/null \
-            || /tmp/oracle/bin/pip install --quiet sdk/python/dist/*.whl
+          /tmp/oracle/bin/pip install --quiet "$WHEEL"
           /tmp/oracle/bin/python tools/gen_sdk_parity_fixture.py
           git diff --exit-code -- sdk/fixtures/parity_vectors.json
 
-      # Clean-env smoke install: a fresh venv gets ONLY the built wheel plus the
-      # upstream MCP SDK + pytest — never an editable install and never the
-      # source python/ tree on sys.path, so `import mcp_re_sdk` resolves to the
-      # INSTALLED wheel (its native mcp_re_sdk._core), proving the downloader
-      # artifact stands on its own.
-      # The upstream SDK is installed as the WHEEL'S OWN `mcp` extra, never as a
-      # restated `"mcp>=…"` on this line. pyproject declares `mcp>=1.16,<2.0`; naming
-      # the package here independently bypassed that cap, and when upstream published
-      # mcp 2.0.0 — where `JSONRPCMessage` stopped being a RootModel and became a
-      # plain union alias, so it is neither callable nor carries `.root` — this job
-      # installed it and 33 SDK tests failed on a branch that had not touched the SDK.
-      # One source for the constraint, the same rule VERSION and config/ports.toml get.
       - name: Clean-env install (wheel only) + smoke import
         run: |
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install --upgrade pip
-          WHEEL="$(ls dist/*.whl)"
           /tmp/venv/bin/pip install "${WHEEL}[mcp]" "pytest>=8" "pytest-cov>=5"
           /tmp/venv/bin/python -c "import mcp_re_sdk, mcp_re_sdk._core; print('wheel import OK')"
 
-      # Run the SDK suite against the installed wheel from the repo root so the
-      # source package cannot shadow it. Coverage is gated at the repo-wide 90% bar
-      # by [tool.coverage.report] fail_under in sdk/python/pyproject.toml.
       - name: pytest + coverage gate (installed wheel)
-        working-directory: ${{ github.workspace }}
         run: |
           /tmp/venv/bin/python -m pytest sdk/python/tests -q \
             --cov --cov-config=sdk/python/pyproject.toml --cov-report=term-missing
 
   sdk-typescript:
-    name: downloader — TypeScript napi package (no Bazel)
+    name: downloader — TypeScript napi package (Bazel)
     runs-on: ubuntu-latest
-    # ADR-MCPS-048 / MCPS-71 — the npm downloader path. sdk/typescript is its OWN
-    # Cargo workspace (empty [workspace] table) linking mcp-re-client-core via a
-    # path dep; @napi-rs/cli builds the Node native addon. Bazel is neither
-    # installed nor invoked.
+    # ADR-MCPS-048 / MCPS-71 — the npm downloader path. The native addon is Bazel's
+    # (//sdk/typescript:native), built by the same Rust toolchain and crate universe as
+    # every other target; the pinned @napi-rs/cli renders its loader from the type
+    # definitions napi-derive stated (//sdk/typescript:native_type_defs).
     defaults:
       run:
         working-directory: sdk/typescript
@@ -1200,28 +1130,20 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
-
       - name: Install JS dependencies
         run: npm ci
 
-      # napi build (native .node) + tsc (dist/). This is the published artifact's
-      # exact build.
+      # Bazel builds the native .node (-c opt) and renders native/binding.{js,d.ts};
+      # tsc builds dist/. This is the published artifact's exact build.
       - name: Build native addon + TypeScript
         run: npm run build
 
-      # `napi build` REGENERATES the committed native/binding.js loader. This job
-      # already ran it, but nothing checked whether the tree changed — so binding.js
-      # sat at @napi-rs/cli 3.8.0's output after the pin moved to 3.8.1, and the loader
-      # that shipped documented different NAPI_RS_FORCE_WASI semantics than the pinned
-      # generator produces. Generation is deterministic, so any diff here is real drift:
-      # run `npm run build:native` and commit the result.
-      - name: Generated napi loader is in sync with the pinned CLI
+      # The build REGENERATES the committed native/binding.js loader and binding.d.ts.
+      # Generation is deterministic, so any diff here is real drift — a Rust export
+      # changed, or the CLI pin moved: run `npm run build:native` and commit the result.
+      - name: Generated napi loader is in sync with the exports and the pinned CLI
         run: git diff --exit-code -- native/binding.js native/binding.d.ts
 
-      # Coverage is gated at the repo-wide 90% bar by the `thresholds` block in
-      # sdk/typescript/vitest.config.mts; the run fails below it.
       - name: Test + coverage gate (vitest)
         run: npx vitest run --coverage
 

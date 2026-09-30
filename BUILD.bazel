@@ -1,4 +1,4 @@
-# MCP-RE Cargo workspace root.
+# MCP-RE workspace root.
 #
 # Per-crate BUILD.bazel files live under each member directory. These exports
 # let the isolated `crates_mcp_re` crate_universe hub reference the workspace
@@ -17,11 +17,11 @@ package(default_visibility = ["//visibility:public"])
 #     instead of the raw rules_rust rules, so generated targets keep the
 #     workspace's lint/edition/stamp/test-harness policy. gazelle manages the
 #     name/srcs/deps/proc_macro_deps/crate_features attrs; all other custom
-#     attrs (compile_data, auto_cargo_toml, fixture_files, …) are preserved.
+#     attrs (compile_data, fixture_files, …) are preserved.
 #
-# Non-Bazel / build-artifact trees gazelle must never walk: cargo `target/`
-# output dirs (contain generated build-script .rs), the SDK crates (published
-# via maturin/napi, deliberately outside the Bazel graph per ADR-MCPS-048), the
+# Trees gazelle must never walk: `target/` output dirs (generated build-script
+# .rs), the SDK packages (their BUILD files are hand-written: the PyO3 extension
+# and the napi addon are not the one-target-per-crate shape gazelle generates), the
 # `work/` scratch dir, and the demo video's npm tree.
 # gazelle:exclude target
 # gazelle:exclude sdk
@@ -73,8 +73,10 @@ gazelle(
 )
 
 exports_files([
+    ".clippy.toml",
     "Cargo.toml",
     "Cargo.lock",
+    "verification/generated/rust-targets.json",
 ])
 
 filegroup(

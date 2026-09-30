@@ -66,9 +66,11 @@ mod capability;
 /// types are `method`, `url`, `headers`, `body` and `status`, which is what HTTP is. It sat
 /// inside the SCRAPI leaf while that was the only mechanism, and the second one reaching
 /// across for it would have made a sibling's internals a dependency.
+#[cfg(feature = "scitt_registration")]
 mod exchange;
 
 /// The `capsule-anchor` mechanism leaf — one operated service's contract.
+#[cfg(feature = "scitt_registration")]
 mod capsule_anchor;
 
 /// WHICH registration protocol this run speaks.
@@ -78,6 +80,7 @@ mod protocol;
 mod policy;
 
 /// The SCRAPI mechanism leaf — one draft revision's state machine.
+#[cfg(feature = "scitt_registration")]
 mod scrapi;
 
 /// The `ureq` transport. Behind the feature that links an HTTP client, for the reason
@@ -103,7 +106,7 @@ pub use capability::RegistrationError;
 pub(super) use endpoint::RegistrationTarget;
 pub(super) use protocol::RegistrationProtocol;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "scitt_registration"))]
 mod fixtures {
     //! Test fixtures shared by this subtree's owners.
     //!
