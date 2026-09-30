@@ -124,8 +124,15 @@ correction record covers, so neither the bounded event nor a correction link may
 | THM-0119 | scope: `proxy.trust_plane_runtime` → `proxy.trust_resolution_window` and `proxy.trust_reload_cadence` |
 | THM-0123 | scope: `client.local_ingress_authority` → `client.bind_scope`, `client.accepted_authority`, `client.caller_shape_admission` |
 | THM-0126 | scope: `client.response_acceptance` → `client.response_signer_authorization` / `client.response_binding_disposition` |
-| THM-0127 | scope: `client.config_lattice` → `client.local_leg_declaration` |
-| THM-0082 | premises THM-0089, THM-0108, THM-0116: recorded closure digests that no text in the tree at its review reproduces |
+| THM-0127 | scope: `client.config_lattice` → `client.local_leg_declaration` (a correction, not a rename: `client.config_lattice` was never a registered unit) |
+| THM-0082 | premise set grew after its review: THM-0116 became a direct premise in #990 (2026-09-18), adding THM-0108 and THM-0089 transitively. No correction or review record carries the new edge. |
 
-The first four are ADR-069 unit renames in scope prose. A review of each at its current
-fingerprint clears the gate.
+THM-0119, THM-0123 and THM-0126 are ADR-069 unit renames in scope prose. THM-0127 is not a
+rename: `client.config_lattice` never appeared in any version of `verification.toml`, so the
+sentence cited an authority that was never registered, and its replacement is a scope
+correction (`28394a14`). THM-0082's recorded premise digests are NOT unreproducible: the
+tree at `1a86f331` reproduces its reviewed fingerprint exactly. The objection this table
+originally recorded was withdrawn on measurement; the open item is the unreviewed edge to
+THM-0116. A review at the current fingerprint clears the gate, but the evidence for each is in
+`bazel-only-specification-review-evidence-2026-09-30.md`, which also records four findings the
+fingerprint alone does not show.
