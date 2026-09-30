@@ -1854,7 +1854,7 @@ establishes it.
 """
 affected_contracts = []
 sites = [
-  "mcp-re-http-profile/src/context/policy.rs#VerifiedContextPolicy::Trusted",
+  "mcp-re-http-profile/src/context/policy.rs#VerifiedContextPolicy",
   "mcp-re-proxy/src/serving_capabilities.rs#verified_context_carrier",
 ]
 tool_specific_mechanism = "none:trusted-seam"
@@ -2046,6 +2046,6 @@ token label named by `--pkcs11-token-label`.
 """
 affected_contracts = []
 sites = [
-  "mcp-re-proxy/src/pkcs11_native.rs#find_token_slot",
+  "mcp-re-proxy/src/pkcs11_keysource/token.rs#find_token_slot",
 ]
 tool_specific_mechanism = "none:trusted-seam"
