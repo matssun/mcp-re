@@ -10,13 +10,16 @@
       "THM-0049": "sha256:c90442429f9908e51506174e59083a636bdcc987f3d83f7987dee685875afdde",
       "THM-0062": "sha256:55b0e7920cde5eadfb5f316ed36d00befbd4dc733c97a19da3f458e2052db976",
       "THM-0064": "sha256:d4ed4b51ee2b1642de63c8b8024310060f381ed421a151cfd76f51d4e9a43701",
-      "THM-0073": "sha256:1193224486e76a9ffcaf098325e3f701e100454779b066ca7c56be2edb2473ac"
+      "THM-0073": "sha256:1193224486e76a9ffcaf098325e3f701e100454779b066ca7c56be2edb2473ac",
+      "THM-0089": "sha256:5f08ed31d860d3ef9a71836edf1b0bff9ea496a89e74dae727eb4baff757fad8",
+      "THM-0108": "sha256:6c0c7cfdcf006beb8e7b706c2a1de2b87c5410921a36ea81b41f2e25e704e4cf",
+      "THM-0116": "sha256:4af2540c1ffe6739bb34b63b2400d7c03de64294830fc09f47f0924a4fb285bb"
     },
     "theorem_id": "THM-0082",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "OWNER SPECIFICATION REVIEW EVENT, r11 Part A (the ten-row owner packet), 2026-09-16.\nRecorded under the r11 closure mandate's AFK review authority on explicit owner rulings,\ntranscribed verbatim in work/r11-campaign/RULINGS-OWNER-10.md.\n\nDEPENDENCY-ONLY RE-AFFIRMATION. This theorem's own claim text, security consequence, scope,\nowner and review requirement are BYTE-IDENTICAL to the reviewed version: `theorem_claim` is\nunchanged and only `theorem_dependencies` moved. What moved in its closure, and why each is\na CLAIM CORRECTION bringing the registry to what the code already does:\n\n  - THM-0027's scope stopped disclaiming an escape hatch that no longer exists (`build_delegated_resolver_config` became private in a50d4070) and now states positively that this crate publishes no route bypassing the correspondence gate, keeping the embedder boundary outside the claim.\n  - THM-0062's statement stopped claiming the response signer yields no credential under a poisoned snapshot lock; poison is RECOVERED because the protected snapshot is one whole-value swap, and terminal retirement and expiration still dominate. A claim correction to what `current` already does.\n\nNo conjunct of this theorem was broadened. Each premise edit NARROWS or restates a\nregistered claim to what its evidence reaches; none licenses anything this theorem did not\nalready have. The one addition in the same event, ASM-0049, registers a premise\n(`proxy.tls_listener_state` trust-epoch digest distinctness) that was previously unstated,\nwhich makes the trusted-premise set larger and the claims resting on it no stronger.",
-  "reviewed_fingerprint": "sha256:f85bc41b1ad4178e4842d196a2429e15e7147289f1cdedfd44054ea460e223be",
+  "notes": "OWNER SPECIFICATION REVIEW, 2026-09-30, authorized by the owner in this session against head 0e460b8d and re-verified after merging origin/main (fingerprint unchanged). Recorded by the implementing agent as a transcription of that authorization.\n\nAccepts the composition through THM-0116, including its conservative THM-0089 dependency and the stated exclusions.\n\nEVIDENCE: verification/reviews/packets/bazel-only-specification-review-evidence-2026-09-30.md ; the prior record's text is preserved in git history of this file.",
+  "reviewed_fingerprint": "sha256:807d622eec73915f60ab7dd4663f8babbb53d197413ce2fdcdf739f8859d8fca",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0082"
 }
