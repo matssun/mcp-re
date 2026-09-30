@@ -48,6 +48,12 @@ impl ResponseExpectation {
     /// For the FFI bindings, which rebuild the request from scalars and have no
     /// [`SignedRequest`] to take. In-process callers hold that owner and should take it:
     /// see [`Self::for_signed`].
+    ///
+    /// Nothing here can check that `request` is the request that was actually sent: the
+    /// pairing of an expectation with the request it describes is ASSUMED, and it is the
+    /// caller's obligation. It is established only where one owner both sends the request
+    /// and derives the expectation from it, which [`Self::for_signed`] makes possible and
+    /// the shipped `ClientProxy` path does.
     pub fn new(request: HttpRequest) -> Self {
         ResponseExpectation {
             request,

@@ -5050,8 +5050,8 @@ direct_consequence_severity = "critical"
 scope = """
 The SHIPPED path, and that is the whole point of registering it. THM-0057 through THM-0061
 establish what the client-core verifier does with an expectation and a response; every one of
-them takes the PAIRING as given, and `client.response_binding_disposition`'s scope says so explicitly —
-pairing an expectation with the request it describes is the caller's obligation.
+them takes the PAIRING as given: pairing an expectation with the request it describes is the
+caller's obligation, stated on `ResponseExpectation::new`.
 
 For a raw FFI caller that is the honest boundary and it stays there: `ResponseExpectation::new`
 is public precisely so a binding that rebuilt the request from scalars can supply one, and
