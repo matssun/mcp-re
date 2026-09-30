@@ -187,7 +187,7 @@ to the new fingerprint (pairing attribution, 2026-09-30). All earlier records ar
 ## 5. The composition argument, all five moved premises
 
 Closure: 16 premises; 11 byte-identical to the reviewed record. The five that moved, with
-their exact text changes, are in section 5 of the earlier packet. In summary:
+their exact text changes from the reviewed 2026-09-07 text to today, are given after the table. In summary:
 
 | premise | change | proposition changed? | state |
 |---|---|---|---|
@@ -196,6 +196,45 @@ their exact text changes, are in section 5 of the earlier packet. In summary:
 | THM-0121 | same | no | reviewed |
 | THM-0126 | exclusion pointers, lane wording, sealing repair | no | owner-reviewed 2026-09-30 at `sha256:465251d6…f0de` |
 | THM-0127 | `client.config_lattice` pointer, lane wording | no | owner-reviewed 2026-09-30 at `sha256:41d895d9…764b` |
+
+Exact text changes of the five premises, from the text in THM-0076's 2026-09-07 review to
+this head (statements and security consequences are unchanged in all five; only scopes moved):
+
+```diff
+### THM-0084 | The shipped client proxy verifies against the request it sent
+[scope]
+-them takes the PAIRING as given, and `client.response_acceptance`'s scope says so explicitly —
+-pairing an expectation with the request it describes is the caller's obligation.
++them takes the PAIRING as given: pairing an expectation with the request it describes is the
++caller's obligation, stated on `ResponseExpectation::new`.
+
+### THM-0120 | A client that cannot establish current anchors publishes none, rather than servi
+[scope]
+-Executable, class V0, measured in the default cargo lane.
++Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
+
+### THM-0121 | The rollback floor only rises, and a floor that has been pushed too high stops t
+[scope]
+-Executable, class V0, measured in the default cargo lane.
++Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
+
+### THM-0126 | A verified reply is not a completed call
+[scope]
+-request is `client.response_acceptance`'s under THM-0076. What is established here is that
++request is `client.response_signer_authorization`'s and
++`client.response_binding_disposition`'s under THM-0076. What is established here is that
+-Executable, class V0, measured in the default cargo lane. Every control performs a real
++Executable, class V0, measured in the default Bazel lane (`bazel test //...`). Every control performs a real
+-chain is `client.response_acceptance`'s question, not this claim's.
++chain has no owning verification unit today and is not this claim's.
+
+### THM-0127 | The deployable's serving path always runs an anchor refresher
+[scope]
+-that bound is `client.config_lattice`'s.
++that bound is `client.local_leg_declaration`'s.
+-Executable, class V0, measured in the default cargo lane over the shipped
++Executable, class V0, measured in the default Bazel lane (`bazel test //...`) over the shipped
+```
 
 The argument. THM-0076 says that what the shipped client proxy returns as a verified answer
 was verified against the request that proxy sent, under a signer its trust configuration
@@ -211,9 +250,9 @@ scope already drew it ("Raw FFI and low-level reconstruction remain outside the 
 So the composition establishes the same conclusion it did when you ratified it.
 
 Why the root consequence and product behavior are unchanged. THM-0076's text is
-byte-identical, so the promise is. The only source change in this link is a doc comment; the
-earlier link changed none either. Product behavior is unchanged because no executable line
-moved.
+byte-identical, so the promise is. Product behavior is unchanged because neither the sealing link nor this
+one moved a production line: this link's only source change is the doc comment in section 2,
+and the sealing link was registry wording.
 
 What this argument does not establish: it is an argument from the text and the tests named
 here. Local unit evidence prints UNKNOWN for want of attestations, which is not a measurement;
