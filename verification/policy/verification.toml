@@ -4273,6 +4273,11 @@ tested_symbols = [
   "//mcp-re-client:mcp_re_client_test#config::local::tests::the_two_bounds_have_defaults_and_the_security_switch_does_not_default_open",
   "//mcp-re-client:mcp_re_client_test#config::local::tests::a_misspelled_field_is_a_startup_failure_not_a_silent_default",
   "//mcp-re-client:mcp_re_client_test#config::local::tests::a_bind_that_is_not_an_address_is_refused_by_the_type",
+  # The `trust.reload_secs` bound THM-0127's scope points at: enforced in
+  # `config/validation.rs`, so pinned there at both edges. The wider refusal test in
+  # `config/mod.rs` stays `client.deployment_config`'s; it does not catch a bound moved by one.
+  "//mcp-re-client:mcp_re_client_test#config::validation::tests::the_reload_cadence_bound_is_exactly_one_to_the_documented_maximum",
+  "//mcp-re-client:mcp_re_client_test#config::validation::tests::the_documented_maximum_is_one_hour",
 ]
 
 # 2. WHERE the listener is exposed, decided once. The refusal lives in the constructor rather
