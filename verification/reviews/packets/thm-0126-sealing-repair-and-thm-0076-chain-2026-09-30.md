@@ -171,3 +171,101 @@ not among the five, is not enforced by this PR's gate, and is pre-existing debt.
 question for THM-0076 is whether its dependency-only re-affirmation still holds over these
 five movements, every one of which is an exclusion pointer or lane sentence; no premise's
 proposition changed.
+
+## 6. THM-0084, the premise outside the five
+
+THM-0084 has `depends_on = []`, so its fingerprint is its own claim digest plus its review
+requirement and nothing upstream can move it.
+
+| | fingerprint | claim digest |
+|---|---|---|
+| reviewed (owner ruling 2026-08-31, `verification/reviews/specification/THM-0084.json`) | `sha256:235ff94049d233ca2bfd995b24a3219d23ab2a1b720469fa90a8dd8c5c163d4c` | `sha256:6e2056c9c9a85ee5c42e9cd7c60711115968db07dcd422c9a98109c6d3ac9900` |
+| current | `sha256:a0f65e42f8df1cf907dd6beb1c7c9b80f844373b53329f334717402a9ee74b4b` | `sha256:1e8ec26fd8da705b50acf94d44ef1f28e287f8886deb1f2c24d53ab497d32fad` |
+
+The reviewed text is the registry entry at `17dab8a0`, the last revision whose claim digest
+reproduces `6e2056c9…`. The one change landed in `28394a14` (#998, 2026-09-18). Statement and
+security consequence are byte-identical. The whole difference is one scope line:
+
+```diff
+-them takes the PAIRING as given, and `client.response_acceptance`'s scope says so explicitly —
++them takes the PAIRING as given, and `client.response_binding_disposition`'s scope says so explicitly —
+```
+
+No claim-correction record covers it (`verification/claim-corrections/` has no THM-0084 entry),
+so THM-0084 is `STALE_CLAIM` and THM-0076's closure carries that. Nothing in this PR's gate
+enforces it: it is pre-existing debt that THM-0076's review now has to face.
+
+### Supporting evidence, measured on the merged head
+
+`client.proxy_request_correspondence` (class V0, tested), four tests, all Bazel-labelled. I ran
+`//mcp-re-client-proxy:mcp_re_client_proxy_test` filtered to them on this head: 4 passed.
+
+- `the_proxy_sends_the_one_request_it_signed`
+- `both_verification_paths_take_the_signed_request_owner`
+- `the_shipped_path_reconstructs_no_second_request`
+- `the_correspondence_rules_would_catch_each_regression`
+
+These are source-structure controls plus a regression self-check, which THM-0084's own scope
+already says ("Evidence, not unconstructibility"). They do not and cannot prove the two halves
+are the same value.
+
+### An inaccuracy the rename exposed
+
+The scope sentence says the named unit's **scope** "says so explicitly", that pairing an
+expectation with the request it describes is the caller's obligation. Units carry a
+description, not a scope. Neither `client.response_binding_disposition`'s description (what
+a preflight receipt must commit to, and that an unbound response is never a success) nor the
+pre-split `client.response_acceptance`'s (checked at `a3579c3b`) states a pairing obligation.
+So the sentence was loose when it was approved and the rename carried the looseness over.
+The place the boundary is stated in code is `ResponseExpectation::new` in
+`mcp-re-client-core/src/response_expectation.rs`: "For the FFI bindings, which rebuild the
+request from scalars and have no `SignedRequest` to take", with `for_signed` as the preferred
+constructor. THM-0084's own following paragraph also states the boundary.
+
+This changes no proposition. It is the same class of defect as the THM-0126 sealing sentence,
+which you ruled should be repaired rather than approved.
+
+## 7. The five moved premises and the root's conclusion
+
+THM-0076's closure is 16 premises; 11 are byte-identical to the reviewed record.
+
+| premise | what moved | proposition changed? | current review state |
+|---|---|---|---|
+| THM-0084 | one scope pointer (section 6) | no | STALE_CLAIM, unreviewed since 2026-08-31 |
+| THM-0120 | "cargo lane" to "Bazel lane (`bazel test //...`)" | no | REVIEWED (correction chain) |
+| THM-0121 | same lane wording | no | REVIEWED (correction chain) |
+| THM-0126 | scope pointers, lane wording, the sealing repair | no | owner-reviewed 2026-09-30 at `465251d6…` |
+| THM-0127 | `client.config_lattice` pointer, lane wording | no | owner-reviewed 2026-09-30 at `41d895d9…` |
+
+Supporting units for THM-0120, 0121, 0126 and 0127 are `client.anchor_refresh` (8 tests),
+`client.manifest_floor` (18), `client.verified_outcome` (5) and `client.serving_lifetime` (2);
+all are Bazel-labelled, so the lane wording they now carry is true of how they run.
+
+**Does the composition still establish THM-0076's conclusion?** On what I can measure, yes,
+with one caveat. The root is the conjunction of the verifier premises (THM-0057 to 0061,
+unchanged), the pairing (THM-0084), the outcome classification (THM-0126) and the maintained
+trust configuration (THM-0127, THM-0120, THM-0121). No premise's statement or security
+consequence moved. Every movement is a pointer, a lane sentence, or (THM-0126) an exclusion
+made accurate. The premises the review of 2026-09-07 ratified as composition edges,
+THM-0126 and THM-0127, are now owner-reviewed at their current text. The caveat is THM-0084:
+the root leans on it for the pairing, and its reviewed text has a loose pointer that needs a
+decision, below.
+
+Local unit-evidence states print UNKNOWN because this workstation holds no attestations; the
+fresh evidence is the CI run, not that printout.
+
+## 8. Decision requested for THM-0076
+
+The correction-chain gate passing is not specification approval and I have recorded none.
+
+1. **THM-0084 pointer.** Either (a) approve its current text as is, or (b) repair the sentence
+   to what is true. Proposed text for (b), replacing the clause:
+   "...every one of them takes the PAIRING as given: pairing an expectation with the request
+   it describes is the caller's obligation, stated on `ResponseExpectation::new`." Option (b)
+   moves THM-0084's fingerprint and, through it, THM-0076's, so it needs one more correction
+   link (`adr-068-phase1`, same shape as section 3) and the new fingerprints returned to you.
+   I recommend (b), for the reason you gave about THM-0126. I have not applied it.
+2. **THM-0084 review** at its resulting fingerprint.
+3. **THM-0076 review** as a dependency-only re-affirmation over the five movements, recorded
+   only after 1 and 2. Its current fingerprint is
+   `sha256:ab7915a1b9965a67fb7e4bfdeb6b6445537a0191339c17a8b67201f3f59bc442`.
