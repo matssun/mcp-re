@@ -3156,7 +3156,7 @@ producer in the workspace — and NOT of the type. `VerifiedDelegatedResponse` a
 verified-response types carry `pub` fields deliberately, for the prover, and
 `VerifiedMcpResponse::from_block` says so in its own words: a convenience, not a seal. A caller
 outside this workspace could assemble one, and nothing here claims otherwise. Sealing that
-chain is `client.response_signer_authorization`'s question, not this claim's.
+chain has no owning verification unit today and is not this claim's.
 """
 owner = "client.verified_outcome"
 review_requirement = "Owner security-specification review"

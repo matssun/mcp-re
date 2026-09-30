@@ -17,7 +17,7 @@ crate lock, the tests or this packet, and were regenerated on this tree.
 | THM-0082 | `sha256:f85bc41b1ad4178e4842d196a2429e15e7147289f1cdedfd44054ea460e223be` | `sha256:807d622eec73915f60ab7dd4663f8babbb53d197413ce2fdcdf739f8859d8fca` |
 | THM-0119 | `sha256:e1b6ece8eebddbe10e1ab34b0394910a7438ce11c0c917c4fa0f0a25818a26eb` | `sha256:12aa5efb105e02eda8fceef30e1d60c20cfb6efb31525db16737731f4abb6d60` (after the pointer repair, section 4) |
 | THM-0123 | `sha256:d49622174412a7122cc6758effe64e8862e9cbe47e733382415d6c2b5bf244ce` | `sha256:1c134a5776c22b04caa0ecd8fe53f9907427a6c8efa273be8187677812690f05` |
-| THM-0126 | `sha256:732c25f445a1c6fc07cb516f1d6a4e96e4ca39acb66eb4dc939a65a8eadcddf9` | `sha256:18e4a265ba7b324faeb00842b4432c23d723cc1a368064f1053e5c09a9e452b6` |
+| THM-0126 | `sha256:732c25f445a1c6fc07cb516f1d6a4e96e4ca39acb66eb4dc939a65a8eadcddf9` | `sha256:465251d621d39408d78111762bbb166cfa187ad95ce3fac919ea652eed42f0de` (after the sealing repair, section 6) |
 | THM-0127 | `sha256:420a9a9c8f06ea71d6c8638f10ed64d1e5088a433227cfa17b921c6854ecd3e8` | `sha256:41d895d991ca84466ae5b3bacc78405d98a2a18d5602e24046d2117b64d4763b` |
 
 "Reproduced": recomputing `fingerprint_theorem` over `theorems.toml` at a historical commit
@@ -42,8 +42,10 @@ for the other four.
 
 5. **THM-0119's pointer was repaired** (owner's ruling): the unit list is dropped and the
    theorem references kept. Its fingerprint moved; section 4.
-6. **The THM-0126 wording repair has a cost the fingerprint hides.** It breaks THM-0076's
-   claim-correction chain, and THM-0076 is a published root. Held, not applied; section 6.
+6. **THM-0126's sealing sentence was repaired** under the owner's 2026-09-30 ruling. The
+   repair moves the premise digest of THM-0076, a published root, so a third link was added to
+   its correction chain. Section 6 and
+   `thm-0126-sealing-repair-and-thm-0076-chain-2026-09-30.md`.
 
 ## 3. THM-0082 — the serving path signs under the credential source materialization produced
 
@@ -239,35 +241,22 @@ text, so approving THM-0126 and THM-0127 does not cascade again. The first repla
 is accurate: THM-0076's `supported_by` is exactly `client.response_signer_authorization` and
 `client.response_binding_disposition`.
 
-**The second replaced sentence is not supported by evidence.** It says sealing the
-verified-response chain is `client.response_signer_authorization`'s question. That unit's
-description and 15 tests cover which signer a client may accept (chain to a root, pin,
-revocation, expiry). No unit description and no theorem other than THM-0126 mentions
-`VerifiedDelegatedResponse`, and the struct still has `pub` fields (`response.rs:90`). The
-replaced unit's sealing question therefore has no owner today. `28394a14` did not choose this
-replacement by controls, as it did for THM-0130. A wording such as "Sealing that chain has no
-owning unit today and is not this claim's" would be accurate, but it would change the claim
-and therefore the fingerprint, so it must be decided **before** approval, not after.
+**The second replaced sentence was not supported by evidence, and has been repaired.** It
+said sealing the verified-response chain is `client.response_signer_authorization`'s question.
+That unit's description and 15 tests cover which signer a client may accept. No unit and no
+theorem other than THM-0126 mentions `VerifiedDelegatedResponse`, whose fields are still `pub`
+(`response.rs:90`). The pre-split unit `client.response_acceptance` did not cover sealing
+either, so the approved sentence was unsupported from the start; the split did not lose an
+owner. Under the owner's ruling the sentence now reads "Sealing that chain has no owning
+verification unit today and is not this claim's."
 
-### Proposed repair, and what it costs (held, not applied)
-
-Replacing the second sentence with "Sealing that chain has no owning verification unit today
-and is not this claim's." moves THM-0126's fingerprint to
-`sha256:465251d621d39408d78111762bbb166cfa187ad95ce3fac919ea652eed42f0de`. It also moves
-THM-0076's premise digest: THM-0076 is a published root and depends on THM-0126, and it
-publishes through a recorded claim-correction chain. Measured with the repair applied, the
-gate stops at:
-
-> claim-correction record(s) for THM-0076 authorize no live transition ... the correction
-> chain ends at e684fc966ea8ddba and the tree is at ab7915a1b9965a67: the claim moved again
-> after the last recorded correction.
-
-(The gate reports the first failure, so roots above THM-0076 may follow.) Carrying it needs a
-new correction link on a root, which is a recorded claim correction under the owner's
-Phase-1 authority, not a review record. No ruling covers it today: the 2026-09-29 ruling is
-limited to lane wording. So the options are (a) apply the wording and record that link under
-a ruling you give, (b) approve THM-0126 as written with this inaccuracy stated here, (c) land
-the wording as a follow-up after #1074. The edit is not on the branch.
+Resulting fingerprint `sha256:465251d621d39408d78111762bbb166cfa187ad95ce3fac919ea652eed42f0de`.
+The repair moves THM-0076's premise digest (THM-0126 `8b15a618…` to `3b3cd184…`), so a third
+correction-chain link was added for THM-0076 (`e684fc96…` to `ab7915a1…`), existing history
+untouched, THM-0076's own claim digest identical. THM-0076 needs no text change, and its
+specification review remains the owner's. All of that, with THM-0076's review evidence, is in
+`thm-0126-sealing-repair-and-thm-0076-chain-2026-09-30.md`. The correction record does not
+substitute for that review.
 
 **Evidence run:** `client.verified_outcome` 5/5, `client.execution_contract` 8/8,
 `client.response_signer_authorization` 15/15, `client.response_binding_disposition` 5/5.
@@ -358,7 +347,7 @@ probe in `mutation-probes.toml` was not added; the table above is a manual check
 | THM-0082 | the claim as written, resting on THM-0116 and its closure | whether to accept the conservative THM-0089 inclusion or split THM-0116; the issuance-path re-verification is claimed by nothing |
 | THM-0119 | the seam claim and a theorem-only exclusion pointer, at the repaired fingerprint | none |
 | THM-0123 | the claim, independent of THM-0091 | none specific to the claim |
-| THM-0126 | the claim and its THM-0061 premise | the "sealing" sentence: repair it (needs a new correction link on root THM-0076, your ruling) or approve as written with the inaccuracy stated; decide before approving |
+| THM-0126 | the repaired claim and its THM-0061 premise | none specific; THM-0076's own review is separate and follows this one |
 | THM-0127 | the claim, its premises as they now read | none specific; ordering and ownership of the refresher are now pinned by a structural control as well as the behavioural one; the bound it points at is test-backed |
 
 ## 9. Noted, not changed, not in scope
