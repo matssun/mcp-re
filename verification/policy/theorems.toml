@@ -6903,8 +6903,7 @@ key id — which is a key confusion at the point the whole pipeline decides who 
 direct_consequence_severity = "medium"
 scope = """
 THE SEAM AND THE REFERENCE IMPLEMENTATION. Nothing here is about the runtime trust plane's
-tiers, its caching windows, or its revocation channel — those are THM-0097 through THM-0100's,
-over `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`.
+tiers, its caching windows, or its revocation channel — those are THM-0097 through THM-0100's.
 
 NOT A CLAIM ABOUT WHICH KEYS A DEPLOYMENT TRUSTS. The resolver answers from what it was given;
 where the bindings came from and whether they were authorized is the trust document's
