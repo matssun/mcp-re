@@ -5,7 +5,7 @@ THM-0126 and THM-0127. **Nothing here is an approval. No review record and no cl
 correction was written.** A fingerprint identifies what was reviewed; it does not establish
 that the specification is correct, and this packet is the material for deciding that.
 
-Tree: branch `build/bazel-only-execution` with `origin/main` (`ab5af549`) merged. Fingerprints
+Tree: branch `build/bazel-only-execution` with `origin/main` (`ab5af549`) merged. THM-0119's text was edited after the first version of this packet (section 4), so its current fingerprint differs from the one first circulated (`99320e22…`). Fingerprints
 cover `statement + security_consequence + scope`, each premise's claim digest, the theorem id
 and its review requirement (`tools/verification/_fingerprint.py`), so they do not depend on the
 crate lock, the tests or this packet, and were regenerated on this tree.
@@ -15,7 +15,7 @@ crate lock, the tests or this packet, and were regenerated on this tree.
 | theorem | reviewed fingerprint (recovered, reproduced) | current fingerprint |
 |---|---|---|
 | THM-0082 | `sha256:f85bc41b1ad4178e4842d196a2429e15e7147289f1cdedfd44054ea460e223be` | `sha256:807d622eec73915f60ab7dd4663f8babbb53d197413ce2fdcdf739f8859d8fca` |
-| THM-0119 | `sha256:e1b6ece8eebddbe10e1ab34b0394910a7438ce11c0c917c4fa0f0a25818a26eb` | `sha256:99320e222d165e33ab41be091e81262175c7e8c02ed7e535059e26bd8d31e675` |
+| THM-0119 | `sha256:e1b6ece8eebddbe10e1ab34b0394910a7438ce11c0c917c4fa0f0a25818a26eb` | `sha256:12aa5efb105e02eda8fceef30e1d60c20cfb6efb31525db16737731f4abb6d60` (after the pointer repair, section 4) |
 | THM-0123 | `sha256:d49622174412a7122cc6758effe64e8862e9cbe47e733382415d6c2b5bf244ce` | `sha256:1c134a5776c22b04caa0ecd8fe53f9907427a6c8efa273be8187677812690f05` |
 | THM-0126 | `sha256:732c25f445a1c6fc07cb516f1d6a4e96e4ca39acb66eb4dc939a65a8eadcddf9` | `sha256:18e4a265ba7b324faeb00842b4432c23d723cc1a368064f1053e5c09a9e452b6` |
 | THM-0127 | `sha256:420a9a9c8f06ea71d6c8638f10ed64d1e5088a433227cfa17b921c6854ecd3e8` | `sha256:41d895d991ca84466ae5b3bacc78405d98a2a18d5602e24046d2117b64d4763b` |
@@ -39,6 +39,11 @@ for the other four.
    at, and it checks only 0 and 86400 plus the maximum, so a bound moved by one survives it.
 4. **Only one commit on `origin/main` moved these scopes after approval: `28394a14`.** The
    Cargo-to-Bazel wording is this branch's own commit (`77be06f2`).
+
+5. **THM-0119's pointer was repaired** (owner's ruling): the unit list is dropped and the
+   theorem references kept. Its fingerprint moved; section 4.
+6. **The THM-0126 wording repair has a cost the fingerprint hides.** It breaks THM-0076's
+   claim-correction chain, and THM-0076 is a published root. Held, not applied; section 6.
 
 ## 3. THM-0082 — the serving path signs under the credential source materialization produced
 
@@ -149,8 +154,7 @@ security_consequence are byte-identical to the approved text. Current text in fu
 >
 > **scope.** THE SEAM AND THE REFERENCE IMPLEMENTATION. Nothing here is about the runtime
 > trust plane's tiers, its caching windows, or its revocation channel — those are THM-0097
-> through THM-0100's, over `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`.
-> NOT A CLAIM ABOUT WHICH KEYS A DEPLOYMENT TRUSTS. The resolver answers from what it was
+> through THM-0100's. NOT A CLAIM ABOUT WHICH KEYS A DEPLOYMENT TRUSTS. The resolver answers from what it was
 > given; where the bindings came from and whether they were authorized is the trust
 > document's authority. Executable, class V0, measured in the default Bazel lane
 > (`bazel test //...`).
@@ -164,17 +168,23 @@ The complete difference from the approved text, in two separate parts:
 # this branch, 77be06f2 (Cargo to Bazel wording)
 -Executable, class V0, measured in the default cargo lane.
 +Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
+# this branch, pointer repair (after the review of this packet)
+-over `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`.
++.
 ```
+Net against the approved text: `over proxy.trust_plane_runtime.` is gone and the sentence now
+ends at "THM-0097 through THM-0100's.", and the lane sentence names Bazel.
 
 **Evidence.** The claim is about the seam, which is unchanged: `core.trust_resolver_seam`'s
 seven registered tests (binding and outage mapping, exact error mapping, injectivity) ran and
 passed. The renamed sentence is an exclusion, so it adds nothing the claim depends on.
 
-**One imprecision in the pointer.** THM-0097 through THM-0100 have four theorems, but the
-sentence names two units. THM-0097's owner is `proxy.trust_resolution_window`; THM-0100's is
-`proxy.trust_reload_cadence`. THM-0098's owner is `proxy.trust_document_interpretation`, and
-THM-0099's only unit is `proxy.serving_trust_seam`, neither named. It does not widen THM-0119,
-because it only says what the claim excludes. **No other gap found.**
+**The pointer imprecision is repaired.** THM-0097 through THM-0100 have four theorems behind
+seven `supported_by` units, and the sentence named two. Listing all of them would restate a
+registry in prose, which is how the dead name `proxy.trust_plane_runtime` got stranded by the
+#996 split. The sentence now keeps only the theorem references, so it cannot go stale when a
+unit is split again. The exclusion is no narrower or wider than before. With only this repair
+applied the claim-surface gate fails on exactly the same five theorems. **No other gap found.**
 
 ## 5. THM-0123 — an admitted local request cannot leak its slot, be guessed onto a route, or render a pause as a finished call
 
@@ -239,6 +249,26 @@ replacement by controls, as it did for THM-0130. A wording such as "Sealing that
 owning unit today and is not this claim's" would be accurate, but it would change the claim
 and therefore the fingerprint, so it must be decided **before** approval, not after.
 
+### Proposed repair, and what it costs (held, not applied)
+
+Replacing the second sentence with "Sealing that chain has no owning verification unit today
+and is not this claim's." moves THM-0126's fingerprint to
+`sha256:465251d621d39408d78111762bbb166cfa187ad95ce3fac919ea652eed42f0de`. It also moves
+THM-0076's premise digest: THM-0076 is a published root and depends on THM-0126, and it
+publishes through a recorded claim-correction chain. Measured with the repair applied, the
+gate stops at:
+
+> claim-correction record(s) for THM-0076 authorize no live transition ... the correction
+> chain ends at e684fc966ea8ddba and the tree is at ab7915a1b9965a67: the claim moved again
+> after the last recorded correction.
+
+(The gate reports the first failure, so roots above THM-0076 may follow.) Carrying it needs a
+new correction link on a root, which is a recorded claim correction under the owner's
+Phase-1 authority, not a review record. No ruling covers it today: the 2026-09-29 ruling is
+limited to lane wording. So the options are (a) apply the wording and record that link under
+a ruling you give, (b) approve THM-0126 as written with this inaccuracy stated here, (c) land
+the wording as a follow-up after #1074. The edit is not on the branch.
+
 **Evidence run:** `client.verified_outcome` 5/5, `client.execution_contract` 8/8,
 `client.response_signer_authorization` 15/15, `client.response_binding_disposition` 5/5.
 
@@ -269,14 +299,36 @@ predates them.
 
 | claimed | kind | evidence | result on this tree |
 |---|---|---|---|
-| refresher started before the listener is served and held while serving | claim | `client.serving_lifetime`: `startup::tests::the_serving_path_starts_the_anchor_refresher_and_anchors_are_withdrawn_on_expiry` drives `serve_until_shutdown` | ran ok (1/1) |
+| refresher started before the listener is served and held while serving | claim | `client.serving_lifetime`: the behavioural `startup::tests::the_serving_path_starts_the_anchor_refresher_and_anchors_are_withdrawn_on_expiry` (runs while serving) and the structural `startup::tests::the_refresher_is_started_before_the_accept_loop_and_held_by_a_named_binding` (order and owning binding) | ran ok (2/2) |
 | anchors re-read on the configured cadence, withdrawn past `expires_at` with no newer document | consequence, via THM-0120 | `client.anchor_refresh` | ran ok (8/8) |
 | over the shipped `serve_until_shutdown` itself | scope | same test calls `serve_until_shutdown` directly | ran ok |
 | no freshness number is asserted; no availability claim | disclaimers | none needed | n/a |
 | "the configuration boundary bounds `trust.reload_secs`, and that bound is `client.local_leg_declaration`'s" | pointer the claim does not rely on | `validation.rs:67` (`1..=MAX_MANIFEST_RELOAD_SECS`, 3600) | see below |
 
-The test for the first row shows the refresher runs while serving (anchors are withdrawn after
-expiry). It does not separately assert the ordering "before the listener is served".
+### "Before the listener is served": control flow, and the control added
+
+`serve_until_shutdown` (`startup.rs:131`) begins with `let _refresher =
+AnchorRefresher::start(...)`; the only later statement that serves is the blocking
+`mcp_re_client::serve::serve(listener, ...)`, and nothing returns early between them. The
+handle is a NAMED binding, so it lives to the end of the function, after `serve` returns;
+`let _ =` would drop it at once. The listener is already bound by the caller, so the kernel
+queues connections before the start, but nothing is accepted until `serve`.
+
+The behavioural test alone could not distinguish "started first" from "started while
+serving", and did not see which binding holds the handle, so a structural control reads the
+function and asserts the start precedes the accept loop and the binding is named. It is
+evidence, not unconstructibility. Mutation-checked on `startup.rs`:
+
+| mutant | structural control | behavioural control |
+|---|---|---|
+| handle dropped at once (`let _ =`) | red | red |
+| start moved after the accept loop | red | red |
+| start removed | red | red |
+
+The behavioural control already caught all three (a start after the blocking `serve` never
+runs while serving), so the new one adds an exact failure message and independence from
+timing, not extra kill power. What remains unpinned: that no new early-return path is
+inserted between the two statements, which is a review matter.
 
 ### The reload_secs bound: test added and run
 
@@ -304,10 +356,10 @@ probe in `mutation-probes.toml` was not added; the table above is a manual check
 | theorem | approval attests | still open |
 |---|---|---|
 | THM-0082 | the claim as written, resting on THM-0116 and its closure | whether to accept the conservative THM-0089 inclusion or split THM-0116; the issuance-path re-verification is claimed by nothing |
-| THM-0119 | the seam claim and an exclusion pointer | pointer names two of the units behind THM-0097..0100 (optional tightening) |
+| THM-0119 | the seam claim and a theorem-only exclusion pointer, at the repaired fingerprint | none |
 | THM-0123 | the claim, independent of THM-0091 | none specific to the claim |
-| THM-0126 | the claim and its THM-0061 premise | wording of the "sealing" sentence, to be decided before approving |
-| THM-0127 | the claim, its premises as they now read | none specific; the bound it points at is now test-backed |
+| THM-0126 | the claim and its THM-0061 premise | the "sealing" sentence: repair it (needs a new correction link on root THM-0076, your ruling) or approve as written with the inaccuracy stated; decide before approving |
+| THM-0127 | the claim, its premises as they now read | none specific; ordering and ownership of the refresher are now pinned by a structural control as well as the behavioural one; the bound it points at is test-backed |
 
 ## 9. Noted, not changed, not in scope
 
