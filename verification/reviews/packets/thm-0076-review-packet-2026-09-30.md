@@ -26,20 +26,33 @@ Not before this change. `ResponseExpectation::new` documented only who it is for
 bindings, which rebuild the request from scalars and have no `SignedRequest` to take.
 In-process callers hold that owner and should take it: see `Self::for_signed`"). It did not
 state the obligation, so the ruled sentence would have pointed at documentation that did not
-say what the sentence claims. I added a doc paragraph to it, the only source change
-(`mcp-re-client-core/src/response_expectation.rs`, comment only):
+say what the sentence claims. The owner authorized this contract clarification on 2026-09-30.
+It is the only source change, comment only, in
+`mcp-re-client-core/src/response_expectation.rs`:
 
-> Nothing here can check that `request` is the request that was actually sent: the pairing of
-> an expectation with the request it describes is ASSUMED, and it is the caller's obligation.
-> It is established only where one owner both sends the request and derives the expectation
-> from it, which `Self::for_signed` makes possible and the shipped `ClientProxy` path does.
+```diff
+@@ impl ResponseExpectation, pub fn new
+     /// [`SignedRequest`] to take. In-process callers hold that owner and should take it:
+     /// see [`Self::for_signed`].
++    ///
++    /// Nothing here can check that `request` is the request that was actually sent: the
++    /// pairing of an expectation with the request it describes is ASSUMED, and it is the
++    /// caller's obligation. [`Self::for_signed`] takes the owner of the sent request, so a
++    /// caller that holds it does not have to supply that pairing by hand.
+```
 
-It keeps assuming and establishing apart: `new` assumes; `for_signed` plus the shipped path
-establishes, and THM-0084 measures that on the shipped path only. Raw FFI stays outside. This
-edit is beyond the literal ruling, which authorized the theorem wording; I made it because the
-sentence is false without it. If you would rather not touch source, the alternative is wording
-that names the struct-level documentation instead, and I will revert this.
+The documentation states the assumption and whose obligation it is, and says nothing more. An
+earlier draft also said the pairing is "established only" where one owner sends the request
+and derives the expectation; the owner ruled that out, since documentation is not proof of
+that correspondence. What the shipped `ClientProxy` path does is THM-0084's claim, and it is
+supported only by the tests named in section 3, not by this comment.
 `bazel test //mcp-re-client-core:mcp_re_client_core_test` passes on the edited tree.
+
+**The theorem fingerprint does not cover source documentation.** It digests a theorem's
+statement, consequence, scope, premise-closure claim digests, id and review requirement. This
+comment changes none of those, so no fingerprint in this packet moved for it. An unchanged
+fingerprint therefore does not show that the supporting evidence is unchanged; that is
+established by the tests in section 3 and by CI on the final head, not by the digest.
 
 ## 3. THM-0084, full repaired text
 
@@ -117,7 +130,7 @@ labelled, run on this branch and passing: `the_proxy_sends_the_one_request_it_si
 `the_correspondence_rules_would_catch_each_regression`. Evidence ids
 `test://client/proxy/request_correspondence` and `mutation://client/proxy/request_correspondence`.
 These are source-structure controls; the scope says so ("Evidence, not unconstructibility").
-Constructor documentation: section 2.
+Constructor documentation: section 2 (a clarification of the assumption, not evidence of correspondence).
 
 ## 4. THM-0076, full current text
 
