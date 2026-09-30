@@ -9886,6 +9886,7 @@ evidence = [
 # clock having moved past `expires_at`.
 tested_symbols = [
   "//mcp-re-client:mcp_re_client_cli_test#startup::tests::the_serving_path_starts_the_anchor_refresher_and_anchors_are_withdrawn_on_expiry",
+  "//mcp-re-client:mcp_re_client_cli_test#startup::tests::the_refresher_is_started_before_the_accept_loop_and_held_by_a_named_binding",
 ]
 
 # The durable rollback floor the client's anchor refresh rests on. Its own unit and not part

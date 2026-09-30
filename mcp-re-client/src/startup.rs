@@ -399,4 +399,40 @@ mod tests {
         );
         SHUTDOWN.store(false, Ordering::SeqCst);
     }
+
+    /// THM-0127 says the refresher starts BEFORE the local listener is served and is held for
+    /// as long as it serves. The control above shows it runs while serving; it cannot tell
+    /// "started first" from "started while serving", and it cannot see WHICH binding holds
+    /// it. Both are facts about the statements of `serve_until_shutdown`, so they are read
+    /// from its source: the start precedes the accept loop, and the handle is a NAMED binding
+    /// (`let _ = ..` would drop it, and stop the refresher, on the spot).
+    ///
+    /// Evidence, not unconstructibility: it reads this file, the shape the composition
+    /// controls elsewhere use, and moving the start into another function would need this
+    /// control to follow it.
+    #[test]
+    fn the_refresher_is_started_before_the_accept_loop_and_held_by_a_named_binding() {
+        let source = include_str!("startup.rs");
+        let from = source
+            .find("pub(crate) fn serve_until_shutdown(")
+            .expect("the serving function is in this file");
+        let rest = source.get(from..).expect("a slice from a found offset");
+        let body = rest
+            .get(..rest.find("\n}\n").expect("the function ends at column 0"))
+            .expect("a slice up to a found offset");
+        let start = body
+            .find("let _refresher = AnchorRefresher::start(")
+            .expect("the refresher is started and held by a named binding");
+        let accept_loop = body
+            .find("mcp_re_client::serve::serve(")
+            .expect("the function serves the listener");
+        assert!(
+            start < accept_loop,
+            "the refresher must be started before the accept loop begins"
+        );
+        assert!(
+            !body.contains("let _ = AnchorRefresher::start("),
+            "an unnamed binding drops the refresher immediately"
+        );
+    }
 }
