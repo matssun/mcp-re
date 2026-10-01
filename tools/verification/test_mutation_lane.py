@@ -705,24 +705,23 @@ def test_an_absent_matrix_and_a_stale_artefact_are_different_refusals():
     assert "UNPREPARED" in guard
 
 
-def test_a_needed_artefact_is_looked_for_where_each_preparation_leaves_it():
-    """The Python native module has TWO spellings, and the lane refused CI over knowing one.
+def test_a_needed_artefact_is_looked_for_where_the_preparation_leaves_it():
+    """The Python native module is looked for under the name the Bazel wheel gives it.
 
-    `maturin develop` leaves `_core.abi3.so` beside the package in the source tree;
     `prepare_python_matrix.sh` -- the form the verification workflow runs, and the one that
-    pins an environment per supported interpreter -- builds a WHEEL and installs it, so the
-    tree has no `.so` at all. A lane that knew only the first spelling reported a correctly
-    prepared runner as an unbuilt environment and failed every Python probe on it.
+    pins an environment per supported interpreter -- installs the Bazel-built WHEEL, whose
+    extension is `mcp_re_sdk/_core.so`, so the tree has no `.so` at all. A lane that looked
+    for another spelling reported a correctly prepared runner as an unbuilt environment and
+    failed every Python probe on it; that happened on the first change to a Python unit's
+    inputs after the migration, because nothing exercised it before.
 
-    Asked over a CONSTRUCTED workspace rather than this one, because the two layouts are the
-    point and no single environment has both -- and the fast job that runs these self-tests
-    builds no SDK matrix at all, so a control needing either spelling present would fail
-    there for the environment rather than for the rule.
+    Asked over a CONSTRUCTED workspace rather than this one: the fast job that runs these
+    self-tests builds no SDK matrix at all, so a control needing the module present would
+    fail there for the environment rather than for the rule.
     """
-    wanted = "python/mcp_re_sdk/_core.abi3.so"
+    wanted = "python/mcp_re_sdk/_core.so"
     candidates = lane._SCRATCH_NEEDS[lane.PYTHON][wanted]
-    assert candidates[0] == wanted, candidates
-    assert any("site-packages" in spelling for spelling in candidates[1:]), candidates
+    assert all("site-packages" in spelling for spelling in candidates), candidates
 
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
@@ -731,17 +730,9 @@ def test_a_needed_artefact_is_looked_for_where_each_preparation_leaves_it():
         # The installed spelling ALONE resolves -- the shape a prepared runner has.
         installed = root / ".venv-cp314/lib/python3.14/site-packages/mcp_re_sdk"
         installed.mkdir(parents=True)
-        (installed / "_core.abi3.so").write_bytes(b"")
+        (installed / "_core.so").write_bytes(b"")
         from_wheel = lane._first_present(root, wanted, candidates)
         assert [relative for _s, relative in from_wheel] == [wanted], from_wheel
-
-        # And with both present the source tree wins, so a developer's own build is what a
-        # probe measures against their own edits.
-        tree = root / "python/mcp_re_sdk"
-        tree.mkdir(parents=True)
-        (tree / "_core.abi3.so").write_bytes(b"")
-        from_tree = lane._first_present(root, wanted, candidates)
-        assert [source for source, _r in from_tree] == [tree / "_core.abi3.so"], from_tree
 
 
 def test_an_unavailable_probe_is_named_in_the_verdict_line():

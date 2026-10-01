@@ -348,7 +348,7 @@ def probe_runtime(eco, toolchains: dict) -> tuple[str | None, str | None]:
 #:
 #: The scratch tree is a copy of the TRACKED files, which is right for Bazel -- it builds
 #: from source -- and not sufficient for the two SDKs. `sdk/python`'s package imports a
-#: compiled `_core.abi3.so` that `.gitignore` excludes, and `sdk/typescript` cannot run
+#: compiled `_core.so` that `.gitignore` excludes, and `sdk/typescript` cannot run
 #: vitest without `node_modules`. Neither is copied, so a battery in the scratch tree fails
 #: to import before a single control runs.
 #: Both SDKs are Rust extensions with a thin language-native wrapper, so both need their
@@ -356,16 +356,15 @@ def probe_runtime(eco, toolchains: dict) -> tuple[str | None, str | None]:
 #: carries the host triple, so it is discovered rather than spelled.
 #:
 #: Each entry maps the path the battery LOOKS FOR to the places the artefact may actually
-#: live, in order. Python needs both: `maturin develop` leaves `_core.abi3.so` beside the
-#: package in the source tree, while `prepare_python_matrix.sh` -- the form CI runs, and the
-#: one that pins an environment per supported interpreter -- builds a WHEEL and installs it,
-#: leaving the tree without a `.so` at all. A lane that knew only the first spelling refused
-#: every Python probe on a correctly prepared runner and called the environment unbuilt.
+#: live, in order. `prepare_python_matrix.sh` builds the Bazel WHEEL and installs it into one
+#: environment per supported interpreter, so the module lives only in those environments'
+#: site-packages and the tree has no `.so` at all. It is `_core.so`, the name the wheel's
+#: extension carries: a lane that looked for another spelling refused every Python probe on a
+#: correctly prepared runner and called the environment unbuilt.
 _SCRATCH_NEEDS = {
     PYTHON: {
-        "python/mcp_re_sdk/_core.abi3.so": (
-            "python/mcp_re_sdk/_core.abi3.so",
-            ".venv-cp*/lib/python*/site-packages/mcp_re_sdk/_core.abi3.so",
+        "python/mcp_re_sdk/_core.so": (
+            ".venv-cp*/lib/python*/site-packages/mcp_re_sdk/_core.so",
         ),
     },
     TYPESCRIPT: {
@@ -421,7 +420,7 @@ def prepare_scratch(
     if eco is PYTHON and probe_path.endswith(".rs"):
         return STALE, (
             f"probe path {probe_path!r} is Rust compiled into the prepared "
-            f"`_core.abi3.so`. The scratch tree carries that binary rather than rebuilding "
+            f"`_core.so`. The scratch tree carries that binary rather than rebuilding "
             f"it, so a weakening of its sources cannot be measured here: the battery would "
             f"run the OLD native code against the NEW declaration"
         )
@@ -539,7 +538,7 @@ def run_battery(
                 # under every weakening, and the lane would report each probe as a control
                 # that refused to go red: not a false green, but permanently unmeasurable.
                 # Putting the scratch package root first makes the import resolve to the
-                # file the probe edited, and the carried `_core.abi3.so` keeps the native
+                # file the probe edited, and the carried `_core.so` keeps the native
                 # submodule importable from there.
                 env = {**env, "PYTHONPATH": str(tree / package / "python")}
         proc = subprocess.run(
