@@ -59,8 +59,8 @@ fn sha256_b64url(bytes: &[u8]) -> String {
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) ==> {
-            &&& binding.artifact_type == ArtifactType::OauthDpop
-            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthDpop
+            &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
         },
 ))]
 pub fn verify_dpop_ath(
@@ -76,8 +76,8 @@ pub fn verify_dpop_ath(
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) ==> {
-            &&& binding.artifact_type == ArtifactType::OauthMtls
-            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthMtls
+            &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
         },
 ))]
 pub fn verify_mtls_x5t_s256(
@@ -94,8 +94,8 @@ pub fn verify_mtls_x5t_s256(
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) ==> {
-            &&& binding.artifact_type == ArtifactType::OauthRar
-            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthRar
+            &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
         },
 ))]
 pub fn verify_rar_details(
@@ -119,11 +119,11 @@ pub fn verify_rar_details(
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) ==> {
-            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
             &&& {
-                ||| binding.artifact_type == ArtifactType::OauthDpop
-                ||| binding.artifact_type == ArtifactType::OauthMtls
-                ||| binding.artifact_type == ArtifactType::OauthRar
+                ||| crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthDpop
+                ||| crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthMtls
+                ||| crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthRar
             }
         },
 ))]
@@ -131,7 +131,7 @@ pub fn verify_artifact_binding(
     binding: &ArtifactBinding,
     credential: &[u8],
 ) -> Result<(), HttpProfileError> {
-    match binding.artifact_type {
+    match binding.artifact_type() {
         ArtifactType::OauthDpop => verify_dpop_ath(binding, credential),
         ArtifactType::OauthMtls => verify_mtls_x5t_s256(binding, credential),
         ArtifactType::OauthRar => verify_rar_details(binding, credential),
@@ -147,24 +147,24 @@ pub fn verify_artifact_binding(
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) ==> {
-            &&& binding.artifact_type == want
-            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& crate::verus_std_specs::artifact_type_of(binding) == want
+            &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
         },
 ))]
 fn expect_type(binding: &ArtifactBinding, want: ArtifactType) -> Result<(), HttpProfileError> {
     // The typed OAuth proofs are always the opaque-digest form (the digest is
     // over the presented credential bytes, not an external reference).
-    if binding.artifact_type != want || binding.binding_type != BindingType::OpaqueDigest {
+    if binding.artifact_type() != want || binding.binding_type() != BindingType::OpaqueDigest {
         return Err(HttpProfileError::ArtifactBindingFailed);
     }
-    binding.validate()
+    Ok(())
 }
 
 // ADR-MCPRE-059 ASM-0018: the digest comparison's MEANING is a statement about SHA-256,
 // so the typed-verifier theorem takes it as an opaque decision and claims nothing here.
 #[cfg_attr(feature = "verify", verus_verify(external_body))]
 fn compare(binding: &ArtifactBinding, credential: &[u8]) -> Result<(), HttpProfileError> {
-    if sha256_b64url(credential) == binding.digest_value {
+    if sha256_b64url(credential) == binding.digest_value() {
         Ok(())
     } else {
         Err(HttpProfileError::ArtifactBindingFailed)
@@ -176,15 +176,7 @@ mod tests {
     use super::*;
 
     fn opaque(artifact_type: ArtifactType, digest_value: &str) -> ArtifactBinding {
-        ArtifactBinding {
-            artifact_type,
-            binding_type: BindingType::OpaqueDigest,
-            digest_alg: "sha256".into(),
-            digest_value: digest_value.into(),
-            authorization_system_id: None,
-            reference_scheme_id: None,
-            reference_value: None,
-        }
+        ArtifactBinding::opaque_from_digest(artifact_type, digest_value).expect("a legal binding")
     }
 
     fn bind_over(artifact_type: ArtifactType, credential: &[u8]) -> ArtifactBinding {

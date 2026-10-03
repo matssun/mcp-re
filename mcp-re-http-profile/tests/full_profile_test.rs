@@ -14,7 +14,6 @@ use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::AudienceTuple;
-use mcp_re_http_profile::BindingType;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
@@ -183,7 +182,10 @@ fn full_response_roundtrip_binds_request_evidence() {
         rv.request_evidence_agreement.bound_request_evidence,
         rv.request_evidence_agreement.body_request_evidence
     );
-    assert_eq!(rv.floor.resolved_server_actor.identity.keyid, "server-key-1");
+    assert_eq!(
+        rv.floor.resolved_server_actor.identity.keyid,
+        "server-key-1"
+    );
 }
 
 // ---------- request-side negatives -----------------------------------------
@@ -268,7 +270,7 @@ fn caller_supplied_material_verifies_non_header_binding() {
     let mtls = ArtifactBinding::opaque_digest(ArtifactType::OauthMtls, cert);
     let block = request_block(vec![mtls]);
     let (req, _ev) = signed_full_request(&block);
-    let material = |b: &ArtifactBinding| match b.artifact_type {
+    let material = |b: &ArtifactBinding| match b.artifact_type() {
         ArtifactType::OauthMtls => Some(cert.to_vec()),
         _ => None,
     };
@@ -297,13 +299,14 @@ fn decision_block(decision: &str) -> HttpRequestEvidenceBlock {
 /// The `reference-digest` LINKAGE form over the same digest bytes as the evidence form.
 fn reference_binding_over(decision: &str) -> ArtifactBinding {
     let opaque = ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, decision.as_bytes());
-    ArtifactBinding {
-        binding_type: BindingType::ReferenceDigest,
-        authorization_system_id: Some("urn:example:pdp".into()),
-        reference_scheme_id: Some("urn:example:scheme".into()),
-        reference_value: Some("decision-1".into()),
-        ..opaque
-    }
+    ArtifactBinding::reference(
+        ArtifactType::PdpDecision,
+        opaque.digest_value(),
+        "urn:example:pdp",
+        "urn:example:scheme",
+        "decision-1",
+    )
+    .expect("a legal reference binding")
 }
 
 #[test]

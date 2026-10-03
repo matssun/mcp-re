@@ -33,7 +33,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0014 | external-boundary | `#[derive(PartialEq)]` on the fieldless enum `AdmissionStatus` is structural equality. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005, THM-0006 |
 | ASM-0015 | _withdrawn_ | RESERVED — withdrawn before use. | _no unit_ | _no theorem_ |
 | ASM-0018 | review-obligation | `sha256_b64url` and `compare` are opaque digest primitives; nothing is claimed about the digest. | http_profile.artifact_typing | THM-0007 |
-| ASM-0019 | review-obligation | `ArtifactBinding::validate` is opaque; the typing theorem holds whatever it returns. | http_profile.artifact_typing | THM-0007 |
 | ASM-0020 | external-boundary | `#[derive(PartialEq)]` on the fieldless enums `ArtifactType` and `BindingType` is structural equality. | http_profile.artifact_typing | THM-0007 |
 | ASM-0021 | review-obligation | `ActorIdentity::actor_id` / `ResolvedActor::actor_id` are opaque; NO ensures. | http_profile.continuation_unbypassability | THM-0009 |
 | ASM-0022 | _withdrawn_ | WITHDRAWN — discharged by unit://http_profile.continuation_binding. | _no unit_ | _no theorem_ |
@@ -76,5 +75,7 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0059 | external-boundary | Every server reachable at `--replay-redis-url`, failover targets and replacements included, runs `maxmemory-policy noeviction` for as long as it serves the replay tier. | proxy.redis_replay_adapter | THM-0106 |
 | ASM-0060 | assumed | For any two distinct (audience, resolved actor, `requestState`) triples this deployment handles, the continuation key derivation produces distinct SHA-256 digest values. | proxy.continuation_correlation_store | THM-0087 |
 | ASM-0061 | external-boundary | The actual divergence between any two replicas' host clocks is at most the bound the deployment declares with `--replay-clock-divergence-secs`. | proxy.etcd_replay_adapter, proxy.redis_replay_adapter | THM-0106, THM-0107 |
+| ASM-0062 | assumed | `ArtifactBinding::artifact_type` and `ArtifactBinding::binding_type` return the value's own private fields. | http_profile.artifact_typing | THM-0007 |
+| ASM-0063 | assumed | `artifact_type_of(binding)` and `binding_type_of(binding)` are the tags a binding carries, as functions of the binding. | http_profile.artifact_typing | THM-0007 |
 
 22 assumption(s) are reached by more than one theorem.

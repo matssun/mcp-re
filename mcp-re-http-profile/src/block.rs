@@ -479,9 +479,6 @@ impl HttpRequestEvidenceBlock {
                 "empty artifact_bindings",
             ));
         }
-        for b in &self.artifact_bindings {
-            b.validate()?;
-        }
         // Admission is both halves or neither. A binding alone commits to a digest
         // of state no one here can see, so it cannot be checked; an assertion alone
         // is an authority's statement bound to no call. Either shape would verify
@@ -534,8 +531,8 @@ impl HttpRequestEvidenceBlock {
             .artifact_bindings
             .iter()
             .filter(|b| {
-                b.artifact_type == ArtifactType::PdpDecision
-                    && b.binding_type == BindingType::OpaqueDigest
+                b.artifact_type() == ArtifactType::PdpDecision
+                    && b.binding_type() == BindingType::OpaqueDigest
             })
             .count();
         match (&self.authorization_decision, applicable) {
@@ -607,15 +604,7 @@ mod tests {
     use crate::ids::PROFILE_TAG;
 
     fn dpop_binding() -> ArtifactBinding {
-        ArtifactBinding {
-            artifact_type: ArtifactType::OauthDpop,
-            binding_type: BindingType::OpaqueDigest,
-            digest_alg: "sha256".into(),
-            digest_value: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
-            authorization_system_id: None,
-            reference_scheme_id: None,
-            reference_value: None,
-        }
+        ArtifactBinding::opaque_from_digest(ArtifactType::OauthDpop, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").expect("a legal binding")
     }
 
     fn block() -> HttpRequestEvidenceBlock {
@@ -674,15 +663,7 @@ mod tests {
     }
 
     fn pdp_reference_binding() -> ArtifactBinding {
-        ArtifactBinding {
-            artifact_type: ArtifactType::PdpDecision,
-            binding_type: BindingType::ReferenceDigest,
-            digest_alg: EVIDENCE_DIGEST_ALG.into(),
-            digest_value: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
-            authorization_system_id: Some("sys".into()),
-            reference_scheme_id: Some("scheme".into()),
-            reference_value: Some("handle".into()),
-        }
+        ArtifactBinding::reference(ArtifactType::PdpDecision, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "sys", "scheme", "handle").expect("a legal binding")
     }
 
     fn pdp_opaque_binding(credential: &[u8]) -> ArtifactBinding {
@@ -981,29 +962,34 @@ mod tests {
 
     #[test]
     fn opaque_binding_with_reference_fields_fails_closed() {
-        let mut b = dpop_binding();
-        b.reference_value = Some("grant-123".into());
-        assert_eq!(
-            b.validate().unwrap_err(),
-            HttpProfileError::MalformedEvidence("opaque binding carries reference fields")
-        );
+        let json = serde_json::json!({
+            "artifact_type": "oauth-dpop",
+            "binding_type": "opaque-digest",
+            "digest_alg": "sha256",
+            "digest_value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "reference_value": "grant-123",
+        });
+        assert!(serde_json::from_value::<ArtifactBinding>(json).is_err());
     }
 
     #[test]
     fn reference_binding_missing_fields_fails_closed() {
-        let b = ArtifactBinding {
-            artifact_type: ArtifactType::OauthRar,
-            binding_type: BindingType::ReferenceDigest,
-            digest_alg: "sha256".into(),
-            digest_value: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
-            authorization_system_id: Some("authz".into()),
-            reference_scheme_id: None,
-            reference_value: None,
-        };
-        assert_eq!(
-            b.validate().unwrap_err(),
-            HttpProfileError::MalformedEvidence("reference binding missing reference fields")
-        );
+        let json = serde_json::json!({
+            "artifact_type": "oauth-rar",
+            "binding_type": "reference-digest",
+            "digest_alg": "sha256",
+            "digest_value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "authorization_system_id": "authz",
+        });
+        assert!(serde_json::from_value::<ArtifactBinding>(json).is_err());
+    }
+
+    /// A request block carrying a malformed binding does not parse, so no block holds one.
+    #[test]
+    fn a_block_carrying_a_malformed_binding_does_not_parse() {
+        let mut json = serde_json::to_value(block()).expect("serializes");
+        json["artifact_bindings"][0]["digest_value"] = "A".into();
+        assert!(serde_json::from_value::<HttpRequestEvidenceBlock>(json).is_err());
     }
 
     // ----- MRTR continuation (three handles) -----

@@ -472,24 +472,49 @@ sites = [
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
-id = "ASM-0019"
-description = "`ArtifactBinding::validate` is opaque; the typing theorem holds whatever it returns."
+id = "ASM-0062"
+description = "`ArtifactBinding::artifact_type` and `ArtifactBinding::binding_type` return the value's own private fields."
 justification = """
-Structural validation — digest token shape and the reference-field all-or-none rule — is
-a separate property from artifact typing. The theorem's Ok-path facts are established by
-the comparison ahead of the call, so this contributes no postcondition.
+`ArtifactBinding`'s representation is private, so the typed-verifier theorem cannot read the
+tags as fields. The two getters are field reads, presented to the verifier as uninterpreted
+functions of the binding (ASM-0063) exactly as the policy accessors are (ASM-0007): the theorem
+quantifies over whatever pair a binding carries, so it assumes only that repeated reads of one
+binding agree. The structural validity the old `validate` carried (digest shape, the
+reference-field all-or-none rule) is no longer a premise: the value cannot exist without it, so
+there is nothing for the theorem to take as opaque.
 """
 scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
-introduced_by = "ADR-MCPRE-059 WP2"
-review_requirement = "Owner review; a validate() contract is its own unit, not an ensures added here."
-premise_class = "review-obligation"
-discharging_event = { kind = "owner-event", statement = "A `validate()` contract is registered as its own unit. That unit is the discharge; an `ensures` added here is not." }
+introduced_by = "r12 ruling 12 item 12"
+review_requirement = "Owner review; any change that makes either getter more than a field read."
+premise_class = "assumed"
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
-  "mcp-re-http-profile/src/block/artifact_binding.rs#ArtifactBinding::validate",
+  "mcp-re-http-profile/src/block/artifact_binding.rs#ArtifactBinding::artifact_type",
+  "mcp-re-http-profile/src/block/artifact_binding.rs#ArtifactBinding::binding_type",
 ]
 tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0063"
+description = "`artifact_type_of(binding)` and `binding_type_of(binding)` are the tags a binding carries, as functions of the binding."
+justification = """
+Uninterpreted on purpose, as ASM-0025 is for the skew: the typed-verifier theorem must hold for
+WHATEVER tags a binding carries, so it assumes nothing about them but that they are a function
+of the binding. The paired `external_body` getters are ASM-0062; this is the specification-level
+declaration those getters are presented through.
+"""
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_own_behaviour"]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 12"
+review_requirement = "Owner review; any change that makes the tags more than per-binding constants."
+premise_class = "assumed"
+affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#artifact_type_of",
+  "mcp-re-http-profile/src/verus_std_specs.rs#binding_type_of",
+]
+tool_specific_mechanism = "verus:uninterp"
 
 [[assumption]]
 id = "ASM-0020"

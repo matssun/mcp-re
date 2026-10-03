@@ -115,11 +115,12 @@ pub assume_specification[ <AdmissionStatus as core::cmp::PartialEq>::eq ](
 #[verifier::external_type_specification]
 pub struct ExAdmissionPolicy(AdmissionPolicy);
 
-/// The artifact-binding datatypes, TRANSPARENT: the typed-verifier theorem is a statement
-/// about which `artifact_type`/`binding_type` pair can leave the verifier as `Ok`.
+/// The tags are TRANSPARENT; the binding is OPAQUE (private representation) and is read
+/// only through `artifact_type_of`/`binding_type_of`, which its two getters are specified by.
 #[verifier::external_type_specification]
 pub struct ExArtifactType(crate::block::ArtifactType);
 #[verifier::external_type_specification]
+#[verifier::external_body]
 pub struct ExArtifactBinding(crate::block::ArtifactBinding);
 
 /// As ASM-0014, for the artifact-type tag.
@@ -173,17 +174,9 @@ pub struct ExDispatchError(crate::dispatch::DispatchError);
 pub struct ExRetainedContinuation<'a>(crate::dispatch::RetainedContinuation<'a>);
 
 /// The labeled evidence digest, as an UNINTERPRETED function of its role label and its
-/// input bytes.
-///
-/// ADR-MCPRE-059 ASM-0023, and the shape is the point. Nothing is assumed about SHA-256 —
-/// not collision resistance, not preimage resistance, not even that distinct inputs give
-/// distinct outputs. What is assumed is only that the digest IS A FUNCTION of the pair
-/// `(label, bytes)`: the same label over the same bytes yields the same value.
-///
-/// That alone is what makes role separation provable. An accepted continuation's
-/// previous-request handle equals `labeled_digest(REQUEST, prev)`; for a response handle
-/// to be accepted in the request role, `labeled_digest(REQUEST, x)` would have to equal
-/// `labeled_digest(RESPONSE, y)` — a cross-role collision, which is precisely the
+/// input bytes (ASM-0023). Nothing is assumed about SHA-256 — only that the digest IS A
+/// FUNCTION of `(label, bytes)`, which is what makes role separation provable: a response
+/// handle accepted in the request role would need a cross-role collision, which is the
 /// `boundary.crypto_primitives` obligation and is not silently assumed away here.
 pub uninterp spec fn labeled_digest(label: Seq<char>, bytes: Seq<u8>) -> Seq<char>;
 
@@ -193,6 +186,10 @@ pub uninterp spec fn labeled_digest(label: Seq<char>, bytes: Seq<u8>) -> Seq<cha
 /// deployment configures, so nothing is assumed about this value except that it is a
 /// function of the policy object.
 pub uninterp spec fn skew_of(policy: &VerifierPolicy) -> i64;
+
+/// The tags a binding carries, UNINTERPRETED (ASM-0063): the typing theorem holds for any.
+pub uninterp spec fn artifact_type_of(binding: &crate::block::ArtifactBinding) -> crate::block::ArtifactType;
+pub uninterp spec fn binding_type_of(binding: &crate::block::ArtifactBinding) -> BindingType;
 
 /// The widest `expires - created` this verifier accepts, as a specification value.
 pub uninterp spec fn validity_of(policy: &VerifierPolicy) -> i64;

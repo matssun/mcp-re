@@ -46,7 +46,6 @@ pub use refusal::BindingSpecRefusal;
 
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
-use mcp_re_http_profile::BindingType;
 
 /// The binding form a provider asks for (ADR-MCPS-044 §Authorization-binding hook).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
@@ -159,17 +158,20 @@ fn binding_from(
     if spec.form == BindingForm::OpaqueBytes && spec.artifact_type == ArtifactType::PdpDecision {
         return Err(BindingSpecRefusal::OpaqueBindingIsHalfOfADecision);
     }
-    let mut binding = ArtifactBinding::opaque_digest(spec.artifact_type, material);
-    if spec.form == BindingForm::AuthzSystemReference {
-        binding.binding_type = BindingType::ReferenceDigest;
-        binding.authorization_system_id = spec.authorization_system_id.clone();
-        binding.reference_scheme_id = spec.reference_scheme_id.clone();
-        binding.reference_value = spec.reference_value.clone();
+    let opaque = ArtifactBinding::opaque_digest(spec.artifact_type, material);
+    if spec.form != BindingForm::AuthzSystemReference {
+        return Ok(opaque);
     }
-    // Fail closed on a malformed shape: an opaque binding carrying reference fields, or a
-    // reference binding missing any of them.
-    binding.validate().map_err(BindingSpecRefusal::Malformed)?;
-    Ok(binding)
+    // The reference form is refused unless all three reference fields are named: the
+    // binding's own constructor decides, so there is no half-built binding to validate.
+    ArtifactBinding::reference(
+        spec.artifact_type,
+        opaque.digest_value(),
+        spec.authorization_system_id.as_deref().unwrap_or_default(),
+        spec.reference_scheme_id.as_deref().unwrap_or_default(),
+        spec.reference_value.as_deref().unwrap_or_default(),
+    )
+    .map_err(BindingSpecRefusal::Malformed)
 }
 
 #[cfg(test)]
@@ -226,7 +228,10 @@ mod tests {
         let provided = build_authorization(&spec("oauth-mtls", "opaque-bytes", b"cert"))
             .expect("an ordinary provider binding");
         assert_eq!(provided.bindings.len(), 1);
-        assert_eq!(provided.bindings[0].artifact_type, ArtifactType::OauthMtls);
+        assert_eq!(
+            provided.bindings[0].artifact_type(),
+            ArtifactType::OauthMtls
+        );
     }
 
     #[test]
@@ -257,11 +262,11 @@ mod tests {
         assert!(provided.decision.is_none(), "linkage carries no document");
         assert_eq!(provided.bindings.len(), 1);
         assert_eq!(
-            provided.bindings[0].artifact_type,
+            provided.bindings[0].artifact_type(),
             ArtifactType::PdpDecision
         );
         assert_eq!(
-            provided.bindings[0].binding_type,
+            provided.bindings[0].binding_type(),
             BindingType::ReferenceDigest
         );
     }
@@ -340,10 +345,13 @@ mod tests {
             .expect("generic opaque is untouched");
         assert!(provided.decision.is_none());
         assert_eq!(provided.bindings.len(), 1);
-        assert_eq!(provided.bindings[0].binding_type, BindingType::OpaqueDigest);
         assert_eq!(
-            provided.bindings[0].digest_value,
-            ArtifactBinding::opaque_digest(ArtifactType::HumanApproval, b"approved").digest_value,
+            provided.bindings[0].binding_type(),
+            BindingType::OpaqueDigest
+        );
+        assert_eq!(
+            provided.bindings[0].digest_value(),
+            ArtifactBinding::opaque_digest(ArtifactType::HumanApproval, b"approved").digest_value(),
             "the seam digests the material the caller presented"
         );
     }

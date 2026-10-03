@@ -1830,8 +1830,8 @@ conjunct = "matched one of the supported typed verification branches and satisfi
 # an external decision it never carried.
 path = "mcp-re-http-profile/src/pdp_decision/binding.rs"
 anchor = """
-    if binding.artifact_type != ArtifactType::PdpDecision
-        || binding.binding_type != BindingType::OpaqueDigest
+    if binding.artifact_type() != ArtifactType::PdpDecision
+        || binding.binding_type() != BindingType::OpaqueDigest
     {
         return Err(PdpBindingRefusal::NotTheEvidenceForm);
     }
@@ -1874,7 +1874,7 @@ conjunct = "verified ... against the decision document the block itself carried"
 # would fingerprint a second typed verifier whose only check nothing was shown to notice.
 path = "mcp-re-http-profile/src/pdp_decision/binding.rs"
 anchor = """
-    if b64url_encode(&Sha256::digest(decision.as_bytes())) != binding.digest_value {
+    if b64url_encode(&Sha256::digest(decision.as_bytes())) != binding.digest_value() {
         return Err(PdpBindingRefusal::DigestMismatch);
     }
 """
@@ -7208,7 +7208,7 @@ narrows nothing, so the shapes that worked still work. Only the refusal control 
 id = "M257-client-evidence-that-can-never-verify-is-refused-locally"
 unit = "client.request_construction"
 theorem = "THM-0125"
-conjunct = "a request with no artifact binding or a structurally invalid one is refused LOCALLY rather than sent"
+conjunct = "a request with no artifact binding is refused LOCALLY rather than sent"
 path = "mcp-re-client-core/src/request.rs"
 anchor = """
     block.validate(PROFILE_TAG)?;
@@ -7218,11 +7218,11 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::signing_with_no_artifact_binding_is_refused_locally",
-  "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::signing_with_a_structurally_invalid_binding_is_refused_locally",
 ]
 note = """
-THE SERVER ALSO REFUSES IT, AND THAT IS WHY THE PROPOSITION IS ABOUT WHERE. An empty or
-structurally invalid `artifact_bindings` is rejected as `malformed_evidence` at the boundary,
+THE SERVER ALSO REFUSES IT, AND THAT IS WHY THE PROPOSITION IS ABOUT WHERE. An empty
+`artifact_bindings` is rejected as `malformed_evidence` at the boundary (a structurally invalid
+entry cannot be built at all: `ArtifactBinding`'s construction and deserialization refuse it),
 so under the weakening nothing unsafe reaches an executor -- what changes is that the client
 composes it, SIGNS it, spends a round trip, and then reports a local misconfiguration as a
 server-side evidence fault. The operator reads a wire error about the peer for a value in

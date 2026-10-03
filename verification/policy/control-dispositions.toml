@@ -13268,9 +13268,9 @@ record = "docs/architecture/control-dispositions.md#np-199"
 id = "NP-200"
 title = "An artifact binding is admitted only in its well-formed shape"
 carrier = "mcp-re-http-profile/src/block/artifact_binding.rs"
-likely_owner = "none. `http_profile.artifact_typing` (THM-0007) and `http_profile.artifact_verification_boundary` (THM-0008) both carry this file, but ASM-0019 makes `validate` opaque to the typed-verifier theorem ('Its own contract ... is a separate property'). THM-0008 refuses every `ReferenceDigest` whatever `validate` returns, so the width and reference-form clauses are not needed by any branch verdict."
+likely_owner = "none. `http_profile.artifact_typing` (THM-0007) and `http_profile.artifact_verification_boundary` (THM-0008) both carry this file. The value owns the rule: `ArtifactBinding`'s representation is private and its construction and deserialization are fallible, so the typed-verifier theorem reads a binding that is already well-formed and the width and reference-form clauses are not needed by any branch verdict."
 consequence = "medium"
-root_relationship = "The structural premise ASM-0019 carves out beneath THM-0007/THM-0008, and one conjunct of THM-0015's 'validated under the profile tag'."
+root_relationship = "The structural invariant beneath THM-0007/THM-0008, owned by the binding's construction, and one conjunct of THM-0015's 'validated under the profile tag'."
 record = "docs/architecture/control-dispositions.md#np-200"
 
 [[proposition]]

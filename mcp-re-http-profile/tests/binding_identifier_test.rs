@@ -11,6 +11,7 @@
 //! request would then be admitted having declared a constraint the verifier never
 //! actually checked.
 
+use mcp_re_http_profile::block::artifact_binding::UncheckedArtifactBinding;
 use mcp_re_http_profile::block::ArtifactBinding;
 use mcp_re_http_profile::HttpProfileError;
 
@@ -46,10 +47,11 @@ fn unknown_binding_type_fails_closed() {
 
 /// A binding that declares the opaque form but carries reference fields: the two
 /// halves disagree about what the digest commits to. Fail closed rather than pick
-/// an interpretation.
+/// an interpretation. The refusal is construction's: the wire entry does not become a
+/// binding, and its structural reason carries the frozen `malformed_envelope` token.
 #[test]
 fn opaque_binding_carrying_reference_fields_is_malformed() {
-    let binding: ArtifactBinding = serde_json::from_value(serde_json::json!({
+    let json = serde_json::json!({
         "artifact_type": "oauth-rar",
         "binding_type": "opaque-digest",
         "digest_alg": "sha256",
@@ -57,15 +59,18 @@ fn opaque_binding_carrying_reference_fields_is_malformed() {
         "authorization_system_id": "https://pdp.example.com",
         "reference_scheme_id": "acme/decision-v1",
         "reference_value": "decision-123",
-    }))
-    .expect("the shape parses; the disagreement is a validation failure");
+    });
+    let unchecked: UncheckedArtifactBinding =
+        serde_json::from_value(json.clone()).expect("the shape parses");
+    let refusal = ArtifactBinding::try_from(unchecked).unwrap_err();
     assert_eq!(
-        binding.validate().unwrap_err(),
+        refusal,
         HttpProfileError::MalformedEvidence("opaque binding carries reference fields"),
     );
-    assert_eq!(
-        binding.validate().unwrap_err().wire_code(),
-        "mcp-re.malformed_envelope"
+    assert_eq!(refusal.wire_code(), "mcp-re.malformed_envelope");
+    assert!(
+        serde_json::from_value::<ArtifactBinding>(json).is_err(),
+        "the disagreement does not deserialize into a binding at all"
     );
 }
 
@@ -73,16 +78,17 @@ fn opaque_binding_carrying_reference_fields_is_malformed() {
 /// meaning. A dangling reference is not a weaker binding, it is an unusable one.
 #[test]
 fn reference_binding_missing_its_reference_fields_is_malformed() {
-    let binding: ArtifactBinding = serde_json::from_value(serde_json::json!({
+    let json = serde_json::json!({
         "artifact_type": "pdp-decision",
         "binding_type": "reference-digest",
         "digest_alg": "sha256",
         "digest_value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "authorization_system_id": "https://pdp.example.com",
-    }))
-    .expect("the shape parses");
+    });
+    let unchecked: UncheckedArtifactBinding =
+        serde_json::from_value(json).expect("the shape parses");
     assert_eq!(
-        binding.validate().unwrap_err(),
+        ArtifactBinding::try_from(unchecked).unwrap_err(),
         HttpProfileError::MalformedEvidence("reference binding missing reference fields"),
     );
 }

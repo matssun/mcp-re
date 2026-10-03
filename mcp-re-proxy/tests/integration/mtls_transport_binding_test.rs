@@ -261,7 +261,7 @@ fn signed_request_bound_to_cert(bound_cert_der: &[u8]) -> HttpRequest {
 /// checked against the leaf cert the TLS layer presented on THIS connection;
 /// every other artifact type is unavailable here.
 fn mtls_material(presented_leaf: Option<Vec<u8>>) -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
-    move |binding: &ArtifactBinding| match binding.artifact_type {
+    move |binding: &ArtifactBinding| match binding.artifact_type() {
         ArtifactType::OauthMtls => presented_leaf.clone(),
         _ => None,
     }

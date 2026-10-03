@@ -319,7 +319,9 @@ mod tests {
     /// The digest algorithm the evidence binding declares, read off the binding producer
     /// the request itself uses rather than restated as a literal.
     fn binding_alg() -> String {
-        ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, b"any").digest_alg
+        ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, b"any")
+            .digest_alg()
+            .to_owned()
     }
 
     /// A verified request carrying `decision`, bound to it in the evidence form.

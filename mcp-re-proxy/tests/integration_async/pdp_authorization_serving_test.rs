@@ -37,7 +37,6 @@ use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::Audience;
 use mcp_re_http_profile::AudienceTuple;
-use mcp_re_http_profile::BindingType;
 use mcp_re_http_profile::CustodyConfig;
 use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
@@ -573,12 +572,16 @@ async fn a_reference_binding_can_never_satisfy_the_enforcement_profile() {
     // it never presented.
     let calls = Arc::new(AtomicUsize::new(0));
     let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
-    let req = signed_call_bound_by("read", "n-reference", Some(&d), |doc| ArtifactBinding {
-        binding_type: BindingType::ReferenceDigest,
-        authorization_system_id: Some("urn:example:pdp".into()),
-        reference_scheme_id: Some("urn:example:scheme".into()),
-        reference_value: Some("decision-1".into()),
-        ..ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, doc.as_bytes())
+    let req = signed_call_bound_by("read", "n-reference", Some(&d), |doc| {
+        ArtifactBinding::reference(
+            ArtifactType::PdpDecision,
+            ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, doc.as_bytes())
+                .digest_value(),
+            "urn:example:pdp",
+            "urn:example:scheme",
+            "decision-1",
+        )
+        .expect("a legal reference binding")
     });
     let (status, body) = serve(&proxy(Arc::clone(&calls)), req).await;
     assert_eq!(status, 403, "{body}");
@@ -886,8 +889,8 @@ async fn an_authorized_request_records_which_policy_permitted_what() {
     // and neither stands in for the other.
     assert_eq!(a.authority_decision_id, "decision-1");
     let bound = ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, d.as_bytes());
-    assert_eq!(a.decision_evidence.alg(), bound.digest_alg);
-    assert_eq!(a.decision_evidence.value(), bound.digest_value);
+    assert_eq!(a.decision_evidence.alg(), bound.digest_alg());
+    assert_eq!(a.decision_evidence.value(), bound.digest_value());
     assert_ne!(
         a.decision_evidence.rendered(),
         a.authority_decision_id,

@@ -191,7 +191,7 @@ fn authorization_artifact_binding_is_bound_and_verified() {
         !bindings.is_empty(),
         "the request carries a bound authorization artifact"
     );
-    assert_eq!(bindings[0].artifact_type, ArtifactType::OauthDpop);
+    assert_eq!(bindings[0].artifact_type(), ArtifactType::OauthDpop);
 }
 
 // ---- §A: Freshness -----------------------------------------------------------

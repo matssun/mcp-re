@@ -117,7 +117,7 @@ fn resolve_artifact_credential(
     headers: &[(String, String)],
     artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
 ) -> Option<Vec<u8>> {
-    match binding.artifact_type {
+    match binding.artifact_type() {
         ArtifactType::OauthDpop => authorization_bearer_bytes(headers),
         ArtifactType::OauthMtls
         | ArtifactType::OauthRar

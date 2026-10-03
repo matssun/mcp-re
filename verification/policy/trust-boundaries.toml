@@ -242,6 +242,8 @@ paths = [
   "mcp-re-http-profile/src/authoritative_admission/mod.rs",
   "mcp-re-http-profile/src/block.rs",
   "mcp-re-http-profile/src/block/artifact_binding.rs",
+  "mcp-re-http-profile/src/block/artifact_binding/unchecked.rs",
+  "mcp-re-http-profile/src/block/artifact_binding/vocabulary.rs",
   "mcp-re-http-profile/src/policy.rs",
   "mcp-re-http-profile/src/verified_request/floor.rs",
 ]

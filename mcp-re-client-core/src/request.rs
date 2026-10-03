@@ -448,16 +448,11 @@ mod evidence_precondition_tests {
     }
 
     #[test]
-    fn signing_with_a_structurally_invalid_binding_is_refused_locally() {
-        // Not just emptiness: the client reuses the verifier's whole predicate, so a
-        // present-but-malformed binding is caught here too. An empty digest value can
-        // never satisfy the binding's own validation.
-        let mut broken = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"token");
-        broken.digest_value = String::new();
-        assert!(
-            sign(vec![broken]).is_err(),
-            "a structurally invalid binding is refused before signing"
-        );
+    fn a_structurally_invalid_binding_cannot_reach_signing() {
+        // The client reuses the binding's own construction, so a present-but-malformed
+        // binding does not exist to be signed: an empty digest value is refused where the
+        // binding would be made.
+        assert!(ArtifactBinding::opaque_from_digest(ArtifactType::OauthDpop, "").is_err());
     }
 
     #[test]

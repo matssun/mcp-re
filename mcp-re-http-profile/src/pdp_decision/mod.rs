@@ -104,7 +104,6 @@ mod tests {
     use super::binding::PdpBindingRefusal;
     use crate::block::ArtifactBinding;
     use crate::block::ArtifactType;
-    use crate::block::BindingType;
 
     #[test]
     fn the_linkage_form_and_the_evidence_form_are_not_interchangeable() {
@@ -113,13 +112,14 @@ mod tests {
             ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, decision.as_bytes());
         assert!(verify_pdp_decision_binding(&evidence, decision).is_ok());
 
-        let linkage = ArtifactBinding {
-            binding_type: BindingType::ReferenceDigest,
-            authorization_system_id: Some("urn:example:pdp".into()),
-            reference_scheme_id: Some("urn:example:scheme".into()),
-            reference_value: Some("decision-1".into()),
-            ..evidence
-        };
+        let linkage = ArtifactBinding::reference(
+            ArtifactType::PdpDecision,
+            evidence.digest_value(),
+            "urn:example:pdp",
+            "urn:example:scheme",
+            "decision-1",
+        )
+        .expect("a legal reference binding");
         assert_eq!(
             verify_pdp_decision_binding(&linkage, decision),
             Err(PdpBindingRefusal::NotTheEvidenceForm),

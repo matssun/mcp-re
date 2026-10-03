@@ -1536,12 +1536,14 @@ description = "MCPRE-95 typed artifact bindings: each typed OAuth verifier admit
 paths = [
   "mcp-re-http-profile/src/artifact.rs",
   "mcp-re-http-profile/src/block.rs",
-  # The artifact-binding vocabulary and its structurally-verified `validate` moved here
+  # The artifact-binding vocabulary and its fallible construction moved here
   # under ADR-MCPRE-065 Slice 2, which split it from the evidence block that carries it.
   # The path follows the ITEM: a unit whose path set no longer covers its own
   # specification stops asking rather than going red.
   "mcp-re-http-profile/src/block/artifact_binding.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
+  "mcp-re-http-profile/src/block/artifact_binding/unchecked.rs",
+  "mcp-re-http-profile/src/block/artifact_binding/vocabulary.rs",
 ]
 exported_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 evidence_class = "proved"
@@ -1623,6 +1625,8 @@ paths = [
   # The vocabulary the relation is over, and the structural validity every branch demands.
   "mcp-re-http-profile/src/block/artifact_binding.rs",
   # The block rules that decide whether the carried-decision evidence form is even
+  "mcp-re-http-profile/src/block/artifact_binding/unchecked.rs",
+  "mcp-re-http-profile/src/block/artifact_binding/vocabulary.rs",
   # presentable: both halves or neither, exactly one applicable binding, never the
   # reference form.
   "mcp-re-http-profile/src/block.rs",
@@ -1673,6 +1677,11 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::tests::a_foreign_digest_alg_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::tests::an_opaque_binding_with_a_reference_field_is_refused",
 ]
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::tests::deserialization_refuses_what_construction_refuses",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::tests::an_opaque_binding_over_a_held_digest_is_checked",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::unchecked::tests::the_unchecked_form_holds_what_a_binding_refuses",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::vocabulary::tests::the_tags_serialize_to_their_registry_tokens",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::a_block_carrying_a_malformed_binding_does_not_parse",
 
 # ---------------------------------------------------------------------------
 # WP2 — continuation unbypassability
@@ -10260,7 +10269,7 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::caller_params_meta_survives_signing",
   "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::the_evidence_block_still_lands_at_the_body_root",
   "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::signing_with_no_artifact_binding_is_refused_locally",
-  "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::signing_with_a_structurally_invalid_binding_is_refused_locally",
+  "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::a_structurally_invalid_binding_cannot_reach_signing",
   "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::a_valid_binding_still_signs",
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::a_signed_notification_carries_no_id_at_all",
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::the_id_key_is_absent_rather_than_null",

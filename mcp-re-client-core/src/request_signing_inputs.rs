@@ -198,14 +198,14 @@ mod tests {
         let minted: Vec<_> = block
             .artifact_bindings
             .iter()
-            .filter(|b| b.artifact_type == ArtifactType::PdpDecision)
+            .filter(|b| b.artifact_type() == ArtifactType::PdpDecision)
             .collect();
         assert_eq!(minted.len(), 1, "exactly one applicable binding");
-        assert_eq!(minted[0].binding_type, BindingType::OpaqueDigest);
+        assert_eq!(minted[0].binding_type(), BindingType::OpaqueDigest);
         assert_eq!(
-            minted[0].digest_value,
+            minted[0].digest_value(),
             ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, DECISION.as_bytes())
-                .digest_value
+                .digest_value()
         );
         block
             .validate(mcp_re_http_profile::PROFILE_TAG)
@@ -219,7 +219,7 @@ mod tests {
         assert!(block
             .artifact_bindings
             .iter()
-            .all(|b| b.artifact_type != ArtifactType::PdpDecision));
+            .all(|b| b.artifact_type() != ArtifactType::PdpDecision));
         block
             .validate(mcp_re_http_profile::PROFILE_TAG)
             .expect("legal");

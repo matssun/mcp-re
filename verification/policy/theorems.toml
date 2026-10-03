@@ -7231,8 +7231,9 @@ id = "THM-0125"
 title = "A request a verifier could not bind is refused before it is sent, and a notification is not a request with no id"
 statement = """
 Every signed request is built through one seam, and it refuses locally what a verifier would
-refuse remotely: a request carrying no artifact binding, or a structurally invalid one, does
-not sign. A valid binding still signs, so the refusal is not vacuous.
+refuse remotely: a request carrying no artifact binding does not sign, and a structurally
+invalid binding cannot be built to be signed (its construction refuses it). A valid binding
+still signs, so the refusal is not vacuous.
 
 The caller's own `params._meta` survives signing unchanged, and the MCP-RE evidence block
 lands at the body root rather than inside the caller's content.

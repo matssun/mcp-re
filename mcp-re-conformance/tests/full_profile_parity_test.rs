@@ -156,7 +156,7 @@ fn base_request() -> HttpRequest {
 /// material); RAR is caller-supplied, so this returns the committed details for
 /// a RAR binding and `None` otherwise.
 fn rar_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
-    move |b: &ArtifactBinding| match b.artifact_type {
+    move |b: &ArtifactBinding| match b.artifact_type() {
         ArtifactType::OauthRar => Some(RAR_DETAILS.to_vec()),
         _ => None,
     }
@@ -262,7 +262,10 @@ fn full_exchange_activates_all_blocks() {
         rv.request_evidence_agreement.body_request_evidence,
         "response binds request evidence"
     );
-    assert_eq!(rv.floor.resolved_server_actor.identity.keyid, "server-key-1");
+    assert_eq!(
+        rv.floor.resolved_server_actor.identity.keyid,
+        "server-key-1"
+    );
 }
 
 // ---------- #1 request body tamper -----------------------------------------
@@ -375,7 +378,7 @@ fn artifact_mismatch_fails_in_integrated_path() {
     // different bytes: strict artifact enforcement rejects.
     let block = full_block();
     let (req, _ev) = signed_request(&block, "nonce-1");
-    let wrong_rar = |b: &ArtifactBinding| match b.artifact_type {
+    let wrong_rar = |b: &ArtifactBinding| match b.artifact_type() {
         ArtifactType::OauthRar => Some(b"a-different-rar-detail".to_vec()),
         _ => None,
     };

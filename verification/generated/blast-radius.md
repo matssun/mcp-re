@@ -446,7 +446,6 @@ attestations this view cannot see.
 | ASM-0014 | description, justification, scope or mechanism | http_profile.admission_currency | assumption review |
 | ASM-0015 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0018 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
-| ASM-0019 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
 | ASM-0020 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
 | ASM-0021 | description, justification, scope or mechanism | http_profile.continuation_unbypassability | assumption review |
 | ASM-0022 | description, justification, scope or mechanism | _no unit_ | assumption review |
@@ -489,3 +488,5 @@ attestations this view cannot see.
 | ASM-0059 | description, justification, scope or mechanism | proxy.redis_replay_adapter | assumption review |
 | ASM-0060 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |
 | ASM-0061 | description, justification, scope or mechanism | proxy.etcd_replay_adapter, proxy.redis_replay_adapter | assumption review |
+| ASM-0062 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
+| ASM-0063 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
