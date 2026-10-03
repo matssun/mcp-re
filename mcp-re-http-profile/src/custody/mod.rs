@@ -46,13 +46,20 @@ use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
-use crate::sign::sign_delegated_response_full;
+use crate::sign::sign_delegated_response_full_with_owned_key;
 
 mod active_key;
 mod issuance_terms;
 mod key_window;
+mod signing_window;
+mod window_emission;
 pub use active_key::ActiveDelegatedKey;
 pub use key_window::{DelegatedKeyWindow, KeyWindowError};
+pub use signing_window::SigningWindow;
+pub use window_emission::{
+    build_delegated_rejection, build_delegated_rejection_preflight, sign_delegated_accepted_202,
+    sign_delegated_response_full, sign_delegated_response_unbound,
+};
 
 /// A failure of the custody layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,7 +355,7 @@ where
         let Some(a) = self.active.as_ref() else {
             return Err(CustodyError::FailClosedIssuance);
         };
-        sign_delegated_response_full(
+        sign_delegated_response_full_with_owned_key(
             response,
             request,
             request_evidence,

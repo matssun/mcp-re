@@ -215,7 +215,7 @@ fn custody_cfg() -> CustodyConfig {
         audience_hash: VERIFIER_AUD.into(),
         trust_epoch: EPOCH.into(),
         server_role: "server".into(),
-        server_trust_domain: "example.com".into(),
+        server_trust_domain: "mcp.example.com".into(),
         server_subject: "did:example:server".into(),
         window: DelegatedKeyWindow::of(TTL, OVERLAP).expect("0 < overlap < ttl"),
     }
@@ -430,7 +430,7 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     let first_kid = snap.delegated_kid().to_owned();
     assert_eq!(
         first_kid,
-        mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key().public_key().to_b64url()),
+        mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.public_key().to_b64url()),
     );
 
     // Serve a batch under the one delegated key; each response verifies via the

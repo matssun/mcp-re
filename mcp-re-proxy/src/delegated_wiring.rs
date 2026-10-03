@@ -242,7 +242,7 @@ mod tests {
         // is asserted by the credential's `issuer_kid`, not by the kid string.
         assert_eq!(
             snap.delegated_kid(),
-            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key().public_key().to_b64url()),
+            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.public_key().to_b64url()),
         );
         // The root issuer was touched exactly once (issuance), never per read.
         assert_eq!(wiring.rotor.root_invocations(), 1);

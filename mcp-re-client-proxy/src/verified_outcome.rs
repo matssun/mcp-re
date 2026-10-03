@@ -382,12 +382,12 @@ mod tests {
             signed.evidence(),
             &reason,
             409,
-            snapshot.server_signer(),
-            snapshot.credential(),
-            snapshot.key(),
-            snapshot.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snapshot.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("the boundary builds a bound delegated rejection");
         let revoked = StaticRevocationList::new();

@@ -556,7 +556,7 @@ mod delegated_tests {
         let snap = custody.active_snapshot().expect("a key is active");
         assert_eq!(
             out.verified.server_signer().keyid,
-            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key().public_key().to_b64url()),
+            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.public_key().to_b64url()),
         );
     }
 
@@ -644,12 +644,12 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             409,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("server builds bound delegated rejection");
         verify_delegated_response(
@@ -683,12 +683,12 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             409,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("server builds bound delegated rejection");
         let out = verify_delegated_response(
@@ -719,12 +719,12 @@ mod delegated_tests {
             Some(signed.request()),
             &reason,
             403,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("server builds preflight delegated rejection");
         let out = verify_delegated_response(
@@ -788,12 +788,12 @@ mod delegated_tests {
             Some(theirs.request()),
             &reason,
             403,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("server builds a preflight rejection for the attacker's request");
 
@@ -815,12 +815,12 @@ mod delegated_tests {
             Some(mine.request()),
             &reason,
             403,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("server builds a preflight rejection for this request");
         let out = verify_delegated_response(
@@ -847,12 +847,12 @@ mod delegated_tests {
             None,
             &reason,
             403,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("server builds a receipt with no request context");
         let err = verify_delegated_response(
@@ -884,12 +884,12 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             503,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("server builds a post-dispatch rejection");
         let out = verify_delegated_response(
@@ -919,12 +919,12 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             503,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("server builds an approval-spent rejection");
         let out = verify_delegated_response(
@@ -990,12 +990,12 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             500,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("server builds a retention-indeterminate rejection");
         let out = verify_delegated_response(
@@ -1092,12 +1092,12 @@ mod delegated_tests {
             Some(signed.request()),
             &reason,
             200,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("build unbound response");
         resp.status = 200;
@@ -1250,12 +1250,12 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             409,
-            snap.server_signer(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("server builds bound delegated rejection");
         let revoked = StaticRevocationList::new().revoke(snap.delegated_kid().to_owned());
@@ -1315,14 +1315,18 @@ mod delegated_tests {
 
         // The receipt is signed AT `late`, so its RFC 9421 freshness window is current.
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
-        let resp = build_delegated_rejection(
+        // Signed with the key the custody minted (the factory's first seed): a window opens
+        // over no expired credential, so this deliberately stale signature is built from
+        // parts the verifier's clamp is then asked to refuse.
+        let stale_key = SigningKey::from_seed_bytes(&[101u8; 32]);
+        let resp = mcp_re_http_profile::rejection::build_delegated_rejection_with_owned_key(
             signed.request(),
             signed.evidence(),
             &reason,
             409,
             snap.server_signer(),
             snap.credential(),
-            snap.key(),
+            &stale_key,
             snap.delegated_kid(),
             late,
             late + 300,
@@ -1446,11 +1450,12 @@ mod delegated_tests {
         let snap = custody.active_snapshot().unwrap();
         let ack = mcp_re_http_profile::sign_delegated_accepted_202(
             notification.request(),
-            snap.credential(),
-            snap.key(),
-            snap.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("the boundary signs the acknowledgement");
 

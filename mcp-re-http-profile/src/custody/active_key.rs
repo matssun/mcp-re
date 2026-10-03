@@ -6,7 +6,7 @@
 //! never compared. They also answered different questions: the fields carried what this
 //! issuance **requested**, while `credential` carries what the root **issued**. A root that
 //! clamps a requested validity — ordinary, legitimate issuer behaviour — left the producer
-//! signing, and [`SigningWindow`](../../../mcp_re_proxy/http_profile_serve/signing_window)
+//! signing, and [`SigningWindow`](super::SigningWindow)
 //! advertising validity, under a window every verifier in the fleet had already stopped
 //! accepting. Nothing had to go wrong for that to happen; the type admitted it.
 //!
@@ -144,8 +144,18 @@ impl ActiveDelegatedKey {
     }
 
     /// The delegated signing key. Never the root.
-    pub fn key(&self) -> &SigningKey {
+    ///
+    /// Crate-private: the key confers signing authority for the whole credential lifetime,
+    /// and the only holder that may use it is a [`SigningWindow`](super::SigningWindow),
+    /// which bounds the validity a signature may advertise. Other crates read the public
+    /// half through [`public_key`](Self::public_key).
+    pub(crate) fn key(&self) -> &SigningKey {
         &self.key
+    }
+
+    /// The public half of the delegated key the credential attests.
+    pub fn public_key(&self) -> mcp_re_core::VerificationKey {
+        self.key.public_key()
     }
 
     /// The delegated key id — the RFC 9421 `keyid` the response signs under, and the block's

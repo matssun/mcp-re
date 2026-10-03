@@ -1267,18 +1267,10 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: reply_body.to_vec(),
     };
-    sign_delegated_response_full(
-        &mut response,
-        &request,
-        &req_evidence,
-        active.server_signer(),
-        active.credential(),
-        active.key(),
-        active.delegated_kid(),
-        NOW,
-        NOW + TTL,
-    )
-    .expect("the reply signs — signing does not classify");
+    let window = mcp_re_http_profile::custody::SigningWindow::over(active, NOW, TTL)
+        .expect("a live signing window");
+    sign_delegated_response_full(&mut response, &request, &req_evidence, &window)
+        .expect("the reply signs — signing does not classify");
 
     // Precondition: this fixture is only meaningful if the response is otherwise
     // GENUINE. If it failed verification the SDKs would refuse it for the wrong

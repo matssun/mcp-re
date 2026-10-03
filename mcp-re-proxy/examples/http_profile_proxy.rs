@@ -13,10 +13,10 @@
 //!      entry point the shipped serving path's `answering_commitment` awaits;
 //!   4. strip the proxy-owned top-level `_meta` and forward the clean JSON-RPC to
 //!      the Streamable-HTTP backend through the proxy's real `HttpInnerPool`;
-//!   5. `sign_delegated_response_full` — sign the backend's reply with the DELEGATED
+//!   5. `sign_delegated_response_full_with_owned_key` — sign the backend's reply with the DELEGATED
 //!      key, bound to THIS request, carrying the root-signed credential that
 //!      authorizes it (ADR-MCPRE-052 delegated-required) — or, for a one-way
-//!      notification, `sign_delegated_accepted_202` (#424 / #418).
+//!      notification, `sign_delegated_accepted_202_with_owned_key` (#424 / #418).
 //!
 //! Any fail-closed step emits a DELEGATED-signed rejection receipt instead — bound to
 //! the request once it has verified, preflight (unbound) before that.
@@ -46,10 +46,10 @@ use hyper::Response;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-use mcp_re_http_profile::build_delegated_rejection;
-use mcp_re_http_profile::build_delegated_rejection_preflight;
-use mcp_re_http_profile::sign_delegated_accepted_202;
-use mcp_re_http_profile::sign_delegated_response_full;
+use mcp_re_http_profile::rejection::build_delegated_rejection_with_owned_key;
+use mcp_re_http_profile::rejection::build_delegated_rejection_preflight_with_owned_key;
+use mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key;
+use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
@@ -367,7 +367,7 @@ async fn handle(
     // had no reply to sign and refused the exchange the SDKs are proved against.
     if is_notification(&http_req.body) {
         return Ok(
-            match sign_delegated_accepted_202(
+            match sign_delegated_accepted_202_with_owned_key(
                 &http_req,
                 &hpp_common::delegation_credential(now),
                 &hpp_common::delegated_key(),
@@ -395,7 +395,7 @@ async fn handle(
     // The DELEGATED signer signs; the root only vouches for it via the credential the
     // response carries (ADR-MCPRE-052). The root key never touches a response, and the
     // verifier enrols only the root — it learns the delegated key from the credential.
-    match sign_delegated_response_full(
+    match sign_delegated_response_full_with_owned_key(
         &mut response,
         &http_req,
         verified.evidence(),
@@ -484,7 +484,7 @@ fn rejection(
     );
     let credential = hpp_common::delegation_credential(now);
     match (request, evidence) {
-        (Some(req), Some(ev)) => build_delegated_rejection(
+        (Some(req), Some(ev)) => build_delegated_rejection_with_owned_key(
             req,
             ev,
             &reason,
@@ -496,7 +496,7 @@ fn rejection(
             now,
             now + 300,
         ),
-        _ => build_delegated_rejection_preflight(
+        _ => build_delegated_rejection_preflight_with_owned_key(
             request,
             &reason,
             status,

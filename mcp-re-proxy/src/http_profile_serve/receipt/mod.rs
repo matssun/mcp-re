@@ -23,6 +23,7 @@ use crate::delegated_server_signer::DelegatedSigningReader;
 use crate::refusal::RefusalPosture;
 use mcp_re_http_profile::ExecutionDisposition;
 
+use super::signing_window;
 use super::signing_window::SigningWindow;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
@@ -70,7 +71,7 @@ impl ResponseSigning {
     /// Open the window this deployment may sign under at `now`, or `None` when no valid
     /// delegated credential exists — the fail-closed posture.
     pub(crate) fn window(&self, now: i64) -> Option<SigningWindow> {
-        SigningWindow::open(&self.signer, now, self.sig_ttl_secs)
+        signing_window::open(&self.signer, now, self.sig_ttl_secs)
     }
 
     /// Turn a stage's decision into the signed refusal the client receives.
@@ -98,7 +99,6 @@ impl ResponseSigning {
         response: &mut HttpResponse,
         window: &SigningWindow,
     ) -> Result<Established<Vec<u8>>, Refusal> {
-        let a = window.key();
         // Scoped so the timer covers the signature and nothing after it.
         let sign_result = {
             let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Sign);
@@ -106,12 +106,7 @@ impl ResponseSigning {
                 response,
                 ex.http_req,
                 ex.verified.evidence(),
-                a.server_signer(),
-                a.credential(),
-                a.key(),
-                a.delegated_kid(),
-                window.created(),
-                window.expires(),
+                window,
             )
         };
         sign_result

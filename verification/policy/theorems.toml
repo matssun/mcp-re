@@ -3263,12 +3263,15 @@ depends_on = []
 id = "THM-0063"
 title = "A signed response never advertises validity its credential does not authorize"
 statement = """
-`SigningWindow` keeps `expires` private and no constructor accepts one: every window is
-derived as the earlier of the configured TTL from `now` and the credential's own `exp`, with
-saturating arithmetic so an absurd configured TTL cannot wrap past it. A credential already
-past its bound yields a window claiming no future validity rather than one running backwards.
-The same owner opens every window this deployment signs under, reply and refusal alike, and
-a refusal signs under the snapshot its own exchange took.
+`SigningWindow` (in `mcp-re-http-profile`) keeps `expires` private and no constructor accepts
+one: every window is derived as the earlier of the configured TTL from `now` and the
+credential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap
+past it. A credential already past its bound yields a window claiming no future validity
+rather than one running backwards. The delegated signing key is crate-private to its
+`ActiveDelegatedKey`, and the emitters that read it take a window, so a signature under a
+delegated credential cannot advertise any other validity. The proxy's one opener opens every
+window this deployment signs under, reply and refusal alike, and a refusal signs under the
+snapshot its own exchange took.
 """
 security_consequence = """
 A client cannot be given a receipt asserting validity beyond the moment its credential stops
@@ -3285,7 +3288,7 @@ unit rather than part of this claim.
 """
 owner = "proxy.response_signing"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.response_signing", "unit://proxy.delegated_signing_credential"]
+supported_by = ["unit://proxy.response_signing", "unit://proxy.delegated_signing_credential", "unit://http_profile.delegated_signing_custody"]
 depends_on = ["THM-0062"]
 
 [[theorem]]

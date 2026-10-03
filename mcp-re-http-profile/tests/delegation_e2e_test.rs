@@ -14,8 +14,8 @@ use mcp_re_core::SigningKey;
 use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
-use mcp_re_http_profile::sign_delegated_response_full;
-use mcp_re_http_profile::sign_delegated_response_unbound;
+use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
+use mcp_re_http_profile::sign::sign_delegated_response_unbound_with_owned_key;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
@@ -218,7 +218,7 @@ fn valid_delegated_response_verifies_under_cnf_key() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
         &ev,
@@ -298,7 +298,7 @@ fn response_keyid_not_delegated_kid_is_key_mismatch() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
         &ev,
@@ -327,7 +327,7 @@ fn response_signed_by_key_other_than_cnf_is_key_mismatch() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
         &ev,
@@ -355,7 +355,7 @@ fn body_tamper_is_caught_by_content_digest() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
         &ev,
@@ -386,7 +386,7 @@ fn stale_epoch_rejected_end_to_end() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
         &ev,
@@ -477,7 +477,7 @@ fn revoked_delegated_key_rejected_end_to_end() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
         &ev,
@@ -515,7 +515,7 @@ fn a_delegated_preflight_receipt_verifies_without_request_binding() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound(
+    sign_delegated_response_unbound_with_owned_key(
         &mut rsp,
         &server_signer(),
         &valid_credential(),
@@ -548,7 +548,7 @@ fn an_unbound_receipt_without_a_credential_is_refused() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound(
+    sign_delegated_response_unbound_with_owned_key(
         &mut rsp,
         &server_signer(),
         &valid_credential(),
@@ -635,7 +635,7 @@ fn a_delegated_response_advertising_another_requests_evidence_is_refused() {
         body: response_body(),
     };
     // ;req is bound to req_a; the block advertises req_b's handle.
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req_a,
         &ev_b,
@@ -666,7 +666,7 @@ fn an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound(
+    sign_delegated_response_unbound_with_owned_key(
         &mut rsp,
         &server_signer(),
         &valid_credential(),
@@ -695,7 +695,7 @@ fn a_req_component_is_refused_on_the_delegated_unbound_path() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
         &ev,
@@ -728,7 +728,7 @@ fn an_unbound_receipt_body_tamper_is_caught_by_content_digest() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound(
+    sign_delegated_response_unbound_with_owned_key(
         &mut rsp,
         &server_signer(),
         &valid_credential(),
@@ -760,7 +760,7 @@ fn an_unbound_receipt_whose_root_is_unknown_to_the_seam_is_untrusted() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound(
+    sign_delegated_response_unbound_with_owned_key(
         &mut rsp,
         &server_signer(),
         &valid_credential(),
@@ -854,7 +854,7 @@ fn a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
         &ev,
@@ -884,7 +884,7 @@ fn an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_misma
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound(
+    sign_delegated_response_unbound_with_owned_key(
         &mut rsp,
         &disowned,
         &credential,
@@ -918,7 +918,7 @@ fn an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound(
+    sign_delegated_response_unbound_with_owned_key(
         &mut rsp,
         &server_signer(), // block keyid == the credential's delegated kid
         &valid_credential(),
@@ -945,7 +945,7 @@ fn signed_delegated_bound() -> (HttpRequest, HttpResponse) {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
         &ev,
@@ -967,7 +967,7 @@ fn signed_delegated_unbound() -> HttpResponse {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound(
+    sign_delegated_response_unbound_with_owned_key(
         &mut rsp,
         &server_signer(),
         &valid_credential(),
@@ -1073,7 +1073,7 @@ fn a_delegated_bound_response_whose_req_binding_is_to_another_request_is_refused
     };
     // ;req resolves over req_a while the block carries req_b's handle, and the response is
     // verified against req_b: the block-handle comparison agrees, only ;req can refuse.
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req_a,
         &ev_b,

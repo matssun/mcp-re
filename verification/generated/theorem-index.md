@@ -100,7 +100,7 @@ any of them is closed.
 | THM-0060 | The client's clock skew is bounded at construction and read once | client.delegation_policy_seal | unit://client.delegation_policy_seal | live |
 | THM-0061 | A receipt that says nothing is not a receipt that says nothing ran | client.execution_contract | unit://client.execution_contract, unit://client.proxy_reply_disposition, unit://client.receipt_contract_carriage | live |
 | THM-0062 | A response-signing credential exists only while a valid delegated key does | proxy.delegated_signing_credential | unit://proxy.delegated_signing_credential | live |
-| THM-0063 | A signed response never advertises validity its credential does not authorize | proxy.response_signing | unit://proxy.delegated_signing_credential, unit://proxy.response_signing | live |
+| THM-0063 | A signed response never advertises validity its credential does not authorize | proxy.response_signing | unit://http_profile.delegated_signing_custody, unit://proxy.delegated_signing_credential, unit://proxy.response_signing | live |
 | THM-0064 | A non-exporting custody selection keeps the private key off this process | proxy.custody_exposure | unit://proxy.custody_exposure, unit://proxy.custody_exposure_sole_producer | live |
 | THM-0065 | An emitted bound response signature binds the request it answers | http_profile.response_emission_binding | unit://http_profile.response_emission_binding | live |
 | THM-0066 | The serving PEP resolves actors through the deployment's materialized trust authority | proxy.serving_trust_seam | unit://proxy.serving_trust_seam, unit://proxy.trust_plan | live |
@@ -851,7 +851,7 @@ any of them is closed.
 
 ### THM-0063 — A signed response never advertises validity its credential does not authorize
 
-**Statement.** `SigningWindow` keeps `expires` private and no constructor accepts one: every window is derived as the earlier of the configured TTL from `now` and the credential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap past it. A credential already past its bound yields a window claiming no future validity rather than one running backwards. The same owner opens every window this deployment signs under, reply and refusal alike, and a refusal signs under the snapshot its own exchange took.
+**Statement.** `SigningWindow` (in `mcp-re-http-profile`) keeps `expires` private and no constructor accepts one: every window is derived as the earlier of the configured TTL from `now` and the credential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap past it. A credential already past its bound yields a window claiming no future validity rather than one running backwards. The delegated signing key is crate-private to its `ActiveDelegatedKey`, and the emitters that read it take a window, so a signature under a delegated credential cannot advertise any other validity. The proxy's one opener opens every window this deployment signs under, reply and refusal alike, and a refusal signs under the snapshot its own exchange took.
 
 **Security consequence.** A client cannot be given a receipt asserting validity beyond the moment its credential stops authorizing signatures — a window the verifier refuses as soon as the credential's own closes, which the client would learn about only by failing. And a refusal minted late in an exchange cannot advertise more validity for having been reached by a different path.
 

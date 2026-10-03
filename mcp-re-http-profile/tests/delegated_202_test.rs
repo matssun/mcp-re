@@ -16,7 +16,7 @@ use mcp_re_core::SigningKey;
 use mcp_re_http_profile::Verifier;
 
 use mcp_re_http_profile::issue_delegation_credential;
-use mcp_re_http_profile::sign_delegated_accepted_202;
+use mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::verify_delegated_accepted_202;
 use mcp_re_http_profile::ActorIdentity;
@@ -103,6 +103,10 @@ fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
 
 /// Mint a root-signed credential attesting `delegated_kid`/`server_signer`.
 fn credential() -> String {
+    credential_for(&server_signer())
+}
+
+fn credential_for(scope: &ActorIdentity) -> String {
     let d = delegated_key();
     let header = DelegationHeader {
         typ: DELEGATION_TYP.into(),
@@ -118,7 +122,7 @@ fn credential() -> String {
         aud: Audience::One(VERIFIER_AUD.into()),
         mcp_re_profile: PROFILE_TAG.into(),
         mcp_re_audience_hash: AUD_SCOPE.into(),
-        mcp_re_server_signer: server_signer().actor_id(),
+        mcp_re_server_signer: scope.actor_id(),
         mcp_re_key_use: KEY_USE_RESPONSE_SIGNING.into(),
         delegated_kid: DELEGATED_KID.into(),
         issuer_kid: ROOT_KID.into(),
@@ -163,9 +167,13 @@ fn no_revocation() -> impl Fn(&str) -> bool {
 }
 
 fn sign_ack(note: &HttpRequest) -> mcp_re_http_profile::HttpResponse {
-    sign_delegated_accepted_202(
+    sign_ack_with(note, &credential())
+}
+
+fn sign_ack_with(note: &HttpRequest, credential: &str) -> mcp_re_http_profile::HttpResponse {
+    sign_delegated_accepted_202_with_owned_key(
         note,
-        &credential(),
+        credential,
         &delegated_key(),
         DELEGATED_KID,
         CREATED,
@@ -215,6 +223,30 @@ fn a_delegated_202_verifies_via_the_credential_chain() {
 }
 
 // --- negatives the ruling requires -------------------------------------------
+
+/// A credential its root issued for another server's principal must not let that
+/// server's delegated key acknowledge as this one.
+#[test]
+fn a_credential_scoped_to_a_principal_its_root_is_not_is_refused() {
+    let note = notification("n-other-principal");
+    let other = ActorIdentity {
+        subject: "did:example:other-server".into(),
+        ..server_signer()
+    };
+    let ack = sign_ack_with(&note, &credential_for(&other));
+    assert_eq!(
+        verify_delegated_accepted_202(
+            &ack,
+            &note,
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            &expectations(&[EPOCH]),
+            &no_revocation(),
+            NOW
+        )
+        .unwrap_err(),
+        HttpProfileError::DelegationIssuerUntrusted,
+    );
+}
 
 /// The credential header stripped from the COVERED set (still on the wire). An
 /// uncovered credential is unprotected — exactly what the coverage requirement

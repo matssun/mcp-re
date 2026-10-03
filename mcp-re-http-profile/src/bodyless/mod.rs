@@ -231,7 +231,7 @@ fn check_request_evidence(
 ///
 /// This preserves the three constraints the ruling required jointly: MCP's
 /// bodyless 202, delegated-only response signing, and self-contained verification.
-pub fn sign_delegated_accepted_202(
+pub fn sign_delegated_accepted_202_with_owned_key(
     request: &HttpRequest,
     server_delegation: &str,
     delegated_key: &mcp_re_core::SigningKey,

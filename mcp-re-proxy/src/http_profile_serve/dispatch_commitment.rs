@@ -34,6 +34,7 @@ use crate::refusal::Refusal;
 use crate::request_stages::RetentionDisposition;
 
 use super::body_boundary::ForwardedBody;
+use super::signing_window;
 use super::signing_window::SigningWindow;
 use super::Exchange;
 use super::HttpProfileProxy;
@@ -102,7 +103,7 @@ impl HttpProfileProxy {
         // can complete at — asked HERE because this is the first point where the bound
         // exists and the last where refusing is free. The capability is already held, so a
         // refusal drops it and returns everything it took.
-        if !window.covers(prepared.completion_bound()) {
+        if !signing_window::covers(window, prepared.completion_bound()) {
             return Err(self.refuse(
                 ex,
                 Refusal::after_admission(McpReError::DelegatedSigningUnavailable, 503),

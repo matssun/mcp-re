@@ -1499,7 +1499,7 @@ fn chain_hop(
     // DELEGATED signing, because that is the only response mode the serving path has.
     // Signing these hops direct-root meant the frozen corpus exercised a mode removed
     // from the runtime surface, so a green suite said nothing about real evidence.
-    mcp_re_http_profile::sign_delegated_response_full(
+    mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
         &req_evidence,
@@ -1873,7 +1873,7 @@ fn d202_fixture(name: &str, check: Delegated202Check, expected: &str) -> Fixture
 
 fn delegated_202_fixtures() -> Vec<Fixture> {
     let note = d202_notification();
-    let ack = mcp_re_http_profile::sign_delegated_accepted_202(
+    let ack = mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key(
         &note,
         &d202_credential(),
         &d202_delegated(),

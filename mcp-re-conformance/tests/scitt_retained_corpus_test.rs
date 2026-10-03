@@ -260,7 +260,7 @@ fn hop(
         body: body.as_bytes().to_vec(),
     };
     // DELEGATED, because that is the only response mode the serving path has.
-    mcp_re_http_profile::sign_delegated_response_full(
+    mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
         &req_evidence,

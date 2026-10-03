@@ -80,7 +80,7 @@ attestations this view cannot see.
 | unit://http_profile.continuation_unbypassability | source, contracts or evidence | THM-0009 | _no consumer_ |
 | unit://http_profile.delegated_bound_result | source, contracts or evidence | THM-0019 | _no consumer_ |
 | unit://http_profile.delegated_credential_chain | source, contracts or evidence | THM-0019, THM-0020 | _no consumer_ |
-| unit://http_profile.delegated_signing_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://http_profile.delegated_signing_custody | source, contracts or evidence | THM-0063 | _no consumer_ |
 | unit://http_profile.delegated_unbound_result | source, contracts or evidence | THM-0020 | _no consumer_ |
 | unit://http_profile.dispatch_product_seal | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.evidence_block_carriage | source, contracts or evidence | THM-0015, THM-0125 | _no consumer_ |

@@ -4319,11 +4319,11 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-224 — a signing window advertises the instant it was opened at
 
-**Control:** `mcp-re-proxy` `lib#http_profile_serve::signing_window::tests::the_window_advertises_the_instant_it_was_opened_at`.
-**Carrier:** `mcp-re-proxy/src/http_profile_serve/signing_window.rs`.
+**Control:** `mcp-re-http-profile` `lib#custody::signing_window::tests::the_window_advertises_the_instant_it_was_opened_at`.
+**Carrier:** `mcp-re-http-profile/src/custody/signing_window.rs`.
 **Statement.** *A `SigningWindow` opened at `now` advertises `created = now`.*
 **If false.** A signed response claims to have been created at an instant other than the one its window was opened at, and a verifier's freshness evaluation reads a lower bound the signer never observed.
-**Likely owner:** `proxy.response_signing` has the carrier in its paths, but THM-0063 derives only `expires` — "the earlier of the configured TTL from `now` and the credential's own `exp`" — and states nothing about the lower bound.
+**Likely owner:** `http_profile.delegated_signing_custody` has the carrier in its paths, but THM-0063 derives only `expires` — "the earlier of the configured TTL from `now` and the credential's own `exp`" — and states nothing about the lower bound.
 **Severity:** `medium`.
 **Root relationship.** The lower-bound twin of THM-0063's `expires` derivation, over the same window.
 **Recorded:** 2026-09-29, owner ruling: THM-0063 read strictly.

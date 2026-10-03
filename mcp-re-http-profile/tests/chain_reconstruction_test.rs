@@ -10,7 +10,7 @@ use mcp_re_core::SigningKey;
 use mcp_re_http_profile::block::AudienceTuple;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::reconstruct_chain;
-use mcp_re_http_profile::sign_delegated_response_full;
+use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
@@ -233,7 +233,7 @@ fn hop_with_bad_window(created: i64, expires: i64, nonce: &str) -> RetainedHop {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: DONE.as_bytes().to_vec(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
         &req_evidence,
@@ -280,7 +280,7 @@ fn hop_at(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: body.as_bytes().to_vec(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
         &req_evidence,
@@ -1026,7 +1026,7 @@ fn signed_answer(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: body.as_bytes().to_vec(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut response,
         request,
         req_evidence,

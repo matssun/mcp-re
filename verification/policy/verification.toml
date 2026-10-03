@@ -3986,7 +3986,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::a_credential_longer_than_the_dispatch_budget_covers_it",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::a_plane_that_states_no_bound_is_refused_however_long_the_credential_lives",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::a_sub_second_budget_is_measured_at_the_second_it_can_still_be_running_in",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::admissibility_ends_at_expires_exactly_as_the_floor_says_it_does",
   # And the same property through the production `HttpProfileProxy`, which is the only
   # thing that can say the boundary CONSULTS it. The mirror is not optional: the hostile
   # control alone passes against a proxy that refuses every dispatch it ever makes.
@@ -6406,10 +6405,6 @@ evidence = [
 # to clamp. The last-resort controls are the other half — what an UNSIGNED receipt may still
 # state when no valid credential exists.
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::the_configured_ttl_bounds_a_window_inside_the_credential",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::an_expired_credential_opens_no_window",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::a_saturating_ttl_does_not_wrap_past_the_credential",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_spent_approval_last_resort_receipt_names_the_consumed_continuation",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_retention_indeterminate_last_resort_receipt_still_names_the_failed_obligation",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_ordinary_post_dispatch_failure_claims_no_retention_status",
@@ -6442,7 +6437,6 @@ tested_symbols = [
   # the double citation is measured twice rather than claimed twice.
   "//mcp-re-proxy:integration_async_test#delegated_production_wiring_test::delegated_required_wiring_serves_verifies_and_rotates",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_unstated_disposition_adds_no_claim",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::a_non_positive_ttl_opens_no_window",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::open_yields_a_window_only_while_the_signer_holds_a_live_credential",
 ]
 
@@ -7761,6 +7755,8 @@ paths = [
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
   "mcp-re-http-profile/src/custody/key_window.rs",
   "mcp-re-http-profile/src/custody/active_key.rs",
+  "mcp-re-http-profile/src/custody/signing_window.rs",
+  "mcp-re-http-profile/src/custody/window_emission.rs",
 ]
 exported_contracts = []
 # TWO classes, for the reason each of the verifier's propositions carries two. The seal added by
@@ -7803,6 +7799,13 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_credential_attesting_another_key_fails_the_issuance_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_audit_records_the_issued_window_not_the_requested_one",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_root_stamping_a_future_nbf_fails_the_rotation_and_the_predecessor_keeps_serving",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::signing_window::tests::the_configured_ttl_bounds_a_window_inside_the_credential",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::signing_window::tests::an_expired_credential_opens_no_window",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::signing_window::tests::a_saturating_ttl_does_not_wrap_past_the_credential",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::signing_window::tests::a_non_positive_ttl_opens_no_window",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::signing_window::tests::admissibility_ends_at_expires_exactly_as_the_floor_says_it_does",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::window_emission::tests::a_signature_advertises_exactly_the_windows_validity",
   # The window's own relation. `key_window.rs` entered `paths` with this slice, so it was a
   # fingerprint input whose controls no unit named — the file could have been emptied and
   # every declared symbol would still have passed.
@@ -8326,6 +8329,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#bodyless::delegated_credential::tests::a_credential_scoped_to_another_signer_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#bodyless::delegated_credential::tests::the_scoped_keyid_is_read_through_the_actor_field_escape",
   "//mcp-re-http-profile:mcp_re_http_profile_test#bodyless::delegated_credential::tests::the_credential_header_is_present_exactly_once_and_bounded",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#bodyless::delegated_credential::tests::a_scope_that_is_not_a_canonical_four_field_actor_id_is_refused",
+  "//mcp-re-http-profile:delegated_202_test#a_credential_scoped_to_a_principal_its_root_is_not_is_refused",
 ]
 
 [[unit]]

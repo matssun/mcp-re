@@ -43,15 +43,7 @@ impl HttpProfileProxy {
         retention: &RetentionDisposition,
         execution: ExecutionDisposition,
     ) -> ServedHttpResponse {
-        let a = window.key();
-        match sign_delegated_accepted_202(
-            http_req,
-            a.credential(),
-            a.key(),
-            a.delegated_kid(),
-            window.created(),
-            window.expires(),
-        ) {
+        match sign_delegated_accepted_202(http_req, window) {
             Ok(ack) => {
                 // Retention covers this exit on the SAME terms as the bodied reply.
                 // The backend has already run by here, so leaving it out let a

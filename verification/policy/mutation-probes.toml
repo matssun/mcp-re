@@ -4377,7 +4377,7 @@ conjunct = "a signing window snapshotted before the backend runs and shown to su
 # twice. Deleting the question is the defect, and the battery must go red on it.
 path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
 anchor = """
-        if !window.covers(prepared.completion_bound()) {
+        if !signing_window::covers(window, prepared.completion_bound()) {
 """
 weakening = """
         if false {
@@ -6838,10 +6838,10 @@ only safe answer when the two reads disagree.
 
 [[probe]]
 id = "M245-proxy-a-response-advertises-no-validity-past-its-credential"
-unit = "proxy.response_signing"
+unit = "http_profile.delegated_signing_custody"
 theorem = "THM-0063"
 conjunct = "the validity a response may advertise is bounded by the credential it is signed under, not only by the configured TTL"
-path = "mcp-re-proxy/src/http_profile_serve/signing_window.rs"
+path = "mcp-re-http-profile/src/custody/signing_window.rs"
 anchor = """
         let expires = now.saturating_add(ttl_secs).min(key.exp());
 """
@@ -6849,8 +6849,8 @@ weakening = """
         let expires = now.saturating_add(ttl_secs);
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::an_expired_credential_opens_no_window",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::signing_window::tests::an_expired_credential_opens_no_window",
 ]
 note = """
 TWO BOUNDS, AND THE OTHER ONE IS THE OPERATOR'S. The configured TTL is what the deployment
@@ -10570,15 +10570,10 @@ conjunct = "bound evidence is bound to the exact request it answers"
 # is what is deleted, not the argument.
 path = "mcp-re-proxy/src/http_profile_serve/receipt/artifact.rs"
 anchor = """
-                    Some(ev) => build_delegated_rejection(
-                        request,
-                        ev,
-                        &reason,
+                    Some(ev) => build_delegated_rejection(request, ev, &reason, status, &w),
 """
 weakening = """
-                    Some(_ev) => build_delegated_rejection_preflight(
-                        Some(request),
-                        &reason,
+                    Some(_ev) => build_delegated_rejection_preflight(Some(request), &reason, status, &w),
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::delegated_bound_rejection_verifies",

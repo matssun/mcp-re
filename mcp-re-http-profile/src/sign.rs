@@ -189,7 +189,7 @@ pub fn sign_request_with_signer(
 /// (`se.syncom/mcp-re.http.request`) into the JSON-RPC body `_meta` FIRST, then
 /// sign — so `content-digest` (a covered component) protects the block. Returns
 /// the [`RequestEvidence`] handle over the resulting signature base; pass it to
-/// [`sign_delegated_response_full`] so the response can carry `request_evidence`.
+/// [`sign_delegated_response_full_with_owned_key`] so the response can carry `request_evidence`.
 pub fn sign_request_full(
     request: &mut HttpRequest,
     block: &HttpRequestEvidenceBlock,
@@ -229,7 +229,7 @@ pub fn sign_request_full_with_signer(
 /// (`delegated_kid` == the block's `server_signer.keyid`). The root is NOT on this
 /// path: it signed only the credential, off the hot path at issuance/rotation.
 #[allow(clippy::too_many_arguments)]
-pub fn sign_delegated_response_full(
+pub fn sign_delegated_response_full_with_owned_key(
     response: &mut HttpResponse,
     request: &HttpRequest,
     request_evidence: &RequestEvidence,
@@ -266,7 +266,7 @@ pub fn sign_delegated_response_full(
 
 /// Full-profile response signing for the DELEGATED-key path with NO request
 /// binding (ADR-MCPRE-052; the preflight-unbound rejection case, MCPRE-122). Like
-/// [`sign_delegated_response_unbound`] a directly-root-signed sibling of
+/// [`sign_delegated_response_unbound_with_owned_key`] a directly-root-signed sibling of
 /// [`sign_response_unbound`]: the response evidence block carries the inline
 /// `server_delegation` credential and the response is signed by the DELEGATED key,
 /// but the signature covers only the response components (`@status`,
@@ -274,7 +274,7 @@ pub fn sign_delegated_response_full(
 /// recorded in the block for diagnostics ONLY; an unbound response is verified
 /// response-only and this handle is never treated as a trusted request binding.
 #[allow(clippy::too_many_arguments)]
-pub fn sign_delegated_response_unbound(
+pub fn sign_delegated_response_unbound_with_owned_key(
     response: &mut HttpResponse,
     server_signer: &ActorIdentity,
     server_delegation: &str,

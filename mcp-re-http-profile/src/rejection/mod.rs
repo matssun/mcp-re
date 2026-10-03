@@ -50,8 +50,8 @@ use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
-use crate::sign::sign_delegated_response_full;
-use crate::sign::sign_delegated_response_unbound;
+use crate::sign::sign_delegated_response_full_with_owned_key;
+use crate::sign::sign_delegated_response_unbound_with_owned_key;
 
 /// The JSON-RPC error code MCP-RE rejections carry. The wire code in `data`,
 /// not this integer, is the stable signal.
@@ -143,7 +143,7 @@ fn request_id(request: &HttpRequest) -> Value {
 /// delegated chain (`Verifier::verify_delegated_bound_response`), never as a directly
 /// root-signed response.
 #[allow(clippy::too_many_arguments)]
-pub fn build_delegated_rejection(
+pub fn build_delegated_rejection_with_owned_key(
     request: &HttpRequest,
     request_evidence: &RequestEvidence,
     reason: &RejectionReason,
@@ -160,7 +160,7 @@ pub fn build_delegated_rejection(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: rejection_body(request_id(request), reason),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut response,
         request,
         request_evidence,
@@ -183,7 +183,7 @@ pub fn build_delegated_rejection(
 /// NOT pretend to be bound to a valid request. When `received` is present its bytes
 /// are recorded as a diagnostic digest (never a binding) and its id is echoed.
 #[allow(clippy::too_many_arguments)]
-pub fn build_delegated_rejection_preflight(
+pub fn build_delegated_rejection_preflight_with_owned_key(
     received: Option<&HttpRequest>,
     reason: &RejectionReason,
     status: u16,
@@ -212,7 +212,7 @@ pub fn build_delegated_rejection_preflight(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: rejection_body(id, reason),
     };
-    sign_delegated_response_unbound(
+    sign_delegated_response_unbound_with_owned_key(
         &mut response,
         server_signer,
         server_delegation,

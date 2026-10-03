@@ -32,7 +32,7 @@ use serde::Serialize;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
-use mcp_re_http_profile::sign_delegated_response_full;
+use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
@@ -411,7 +411,7 @@ fn delegated_response(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         req,
         ev,
