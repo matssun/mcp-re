@@ -196,6 +196,15 @@ pub(crate) mod test_support {
     /// told it, so a test about the boundary is about the CRL's own boundary.
     pub(crate) fn crl_with_next_update() -> rustls_pki_types::CertificateRevocationListDer<'static>
     {
+        crl_and_issuer().0
+    }
+
+    /// The same CRL together with the CA certificate that signed it — the client CA anchor a
+    /// deployment would configure for the CRL to be authentic.
+    pub(crate) fn crl_and_issuer() -> (
+        rustls_pki_types::CertificateRevocationListDer<'static>,
+        rustls_pki_types::CertificateDer<'static>,
+    ) {
         let key = rcgen::KeyPair::generate().expect("ca key");
         let mut params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -206,7 +215,7 @@ pub(crate) mod test_support {
         params
             .distinguished_name
             .push(rcgen::DnType::CommonName, "crl-gate-ca");
-        let _ca = params.self_signed(&key).expect("ca");
+        let ca = params.self_signed(&key).expect("ca");
         let crl_params = rcgen::CertificateRevocationListParams {
             this_update: rcgen::date_time_ymd(2024, 1, 1),
             next_update: rcgen::date_time_ymd(2999, 1, 1),
@@ -215,13 +224,14 @@ pub(crate) mod test_support {
             revoked_certs: Vec::new(),
             key_identifier_method: rcgen::KeyIdMethod::Sha256,
         };
-        rustls_pki_types::CertificateRevocationListDer::from(
+        let crl = rustls_pki_types::CertificateRevocationListDer::from(
             crl_params
                 .signed_by(&rcgen::Issuer::from_params(&params, &key))
                 .expect("crl")
                 .der()
                 .to_vec(),
-        )
+        );
+        (crl, ca.der().clone())
     }
 }
 

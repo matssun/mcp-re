@@ -19,9 +19,15 @@
 //! [`ClientCrlEvidence`] has one constructor and that constructor performs the
 //! classification, so a set of CRLs that fails it has no inhabitant to install. Deleting the
 //! check does not leave a path that skips it; it leaves nothing that compiles.
+//!
+//! The same constructor AUTHENTICATES them. A CRL is bytes somebody wrote, and the handshake
+//! verifier's own check of one covers only the chains it is verifying, so the per-request
+//! index is built here, against the configured client CA keys, and the evidence carries that
+//! index: a set of CRLs that no configured CA signed has no inhabitant either.
 
 use crate::client_crl_publication::CrlFreshness;
 use crate::client_crl_publication::CrlPosture;
+use crate::client_revocation::ClientRevocationIndex;
 
 /// How near a CRL's `nextUpdate` an operator is warned, so a refreshed CRL can be installed
 /// before the cutover rather than after every handshake has started failing.
@@ -41,6 +47,9 @@ pub struct ClientCrlEvidence {
     /// The bytes those postures were classified from, and the only bytes the index and the
     /// verifier are built from.
     ders: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
+    /// The per-request index over those bytes, built against the client CA keys. `None` when
+    /// no CRLs are configured.
+    index: Option<ClientRevocationIndex>,
 }
 
 /// One CRL's gate: refuse it unless in force, warn when near expiry, then report its posture.
@@ -52,7 +61,11 @@ fn classify_one(crl: &[u8], index: usize, now_unix: i64) -> Result<CrlPosture, S
 }
 
 impl ClientCrlEvidence {
-    /// Classify every CRL against `now_unix`, then parse what the posture reports.
+    /// Classify every CRL against `now_unix`, authenticate them against `anchors`, then parse
+    /// what the posture reports.
+    ///
+    /// `anchors` are the configured client CA certificates — the keys a CRL signature must
+    /// verify under. A CRL none of them signed is refused.
     ///
     /// `Stale` is refused: with expiration enforced, installing one fails every new
     /// handshake closed. `NoNextUpdate` is refused because a CRL that never falls out of
@@ -62,15 +75,21 @@ impl ClientCrlEvidence {
     /// path entirely.
     pub(super) fn from_checked(
         crls: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
+        anchors: &[rustls_pki_types::CertificateDer<'_>],
         now_unix: i64,
     ) -> Result<Self, String> {
         let mut postures = Vec::with_capacity(crls.len());
         for (index, crl) in crls.iter().enumerate() {
             postures.push(classify_one(crl.as_ref(), index, now_unix)?);
         }
+        let index = (!crls.is_empty())
+            .then(|| ClientRevocationIndex::from_crl_ders(&crls, anchors))
+            .transpose()
+            .map_err(|e| e.to_string())?;
         Ok(ClientCrlEvidence {
             postures,
             ders: crls,
+            index,
         })
     }
 
@@ -79,13 +98,12 @@ impl ClientCrlEvidence {
         &self.ders
     }
 
-    /// The per-request index over the gated bytes, so it cannot be built from CRLs the
-    /// gate did not classify.
-    pub(super) fn revocation_index(
-        &self,
-    ) -> Result<crate::client_revocation::ClientRevocationIndex, String> {
-        crate::client_revocation::ClientRevocationIndex::from_crl_ders(&self.ders)
-            .map_err(|e| e.to_string())
+    /// The per-request index over the gated bytes, built when they were authenticated, so it
+    /// cannot be had for CRLs the gate did not classify and no configured CA signed.
+    pub(super) fn revocation_index(&self) -> Result<ClientRevocationIndex, String> {
+        self.index
+            .clone()
+            .ok_or_else(|| "no client CRLs to index".to_owned())
     }
 
     /// Whether offline client-cert revocation is configured at all.
@@ -110,6 +128,7 @@ impl ClientCrlEvidence {
         ClientCrlEvidence {
             postures,
             ders: Vec::new(),
+            index: None,
         }
     }
 }
@@ -169,16 +188,21 @@ mod tests {
     /// it is that the value the reload must produce cannot be built from those bytes.
     #[test]
     fn a_stale_crl_produces_no_evidence_to_install() {
-        let crl = crate::client_crl_publication::test_support::crl_with_next_update();
+        let (crl, issuer) = crate::client_crl_publication::test_support::crl_and_issuer();
         let next_update = crate::client_crl_publication::crl_posture(crl.as_ref())
             .expect("posture")
             .next_update_unix
             .expect("the fixture states one");
         assert!(
-            ClientCrlEvidence::from_checked(vec![crl.clone()], next_update - 1).is_ok(),
+            ClientCrlEvidence::from_checked(
+                vec![crl.clone()],
+                std::slice::from_ref(&issuer),
+                next_update - 1,
+            )
+            .is_ok(),
             "inside its window it is installable"
         );
-        let refusal = ClientCrlEvidence::from_checked(vec![crl], next_update + 1)
+        let refusal = ClientCrlEvidence::from_checked(vec![crl], &[issuer], next_update + 1)
             .expect_err("past its nextUpdate it is not");
         assert!(refusal.contains("STALE"), "{refusal}");
     }
@@ -186,7 +210,8 @@ mod tests {
     /// An empty set is a configured-off posture, not a failed one.
     #[test]
     fn no_crls_is_evidence_of_a_deployment_without_them() {
-        let evidence = ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal");
+        let evidence =
+            ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal");
         assert!(evidence.is_empty());
         assert!(evidence.postures().is_empty());
     }
@@ -194,15 +219,15 @@ mod tests {
     /// The index is a projection of the gated evidence, not of a sibling copy of the bytes.
     #[test]
     fn the_revocation_index_is_derived_from_the_gated_evidence() {
-        let crl = crate::client_crl_publication::test_support::crl_with_next_update();
+        let (crl, issuer) = crate::client_crl_publication::test_support::crl_and_issuer();
         let next_update = crate::client_crl_publication::crl_posture(crl.as_ref())
             .expect("posture")
             .next_update_unix
             .expect("the fixture states one");
-        let evidence =
-            ClientCrlEvidence::from_checked(vec![crl], next_update - 1).expect("inside its window");
+        let evidence = ClientCrlEvidence::from_checked(vec![crl], &[issuer], next_update - 1)
+            .expect("inside its window");
         assert!(!evidence.revocation_index().expect("index").is_empty());
-        let none = ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal");
+        let none = ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal");
         assert!(none.revocation_index().is_err());
     }
 
@@ -215,7 +240,8 @@ mod tests {
         list.tbs_cert_list.next_update = None;
         let der =
             rustls_pki_types::CertificateRevocationListDer::from(list.to_der().expect("encode"));
-        let refusal = ClientCrlEvidence::from_checked(vec![der], 0).expect_err("never expires");
+        let refusal =
+            ClientCrlEvidence::from_checked(vec![der], &[], 0).expect_err("never expires");
         assert!(
             refusal.contains("#0") && refusal.contains("nextUpdate"),
             "{refusal}"
@@ -225,7 +251,7 @@ mod tests {
     /// Near expiry is admitted and names its deadline.
     #[test]
     fn a_near_expiry_crl_is_installable_and_names_its_deadline() {
-        let crl = crate::client_crl_publication::test_support::crl_with_next_update();
+        let (crl, issuer) = crate::client_crl_publication::test_support::crl_and_issuer();
         let next_update = crate::client_crl_publication::crl_posture(crl.as_ref())
             .expect("posture")
             .next_update_unix
@@ -238,6 +264,38 @@ mod tests {
             require_in_force(crl.as_ref(), 0, next_update - 7 * 3600),
             Ok(None)
         );
-        assert!(ClientCrlEvidence::from_checked(vec![crl], next_update - 60).is_ok());
+        assert!(ClientCrlEvidence::from_checked(vec![crl], &[issuer], next_update - 60).is_ok());
+    }
+
+    /// A CRL no configured CA signed has no evidence to install.
+    ///
+    /// The handshake verifier authenticates a CRL only against the chain it is verifying, and
+    /// the per-request index is read on requests the verifier never sees. So the evidence's
+    /// constructor authenticates against the client CA keys, and a well-formed, fresh CRL
+    /// that a stranger signed — or that names the right issuer but is signed by another key —
+    /// produces nothing to install.
+    #[test]
+    fn a_fresh_crl_no_configured_ca_signed_produces_no_evidence_to_install() {
+        let (crl, issuer) = crate::client_crl_publication::test_support::crl_and_issuer();
+        let (_other_crl, stranger) = crate::client_crl_publication::test_support::crl_and_issuer();
+        let next_update = crate::client_crl_publication::crl_posture(crl.as_ref())
+            .expect("posture")
+            .next_update_unix
+            .expect("the fixture states one");
+        assert!(
+            ClientCrlEvidence::from_checked(vec![crl.clone()], &[issuer], next_update - 1).is_ok(),
+            "the control: signed by a configured CA, it is installable"
+        );
+        let refusal =
+            ClientCrlEvidence::from_checked(vec![crl.clone()], &[stranger], next_update - 1)
+                .expect_err("a CRL no configured CA signed is not");
+        assert!(
+            refusal.contains("not signed by any configured client CA"),
+            "{refusal}"
+        );
+        assert!(
+            ClientCrlEvidence::from_checked(vec![crl], &[], next_update - 1).is_err(),
+            "with no anchors nothing authenticates"
+        );
     }
 }

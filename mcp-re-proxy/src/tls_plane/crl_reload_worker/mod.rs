@@ -138,7 +138,8 @@ fn attempt_reload(
         // swapped in, after which every new handshake against that issuer failed closed and
         // this worker reported success. Building the evidence FIRST is what makes that
         // unreachable rather than merely checked: there is no inhabitant to install.
-        let evidence = ClientCrlEvidence::from_checked(crls, now_unix)?;
+        let evidence =
+            ClientCrlEvidence::from_checked(crls, task.rebuild_state.trust_anchors(), now_unix)?;
         // The per-request index from the SAME bytes, BEFORE the verifier is rebuilt, so a
         // malformed CRL keeps last-good on both rather than swapping one and failing the
         // other.
@@ -204,11 +205,14 @@ mod tests {
     use crate::tls_plane::revocation_currency::CrlMaintenance;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    /// `anchors` are the client CA certificates the listener trusts — the keys a reloaded CRL
+    /// must be signed by.
     fn task(
         server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
         crl_paths: Vec<String>,
         revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
         currency: Arc<ClientRevocationCurrency>,
+        anchors: Vec<rustls_pki_types::CertificateDer<'static>>,
     ) -> CrlReloadTask {
         let key = rcgen::KeyPair::generate().expect("server key");
         let cert = rcgen::CertificateParams::new(vec!["localhost".to_string()])
@@ -221,7 +225,7 @@ mod tests {
                 key.serialize_der(),
             ))
         };
-        let rebuild_state = Arc::new(TlsListenerSecurityState::new(chain.clone()));
+        let rebuild_state = Arc::new(TlsListenerSecurityState::new(anchors));
         let initial = rebuild_state
             .build_exported_key_config(chain.clone(), key_der(), Vec::new())
             .expect("initial config");
@@ -241,15 +245,16 @@ mod tests {
         }
     }
 
-    /// A fresh CRL on disk under a unique name; the caller removes it.
-    fn crl_file(tag: &str) -> String {
+    /// A fresh CRL on disk under a unique name, and the CA certificate that signed it; the
+    /// caller removes the file.
+    fn crl_file(tag: &str) -> (String, rustls_pki_types::CertificateDer<'static>) {
         let path = std::env::temp_dir().join(format!(
             "crl-reload-worker-{tag}-{}.der",
             std::process::id()
         ));
-        let der = crate::client_crl_publication::test_support::crl_with_next_update();
+        let (der, issuer) = crate::client_crl_publication::test_support::crl_and_issuer();
         std::fs::write(&path, der.as_ref()).expect("write crl");
-        path.to_string_lossy().into_owned()
+        (path.to_string_lossy().into_owned(), issuer)
     }
 
     fn chain_for_task() -> Vec<rustls_pki_types::CertificateDer<'static>> {
@@ -267,14 +272,20 @@ mod tests {
         let workers = WorkerSet::new(Arc::clone(&deployment));
         let halt = workers.halt();
         let currency = Arc::new(ClientRevocationCurrency::new(
-            ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+            ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
             true,
         ));
         assert_eq!(
             currency.maintenance(),
             crate::tls_plane::revocation_currency::CrlMaintenance::Maintained
         );
-        let t = task(chain_for_task(), Vec::new(), None, Arc::clone(&currency));
+        let t = task(
+            chain_for_task(),
+            Vec::new(),
+            None,
+            Arc::clone(&currency),
+            chain_for_task(),
+        );
 
         deployment.store(true, Ordering::SeqCst);
         crl_reload_loop(t, &halt);
@@ -284,9 +295,9 @@ mod tests {
 
     #[test]
     fn a_successful_reload_republishes_the_evidence_it_installed() {
-        let path = crl_file("ok");
+        let (path, issuer) = crl_file("ok");
         let currency = Arc::new(ClientRevocationCurrency::new(
-            ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+            ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
             true,
         ));
         currency.mark_degraded();
@@ -296,6 +307,7 @@ mod tests {
             vec![path.clone()],
             Some(Arc::clone(&revocation)),
             Arc::clone(&currency),
+            vec![issuer],
         );
 
         let (outcome, installed) = attempt_reload(&t);
@@ -309,11 +321,39 @@ mod tests {
         assert!(!revocation.load().is_empty());
     }
 
+    /// A CRL on disk that no configured client CA signed is not installed: the reload keeps
+    /// last-good, so replacing the file is not a way to publish revocations (or to retract
+    /// them) for a deployment whose CA never issued them.
+    #[test]
+    fn a_reloaded_crl_no_configured_ca_signed_is_not_installed() {
+        let (path, _signer_not_configured) = crl_file("unsigned-by-anchor");
+        let currency = Arc::new(ClientRevocationCurrency::new(
+            ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
+            true,
+        ));
+        let revocation = Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()));
+        let before = revocation.load();
+        let t = task(
+            chain_for_task(),
+            vec![path.clone()],
+            Some(Arc::clone(&revocation)),
+            Arc::clone(&currency),
+            chain_for_task(),
+        );
+
+        let (outcome, installed) = attempt_reload(&t);
+        let _ = std::fs::remove_file(&path);
+
+        assert!(matches!(outcome, ReloadOutcome::KeptLastGood { .. }));
+        assert!(installed.is_none());
+        assert!(Arc::ptr_eq(&before, &revocation.load()));
+    }
+
     #[test]
     fn a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped() {
-        let path = crl_file("bad-rebuild");
+        let (path, issuer) = crl_file("bad-rebuild");
         let currency = Arc::new(ClientRevocationCurrency::new(
-            ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+            ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
             true,
         ));
         let revocation = Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()));
@@ -323,6 +363,7 @@ mod tests {
             vec![path.clone()],
             Some(Arc::clone(&revocation)),
             Arc::clone(&currency),
+            vec![issuer],
         );
 
         let (outcome, installed) = attempt_reload(&t);

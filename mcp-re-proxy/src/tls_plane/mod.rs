@@ -161,7 +161,7 @@ impl TlsPlane {
             snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(server))),
             revocation: None,
             currency: Arc::new(ClientRevocationCurrency::new(
-                ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+                ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
                 true,
             )),
             key_exposure: PrivateKeyExposure::ProcessReadable,
@@ -249,7 +249,7 @@ impl TlsPlane {
             ));
         }
         let crl_paths = plan.client_revocation.paths();
-        let crls = load_and_check_crls(crl_paths, startup_now_unix)?;
+        let crls = load_and_check_crls(crl_paths, &client_ca, startup_now_unix)?;
         // Cloned because the initial build below consumes the original; the reload
         // re-reads only the CRLs, never this.
         let reload_chain = server_chain.clone();
@@ -440,7 +440,7 @@ mod handle_lifetime_tests {
             snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(config)),
             revocation: None,
             currency: Arc::new(ClientRevocationCurrency::new(
-                ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+                ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
                 true,
             )),
             key_exposure: PrivateKeyExposure::ProcessReadable,
@@ -679,7 +679,7 @@ mod trust_epoch_binding_tests {
         let first = material
             .rebuild(
                 chain.clone(),
-                &ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+                &ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
                 &state,
             )
             .expect("initial build");
@@ -691,7 +691,7 @@ mod trust_epoch_binding_tests {
         material
             .rebuild(
                 chain,
-                &ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+                &ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
                 &state,
             )
             .expect("rebuild");

@@ -938,6 +938,9 @@ evidence = [
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::revocation_currency::tests::a_stopped_worker_is_not_cleared_by_a_later_reload",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_stale_crl_produces_no_evidence_to_install",
+  # The same constructor AUTHENTICATES: a fresh, well-formed CRL that no configured client CA
+  # signed has no inhabitant either, by startup or by reload.
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_fresh_crl_no_configured_ca_signed_produces_no_evidence_to_install",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::revocation_currency::tests::an_unscheduled_reload_is_never_reported_as_stopped",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::revocation_currency::tests::a_degraded_reload_recovers_on_the_next_success",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::revocation_currency::tests::the_maintenance_token_names_the_cadence_it_is_or_is_not_keeping",
@@ -968,6 +971,7 @@ description = "Every MCP-RE construction path obtains a listener's trust anchors
 paths = [
   "mcp-re-proxy/src/tls_listener_state/mod.rs",
   "mcp-re-proxy/src/tls_listener_state/assembly.rs",
+  "mcp-re-proxy/src/tls_listener_state/trust_anchors.rs",
   "mcp-re-proxy/src/tls.rs",
   "mcp-re-proxy/src/delegated_tls.rs",
   "mcp-re-proxy/src/tls_plane/mod.rs",
@@ -985,6 +989,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
   "//mcp-re-proxy:proxy_unit_test#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
   "//mcp-re-proxy:proxy_unit_test#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",
+  # The anchors read back: the set a client CRL must be signed by is the SAME set the listener
+  # was built around, not a copy a second consumer was handed.
+  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::trust_anchors::tests::the_anchors_read_back_are_the_ones_the_listener_was_built_around",
   "//mcp-re-proxy:proxy_unit_test#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",  # ADR-MCPRE-069 batch 19. This statement names the SIGNING BUDGET as one of the four terms
   # a listener obtains through one state. These three are that term measured: the budget
   # bounds remote-signer invocations, refills over time, and — the one a bound normally
@@ -11521,6 +11528,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_successful_reload_republishes_the_evidence_it_installed",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_halted_reload_loop_retracts_the_cadence_it_advertised",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_reloaded_crl_no_configured_ca_signed_is_not_installed",
 ]
 
 # ---------------------------------------------------------------------------
@@ -12029,8 +12037,13 @@ tested_symbols = [
 [[unit]]
 id = "proxy.client_revocation_index_verdict"
 class = "V0"
-description = "WHAT THE PER-REQUEST CLIENT-REVOCATION INDEX ANSWERS ABOUT ONE CERTIFICATE, by its raw issuer `Name` DER and its raw serial: a listed serial is Revoked and an unlisted one under an in-force list is Good, with the two DER spellings of one serial normalised so a zero pad cannot miss a revocation; a CRL speaks only for its own issuer and says nothing about another CA's leaves; several CRLs for one issuer union their serials and keep the EARLIEST nextUpdate, so a fresher sibling cannot hold a lapsed list in force; an issuer no in-force CRL covers is Unknown and Unknown is refused, with no parameter, field or policy object through which a caller could admit it; a CRL past its nextUpdate certifies nothing and its issuer's certificates become Unknown, while a revocation it already carries is still honoured; and an index carrying no CRLs at all admits everything, which is the one admission granted without a Good verdict. It says nothing about WHICH index a request reads, and nothing about what the handshake verifier does."
-paths = ["mcp-re-proxy/src/client_revocation.rs"]
+description = "WHAT THE PER-REQUEST CLIENT-REVOCATION INDEX ANSWERS ABOUT ONE CERTIFICATE, by its raw issuer `Name` DER and its raw serial: a listed serial is Revoked and an unlisted one under an in-force list is Good, with the two DER spellings of one serial normalised so a zero pad cannot miss a revocation; a CRL speaks only for its own issuer and says nothing about another CA's leaves; every CRL it carries was signed by a configured client CA key — a CRL no such key signed is refused at construction, and the entry is filed under that KEY and not under the issuer name the document asserts, so two CAs sharing a subject Name never answer for each other; several CRLs for one issuer union their serials and keep the EARLIEST nextUpdate, so a fresher sibling cannot hold a lapsed list in force; an issuer no in-force CRL covers is Unknown and Unknown is refused, with no parameter, field or policy object through which a caller could admit it; a CRL past its nextUpdate certifies nothing and its issuer's certificates become Unknown, while a revocation it already carries is still honoured; and an index carrying no CRLs at all admits everything, which is the one admission granted without a Good verdict. It says nothing about WHICH index a request reads, and nothing about what the handshake verifier does."
+paths = [
+  "mcp-re-proxy/src/client_revocation.rs",
+  "mcp-re-proxy/src/client_revocation/build.rs",
+  "mcp-re-proxy/src/client_revocation/issuer_key.rs",
+  "mcp-re-proxy/src/client_revocation/verdict.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -12048,13 +12061,27 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::unknown_status_is_refused_with_no_policy_input_that_could_admit_it",
   "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::a_stale_crl_certifies_nothing_but_still_revokes",
   "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::an_expired_crl_refuses_its_issuer_rather_than_admitting_it",
+  # AUTHENTICITY. A CRL is bytes somebody wrote, and the handshake verifier authenticates one
+  # only against the chain it is checking. The index is built from these bytes and read on
+  # requests the verifier never sees, so it refuses a CRL no configured CA key signed (a forged
+  # one under the right Name, an altered one, one from outside the bundle, one under an
+  # anchor that may not sign CRLs), and keeps same-Name CAs apart by key.
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::a_crl_no_configured_ca_key_signed_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::a_crl_from_a_ca_outside_the_bundle_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::an_anchor_that_may_not_sign_crls_authenticates_none",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::two_cas_sharing_a_name_never_answer_for_each_other",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::verdict::tests::a_zero_pad_is_the_only_thing_normalisation_removes",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::verdict::tests::the_three_verdicts_are_distinct",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::build::tests::no_crls_build_no_index_even_with_anchors",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::issuer_key::tests::two_cas_with_one_name_are_two_keys",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::issuer_key::tests::an_unreadable_key_or_certificate_issued_nothing",
 ]
 
 [[unit]]
 id = "proxy.client_revocation_snapshot"
 class = "V0"
 description = "WHICH REVOCATION INDEX A REQUEST READS: the shared cell publishes a rebuilt index so the next `load` sees it rather than the one read at boot, and a `load` over a lock a reloader poisoned mid-swap still yields the LAST GOOD index — never a default one — and the cell still accepts a later swap. It says nothing about what the index it yields then answers."
-paths = ["mcp-re-proxy/src/client_revocation.rs"]
+paths = ["mcp-re-proxy/src/client_revocation/shared.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -12063,8 +12090,8 @@ evidence = [
   "mutation://proxy/client_revocation/snapshot_in_force",
 ]
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::the_snapshot_swaps_atomically",
-  "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::a_poisoned_lock_still_yields_the_last_good_index_and_still_accepts_a_swap",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::shared::tests::the_snapshot_swaps_atomically",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::shared::tests::a_poisoned_lock_still_yields_the_last_good_index_and_still_accepts_a_swap",
 ]
 
 # ---------------------------------------------------------------------------

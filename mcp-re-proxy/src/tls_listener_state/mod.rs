@@ -77,14 +77,14 @@ mod auth_epoch;
 mod client_verifier;
 mod resumption_acceptance;
 mod resumption_binding;
+mod trust_anchors;
 
 use auth_epoch::EpochBoundSessionStore;
 
 /// The trust-anchor digest an epoch-bound store is tagged with.
 ///
-/// Re-exported because it is a VALUE — computing one confers no authority — and the
-/// startup posture line and the plane's own tests name it. The capabilities that could
-/// pair a store with the wrong one stay private to this subtree.
+/// A VALUE — computing one confers no authority — so it is re-exported for the startup posture
+/// line and the plane's tests; the capabilities that pair a store with an epoch stay private.
 pub use auth_epoch::TlsAuthEpoch;
 
 /// Entries the per-listener TLS session cache retains.

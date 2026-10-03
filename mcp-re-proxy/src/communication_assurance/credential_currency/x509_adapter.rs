@@ -24,6 +24,9 @@ pub(super) struct CertificateCurrencyFacts<'a> {
     pub(super) issuer_der: &'a [u8],
     /// This certificate's serial number, as DER.
     pub(super) serial: &'a [u8],
+    /// The certificate itself, DER: read by the CRL index only when several configured CA
+    /// keys share this certificate's issuer name, to find the one that signed it.
+    pub(super) certificate_der: &'a [u8],
     /// Issuer `Name` == subject `Name`.
     ///
     /// A peer may send its root. Path building matches that against the CONFIGURED
@@ -58,6 +61,17 @@ impl CertificateCurrencyFacts<'_> {
     }
 }
 
+impl<'a> CertificateCurrencyFacts<'a> {
+    /// This certificate's coordinate in a CRL index.
+    pub(super) fn coordinate(&self) -> crate::client_revocation::CertificateCoordinate<'a> {
+        crate::client_revocation::CertificateCoordinate {
+            issuer_der: self.issuer_der,
+            serial: self.serial,
+            certificate_der: self.certificate_der,
+        }
+    }
+}
+
 /// Read one certificate's currency facts, or `None` if the DER does not parse.
 pub(super) fn read_currency_facts(der: &[u8]) -> Option<CertificateCurrencyFacts<'_>> {
     let (_, cert) = X509Certificate::from_der(der).ok()?;
@@ -67,6 +81,7 @@ pub(super) fn read_currency_facts(der: &[u8]) -> Option<CertificateCurrencyFacts
         not_after: cert.validity().not_after.timestamp(),
         issuer_der,
         serial: cert.tbs_certificate.raw_serial(),
+        certificate_der: der,
         self_issued: issuer_der == cert.tbs_certificate.subject.as_raw(),
     })
 }
@@ -91,6 +106,7 @@ mod tests {
             not_after: 200,
             issuer_der: &[],
             serial: &[],
+            certificate_der: &[],
             self_issued: false,
         };
         assert!(facts.window_is_orderable());
@@ -111,6 +127,7 @@ mod tests {
             not_after: 100,
             issuer_der: &[],
             serial: &[],
+            certificate_der: &[],
             self_issued: false,
         };
         assert!(!inverted.window_is_orderable());

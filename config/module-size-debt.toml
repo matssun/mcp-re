@@ -728,12 +728,6 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/client_revocation.rs"
-baseline_prod_loc = 263
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-core/src/audit.rs"
 baseline_prod_loc = 257
 baseline_sha = "d1fc5fa"

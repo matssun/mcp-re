@@ -130,11 +130,12 @@ fn leaf_refusal(
     // `admits` at the leaf: an index carrying no lists at all admits everything, and any
     // other index refuses BOTH `Revoked` and `Unknown`. The leaf is the certificate a
     // deployment's CRLs are expected to cover.
-    if index.admits(facts.issuer_der, facts.serial, now) {
+    let coordinate = facts.coordinate();
+    if index.admits(&coordinate, now) {
         return None;
     }
     Some(CredentialCurrencyRefusal::LeafRevocationRefused {
-        verdict: index.verdict(facts.issuer_der, facts.serial, now),
+        verdict: index.verdict(&coordinate, now),
     })
 }
 
@@ -175,8 +176,7 @@ fn issuer_revocation_refusal(
         match read_currency_facts(der).filter(CertificateCurrencyFacts::window_is_orderable) {
             None => Some(CredentialCurrencyRefusal::IssuerUnreadable),
             Some(facts)
-                if index.verdict(facts.issuer_der, facts.serial, now)
-                    == RevocationVerdict::Revoked =>
+                if index.verdict(&facts.coordinate(), now) == RevocationVerdict::Revoked =>
             {
                 Some(CredentialCurrencyRefusal::IssuerRevoked)
             }
@@ -709,8 +709,11 @@ mod per_request_revocation_tests {
 
     /// The index in force for the request under test — the snapshot the serving path
     /// takes once per request, not the atomic cell it was loaded from.
-    fn shared(crls: &[Vec<u8>]) -> Arc<ClientRevocationIndex> {
-        Arc::new(ClientRevocationIndex::from_crl_ders(crls).expect("index builds"))
+    ///
+    /// `anchors` are the configured client CAs each CRL is authenticated against.
+    fn shared(anchors: &[&Ca], crls: &[Vec<u8>]) -> Arc<ClientRevocationIndex> {
+        let anchors: Vec<CertificateDer<'static>> = anchors.iter().map(|a| a.der.clone()).collect();
+        Arc::new(ClientRevocationIndex::from_crl_ders(crls, &anchors).expect("index builds"))
     }
 
     /// No lifetime ceiling: revocation ALONE must arm the per-request evaluation, and
@@ -733,7 +736,7 @@ mod per_request_revocation_tests {
     fn a_leaf_a_current_crl_does_not_list_is_served() {
         let ca = root("revocation-ca");
         let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ca, &[], (2035, 1, 1))]);
+        let revocation = shared(&[&ca], &[crl(&ca, &[], (2035, 1, 1))]);
         assert!(!rejected(&[peer.as_ref()], &options(&revocation)));
     }
 
@@ -747,7 +750,7 @@ mod per_request_revocation_tests {
     fn a_leaf_on_a_current_crl_is_refused() {
         let ca = root("revocation-ca");
         let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))]);
+        let revocation = shared(&[&ca], &[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))]);
         assert!(
             rejected(&[peer.as_ref()], &options(&revocation)),
             "a revoked leaf must stop being served"
@@ -767,10 +770,10 @@ mod per_request_revocation_tests {
         let ca = root("revocation-ca");
         let peer = leaf(&ca, LEAF_SERIAL);
 
-        let before = options(&shared(&[crl(&ca, &[], (2035, 1, 1))]));
+        let before = options(&shared(&[&ca], &[crl(&ca, &[], (2035, 1, 1))]));
         assert!(!rejected(&[peer.as_ref()], &before));
 
-        let after = options(&shared(&[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))]));
+        let after = options(&shared(&[&ca], &[crl(&ca, &[LEAF_SERIAL], (2035, 1, 1))]));
         assert!(
             rejected(&[peer.as_ref()], &after),
             "the reloaded CRL must reach the connection already being served"
@@ -784,7 +787,7 @@ mod per_request_revocation_tests {
         let ca = root("revocation-ca");
         let other = root("unrelated-ca");
         let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[crl(&other, &[], (2035, 1, 1))]);
+        let revocation = shared(&[&other], &[crl(&other, &[], (2035, 1, 1))]);
         assert!(rejected(&[peer.as_ref()], &options(&revocation)));
     }
 
@@ -795,7 +798,7 @@ mod per_request_revocation_tests {
     fn a_leaf_under_a_crl_that_has_fallen_out_of_force_is_refused() {
         let ca = root("revocation-ca");
         let peer = leaf(&ca, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ca, &[], (2021, 1, 1))]);
+        let revocation = shared(&[&ca], &[crl(&ca, &[], (2021, 1, 1))]);
         assert!(rejected(&[peer.as_ref()], &options(&revocation)));
     }
 
@@ -806,7 +809,10 @@ mod per_request_revocation_tests {
         let ca = root("revocation-root");
         let ica = intermediate(&ca, "revocation-ica", ICA_SERIAL);
         let peer = leaf(&ica, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ca, &[], (2035, 1, 1)), crl(&ica, &[], (2035, 1, 1))]);
+        let revocation = shared(
+            &[&ca, &ica],
+            &[crl(&ca, &[], (2035, 1, 1)), crl(&ica, &[], (2035, 1, 1))],
+        );
         assert!(!rejected(
             &[peer.as_ref(), ica.der.as_ref()],
             &options(&revocation)
@@ -825,10 +831,13 @@ mod per_request_revocation_tests {
         let ca = root("revocation-root");
         let ica = intermediate(&ca, "revocation-ica", ICA_SERIAL);
         let peer = leaf(&ica, LEAF_SERIAL);
-        let revocation = shared(&[
-            crl(&ca, &[ICA_SERIAL], (2035, 1, 1)),
-            crl(&ica, &[], (2035, 1, 1)),
-        ]);
+        let revocation = shared(
+            &[&ca, &ica],
+            &[
+                crl(&ca, &[ICA_SERIAL], (2035, 1, 1)),
+                crl(&ica, &[], (2035, 1, 1)),
+            ],
+        );
         assert!(
             rejected(&[peer.as_ref(), ica.der.as_ref()], &options(&revocation)),
             "a revoked issuing intermediate must stop the leaf being served"
@@ -843,7 +852,7 @@ mod per_request_revocation_tests {
         let ca = root("revocation-root");
         let ica = intermediate(&ca, "revocation-ica", ICA_SERIAL);
         let peer = leaf(&ica, LEAF_SERIAL);
-        let revocation = shared(&[crl(&ica, &[], (2035, 1, 1))]);
+        let revocation = shared(&[&ica], &[crl(&ica, &[], (2035, 1, 1))]);
         assert!(!rejected(
             &[peer.as_ref(), ica.der.as_ref()],
             &options(&revocation)

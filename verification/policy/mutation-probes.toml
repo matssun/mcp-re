@@ -1630,10 +1630,10 @@ conjunct = "leaf revocation goes through `admits`, so Unknown REFUSES"
 # handshake verifier holds.
 path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
 anchor = """
-    if index.admits(facts.issuer_der, facts.serial, now) {
+    if index.admits(&coordinate, now) {
 """
 weakening = """
-    if index.verdict(facts.issuer_der, facts.serial, now) != RevocationVerdict::Revoked {
+    if index.verdict(&coordinate, now) != RevocationVerdict::Revoked {
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_leaf_whose_issuer_no_crl_covers_is_refused",
@@ -1671,10 +1671,10 @@ conjunct = "every certificate above the leaf is not EXPLICITLY revoked"
 # the leaf's own revocation check says nothing, because the leaf is not on any CRL.
 path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
 anchor = """
-                    == RevocationVerdict::Revoked =>
+                if index.verdict(&facts.coordinate(), now) == RevocationVerdict::Revoked =>
 """
 weakening = """
-                    == RevocationVerdict::Good =>
+                if index.verdict(&facts.coordinate(), now) == RevocationVerdict::Good =>
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_chain_under_a_revoked_intermediate_is_refused",
@@ -10344,13 +10344,13 @@ id = "M347-proxy-a-poisoned-revocation-lock-yields-an-empty-index"
 unit = "proxy.client_revocation_snapshot"
 theorem = "THM-0032"
 conjunct = "The revocation index it carries is the SNAPSHOT in force for the request, not the atomic cell"
-path = "mcp-re-proxy/src/client_revocation.rs"
+path = "mcp-re-proxy/src/client_revocation/shared.rs"
 anchor = """            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
 """
 weakening = """            Err(_) => Arc::new(ClientRevocationIndex::empty()),
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::a_poisoned_lock_still_yields_the_last_good_index_and_still_accepts_a_swap",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::shared::tests::a_poisoned_lock_still_yields_the_last_good_index_and_still_accepts_a_swap",
 ]
 note = """
 THE DEFECT THIS WEAKENING WRITES OUT IS A PROCESS-WIDE SILENT DISABLE, and it is the one the

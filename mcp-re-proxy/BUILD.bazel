@@ -529,6 +529,10 @@ _PROXY_LIB_SRCS = [
     # consults on every request, since rustls consults the CRLs at the handshake alone.
     "src/client_crl_publication.rs",
     "src/client_revocation.rs",
+    "src/client_revocation/build.rs",
+    "src/client_revocation/issuer_key.rs",
+    "src/client_revocation/shared.rs",
+    "src/client_revocation/verdict.rs",
     "src/stage_timers/mod.rs",
     "src/stage_timers/accumulator.rs",
     "src/blocking_mtls_harness/connection.rs",
@@ -542,6 +546,7 @@ _PROXY_LIB_SRCS = [
     "src/tls_listener_state/mod.rs",
     "src/tls_listener_state/resumption_acceptance.rs",
     "src/tls_listener_state/resumption_binding.rs",
+    "src/tls_listener_state/trust_anchors.rs",
     # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
     # invalidation channel; bounded-T fallback when the channel is unhealthy).
     "src/trust_plane/push_trust.rs",

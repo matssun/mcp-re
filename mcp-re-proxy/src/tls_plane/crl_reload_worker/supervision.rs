@@ -112,7 +112,7 @@ mod tests {
     fn a_dead_reload_worker_retracts_the_cadence_it_advertised() {
         let plan = plan_with_cadence(300);
         let currency = ClientRevocationCurrency::new(
-            ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+            ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
             true,
         );
         assert!(
@@ -143,7 +143,7 @@ mod tests {
     fn a_failed_reload_is_degraded_and_a_dead_worker_is_stopped() {
         let plan = plan_with_cadence(300);
         let currency = ClientRevocationCurrency::new(
-            ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+            ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
             true,
         );
 

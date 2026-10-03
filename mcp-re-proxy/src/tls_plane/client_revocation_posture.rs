@@ -35,9 +35,12 @@ use super::ClientCrlEvidence;
 /// installed before the cutover, and a malformed CRL is a hard startup error.
 ///
 /// Freshness is checked before posture is read, so a stale CRL refuses startup with its own
-/// diagnostic rather than being reported as posture.
+/// diagnostic rather than being reported as posture. Each CRL must also be signed by a
+/// configured client CA key (`client_ca`): the per-request index is built from these bytes
+/// and nothing the handshake verifier does authenticates it.
 pub(super) fn load_and_check_crls(
     crl_paths: &[String],
+    client_ca: &[rustls_pki_types::CertificateDer<'static>],
     startup_now_unix: i64,
 ) -> Result<ClientCrlEvidence, String> {
     let client_crls = crate::client_crl_publication::load_client_crls(crl_paths)?;
@@ -53,7 +56,7 @@ pub(super) fn load_and_check_crls(
     // is the CONSEQUENCE: here a refusal means the deployment does not come up, because a
     // proxy that starts and then fails every handshake is an outage nobody attributes to a
     // CRL; on reload the same refusal keeps last-good, which still ages out on its own.
-    ClientCrlEvidence::from_checked(client_crls, startup_now_unix)
+    ClientCrlEvidence::from_checked(client_crls, client_ca, startup_now_unix)
         .map_err(|e| format!("mcp-re-proxy refuses to start with a bad client CRL: {e}"))
 }
 
@@ -189,7 +192,7 @@ mod revocation_posture_tests {
     }
 
     fn no_crls() -> ClientCrlEvidence {
-        ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal")
+        ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal")
     }
 
     /// Without a CRL the posture must say `per_request_crl_check=not_configured`.
