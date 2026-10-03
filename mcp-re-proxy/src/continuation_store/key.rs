@@ -11,12 +11,18 @@
 //! occupancy and atomicity, and are measured against a running tier; these are algebraic
 //! properties of an encoding — injectivity over the triple, and domain separation from every
 //! other SHA-256 the profile computes — and are measured against nothing but the function.
+//!
+//! The key is derivable by anyone from three public identifiers: it contributes
+//! injectivity, not unpredictability. Isolation from a party that can WRITE the
+//! `mcp-re:cont:` keyspace is the store's premise ASM-0047, not the key's.
 
 /// The key prefix for a continuation correlation entry in the shared store.
 pub const CONTINUATION_KEY_PREFIX: &str = "mcp-re:cont:";
 
-/// Domain separator, so this digest cannot collide with any other SHA-256 the
-/// profile computes over the same bytes.
+/// Domain separator: it keeps this encoding apart from the profile's other domain-tagged
+/// digests, each of which carries its own `mcp-re/...` tag and none a prefix of another.
+/// No other digest is ever accepted in place of a continuation key, because both legs
+/// recompute the key from its inputs.
 const CONTINUATION_KEY_DOMAIN: &[u8] = b"mcp-re/continuation-key/v1";
 
 /// Derive the shared-store key for a continuation from the dispatch AUDIENCE, the
@@ -98,6 +104,26 @@ mod tests {
             continuation_key(AUD, ACTOR_B, b"abc")
         );
         assert!(continuation_key(AUD, ACTOR_A, b"abc").starts_with(CONTINUATION_KEY_PREFIX));
+    }
+
+    /// The domain tag is part of the digested bytes: the expected key is rebuilt
+    /// independently from the literal tag, so editing or dropping the constant is red.
+    #[test]
+    fn the_domain_separator_is_part_of_the_digested_bytes() {
+        use sha2::Digest;
+        let encode = |domain: &[u8]| {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(domain);
+            hasher.update(3u64.to_be_bytes());
+            hasher.update(b"aud");
+            hasher.update(5u64.to_be_bytes());
+            hasher.update(b"actor");
+            hasher.update(b"state");
+            format!("mcp-re:cont:{}", mcp_re_core::b64url_encode(&hasher.finalize()))
+        };
+        let key = continuation_key("aud", "actor", b"state");
+        assert_eq!(key, encode(b"mcp-re/continuation-key/v1"));
+        assert_ne!(key, encode(b""));
     }
 
     /// No boundary in the key can be moved — over BOTH of the key's interior boundaries,
