@@ -175,15 +175,14 @@ impl TlsHandshakeSignBudget {
         state.0 = (state.0 + elapsed * self.refill_per_sec).min(self.capacity);
         if state.0 >= 1.0 {
             state.0 -= 1.0;
-            true
-        } else {
-            drop(state);
-            let total = self.refused.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
-            if total.is_power_of_two() {
-                eprintln!("mcp-re-proxy: delegated TLS handshake-signature budget exhausted ({}/s, burst {}); {total} handshake(s) refused so far", self.rate_per_sec(), self.burst());
-            }
-            false
+            return true;
         }
+        drop(state);
+        let total = self.refused.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        if total.is_power_of_two() {
+            eprintln!("mcp-re-proxy: delegated TLS handshake-signature budget exhausted ({}/s, burst {}); {total} handshake(s) refused so far", self.rate_per_sec(), self.burst());
+        }
+        false
     }
 }
 

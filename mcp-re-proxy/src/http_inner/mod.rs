@@ -180,6 +180,17 @@ impl Backend {
             probe_inflight: AtomicBool::new(false),
         }
     }
+
+    /// Count one more consecutive failure and return the new count. Saturating: the count
+    /// is compared only against `failure_threshold`, so the ceiling is the most-ejected end.
+    fn count_failure(&self) -> u32 {
+        self.consecutive_failures
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                Some(n.saturating_add(1))
+            })
+            .unwrap_or_else(|n| n)
+            .saturating_add(1)
+    }
 }
 
 /// The pooled HTTP client to stateless Streamable-HTTP inner backends, with
@@ -330,13 +341,7 @@ impl HttpInnerPool {
             // against `failure_threshold`, so the ceiling is the most-ejected end and
             // wrapping is the permissive one — a backend failing without pause would count
             // back through zero and stop tripping the breaker.
-            let fails = b
-                .consecutive_failures
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-                    Some(n.saturating_add(1))
-                })
-                .unwrap_or_else(|n| n)
-                .saturating_add(1);
+            let fails = b.count_failure();
             if fails >= self.breaker.failure_threshold {
                 b.reopen_at_nanos.store(reopen, Ordering::Release);
                 b.state.store(STATE_OPEN, Ordering::Release);
