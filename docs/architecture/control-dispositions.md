@@ -4371,3 +4371,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** Beside NP-012: the TypeScript binding's input boundary, which no theorem states.
 **Recorded:** 2026-10-03, round-12 remediation of findings 57ac9594c01178bd, 79d16e40e00198e7, 9503efa53570820a.
+
+## NP-229 — an operator's connection limit is the bound hyper enforces on the wire, or the argv refuses it
+
+**Controls:** `mcp-re-proxy/src/async_serve/http_limits.rs` (5), `mcp-re-proxy/src/cli/runtime_flags/connection_limits.rs` (1).
+**Carrier:** `mcp-re-proxy/src/async_serve/http_limits.rs` (`http_builder`) and `cli/runtime_flags/connection_limits.rs`.
+**Statement.** *Every validated per-core in-flight ceiling, header ceiling, read bound and write bound reaches hyper's builder as that value (saturating at `u32::MAX` for the stream cap), and a header ceiling below hyper's 8 KiB floor is refused at the argv boundary rather than widened.*
+**If false.** An operator's tightened limit is silently widened or truncated (a 2^32 ceiling becomes a deny-all stream cap, a small header ceiling becomes 8 KiB on HTTP/1), so the deployment serves a posture nobody selected.
+**Likely owner:** none; NP-138 states the sync path, not the async builder.
+**Severity:** `high`.
+**Root relationship.** Under THM-0077: no deployment serves a posture nobody selected; the async-path analogue of NP-138.
+**Recorded:** 2026-10-04, round-12 remediation of f301bf012bce3e0f, 2254e76746abebba, 9cf3cbb8703b2ba0, aee0392415be35e5.

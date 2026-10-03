@@ -161,8 +161,8 @@ const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// hyper's own floor for `http1::Builder::max_buf_size`; a smaller value panics.
-/// `--max-header-bytes` is clamped up to it rather than passed through.
-const MIN_HYPER_BUF_BYTES: usize = 8192;
+/// Crate-visible because the argv boundary refuses a `--max-header-bytes` below it.
+pub(crate) const MIN_HYPER_BUF_BYTES: usize = 8192;
 
 /// Run the async accept loop until `shutdown` flips. Each accepted connection is
 /// TLS-terminated (`tokio-rustls`) and served over `hyper` (keep-alive + H2). One

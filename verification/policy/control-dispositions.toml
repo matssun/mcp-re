@@ -13552,6 +13552,15 @@ consequence = "high"
 root_relationship = "Beside NP-012: what the shipped TypeScript addon does with a JS number it cannot represent; stated by no theorem."
 record = "docs/architecture/control-dispositions.md#np-228"
 
+[[proposition]]
+id = "NP-229"
+title = "An operator's connection limit is the bound hyper enforces on the wire, or the argv refuses it"
+carrier = "mcp-re-proxy/src/async_serve/http_limits.rs (http_builder) and cli/runtime_flags/connection_limits.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected; the async-path analogue of NP-138"
+record = "docs/architecture/control-dispositions.md#np-229"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -13775,4 +13784,76 @@ project = "mcp-re-http-profile"
 control = "src/lib.rs#sigbase::tests::userinfo_in_the_target_uri_has_no_authority"
 decision = "new-proposition"
 proposition = "NP-089"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20180"
+project = "mcp-re-proxy"
+control = "src/lib.rs#http_profile_serve::continuation::open_leg::tests::a_store_less_plane_refuses_the_open_leg_after_admission"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20181"
+project = "mcp-re-proxy"
+control = "src/lib.rs#key_source::tests::a_seed_that_is_not_32_bytes_is_malformed"
+decision = "new-proposition"
+proposition = "NP-164"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20182"
+project = "mcp-re-proxy"
+control = "tests/dev_env_key_source_test.rs#a_non_utf8_seed_var_is_malformed_not_absent"
+decision = "new-proposition"
+proposition = "NP-164"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20183"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_serve::http_limits::tests::an_in_flight_ceiling_beyond_u32_saturates_the_h2_stream_cap"
+decision = "new-proposition"
+proposition = "NP-229"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20184"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_serve::http_limits::tests::the_in_flight_ceiling_caps_h2_streams"
+decision = "new-proposition"
+proposition = "NP-229"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20185"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_serve::http_limits::tests::the_header_ceiling_reaches_both_protocols"
+decision = "new-proposition"
+proposition = "NP-229"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20186"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_serve::http_limits::tests::the_read_bound_arms_the_h1_header_read_timeout"
+decision = "new-proposition"
+proposition = "NP-229"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20187"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_serve::http_limits::tests::the_write_bound_arms_the_h2_keep_alive_probe"
+decision = "new-proposition"
+proposition = "NP-229"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20188"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::runtime_flags::connection_limits::tests::a_header_ceiling_below_the_wire_floor_is_refused"
+decision = "new-proposition"
+proposition = "NP-229"
 recorded = "2026-10-04"

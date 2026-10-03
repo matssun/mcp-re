@@ -48,16 +48,21 @@ pub(super) fn http_builder(options: &ServerOptions) -> auto::Builder<TokioExecut
     // concurrent streams; each is a request that buffers up to `max_body_bytes`, so the
     // in-flight semaphore sheds them with a 503 only AFTER hyper has accepted the
     // stream. Capping at the connection level applies the same bound one layer earlier,
-    // at the multiplexer. Left unset when no ceiling is configured (unbounded, the
-    // historical behavior).
+    // at the multiplexer. Every validated deployment resolves a per-core ceiling
+    // (`InFlightLimit::per_core` / `apply_global_admission`), so it is unset only for a
+    // directly built `ServerLimits` that set `None`; a ceiling above `u32::MAX` saturates,
+    // since H2 cannot state more and the in-flight semaphore still holds the real ceiling.
     if let Some(ceiling) = stream_ceiling {
-        builder.http2().max_concurrent_streams(ceiling as u32);
+        builder
+            .http2()
+            .max_concurrent_streams(u32::try_from(ceiling).unwrap_or(u32::MAX));
     }
     // Apply the operator's `--max-header-bytes` on BOTH protocols. It was previously
     // parsed, validated, and then read by nothing on this path, so the only bound was
     // hyper's internal default — an operator tightening the limit got a silent no-op.
-    // `max_buf_size` has a hyper-enforced 8 KiB floor, so clamp rather than pass a
-    // smaller value straight through and panic.
+    // `max_buf_size` has a hyper-enforced 8 KiB floor. The argv boundary refuses a
+    // `--max-header-bytes` below it, so the clamp is reached only by a directly built
+    // `ServerLimits` and exists to avoid hyper's panic.
     builder
         .http1()
         .max_buf_size(max_header_bytes.max(MIN_HYPER_BUF_BYTES));
@@ -77,4 +82,75 @@ pub(super) fn http_builder(options: &ServerOptions) -> auto::Builder<TokioExecut
             .keep_alive_timeout(write_timeout);
     }
     builder
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tls::ServerLimits;
+    use std::time::Duration;
+
+    fn rendered(limits: ServerLimits) -> String {
+        let options = ServerOptions {
+            limits,
+            ..Default::default()
+        };
+        format!("{:?}", http_builder(&options))
+    }
+
+    #[test]
+    fn the_in_flight_ceiling_caps_h2_streams() {
+        let out = rendered(ServerLimits {
+            max_in_flight_requests: Some(7),
+            ..ServerLimits::default()
+        });
+        assert!(out.contains("max_concurrent_streams: Some(7)"), "{out}");
+    }
+
+    #[test]
+    fn an_in_flight_ceiling_beyond_u32_saturates_the_h2_stream_cap() {
+        let out = rendered(ServerLimits {
+            max_in_flight_requests: Some((u32::MAX as usize).saturating_add(1)),
+            ..ServerLimits::default()
+        });
+        assert!(
+            out.contains("max_concurrent_streams: Some(4294967295)"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn the_header_ceiling_reaches_both_protocols() {
+        let out = rendered(ServerLimits {
+            max_header_bytes: 20000,
+            ..ServerLimits::default()
+        });
+        assert!(out.contains("max_buf_size: Some(20000)"), "{out}");
+        assert!(out.contains("max_header_list_size: 20000"), "{out}");
+    }
+
+    #[test]
+    fn the_read_bound_arms_the_h1_header_read_timeout() {
+        let out = rendered(ServerLimits {
+            request_deadline: Some(Duration::from_secs(7)),
+            ..ServerLimits::default()
+        });
+        assert!(out.contains("h1_header_read_timeout: Configured(Some(7s))"), "{out}");
+        let out = rendered(ServerLimits {
+            request_deadline: None,
+            read_timeout: Some(Duration::from_secs(9)),
+            ..ServerLimits::default()
+        });
+        assert!(out.contains("h1_header_read_timeout: Configured(Some(9s))"), "{out}");
+    }
+
+    #[test]
+    fn the_write_bound_arms_the_h2_keep_alive_probe() {
+        let out = rendered(ServerLimits {
+            write_timeout: Some(Duration::from_secs(11)),
+            ..ServerLimits::default()
+        });
+        assert!(out.contains("keep_alive_interval: Some(11s)"), "{out}");
+        assert!(out.contains("keep_alive_timeout: 11s"), "{out}");
+    }
 }

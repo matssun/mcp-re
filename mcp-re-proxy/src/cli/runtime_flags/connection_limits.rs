@@ -37,7 +37,14 @@ pub(super) fn take(limits: &mut ServerLimits, flag: &str, value: &str) -> Result
         value.parse().map_err(|_| format!("invalid {kind}"))
     };
     match flag {
-        "--max-header-bytes" => limits.max_header_bytes = count(flag)?,
+        "--max-header-bytes" => {
+            let bytes = count(flag)?;
+            let floor = crate::async_serve::MIN_HYPER_BUF_BYTES;
+            if bytes < floor {
+                return Err(format!("{flag} must be >= {floor} bytes; got {bytes}"));
+            }
+            limits.max_header_bytes = bytes;
+        }
         "--max-body-bytes" => limits.max_body_bytes = count(flag)?,
         "--max-connections" => limits.max_concurrent_connections = count(flag)?,
         "--read-timeout-secs" => limits.read_timeout = parse_timeout(value, flag)?,
@@ -115,5 +122,20 @@ mod tests {
         take(&mut limits, "--max-body-bytes", "4096").expect("a count");
         assert_eq!(limits.max_body_bytes, 4096);
         assert!(take(&mut limits, "--max-body-bytes", "big").is_err());
+    }
+
+    /// A header ceiling hyper cannot enforce is refused rather than widened on HTTP/1.
+    #[test]
+    fn a_header_ceiling_below_the_wire_floor_is_refused() {
+        let mut limits = ServerLimits::default();
+        for bad in ["8191", "0"] {
+            let err = take(&mut limits, "--max-header-bytes", bad).expect_err("below the floor");
+            assert!(
+                err.contains("--max-header-bytes") && err.contains("8192"),
+                "got: {err}"
+            );
+        }
+        take(&mut limits, "--max-header-bytes", "8192").expect("the floor is accepted");
+        assert_eq!(limits.max_header_bytes, 8192);
     }
 }
