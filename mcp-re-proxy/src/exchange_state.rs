@@ -222,7 +222,7 @@ pub(crate) enum ExchangeEvent {
 /// may open. Those are independent facts: an answer leg routinely consumes one approval and
 /// opens another, so they coexist rather than exclude each other. The second fact lives in
 /// [`OpenLeg`], which is a different projection for exactly that reason.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ContinuationState {
     /// This exchange carries no continuation, so no approval is at stake.
     NotInvolved,
@@ -565,7 +565,7 @@ impl<T> Established<T> {
 /// (ADR-MCPRE-057 §4). Enumerating the product would be 23 x 3 x 2 x 3 x 3 cells, almost all
 /// of them unreachable, and would push the interesting properties out of reach of an SMT
 /// solver rather than into it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ExchangeProgress {
     request: ExchangeState,
     continuation: ContinuationState,
@@ -600,22 +600,22 @@ impl ExchangeProgress {
     /// `debug_assert!` it had reached a terminal, and that check is now the structure of
     /// the two operations rather than an observation made afterwards.
     #[cfg(test)]
-    pub(crate) fn state(self) -> ExchangeState {
+    pub(crate) fn state(&self) -> ExchangeState {
         self.request
     }
 
     #[cfg(test)]
-    pub(crate) fn continuation(self) -> ContinuationState {
+    pub(crate) fn continuation(&self) -> ContinuationState {
         self.continuation
     }
 
     #[cfg(test)]
-    pub(crate) fn origin(self) -> ResponseOrigin {
+    pub(crate) fn origin(&self) -> ResponseOrigin {
         self.origin
     }
 
     #[cfg(test)]
-    pub(crate) fn open_leg(self) -> OpenLeg {
+    pub(crate) fn open_leg(&self) -> OpenLeg {
         self.open_leg
     }
 
@@ -748,7 +748,7 @@ impl ExchangeProgress {
 
     /// The reason this exchange may not publish the success `tail` reaches, latching it.
     ///
-    /// Evaluated on a COPY. `advance` is deliberately infallible mid-pipeline — a state
+    /// Evaluated on a clone. `advance` is deliberately infallible mid-pipeline — a state
     /// that lags claims LESS happened than did, and refusing there would err in the one
     /// direction a refusal must not. At the terminal the opposite holds: there IS somewhere
     /// else to go, a post-dispatch refusal, and the claim about to be committed is the
@@ -767,7 +767,7 @@ impl ExchangeProgress {
     fn prospective_refusal(&mut self, tail: &[ExchangeEvent]) -> Option<&'static str> {
         const NOT_A_SUCCESS: &str = "a success publication was checked against a tail that \
                                      reaches no success terminal";
-        let mut prospective = *self;
+        let mut prospective = self.clone();
         for event in tail {
             prospective.advance(*event);
         }
@@ -794,7 +794,7 @@ impl ExchangeProgress {
     /// serving path is written to produce. `Some` means this process is running code that
     /// disagrees with the machine, and the exchange record is not evidence of anything.
     #[cfg(test)]
-    pub(crate) fn anomaly(self) -> Option<&'static str> {
+    pub(crate) fn anomaly(&self) -> Option<&'static str> {
         self.anomaly
     }
 
@@ -802,16 +802,15 @@ impl ExchangeProgress {
     ///
     /// Separate from [`apply`](Self::apply) because the continuation machine is not this
     /// exchange's to drive: it is shared across replicas and its authority is the store.
-    /// `Consumed` LATCHES. Once a human's approval is spent it is spent for the rest of the
-    /// exchange, and no later observation may report otherwise.
+    /// The observation LATCHES upward: `Peeked` cannot be downgraded and `Consumed` cannot be
+    /// un-spent, so once a human's approval is spent no later observation may report otherwise.
     ///
     /// The latch makes monotonicity a property of the TYPE rather than of the current call
     /// sites, so a future observation cannot reintroduce the defect silently.
     pub(crate) fn observe_continuation(&mut self, observed: ContinuationState) {
-        if self.continuation == ContinuationState::Consumed {
-            return;
+        if observed > self.continuation {
+            self.continuation = observed;
         }
-        self.continuation = observed;
     }
 
     /// Record who authored the bytes this exchange holds.
@@ -864,7 +863,7 @@ impl ExchangeProgress {
     /// `SafeNothingExecuted` would collapse "did not run" and "unknown whether it ran" into
     /// the one answer a client may act on destructively, so the unknown is reported at full
     /// strength instead.
-    pub(crate) fn retry_semantics(self) -> RetrySemantics {
+    pub(crate) fn retry_semantics(&self) -> RetrySemantics {
         if self.anomaly.is_some() {
             return RetrySemantics::NotRetrySafe;
         }
@@ -884,7 +883,7 @@ impl ExchangeProgress {
     /// `None` means the tuple is coherent. These are the combinations that the transition
     /// relation alone cannot rule out, because they are agreements BETWEEN projections and
     /// `transition` sees only one of them.
-    fn invariant_violation(self) -> Option<&'static str> {
+    fn invariant_violation(&self) -> Option<&'static str> {
         // P2. An open leg may be claimed only once it can actually be answered. The
         // obligation is incurred at classification and discharged only by the durable
         // record; reaching a success terminal with it outstanding is MCP-RE telling a client
@@ -1338,7 +1337,7 @@ mod tests {
         // the retention obligation the store accepts below them — none of which advances
         // the machine past the last state at which refusing is still free.
         assert_eq!(progress.state(), ExchangeState::InnerPlaneAccepted);
-        let mut refused = progress;
+        let mut refused = progress.clone();
         refused.apply(ExchangeEvent::Refused).unwrap();
         assert_eq!(refused.state(), ExchangeState::RefusedBeforeDispatch);
         assert_eq!(
@@ -1624,7 +1623,7 @@ mod tests {
                     if transition(*state, *event).is_err() {
                         continue;
                     }
-                    let mut after = base;
+                    let mut after = base.clone();
                     // `advance` debug-asserts the tuple invariants, which the open-leg and
                     // origin projections are not being exercised by here; the consequence
                     // question is about the request/continuation pair alone.
@@ -1638,8 +1637,12 @@ mod tests {
                 }
 
                 for observed in CONTINUATIONS {
-                    let mut after = base;
+                    let mut after = base.clone();
                     after.observe_continuation(*observed);
+                    assert!(
+                        after.continuation() >= base.continuation(),
+                        "{state:?}/{continuation:?} observed {observed:?}: continuation moved backward"
+                    );
                     assert!(
                         after.retry_semantics() >= before,
                         "{state:?}/{continuation:?} observed {observed:?}: {:?} < {before:?}",
