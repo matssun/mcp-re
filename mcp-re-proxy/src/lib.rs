@@ -95,7 +95,7 @@ pub mod gcp_kms_keysource;
 // ADR-MCPS-028 §G: the handshake path's share of a remote signer's quota. Gated on the
 // two backends that use it, because a build with neither carries no signer whose quota
 // could be spent. Its tests therefore run in the FEATURE lane
-// (`cargo test -p mcp-re-proxy --features ...`), not in the default workspace lane.
+// (the feature-enabled `rust_test` targets), not in the default-feature targets.
 #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
 pub(crate) mod handshake_quota;
 // ADR-MCPS-028 §B/§C: one remote-signer call, as it failed — the HTTP status and the body

@@ -370,7 +370,7 @@ fn entry_source_matches_target_package() {
 /// manifest ⊆ table. The reverse containment needs asserting: a table entry
 /// whose manifest entry is withdrawn stops being consulted, and an unreachable
 /// mapping is not inert — it is a claim that a source is still wired up, in a
-/// table `mcp-re-test-paths` mirrors for the cargo lane.
+/// table `mcp-re-test-paths` mirrors.
 #[test]
 fn the_source_table_names_exactly_the_manifest_sources() {
     let m = manifest();
@@ -380,7 +380,7 @@ fn the_source_table_names_exactly_the_manifest_sources() {
     assert!(
         orphaned.is_empty(),
         "SOURCE_ENVS wires runfiles for source(s) the manifest no longer names — delete the \
-         entry (and its cargo fallback in mcp-re-test-paths) once nothing claims it: {orphaned:?}"
+         entry (and its mirror in mcp-re-test-paths) once nothing claims it: {orphaned:?}"
     );
     let unwired: Vec<&&str> = declared.difference(&tabled).collect();
     assert!(

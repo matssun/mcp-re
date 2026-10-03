@@ -3,7 +3,7 @@
 //!
 //! This is the periodic/pre-release "test of the tests": it deliberately BREAKS
 //! the proxy's CLIENT-authentication control (via the `fault_accept_any_client`
-//! cargo feature, which is OFF by default and never compiled by the normal build
+//! crate feature, which is OFF by default and never compiled by the normal build
 //! / default `bazel test //...`) and proves that with the control broken the
 //! client-auth property NO LONGER holds. That is exactly what proves the real
 //! guards `missing_client_certificate_is_rejected` (T1) and

@@ -38,7 +38,7 @@
 #[cfg(all(feature = "verify", not(verus_keep_ghost)))]
 compile_error!(
     "feature `verify` carries Verus specifications and builds only under the pinned \
-     prover. Run `tools/verification/verify-verus`; do not enable it from cargo, and \
+     prover. Run `tools/verification/verify-verus`; do not enable it from a build, and \
      exclude it from any --all-features lane."
 );
 

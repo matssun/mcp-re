@@ -45,7 +45,7 @@ impl Clock for SystemClock {
 ///
 /// A TEST fixture, reused as an injectable clock by integration tests in this and
 /// dependent crates. It is compiled only under `cfg(test)` or the explicit
-/// `test-fixtures` cargo feature — an *enforced* boundary, so a default
+/// `test-fixtures` crate feature — an *enforced* boundary, so a default
 /// (production) build of `mcp-re-host` does not compile or export `FixedClock` at
 /// all, and no deployment can serve on a frozen clock from it.
 /// (This scopes only this fixture; a consumer remains free to provide its own

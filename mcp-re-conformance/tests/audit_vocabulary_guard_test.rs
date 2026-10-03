@@ -24,7 +24,7 @@
 //! Both source files are delivered through Bazel `data` runfiles and read from
 //! DISK at test time (resolved via `$(rlocationpath)` against
 //! `TEST_SRCDIR`/`RUNFILES_DIR`, the SAME scheme as the conformance drift_guard
-//! and the method-name drift guard), with the `mcp-re-test-paths` cargo fallback —
+//! and the method-name drift guard) through `mcp-re-test-paths` —
 //! so adding an `McpReError` variant (a new frozen wire_code) or editing the audit
 //! vocabulary is re-read from reality, never trusted as written. The guard does
 //! not hardcode any absolute path.

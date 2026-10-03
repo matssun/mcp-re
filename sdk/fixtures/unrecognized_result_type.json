@@ -1,5 +1,5 @@
 {
-  "_comment": "A delegated-signed reply carrying a resultType outside the set MCP 2026-07-28 defines. Genuine evidence this reader cannot classify: both SDK bindings must REFUSE it, never report it as a terminal result. Regenerate with MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy --test mrt_continuation_serving_test write_unrecognized_result_type_sdk_fixture",
+  "_comment": "A delegated-signed reply carrying a resultType outside the set MCP 2026-07-28 defines. Genuine evidence this reader cannot classify: both SDK bindings must REFUSE it, never report it as a terminal result. Writer: write_unrecognized_result_type_sdk_fixture (mrt_continuation_serving_test) with MCP_RE_WRITE_SDK_FIXTURE=1",
   "accepted_epochs": [
     "epoch-1"
   ],

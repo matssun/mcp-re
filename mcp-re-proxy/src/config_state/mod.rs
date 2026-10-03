@@ -9,7 +9,7 @@
 //! carrying what they recognised.
 //!
 //! **Three layers, and this is only the first.** Layer A asks whether the request is
-//! internally coherent; it touches no filesystem, no network, and no cargo feature. Layer
+//! internally coherent; it touches no filesystem, no network, and no crate feature. Layer
 //! B asks whether *this executable* can establish the request, and layer C whether the
 //! world cooperated. Both belong to materialization. `key_source = env` is a coherent
 //! request in a binary that cannot serve it: the plan succeeds and materialization

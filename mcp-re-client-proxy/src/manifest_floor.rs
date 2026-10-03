@@ -338,7 +338,7 @@ mod tests {
     use super::*;
 
     /// A unique scratch directory per test. No `tempfile` dependency in this crate,
-    /// and the pid keeps concurrent `cargo test` runs from colliding.
+    /// and the pid keeps concurrent test runs from colliding.
     struct Scratch(PathBuf);
 
     impl Scratch {

@@ -24,7 +24,7 @@
 //! **This machine has no relation to `Replay` (CF-12).** The apparent dependency was an
 //! alias: one field, `replay_redis_url`, carried two different facts — where admitted
 //! nonces live, and where a retained continuation base lives. Sharing a backend technology
-//! and a cargo feature with `Replay` is not a semantic edge. The endpoints may name the
+//! and a crate feature with `Replay` is not a semantic edge. The endpoints may name the
 //! same Redis, and when they do that is an operator's deployment choice.
 
 use crate::deployment_request::{DeploymentRequest, RedactedLocator, SharedStoreRequest};

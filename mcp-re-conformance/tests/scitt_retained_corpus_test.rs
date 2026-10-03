@@ -382,7 +382,7 @@ fn from_wire_response(w: &WireMessage) -> HttpResponse {
     }
 }
 
-/// Where the corpus lives, under Cargo and under Bazel.
+/// Where the corpus lives, under Bazel and in the source tree.
 ///
 /// The same dual-mode bridge the interop corpus uses: Bazel stages the vectors as runfiles
 /// and names the manifest through `MCP_RE_SCITT_RETAINED_MANIFEST`, so the directory is

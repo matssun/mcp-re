@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Integration suites that link the PLAIN proxy library, in one binary.
 //!
-//! Cargo compiles every `tests/*.rs` into a SEPARATE executable, and every executable
+//! Each standalone `tests/*.rs` becomes a SEPARATE executable, and every executable
 //! statically links the whole graph — rustls, ring, tokio, hyper. On this workspace that
 //! link costs about sixteen seconds per binary and is the dominant cost of the gate: the
 //! suites below run in well under a second combined, and took minutes to become runnable.
@@ -11,9 +11,8 @@
 //!
 //! The group is not "whichever tests happened to be cheap to move". Bazel builds the proxy
 //! library in several variants — plain, `async_serve`, and the extended backends — and a
-//! `rust_test` links exactly ONE of them. Cargo hides this by unifying features across the
-//! build; Bazel does not, and the `async_serve` lane is the only place some tests run at
-//! all. So a merged binary may only contain suites that link the same variant, and this
+//! `rust_test` links exactly ONE of them. Features are not unified across targets, and the
+//! `async_serve` lane is the only place some tests run at all. So a merged binary may only contain suites that link the same variant, and this
 //! one holds the plain-library suites. The `async_serve` suites live in
 //! `tests/integration_async/`.
 //!

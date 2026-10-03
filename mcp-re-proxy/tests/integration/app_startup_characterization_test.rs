@@ -9,8 +9,8 @@
 //! **Why this file exists separately.** Every test that drove `app::run` used to live in
 //! `tls_load_harness_bench.rs`, which is gated `#![cfg(feature = "redis_replay")]` and
 //! whose Bazel target is tagged `manual`. So the composition root — the single largest
-//! and most security-relevant assembly in the proxy — was exercised by neither
-//! `cargo test --workspace` nor `bazel test //...`. A startup test that runs in no
+//! and most security-relevant assembly in the proxy — was exercised by
+//! `bazel test //...`. A startup test that runs in no
 //! default lane protects nothing.
 //!
 //! The cases here deliberately need no Redis, no Docker and no listener: each config is
@@ -24,7 +24,7 @@ use serving_fixtures::Material;
 /// The flags every case below shares: enough to get through parsing and preflight, with
 /// a replay tier that cannot be opened — either because the backend is not compiled into
 /// this build, or because nothing answers on `127.0.0.1:1`. Startup therefore always
-/// reaches the trust plane and always stops at the replay stage in every cargo lane,
+/// reaches the trust plane and always stops at the replay stage in every feature variant,
 /// which is what makes these hermetic — no Redis, no Docker, no listener.
 fn base_args(m: &Material) -> Vec<String> {
     [
@@ -165,8 +165,8 @@ fn a_push_tier_without_an_event_source_is_qualified_where_it_is_declared() {
 /// backend is not compiled in at all and the refusal names the missing feature. With it
 /// compiled in, the same config gets as far as dialling `redis://127.0.0.1:1` and is
 /// refused by the connection failure. Asserting one fixed substring would therefore pass
-/// in one cargo lane and fail in the other — as it did — so the lanes are distinguished
-/// here rather than the test being narrowed to whichever lane it was written in.
+/// in one feature variant and fail in the other — as it did — so the variants are
+/// distinguished here rather than the test being narrowed to whichever one it was written in.
 #[test]
 fn an_unopenable_replay_tier_refuses_startup_and_names_why() {
     // Kept as a `cfg!` value rather than a `#[cfg]` on the test so BOTH lanes assert

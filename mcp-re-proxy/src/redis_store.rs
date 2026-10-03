@@ -18,7 +18,7 @@
 //! replay universes.
 //!
 //! This entire module is compiled ONLY under the non-default `redis_replay`
-//! cargo feature, so a default build is byte-for-byte unchanged and gains zero
+//! crate feature, so a default build is byte-for-byte unchanged and gains zero
 //! dependencies.
 
 use std::sync::atomic::AtomicUsize;
