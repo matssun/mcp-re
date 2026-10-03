@@ -2713,10 +2713,9 @@ conjunct = "Consumed latches: no later observation may report a spent approval a
 # is gone.
 path = "mcp-re-proxy/src/exchange_state.rs"
 anchor = """
-        if self.continuation == ContinuationState::Consumed {
-            return;
+        if observed > self.continuation {
+            self.continuation = observed;
         }
-        self.continuation = observed;
 """
 weakening = """
         self.continuation = observed;
