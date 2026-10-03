@@ -8880,7 +8880,7 @@ tested_symbols = [
   "lib#etcd_store::tests::cross_instance_insert_via_a_is_replay_via_b",
   "lib#etcd_store::tests::fresh_does_not_revoke_the_lease",
   "lib#etcd_store::tests::fresh_then_replay_single_instance",
-  "lib#etcd_store::tests::injected_clock_makes_ttl_the_window_not_the_now_zero_epoch",
+  "lib#etcd_store::tests::the_lease_grant_on_the_wire_carries_the_retention_window",
   "lib#etcd_store::tests::lease_grant_body_carries_bounded_ttl",
   "lib#etcd_store::tests::lease_revoke_body_carries_string_lease_id",
   "lib#etcd_store::tests::nonpositive_ttl_rejected_pre_store_no_etcd_calls",

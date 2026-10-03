@@ -43,6 +43,14 @@ pub struct ClientCrlEvidence {
     ders: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
 }
 
+/// One CRL's gate: refuse it unless in force, warn when near expiry, then report its posture.
+fn classify_one(crl: &[u8], index: usize, now_unix: i64) -> Result<CrlPosture, String> {
+    if let Some(next_update_unix) = require_in_force(crl, index, now_unix)? {
+        warn_near_expiry(index, next_update_unix);
+    }
+    crate::client_crl_publication::crl_posture(crl).map_err(|e| e.to_string())
+}
+
 impl ClientCrlEvidence {
     /// Classify every CRL against `now_unix`, then parse what the posture reports.
     ///
@@ -58,13 +66,7 @@ impl ClientCrlEvidence {
     ) -> Result<Self, String> {
         let mut postures = Vec::with_capacity(crls.len());
         for (index, crl) in crls.iter().enumerate() {
-            if let Some(next_update_unix) = require_in_force(crl.as_ref(), index, now_unix)? {
-                warn_near_expiry(index, next_update_unix);
-            }
-            postures.push(
-                crate::client_crl_publication::crl_posture(crl.as_ref())
-                    .map_err(|e| e.to_string())?,
-            );
+            postures.push(classify_one(crl.as_ref(), index, now_unix)?);
         }
         Ok(ClientCrlEvidence {
             postures,
