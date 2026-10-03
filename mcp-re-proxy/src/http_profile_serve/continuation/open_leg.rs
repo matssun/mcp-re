@@ -269,11 +269,93 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_record_budget_is_bounded_and_small() {
-        // The bound is the point: past the execution threshold an unbounded retry would
-        // stall a response the backend has already produced, while zero retries would fail
-        // a leg on a blip the tier answered microseconds earlier.
-        assert_eq!(RECORD_ATTEMPTS, 3);
+    /// Runs `record_open_leg` over `plane` for the standard fixture exchange.
+    async fn record_over(plane: &ContinuationPlane) -> crate::refusal::Refusal {
+        use super::super::answer_leg::tests as fixtures;
+
+        let verified = fixtures::verified_as("did:example:host-a", "key-1");
+        let actor_id = verified.resolved_actor().actor_id();
+        let http_req = fixtures::http_request(fixtures::BODY_ASSERTING_ANOTHER_ACTOR);
+        let ex = Exchange {
+            http_req: &http_req,
+            verified: &verified,
+            actor_id: &actor_id,
+            now: 1,
+            key: None,
+            verdicts: Default::default(),
+        };
+        let outcome = plane
+            .record_open_leg(&ex, "aud", "s-1", b"irr".to_vec())
+            .await;
+        // `Established<()>` is deliberately not `Debug`, so the refusal is taken by pattern.
+        let Err(refusal) = outcome else {
+            panic!("a leg whose bases were not retained must never be returned as answerable")
+        };
+        refusal
+    }
+
+    fn assert_unavailable_after_admission(refusal: &crate::refusal::Refusal) {
+        assert_eq!(refusal.cause.wire_code(), "mcp-re.replay_cache_unavailable");
+        assert_eq!(refusal.status, 503);
+        assert_eq!(
+            refusal.posture,
+            crate::refusal::RefusalPosture::AfterAdmission
+        );
+        assert_eq!(refusal.execution_refinement, None);
+    }
+
+    /// The loop honours `RECORD_ATTEMPTS`: past the execution threshold an unbounded retry
+    /// would stall a response the backend has already produced, while zero retries would
+    /// fail a leg on a blip the tier answered microseconds earlier.
+    #[tokio::test]
+    async fn the_record_budget_is_bounded_and_small() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::atomic::Ordering;
+
+        struct FailingStore(AtomicUsize);
+
+        impl crate::continuation_store::AsyncContinuationStore for FailingStore {
+            fn create<'a>(
+                &'a self,
+                _key: &'a str,
+                _bases: &'a RetainedBases,
+                _ttl_secs: i64,
+            ) -> crate::continuation_store::ContinuationFuture<'a, Creation> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async {
+                    Err(crate::continuation_store::ContinuationStoreError::Unavailable {
+                        details: "down".to_owned(),
+                    })
+                })
+            }
+
+            fn peek<'a>(
+                &'a self,
+                _key: &'a str,
+            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>>
+            {
+                Box::pin(async { Ok(None) })
+            }
+
+            fn consume<'a>(
+                &'a self,
+                _key: &'a str,
+            ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
+                Box::pin(async { Ok(false) })
+            }
+        }
+
+        let store = std::sync::Arc::new(FailingStore(AtomicUsize::new(0)));
+        let plane = ContinuationPlane::wired(store.clone(), 300);
+        let refusal = record_over(&plane).await;
+        assert_unavailable_after_admission(&refusal);
+        assert_eq!(store.0.load(Ordering::SeqCst), RECORD_ATTEMPTS);
+        assert!((2..=5).contains(&RECORD_ATTEMPTS));
+    }
+
+    #[tokio::test]
+    async fn a_store_less_plane_refuses_the_open_leg_after_admission() {
+        let refusal = record_over(&ContinuationPlane::disabled()).await;
+        assert_unavailable_after_admission(&refusal);
     }
 }
