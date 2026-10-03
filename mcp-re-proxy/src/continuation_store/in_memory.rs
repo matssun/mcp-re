@@ -36,13 +36,14 @@ fn poisoned<T>(_: std::sync::PoisonError<T>) -> ContinuationStoreError {
 /// tests without a Redis dependency.
 #[derive(Default)]
 pub struct InMemoryContinuationStore {
-    /// Entry plus its expiry instant. The TTL is part of the trait contract — RF-07
+    /// Entry plus its monotonic expiry instant. The TTL is part of the trait contract — RF-07
     /// requires a completed or abandoned continuation chain to leave no correlation
     /// state — and binding it as `_ttl_secs` meant an unanswered continuation lived for
     /// the whole process lifetime, so a long-running harness accumulated retained
     /// signature bases that nothing would ever consume. The Redis twin sets a
     /// real key TTL; this is the same bound, enforced on read.
-    entries: std::sync::Mutex<std::collections::HashMap<String, (RetainedBases, i64)>>,
+    entries:
+        std::sync::Mutex<std::collections::HashMap<String, (RetainedBases, std::time::Instant)>>,
 }
 
 impl InMemoryContinuationStore {
@@ -53,14 +54,14 @@ impl InMemoryContinuationStore {
         }
     }
 
-    /// Wall-clock seconds. The store owns its own clock because the trait's `create`
-    /// takes a DURATION, not an instant, so there is no caller-supplied `now` to
-    /// anchor expiry to.
-    fn now() -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0)
+    /// The expiry instant for a TTL taken at `now`. The store owns its own clock because
+    /// the trait's `create` takes a DURATION, not an instant, so there is no
+    /// caller-supplied `now` to anchor expiry to; a monotonic instant cannot be unreadable
+    /// or stepped backwards. A negative TTL is a zero lifetime; `None` is a TTL no instant
+    /// can represent.
+    fn expiry(now: std::time::Instant, ttl_secs: i64) -> Option<std::time::Instant> {
+        let secs = u64::try_from(ttl_secs).unwrap_or(0);
+        now.checked_add(std::time::Duration::from_secs(secs))
     }
 }
 
@@ -79,7 +80,11 @@ impl InMemoryContinuationStore {
         bases: RetainedBases,
         ttl_secs: i64,
     ) -> Result<Creation, ContinuationStoreError> {
-        let now = Self::now();
+        let now = std::time::Instant::now();
+        let expires_at =
+            Self::expiry(now, ttl_secs).ok_or_else(|| ContinuationStoreError::Unavailable {
+                details: "continuation ttl is not representable".to_owned(),
+            })?;
         let mut entries = self.entries.lock().map_err(poisoned)?;
         // Drop everything already expired on the way past, so an abandoned chain does not
         // accumulate — and so the occupancy test below reads LIVE entries only. An expired
@@ -88,7 +93,7 @@ impl InMemoryContinuationStore {
         if entries.contains_key(&key) {
             return Ok(Creation::Collision);
         }
-        entries.insert(key, (bases, now.saturating_add(ttl_secs)));
+        entries.insert(key, (bases, expires_at));
         Ok(Creation::Stored)
     }
 }
@@ -108,7 +113,7 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
     fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedBases>> {
         let key = key.to_string();
         Box::pin(async move {
-            let now = Self::now();
+            let now = std::time::Instant::now();
             Ok(self
                 .entries
                 .lock()
@@ -127,7 +132,7 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
             // entry is removed but reported as not-live: consuming a continuation past
             // its TTL would honour an answer leg the Redis twin would already have
             // dropped.
-            let now = Self::now();
+            let now = std::time::Instant::now();
             Ok(self
                 .entries
                 .lock()
@@ -217,5 +222,32 @@ mod tests {
             ),
             "and consumption must not report a removal it cannot have performed"
         );
+    }
+
+    /// A TTL no instant can represent is refused, not stored as an immortal entry.
+    #[test]
+    fn an_unrepresentable_ttl_is_refused_not_stored() {
+        let store = InMemoryContinuationStore::new();
+        assert!(matches!(
+            block_on(store.create("k", &bases(), i64::MAX)),
+            Err(ContinuationStoreError::Unavailable { .. })
+        ));
+        assert!(matches!(block_on(store.peek("k")), Ok(None)));
+    }
+
+    /// Consuming past TTL would honour an answer leg the Redis twin already dropped: an
+    /// expired entry is removed but reported not-live.
+    #[test]
+    fn consuming_an_expired_entry_removes_it_but_reports_not_live() {
+        let store = InMemoryContinuationStore::new();
+        block_on(store.create("expired", &bases(), -1)).expect("stored");
+        assert!(matches!(block_on(store.consume("expired")), Ok(false)));
+        assert!(!store
+            .entries
+            .lock()
+            .expect("not poisoned")
+            .contains_key("expired"));
+        block_on(store.create("live", &bases(), 300)).expect("stored");
+        assert!(matches!(block_on(store.consume("live")), Ok(true)));
     }
 }
