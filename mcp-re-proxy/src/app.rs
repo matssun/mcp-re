@@ -305,13 +305,13 @@ fn run_validated(
     // signs by delegation (`sign_response`), so a non-exporting HSM/KMS source would
     // never need to surrender its private key — there is deliberately no
     // `signing_key()` export call on the wiring path anymore.
-    let key_source = crate::capability_materialization::build_key_source(
+    let roots = crate::capability_materialization::build_key_source(
         admitted_key_files,
         &values.channel_credential.credential_chain,
         &values.peer_trust_anchors,
     )
-    .map_err(|e| e.to_string())?
-    .into_key_source();
+    .map_err(|e| e.to_string())?;
+    let key_source = roots.key_source();
     let server_chain = key_source
         .tls_server_cert_chain()
         .map_err(|e| e.to_string())?;
@@ -615,14 +615,14 @@ fn run_validated(
 
     // Response-signing custody (ADR-MCPRE-056 §8; ADR-MCPRE-052). The plane owns the
     // root issuer, the delegated snapshot and the worker that maintains it; what comes
-    // back is the signer alone. `key_source` is MOVED in here — it was only borrowed
-    // above, for TLS material and the response public key.
+    // back is the signer alone. `roots` is MOVED in here — it was only borrowed above, for
+    // TLS material and the response public key.
     //
     // The plane must outlive the proxy that signs with it, and it does: both are locals
     // of this function, and `serve_fleet` returns before either is dropped.
     building.install_signing(crate::signing_plane::SigningPlane::materialize(
         &signing_plan,
-        key_source,
+        roots,
         startup_now_unix,
         Arc::clone(&shutdown),
     )?);

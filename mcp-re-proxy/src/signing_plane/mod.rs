@@ -122,10 +122,21 @@ impl SigningPlane {
     /// cannot issue the first delegated key, or a configured trust-epoch source cannot be
     /// read, this refuses to start.
     ///
-    /// `root_signer` is MOVED in — it is only borrowed earlier for TLS material and the
-    /// response public key. `deployment` is the caller's shutdown flag; the worker started
+    /// `roots` is MOVED in (borrowed earlier for TLS material); taking the witness rather
+    /// than a signer is what makes a plane over uncompared roles unconstructible. `deployment` is the caller's shutdown flag; the worker started
     /// here stops on it, and also when this plane is dropped.
     pub fn materialize(
+        plan: &crate::startup_plan::SigningPlan,
+        roots: crate::capability_materialization::MaterializedSigningRoles,
+        startup_now_unix: i64,
+        deployment: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<SigningPlane, String> {
+        Self::materialize_over(plan, roots, startup_now_unix, deployment)
+    }
+
+    /// The materialization over any root signer; reachable outside this module only through
+    /// [`SigningPlane::materialize`].
+    fn materialize_over(
         plan: &crate::startup_plan::SigningPlan,
         root_signer: impl crate::key_source::ResponseSigner + Send + 'static,
         startup_now_unix: i64,
@@ -162,8 +173,7 @@ impl SigningPlane {
             );
             rotor.set_trust_epoch_before_first_issue(label);
         }
-        // Initial issuance MUST succeed before serving: the proxy never serves without
-        // an active delegated key (fail closed, ADR-MCPRE-052 §6).
+        // Initial issuance MUST succeed before serving (fail closed, ADR-MCPRE-052 §6).
         rotor.rotate(startup_now_unix).map_err(|e| {
             format!(
                 "delegated-signing: initial delegated key issuance FAILED at startup ({e:?}); \
@@ -175,11 +185,9 @@ impl SigningPlane {
              the request path; delegated key {window}. \
              Initial delegated key issued.",
         );
-        // Cold-path rotation worker: rotate within the overlap window before each key's
-        // exp so the KMS/root stays off the per-core serving runtimes. It also watches the
-        // shared trust-epoch counter and re-issues under a new epoch on an advance, so an
-        // operator `INCR` revokes the outstanding delegated keys across the fleet
-        // (ADR-MCPRE-052 §7).
+        // Cold-path rotation worker: rotates within each key's overlap window, off the
+        // per-core runtimes, and re-issues on a trust-epoch advance so an operator `INCR`
+        // revokes outstanding delegated keys fleet-wide (ADR-MCPRE-052 §7).
         let mut workers = WorkerSet::new(deployment);
         spawn_delegated_rotation_task(
             &mut workers,
@@ -804,7 +812,7 @@ mod rotation_owner_tests {
     fn materialize_refuses_when_the_root_cannot_issue_the_first_key() {
         let offline = Arc::new(AtomicBool::new(true));
         let calls = Arc::new(AtomicU64::new(0));
-        let err = SigningPlane::materialize(
+        let err = SigningPlane::materialize_over(
             &plan(TrustEpochPlan::NoNetworkChannel),
             root(&offline, &calls),
             now_unix(),
@@ -828,7 +836,7 @@ mod rotation_owner_tests {
     fn materialize_publishes_a_usable_key_and_owns_one_rotation_worker() {
         let offline = Arc::new(AtomicBool::new(false));
         let calls = Arc::new(AtomicU64::new(0));
-        let plane = SigningPlane::materialize(
+        let plane = SigningPlane::materialize_over(
             &plan(TrustEpochPlan::NoNetworkChannel),
             root(&offline, &calls),
             now_unix(),
@@ -855,7 +863,7 @@ mod rotation_owner_tests {
         drop(listener);
         let offline = Arc::new(AtomicBool::new(false));
         let calls = Arc::new(AtomicU64::new(0));
-        let err = SigningPlane::materialize(
+        let err = SigningPlane::materialize_over(
             &plan(TrustEpochPlan::redis(
                 &format!("redis://127.0.0.1:{port}"),
                 crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY,

@@ -6377,6 +6377,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::role_separation::tests::a_role_that_produced_no_key_is_not_reported_as_a_separated_one",
   "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::role_separation::tests::two_distinct_roles_materialize",
   "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::role_separation::tests::an_incomparable_channel_credential_materializes",
+  "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::role_separation::tests::the_witness_answers_as_the_source_it_compared",
   "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::role_separation::tests::a_source_over_absent_material_materializes_on_either_side",
   "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::role_identity::tests::the_response_identity_round_trips_its_own_point",
   "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_source::role_identity::tests::two_different_keys_have_two_different_identities",

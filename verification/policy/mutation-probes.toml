@@ -7113,13 +7113,13 @@ path = "mcp-re-proxy/src/app.rs"
 anchor = """
     building.install_signing(crate::signing_plane::SigningPlane::materialize(
         &signing_plan,
-        key_source,
+        roots,
         startup_now_unix,
         Arc::clone(&shutdown),
     )?);
 """
 weakening = """
-    let rival = key_source;
+    let rival = roots;
     building.install_signing(crate::signing_plane::SigningPlane::materialize(
         &signing_plan,
         rival,

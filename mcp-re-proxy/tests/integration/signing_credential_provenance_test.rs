@@ -11,28 +11,30 @@
 //! startup and signs with another on the data plane. Every signature still verifies, every
 //! startup line is still true, and the two facts are simply about different keys.
 //!
-//! > The composition root opens the key source ONCE, through the materializer; it opens the
-//! > role-separation witness once; it constructs no key source of its own; and the signing
-//! > plane it installs is materialized from that same source.
+//! > The composition root opens the key source ONCE, through the materializer; it reads the
+//! > role-separation witness's source through one projection; it constructs no key source of
+//! > its own; and the signing plane it installs is materialized from that same witness.
 //!
 //! # Why a source scan and not a type
 //!
 //! `MaterializedSigningRoles` seals the ROLE RELATION — its representation is private and
-//! `establish` is its only producer, so a source that reached the serving path came through
-//! the comparison. What it cannot seal is that the composition root uses it at all:
+//! `establish` is its only producer, and `SigningPlane::materialize` takes the witness by
+//! type, so a signing plane cannot be built over a source that skipped the comparison. What
+//! the type cannot seal is that the composition root uses the materializer at all:
 //! `FileKeySource` and the KMS adapters are public constructors, as external embedders need,
 //! so a root that built one beside the materializer would compile. That is the root's own
 //! bug to make and the root's own bug to be caught making — evidence, not
 //! unconstructibility (`docs/dev/sealed-owners.md`).
 
-/// The materializer, the witness's one exit, and the plane the signer is installed through.
+/// The materializer, the witness's one borrowed projection, and the plane the signer is
+/// installed through.
 const MATERIALIZER: &str = "build_key_source";
-const WITNESS_EXIT: &str = ".into_key_source()";
+const WITNESS_EXIT: &str = ".key_source()";
 const SIGNING_PLANE: &str = "SigningPlane::materialize";
 
 /// The binding the root must carry from one to the other. Named, because the property is
-/// not "a source exists" but "THIS source is the one that signs".
-const SOURCE_BINDING: &str = "key_source";
+/// not "a source exists" but "THIS witness is the one the signer is built from".
+const SOURCE_BINDING: &str = "roots";
 
 /// Every public key-source constructor a composition root could reach for instead. A root
 /// that opens one of these has materialized a second signing capability beside the one the
@@ -79,9 +81,9 @@ fn the_composition_root_opens_one_key_source_through_the_materializer() {
     assert_eq!(
         occurrences(&source, WITNESS_EXIT),
         1,
-        "the role-separation witness must be opened exactly once. A second `{WITNESS_EXIT}` \
-         is a second source, and the witness proves nothing about the one that was not \
-         compared."
+        "the role-separation witness must be projected exactly once. A second \
+         `{WITNESS_EXIT}` is a second read surface over the source, and the reads this \
+         control places no longer all follow one comparison."
     );
 }
 
@@ -207,9 +209,9 @@ fn the_rules_would_catch_each_regression() {
         0
     );
     assert_eq!(
-        occurrences("a.into_key_source();\nb.into_key_source();", WITNESS_EXIT),
+        occurrences("a.key_source();\nb.key_source();", WITNESS_EXIT),
         2,
-        "a second exit from the witness must be seen"
+        "a second projection of the witness must be seen"
     );
     assert_eq!(
         occurrences("let k = FileKeySource::new(p);", "FileKeySource::"),
@@ -218,7 +220,7 @@ fn the_rules_would_catch_each_regression() {
     );
 
     // A signing plane materialized from something else must be visible in the call text.
-    let bad = "install_signing(SigningPlane::materialize(&plan, other_signer, now));";
+    let bad = "install_signing(SigningPlane::materialize(&plan, other_witness, now));";
     let at = bad
         .find(SIGNING_PLANE)
         .expect("the helper must find the call");

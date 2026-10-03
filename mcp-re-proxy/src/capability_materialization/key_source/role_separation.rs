@@ -44,7 +44,7 @@
 //! it exists because neither machine can see the other's key.
 
 use super::role_identity::{channel_role_identity, response_role_identity, RoleIdentity};
-use crate::key_source::{KeyError, KeySource};
+use crate::key_source::{KeyError, KeySource, ResponseSigner};
 
 /// A deployment's materialized signing capability, known not to have collapsed its two
 /// roles.
@@ -105,11 +105,26 @@ impl MaterializedSigningRoles {
         }
     }
 
-    /// The key source, for the composition root that materializes the serving path.
+    /// The materialized key source, read by reference for the TLS materials, the client-CA
+    /// roots and the response public key the serving path consumes.
     ///
-    /// Consuming, so the witness is not left behind to be presented for a second source.
-    pub fn into_key_source(self) -> Box<dyn KeySource + Send + Sync> {
-        self.source
+    /// Borrowed, so the witness stays with the source it was established over: the only
+    /// owning use is as the response signer ([`ResponseSigner`]), by the plane that
+    /// requires the witness itself.
+    pub fn key_source(&self) -> &(dyn KeySource + Send + Sync) {
+        self.source.as_ref()
+    }
+}
+
+/// The serving path's root signer is the witness, so a signing plane cannot be materialized
+/// over a source whose two roles were never compared.
+impl ResponseSigner for MaterializedSigningRoles {
+    fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
+        self.source.sign_response(preimage)
+    }
+
+    fn response_public_key(&self) -> Result<mcp_re_core::VerificationKey, KeyError> {
+        self.source.response_public_key()
     }
 }
 
@@ -282,6 +297,33 @@ mod tests {
             }))
             .is_ok(),
             "an unreadable response key must not be reported as a signing-role collapse"
+        );
+    }
+
+    /// The witness is the response signer of the very source it compared, so a signing plane
+    /// that takes the witness signs under that source and no other.
+    #[test]
+    fn the_witness_answers_as_the_source_it_compared() {
+        let (_, response) = ed25519_leaf();
+        let (other_leaf, _) = ed25519_leaf();
+        let roles = MaterializedSigningRoles::establish(Box::new(RolesFixture {
+            response: response.clone(),
+            channel_leaf: other_leaf,
+        }))
+        .expect("two keys materialize");
+        assert_eq!(
+            ResponseSigner::response_public_key(&roles)
+                .expect("a key")
+                .to_b64url(),
+            response.to_b64url()
+        );
+        assert_eq!(
+            roles
+                .key_source()
+                .response_public_key()
+                .expect("a key")
+                .to_b64url(),
+            response.to_b64url()
         );
     }
 

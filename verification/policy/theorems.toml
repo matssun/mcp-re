@@ -4263,8 +4263,10 @@ title = "The serving path signs under the credential source materialization prod
 statement = """
 The response-signing authority the serving path holds was built by the composition root from
 the custody state the deployment validated: the root opens one key source through the
-materializer, opens the role-separation witness once, constructs no key source of its own, and
-installs the signing plane from that same source.
+materializer, reads it through the role-separation witness's one borrowed projection,
+constructs no key source of its own, and installs the signing plane from that same witness.
+`SigningPlane::materialize` takes the witness by type and has no other public entry, so a
+signing plane cannot be built over a source whose two roles were never compared.
 """
 security_consequence = """
 A deployment cannot announce one signing custody at startup and sign with another on the data
@@ -4276,10 +4278,11 @@ different keys.
 direct_consequence_severity = "high"
 scope = """
 The counterpart of THM-0066 on the signing side, and the composition half THM-0073's seal
-cannot reach. THM-0062 establishes what the credential source yields and when it yields
-nothing; THM-0064 establishes what a custody selection asserts about exposure; THM-0073
-establishes that a source obtained through the materializer kept its two roles apart. None of
-them says the root USED the materializer — `FileKeySource` and the KMS adapters are public
+does not reach by type. THM-0062 establishes what the credential source yields and when it
+yields nothing; THM-0064 establishes what a custody selection asserts about exposure; THM-0073
+establishes that a source obtained through the materializer kept its two roles apart, and the
+signing plane's witness parameter carries that to the signer. None of them says the root USED
+the materializer — `FileKeySource` and the KMS adapters are public
 constructors, as external embedders need, so a root that opened one beside it would compile.
 
 The root's two eager, fallible reads of the roles it composes — the channel chain and the

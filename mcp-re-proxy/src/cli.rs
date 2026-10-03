@@ -1687,8 +1687,10 @@ mod tests {
     /// to end. Its own properties are tested with it.
     fn key_source_from(
         config: &DeploymentRequest,
-    ) -> Result<Box<dyn crate::key_source::KeySource + Send + Sync>, crate::key_source::KeyError>
-    {
+    ) -> Result<
+        crate::capability_materialization::MaterializedSigningRoles,
+        crate::key_source::KeyError,
+    > {
         let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
         assert!(violations.is_empty(), "fixture refused: {violations:?}");
         let (channel_credential_custody, violations) =
@@ -1707,7 +1709,6 @@ mod tests {
             &config.channel_credential.credential_chain,
             &config.peer_trust_anchors,
         )
-        .map(crate::capability_materialization::MaterializedSigningRoles::into_key_source)
     }
 
     // MCPS-076: the File key source is always constructible (default + dev builds) —
