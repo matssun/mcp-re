@@ -98,7 +98,7 @@ status = "unreviewed"
 # precondition does not hold and the entry is pinned at what it now measures.
 [[debt]]
 path = "mcp-re-proxy/src/tls.rs"
-baseline_prod_loc = 670
+baseline_prod_loc = 643
 baseline_sha = "b142a7a"
 status = "reviewed-exception"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"
@@ -163,7 +163,7 @@ review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 # It is not a licence to grow — the ratchet applies to every entry whatever its status.
 [[debt]]
 path = "mcp-re-proxy/src/ocsp.rs"
-baseline_prod_loc = 980
+baseline_prod_loc = 971
 baseline_sha = "d7abd3e"
 status = "reviewed-exception"
 review_ref = "EX-006 in docs/architecture/review-dispositions.md"
@@ -187,7 +187,7 @@ review_ref = "EX-007 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
-baseline_prod_loc = 1143
+baseline_prod_loc = 1077
 baseline_sha = "b142a7a"
 status = "reviewed-exception"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
@@ -363,7 +363,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/aws_kms_keysource.rs"
-baseline_prod_loc = 668
+baseline_prod_loc = 599
 baseline_sha = "b142a7a"
 status = "reviewed-exception"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
@@ -388,7 +388,7 @@ status = "unreviewed"
 # `tls_plane.rs` became `tls_plane/mod.rs`. The debt moves WITH the file.
 [[debt]]
 path = "mcp-re-proxy/src/tls_plane/mod.rs"
-baseline_prod_loc = 438
+baseline_prod_loc = 393
 baseline_sha = "255465e"
 status = "unreviewed"
 
@@ -560,7 +560,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/deployment_request/mod.rs"
-baseline_prod_loc = 416
+baseline_prod_loc = 249
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -612,7 +612,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/validation/residue.rs"
-baseline_prod_loc = 378
+baseline_prod_loc = 377
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
