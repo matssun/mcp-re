@@ -100,6 +100,8 @@ const WORKLOAD: &str = "workload-7";
 /// TRANSITION from served to refused under a single changing variable rather than
 /// keying off the code.
 const ADMISSION_REFUSED: &str = "mcp-re.actor_binding_failed";
+/// A `Required` call that carried no admission evidence at all.
+const ABSENT_ADMISSION_EVIDENCE: &str = "mcp-re.missing_envelope";
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)
@@ -861,6 +863,11 @@ fn a_call_without_admission_evidence_is_refused_when_required_and_served_when_op
     );
     let served = block_on(strict.handle(served_of(&claims_free), NOW));
     assert_eq!(served.status, 403);
+    assert_eq!(
+        wire_code_of(&served.body),
+        ABSENT_ADMISSION_EVIDENCE,
+        "absent evidence is not an unreachable authority"
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 
     let calls = Arc::new(AtomicUsize::new(0));

@@ -106,7 +106,9 @@ impl AdmissionEnforcer {
             // reaching here means BOTH are absent: the call declares no admission.
             _ => {
                 if self.enforcement == AdmissionEnforcement::Required {
-                    return Err(HttpProfileError::AdmissionStateUnavailable);
+                    // The client presented nothing: the evidence it owed is absent, which is
+                    // not the authority being unreachable.
+                    return Err(HttpProfileError::MissingEvidence("admission"));
                 }
                 // The call declared no admission and this deployment tolerates that. NOT
                 // the same fact as having been checked and passed, and the record now says
