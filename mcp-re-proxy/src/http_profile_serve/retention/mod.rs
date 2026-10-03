@@ -161,8 +161,12 @@ impl Retention {
     /// rather than a `Result`, because a SUCCESS exit turns a failure into a refusal and a
     /// REFUSAL exit cannot, having no further exit to fall through to.
     ///
-    /// The request is NOT a parameter: the crossing carries the retained projection it was
-    /// taken for, so no caller can discharge one exchange's crossing with another's hop.
+    /// The REQUEST is not a parameter: the crossing carries the retained projection it was
+    /// taken for, so no caller can discharge one exchange's crossing against another's
+    /// request. The RESPONSE is the caller's, and nothing here pairs it with the crossing:
+    /// both call sites take it from the reply assembly of the same exchange, which is where
+    /// that pairing is owned, and a response from another exchange would be retained as
+    /// this one's terminal.
     pub(super) async fn complete(
         &self,
         owed: &RetentionDisposition,
