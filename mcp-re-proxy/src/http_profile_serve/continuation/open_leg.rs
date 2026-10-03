@@ -9,7 +9,7 @@ use mcp_re_core::McpReError;
 
 use crate::continuation_store::continuation_key;
 use crate::continuation_store::Creation;
-use crate::continuation_store::RetainedBases;
+use crate::continuation_store::RetainedHandles;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 
@@ -32,7 +32,7 @@ impl ContinuationPlane {
     /// CONTINUATION-RECORDED — make an open leg answerable on any replica.
     ///
     /// ```text
-    /// ensures   Ok  => the retained bases THIS leg produced are in the shared tier
+    /// ensures   Ok  => the retained handles THIS leg produced are in the shared tier
     ///           Err => 503 (shared tier unavailable) or 409 (the key is taken), bound
     /// refusal   NOT free
     /// ```
@@ -85,10 +85,7 @@ impl ContinuationPlane {
                 503,
             ));
         };
-        let bases = RetainedBases {
-            previous_request_base: ex.verified.request_signature_base().to_vec(),
-            input_required_response_base: response_base,
-        };
+        let bases = RetainedHandles::over(ex.verified.request_signature_base(), &response_base);
         let key = continuation_key(audience_id, ex.actor_id, state.as_bytes());
         // Named so the arm below stays an EXPRESSION: a block arm is a nesting level, and
         // this function is inside a loop inside a method already.
@@ -132,7 +129,7 @@ mod tests {
             fn create<'a>(
                 &'a self,
                 key: &'a str,
-                _bases: &'a RetainedBases,
+                _bases: &'a RetainedHandles,
                 _ttl_secs: i64,
             ) -> crate::continuation_store::ContinuationFuture<'a, Creation> {
                 self.0.lock().expect("keys").push(key.to_owned());
@@ -142,7 +139,7 @@ mod tests {
             fn peek<'a>(
                 &'a self,
                 _key: &'a str,
-            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>>
+            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>>
             {
                 Box::pin(async { Ok(None) })
             }
@@ -188,7 +185,7 @@ mod tests {
     /// R11-348 — a COLLISION fails the leg closed, and does not spend the retry budget.
     ///
     /// The two halves are one property. Failing closed is what keeps an answerable
-    /// continuation from being returned over another approval's retained bases; doing it
+    /// continuation from being returned over another approval's retained handles; doing it
     /// on the FIRST answer is what distinguishes a collision from the transient fault the
     /// budget exists for. A retrying implementation would still refuse in the end, so a
     /// test that only checked the refusal would pass over the wrong behaviour — hence the
@@ -205,7 +202,7 @@ mod tests {
             fn create<'a>(
                 &'a self,
                 _key: &'a str,
-                _bases: &'a RetainedBases,
+                _bases: &'a RetainedHandles,
                 _ttl_secs: i64,
             ) -> crate::continuation_store::ContinuationFuture<'a, Creation> {
                 self.0.fetch_add(1, Ordering::SeqCst);
@@ -215,7 +212,7 @@ mod tests {
             fn peek<'a>(
                 &'a self,
                 _key: &'a str,
-            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>>
+            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>>
             {
                 Box::pin(async { Ok(None) })
             }
@@ -248,7 +245,7 @@ mod tests {
         // `Established<()>` is deliberately not `Debug` (it is a capability, not data), so
         // the refusal is taken by pattern rather than by `expect_err`.
         let Err(refusal) = outcome else {
-            panic!("a leg whose bases were not retained must never be returned as answerable")
+            panic!("a leg whose handles were not retained must never be returned as answerable")
         };
         // The token is the point, not merely that it refused. A collision reported as
         // `replay_cache_unavailable`/503 tells a client the tier is down and to retry —
@@ -289,7 +286,7 @@ mod tests {
             .await;
         // `Established<()>` is deliberately not `Debug`, so the refusal is taken by pattern.
         let Err(refusal) = outcome else {
-            panic!("a leg whose bases were not retained must never be returned as answerable")
+            panic!("a leg whose handles were not retained must never be returned as answerable")
         };
         refusal
     }
@@ -318,21 +315,23 @@ mod tests {
             fn create<'a>(
                 &'a self,
                 _key: &'a str,
-                _bases: &'a RetainedBases,
+                _bases: &'a RetainedHandles,
                 _ttl_secs: i64,
             ) -> crate::continuation_store::ContinuationFuture<'a, Creation> {
                 self.0.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async {
-                    Err(crate::continuation_store::ContinuationStoreError::Unavailable {
-                        details: "down".to_owned(),
-                    })
+                    Err(
+                        crate::continuation_store::ContinuationStoreError::Unavailable {
+                            details: "down".to_owned(),
+                        },
+                    )
                 })
             }
 
             fn peek<'a>(
                 &'a self,
                 _key: &'a str,
-            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>>
+            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>>
             {
                 Box::pin(async { Ok(None) })
             }

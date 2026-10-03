@@ -332,8 +332,8 @@ impl HttpProfileProxy {
     }
 
     /// Wire the MRTR continuation correlation store (ADR-MCPS-047) with a bounded
-    /// entry TTL. The open leg records `{previous_request_base,
-    /// input_required_response_base}` under `H(requestState)`; the answer leg — on
+    /// entry TTL. The open leg records the two role-labeled
+    /// evidence handles over its signature bases under `H(requestState)`; the answer leg — on
     /// ANY replica — takes them one-shot to drive the pure continuation binding.
     pub fn with_continuation_store(
         mut self,

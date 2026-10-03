@@ -197,8 +197,8 @@ fn prepare_http_dispatch(
     let continuation_verified = match (continuation, continuation_ctx) {
         (Some(c), Some(ctx)) => {
             c.verify(
-                ctx.previous_request_base,
-                ctx.input_required_response_base,
+                ctx.previous_request_evidence,
+                ctx.input_required_response_evidence,
                 ctx.request_state,
             )
             .map_err(|e| DispatchError::Profile(e))?;
@@ -240,6 +240,7 @@ mod tests {
     use crate::block::ActorIdentity;
     use crate::block::HttpContinuation;
     use crate::block::HttpRequestEvidenceBlock;
+    use crate::block::RequestEvidenceDigest;
     use crate::block::ResolvedActor;
     use crate::block::SignerSlot;
     use crate::evidence::RequestEvidence;
@@ -298,8 +299,12 @@ mod tests {
         }
     }
 
-    fn retained() -> RetainedContinuation<'static> {
-        RetainedContinuation::from_correlation(PREV, IRR, STATE)
+    /// The two retained handles, minted under their own role labels as the open leg does.
+    fn handles() -> (RequestEvidenceDigest, RequestEvidenceDigest) {
+        (
+            RequestEvidenceDigest::over_labeled(crate::ids::EVIDENCE_LABEL_REQUEST, PREV),
+            RequestEvidenceDigest::over_labeled(crate::ids::EVIDENCE_LABEL_RESPONSE, IRR),
+        )
     }
 
     #[test]
@@ -361,8 +366,10 @@ mod tests {
         // The other positive control: the refusals are not satisfied by a seam that
         // refuses everything.
         let ev = verified(Some(HttpContinuation::build(PREV, IRR, STATE)));
+        let (prev, irr) = handles();
+        let retained = RetainedContinuation::from_correlation(&prev, &irr, STATE);
         let (_key, continuation_verified) =
-            prepare_http_dispatch(&ev, Some(retained())).expect("a matching answer leg prepares");
+            prepare_http_dispatch(&ev, Some(retained)).expect("a matching answer leg prepares");
         assert!(continuation_verified);
     }
 
@@ -371,7 +378,9 @@ mod tests {
         // The R12-288/289 repair. `(None, _) => false` discarded the bases and returned an
         // ordinary first-leg admission, so a caller that believed it was resuming a
         // correlation received no signal at all that it was not.
-        let refusal = prepare_http_dispatch(&verified(None), Some(retained()))
+        let (prev, irr) = handles();
+        let retained = RetainedContinuation::from_correlation(&prev, &irr, STATE);
+        let refusal = prepare_http_dispatch(&verified(None), Some(retained))
             .expect_err("a correlation the request does not claim must not be discarded");
         assert_eq!(
             refusal,

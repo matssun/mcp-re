@@ -12,7 +12,7 @@ use super::AsyncContinuationStore;
 use super::ContinuationFuture;
 use super::ContinuationStoreError;
 use super::Creation;
-use super::RetainedBases;
+use super::RetainedHandles;
 
 /// A poisoned correlation map, as the verdict this store already has for it.
 ///
@@ -43,7 +43,7 @@ pub struct InMemoryContinuationStore {
     /// signature bases that nothing would ever consume. The Redis twin sets a
     /// real key TTL; this is the same bound, enforced on read.
     entries:
-        std::sync::Mutex<std::collections::HashMap<String, (RetainedBases, std::time::Instant)>>,
+        std::sync::Mutex<std::collections::HashMap<String, (RetainedHandles, std::time::Instant)>>,
 }
 
 impl InMemoryContinuationStore {
@@ -77,7 +77,7 @@ impl InMemoryContinuationStore {
     fn insert_if_absent(
         &self,
         key: String,
-        bases: RetainedBases,
+        bases: RetainedHandles,
         ttl_secs: i64,
     ) -> Result<Creation, ContinuationStoreError> {
         let now = std::time::Instant::now();
@@ -102,7 +102,7 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
     fn create<'a>(
         &'a self,
         key: &'a str,
-        bases: &'a RetainedBases,
+        bases: &'a RetainedHandles,
         ttl_secs: i64,
     ) -> ContinuationFuture<'a, Creation> {
         let key = key.to_string();
@@ -110,7 +110,7 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
         Box::pin(async move { self.insert_if_absent(key, bases, ttl_secs) })
     }
 
-    fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedBases>> {
+    fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedHandles>> {
         let key = key.to_string();
         Box::pin(async move {
             let now = std::time::Instant::now();
@@ -148,7 +148,7 @@ mod tests {
     use super::AsyncContinuationStore;
     use super::ContinuationStoreError;
     use super::InMemoryContinuationStore;
-    use super::RetainedBases;
+    use super::RetainedHandles;
     use std::future::Future;
     use std::sync::Arc;
 
@@ -159,11 +159,8 @@ mod tests {
             .block_on(f)
     }
 
-    fn bases() -> RetainedBases {
-        RetainedBases {
-            previous_request_base: b"prev-base".to_vec(),
-            input_required_response_base: b"irr-base".to_vec(),
-        }
+    fn bases() -> RetainedHandles {
+        RetainedHandles::over(b"prev-base", b"irr-base")
     }
 
     /// A poisoned correlation map is `Unavailable` on ALL THREE operations.

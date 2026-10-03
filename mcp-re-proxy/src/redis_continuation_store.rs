@@ -4,7 +4,7 @@
 //!
 //! The async analogue of the design in [`crate::async_redis_store`]: one
 //! auto-reconnecting, multiplexed [`ConnectionManager`] cloned per op. The open leg
-//! establishes the retained bases with `SET key <bases> NX PX <ttl_ms>` — `NX` is what
+//! establishes the retained handles with `SET key <handles> NX PX <ttl_ms>` — `NX` is what
 //! makes a live key a collision rather than an overwrite, and it is in the same command
 //! as the write so the test and the set cannot be interleaved; the answer leg
 //! reads them with a non-destructive `GET`, then removes them with a `DEL` whose
@@ -22,27 +22,39 @@ use crate::continuation_store::AsyncContinuationStore;
 use crate::continuation_store::ContinuationFuture;
 use crate::continuation_store::ContinuationStoreError;
 use crate::continuation_store::Creation;
-use crate::continuation_store::RetainedBases;
+use crate::continuation_store::RetainedHandles;
 
-/// The on-the-wire value: the two retained signature bases, each base64url-encoded
-/// and joined with a `.` (base64url alphabet never contains `.`, so the split is
-/// unambiguous). The bases are opaque bytes; base64url keeps the Redis value a clean
-/// ASCII string. Avoids a serde dependency for one fixed two-field shape.
-fn encode_bases(bases: &RetainedBases) -> String {
+/// The on-the-wire value: the two retained evidence handles, each `<digest_alg>:<digest_value>`,
+/// joined with a `.`. Neither the algorithm token nor a base64url digest contains `.` or `:`,
+/// so the split is unambiguous. No signature base is stored.
+fn encode_handles(handles: &RetainedHandles) -> String {
+    let one = |h: &mcp_re_http_profile::RequestEvidenceDigest| {
+        format!("{}:{}", h.digest_alg, h.digest_value)
+    };
     format!(
         "{}.{}",
-        mcp_re_core::b64url_encode(&bases.previous_request_base),
-        mcp_re_core::b64url_encode(&bases.input_required_response_base),
+        one(&handles.previous_request_evidence),
+        one(&handles.input_required_response_evidence)
     )
 }
 
-/// Inverse of [`encode_bases`]. `None` on a malformed value (wrong field count or
-/// an undecodable segment).
-fn decode_bases(value: &str) -> Option<RetainedBases> {
+/// Inverse of [`encode_handles`]. `None` on a malformed value (wrong field count, a missing
+/// separator, or an empty or non-token part).
+fn decode_handles(value: &str) -> Option<RetainedHandles> {
+    let token = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_graphic() && b != b'.');
+    let one = |s: &str| {
+        let (alg, digest) = s.split_once(':')?;
+        (token(alg) && token(digest) && !digest.contains(':')).then(|| {
+            mcp_re_http_profile::RequestEvidenceDigest {
+                digest_alg: alg.to_owned(),
+                digest_value: digest.to_owned(),
+            }
+        })
+    };
     let (p, i) = value.split_once('.')?;
-    Some(RetainedBases {
-        previous_request_base: mcp_re_core::b64url_decode(p).ok()?,
-        input_required_response_base: mcp_re_core::b64url_decode(i).ok()?,
+    Some(RetainedHandles {
+        previous_request_evidence: one(p)?,
+        input_required_response_evidence: one(i)?,
     })
 }
 
@@ -78,11 +90,11 @@ impl AsyncContinuationStore for RedisContinuationStore {
     fn create<'a>(
         &'a self,
         key: &'a str,
-        bases: &'a RetainedBases,
+        bases: &'a RetainedHandles,
         ttl_secs: i64,
     ) -> ContinuationFuture<'a, Creation> {
         let key = key.to_string();
-        let value = encode_bases(bases);
+        let value = encode_handles(bases);
         let mut conn = self.conn.clone();
         // A non-positive TTL would ask Redis for a <=0 PX; clamp to a 1s floor so a
         // degenerate window still records a briefly-live entry rather than erroring.
@@ -123,11 +135,11 @@ impl AsyncContinuationStore for RedisContinuationStore {
         })
     }
 
-    fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedBases>> {
+    fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedHandles>> {
         let key = key.to_string();
         let mut conn = self.conn.clone();
         Box::pin(async move {
-            // A plain GET: reading the bases the binding is checked against must not
+            // A plain GET: reading the handles the binding is checked against must not
             // remove them, or a request that is about to fail the binding would destroy
             // a live entry on its way out.
             let raw: Result<Option<String>, redis::RedisError> =
@@ -138,7 +150,7 @@ impl AsyncContinuationStore for RedisContinuationStore {
             let Some(value) = raw else {
                 return Ok(None);
             };
-            decode_bases(&value)
+            decode_handles(&value)
                 .map(Some)
                 .ok_or_else(|| ContinuationStoreError::Unavailable {
                     details: "malformed continuation value in shared store".to_string(),
@@ -186,11 +198,8 @@ mod tests {
     /// setup, answered with a bare `+OK` and not recorded.
     const STORE_COMMANDS: [&str; 3] = ["SET", "GET", "DEL"];
 
-    fn bases() -> RetainedBases {
-        RetainedBases {
-            previous_request_base: b"prev-base".to_vec(),
-            input_required_response_base: b"irr-base".to_vec(),
-        }
+    fn bases() -> RetainedHandles {
+        RetainedHandles::over(b"prev-base", b"irr-base")
     }
 
     const KEY: &str = "mcp-re:cont:abc";
@@ -210,20 +219,19 @@ mod tests {
 
     #[test]
     fn the_encoded_value_round_trips_and_a_malformed_one_is_rejected() {
-        // Bytes that exercise the URL alphabet: standard base64 would spell 0xfb/0xff
-        // with `+` and `/`, and the two fields must not come back swapped.
-        let bases = RetainedBases {
-            previous_request_base: vec![0xfb, 0xff, 0x00, 1],
-            input_required_response_base: vec![0xff, 0xef, 0xbe],
-        };
-        let encoded = encode_bases(&bases);
+        // The two slots must not come back swapped, and the value is a pair of handles,
+        // not bases.
+        let bases = RetainedHandles::over(&[0xfb, 0xff, 0x00, 1], &[0xff, 0xef, 0xbe]);
+        let encoded = encode_handles(&bases);
         assert_eq!(encoded.matches('.').count(), 1, "one unambiguous separator");
-        assert_eq!(decode_bases(&encoded), Some(bases));
+        assert_eq!(decode_handles(&encoded), Some(bases));
 
-        // A value that never came out of `encode_bases` is not a continuation.
-        assert_eq!(decode_bases("no-separator"), None);
-        assert_eq!(decode_bases("not!base64.aaaa"), None);
-        assert_eq!(decode_bases("aaaa.not!base64"), None);
+        // A value that never came out of `encode_handles` is not a continuation.
+        assert_eq!(decode_handles("no-separator"), None);
+        assert_eq!(decode_handles("sha-256:aaaa"), None);
+        assert_eq!(decode_handles("sha-256aaaa.sha-256:bbbb"), None);
+        assert_eq!(decode_handles("sha-256:aaaa.sha-256:"), None);
+        assert_eq!(decode_handles("sha-256:aa:aa.sha-256:bbbb"), None);
     }
 
     /// CONTROL 8 — the wire evidence: `NX` and `PX` are both requested, in ONE command.
@@ -233,7 +241,7 @@ mod tests {
     /// caller's side and from every higher-level test — the difference is only visible
     /// here, in the bytes. So it is asserted here.
     #[tokio::test]
-    async fn the_open_leg_records_the_bases_under_an_nx_guarded_bounded_px_ttl() {
+    async fn the_open_leg_records_the_handles_under_an_nx_guarded_bounded_px_ttl() {
         let (store, seen) = store_against("+OK\r\n").await;
         assert_eq!(
             store
@@ -254,7 +262,7 @@ mod tests {
         assert_eq!(set[0], "SET");
         assert_eq!(set[1], KEY);
         assert_eq!(
-            decode_bases(&set[2]),
+            decode_handles(&set[2]),
             Some(bases()),
             "the recorded value is the pair the answer leg binds against"
         );
@@ -265,7 +273,7 @@ mod tests {
         );
         assert_eq!(
             set[4], "PX",
-            "an entry with no expiry retains signature bases forever"
+            "an entry with no expiry retains evidence handles forever"
         );
         assert_eq!(set[5], "300000", "the TTL is seconds, the argument is ms");
     }
@@ -306,10 +314,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reading_the_retained_bases_does_not_remove_them() {
+    async fn reading_the_retained_handles_does_not_remove_them() {
         // The binding is checked against these bytes BEFORE anything is removed, so the
         // read leg must not be a destructive command.
-        let encoded = encode_bases(&bases());
+        let encoded = encode_handles(&bases());
         let reply = format!("${}\r\n{encoded}\r\n", encoded.len());
         let (store, seen) = store_against(&reply).await;
 

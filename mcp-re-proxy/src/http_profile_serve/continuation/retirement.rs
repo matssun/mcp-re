@@ -86,7 +86,7 @@ mod tests {
     use crate::continuation_store::continuation_key;
     use crate::continuation_store::AsyncContinuationStore;
     use crate::continuation_store::ContinuationStoreError;
-    use crate::continuation_store::RetainedBases;
+    use crate::continuation_store::RetainedHandles;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -120,14 +120,7 @@ mod tests {
         let plane = ContinuationPlane::wired(store.clone(), 300);
         let key = continuation_key("aud", "actor-1", b"s-1");
         store
-            .create(
-                &key,
-                &RetainedBases {
-                    previous_request_base: b"req".to_vec(),
-                    input_required_response_base: b"resp".to_vec(),
-                },
-                300,
-            )
+            .create(&key, &RetainedHandles::over(b"req", b"resp"), 300)
             .await
             .expect("the in-memory tier accepts an open leg");
 
@@ -161,7 +154,7 @@ mod tests {
         fn create<'a>(
             &'a self,
             _key: &'a str,
-            _bases: &'a RetainedBases,
+            _bases: &'a RetainedHandles,
             _ttl_secs: i64,
         ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
         {
@@ -171,7 +164,7 @@ mod tests {
         fn peek<'a>(
             &'a self,
             _key: &'a str,
-        ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>> {
+        ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>> {
             Box::pin(async { Ok(None) })
         }
 

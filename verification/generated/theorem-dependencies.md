@@ -28,7 +28,7 @@ graph BT
     THM_0007["THM-0007<br/>A typed artifact verifier admits only its own type"]
     THM_0008["THM-0008<br/>No untyped artifact binding leaves the verifier as verified"]
     THM_0009["THM-0009<br/>A presented continuation cannot bypass verification"]
-    THM_0010["THM-0010<br/>Continuation handles match their presented inputs in role"]
+    THM_0010["THM-0010<br/>Continuation handles match their retained evidence in slot"]
     THM_0013["THM-0013<br/>No validated deployment enables online OCSP client-certificate revocation"]
     THM_0014["THM-0014<br/>A successful request-floor verification establishes the cryptographic floor"]
     THM_0015["THM-0015<br/>A successful full-profile request verification establishes audience and artifact binding"]

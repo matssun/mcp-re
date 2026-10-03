@@ -8056,7 +8056,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-17066"
 project = "mcp-re-proxy"
-control = "src/lib.rs#redis_continuation_store::tests::the_open_leg_records_the_bases_under_an_nx_guarded_bounded_px_ttl"
+control = "src/lib.rs#redis_continuation_store::tests::the_open_leg_records_the_handles_under_an_nx_guarded_bounded_px_ttl"
 decision = "new-proposition"
 proposition = "NP-119"
 recorded = "2026-09-19"

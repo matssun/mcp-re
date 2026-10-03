@@ -4,25 +4,24 @@
 //!
 //! The MRT flow is two independent signed legs (ADR-MCPS-024): a client opens an
 //! `InputRequiredResult` on one replica, then answers it — with a fresh nonce and a
-//! signed `HttpContinuation` — on ANY replica. The answer leg carries only DIGESTS
-//! of the three bound handles (previous-request base, input-required-response base,
-//! opaque `requestState`); to verify them the serving replica needs the exact BYTES
-//! the open leg produced. Because the two legs may land on different replicas and
-//! the proxy holds no per-session state, those bytes travel through this shared
-//! store — the same durable tier (Redis) that backs cross-replica replay coherence
-//! and the trust epoch.
+//! signed `HttpContinuation` — on ANY replica. The answer leg carries the three bound
+//! handles (previous-request evidence, input-required-response evidence, `requestState`
+//! digest); to verify them the serving replica needs the two evidence handles the open
+//! leg minted. Because the two legs may land on different replicas and the proxy holds
+//! no per-session state, those handles travel through this shared store — the same
+//! durable tier (Redis) that backs cross-replica replay coherence and the trust epoch.
 //!
 //! Design (stateless replicas, shared correlation tier):
 //!   * OPEN leg on replica A: after A delegated-signs an `InputRequiredResult`, it
-//!     records `{previous_request_base, input_required_response_base}` under the
+//!     records the two role-labeled evidence handles over its signature bases under the
 //!     key `H(actor_id, requestState)`, with a bounded TTL.
 //!   * ANSWER leg on replica B: B reads `requestState` from the request, derives the
 //!     same key from the state and ITS OWN resolved actor, `peek`s the retained
-//!     bases, and drives the EXISTING pure continuation binding
+//!     handles, and drives the EXISTING pure continuation binding
 //!     ([`mcp_re_http_profile::RetainedContinuation`] +
-//!     [`mcp_re_http_profile::dispatch`]): the retained bases are hashed and MUST
-//!     equal the digests the client committed to under its signature. A missing
-//!     entry (never opened, expired, or already answered) means no retained bases,
+//!     [`mcp_re_http_profile::dispatch`]): the retained handles MUST equal
+//!     the handles the client committed to under its signature. A missing
+//!     entry (never opened, expired, or already answered) means no retained handles,
 //!     so the pure dispatcher fails closed `continuation_binding_failed` — a splice
 //!     or replayed continuation never admits. Only once the answer leg has been
 //!     admitted does B `consume` the entry.
@@ -33,12 +32,12 @@
 //! be unguessable.
 //!
 //! The actor scope is what makes the answer leg the OPEN leg's actor's to give. The
-//! continuation binding alone does not decide that: it compares digests of the open
-//! leg's two signature bases, and those digests are not secrets — they are public
+//! continuation binding alone does not decide that: it compares the evidence
+//! handles of the open leg's two signature bases, and those handles are not secrets — they are public
 //! values derived from the exchange, held by the proxy and visible to anyone who saw
 //! it. A second verified actor that knows them can therefore present a
 //! correctly-binding answer leg, and without scoping the store hands it the victim's
-//! retained bases and its approval completes. That is not a denial of service; it is
+//! retained handles and its approval completes. That is not a denial of service; it is
 //! another actor answering a human-approval round trip. Deriving the key from the
 //! actor the VERIFIER resolved — never from anything the request asserts — puts the
 //! entry out of reach: a different actor derives a different key, which does not
@@ -47,7 +46,7 @@
 //! The peek/consume split is what keeps a refused request from destroying a live
 //! entry. A destructive read ran before the binding was checked, so merely naming
 //! another actor's `requestState` — or hitting a transient store failure on one's own
-//! — deleted the retained bases permanently, and an approval round trip cannot be
+//! — deleted the retained handles permanently, and an approval round trip cannot be
 //! re-opened.
 //!
 //! One-shot survives the split: `consume` reports whether IT removed the entry, so of
@@ -55,7 +54,7 @@
 //!
 //! **A live entry is never overwritten.** `requestState` is minted by the inner application
 //! and treated as opaque, so two approvals open for one actor under one `requestState` are
-//! whatever that application does; recording the second over the first destroys bases the
+//! whatever that application does; recording the second over the first destroys handles the
 //! first still needs. The contract this replaced said "a fresh open leg supersedes a stale
 //! one", which asserts an ORDER nothing establishes — the legs may be concurrent, and both
 //! carry the same key and TTL shape. Whether a live entry EXISTS is decidable, so that is
@@ -66,43 +65,33 @@
 //!
 //! **What the store is trusted for.** PROVENANCE — that an entry
 //! under `mcp-re:cont:` was written by an open leg of this deployment. The dispatcher
-//! compares the client's signed digests against the bytes this store returned, and
-//! nothing establishes that those bytes came from an `InputRequiredResult` this fleet
-//! signed; so a party able to WRITE the store plants bases under a key derived from
-//! its OWN resolved actor, signs an answer leg over their digests, and the binding
+//! compares the client's signed handles against the handles this store returned, and
+//! nothing establishes that those came from an `InputRequiredResult` this fleet
+//! signed; so a party able to WRITE the store plants handles under a key derived from
+//! its OWN resolved actor, signs an answer leg carrying them, and the binding
 //! passes — a completed human-approval round trip nobody approved. ASM-0047 registers
 //! that premise and ASM-0048 what the Redis mechanism's replies mean. The client's RFC
 //! 9421 signature carries the other half independently, so what rests on the store is
 //! the human-approval property and not the caller's identity.
 //!
-//! **Confidentiality is claimed by nothing here.** A base carries the VALUE of every
-//! component its message covered, and the profile's closed allowlist admits `authorization`
-//! and `dpop` (`verify/floor/covered_components.rs`) — so a deployment whose clients cover
-//! either retains a bearer credential at rest for the continuation TTL. ASM-0047 constrains
-//! who may WRITE the tier and says nothing about who may read it.
+//! **No credential is retained.** An RFC 9421 signature base carries the VALUE of every
+//! component its message covered, including a covered `authorization` or `dpop` header, so
+//! the store keeps only the two evidence handles (one-way digests under distinct role
+//! labels) and never a base: a read of the tier yields no replayable credential.
 
 use std::future::Future;
 use std::pin::Pin;
 
 mod in_memory;
 mod key;
+mod retained_handles;
 
 pub use in_memory::InMemoryContinuationStore;
 // Re-exported rather than relocated: the key and the contract are one public surface to
 // every consumer, and both legs reach for them together.
 pub use key::continuation_key;
 pub use key::CONTINUATION_KEY_PREFIX;
-
-/// The retained open-leg signature bases an answer leg binds to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RetainedBases {
-    /// The RFC 9421 signature base of the client's request that opened the
-    /// `InputRequiredResult` (the open leg).
-    pub previous_request_base: Vec<u8>,
-    /// The RFC 9421 signature base of the delegated-signed `InputRequiredResult`
-    /// response the open leg returned.
-    pub input_required_response_base: Vec<u8>,
-}
+pub use retained_handles::RetainedHandles;
 
 /// A fail-closed continuation-store failure. An operational outage is always safe
 /// to treat as "no retained continuation" (fail closed) on the answer leg; on the
@@ -179,14 +168,14 @@ pub trait AsyncContinuationStore: Send + Sync {
     fn create<'a>(
         &'a self,
         key: &'a str,
-        bases: &'a RetainedBases,
+        bases: &'a RetainedHandles,
         ttl_secs: i64,
     ) -> ContinuationFuture<'a, Creation>;
 
     /// Read the retained bases for `key` WITHOUT removing them. `Ok(None)` means no
     /// live entry (never opened, expired, or already answered) — the answer leg then
     /// fails closed on the continuation binding.
-    fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedBases>>;
+    fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedHandles>>;
 
     /// Atomically remove the entry for `key`, returning whether THIS call removed a
     /// live one.
@@ -209,11 +198,8 @@ mod tests {
     const ACTOR_A: &str = "client:example.com:did:example:host-a:client-key-1";
     const ACTOR_B: &str = "client:example.com:did:example:host-b:client-key-2";
 
-    fn bases() -> RetainedBases {
-        RetainedBases {
-            previous_request_base: b"prev-base".to_vec(),
-            input_required_response_base: b"irr-base".to_vec(),
-        }
+    fn bases() -> RetainedHandles {
+        RetainedHandles::over(b"prev-base", b"irr-base")
     }
 
     #[tokio::test]
@@ -283,10 +269,7 @@ mod tests {
         let key = continuation_key(AUD, ACTOR_A, b"state-1");
         store.create(&key, &bases(), 300).await.unwrap();
 
-        let intruder = RetainedBases {
-            previous_request_base: b"second-leg-prev".to_vec(),
-            input_required_response_base: b"second-leg-irr".to_vec(),
-        };
+        let intruder = RetainedHandles::over(b"second-leg-prev", b"second-leg-irr");
         // CONTROL 2.
         assert_eq!(
             store.create(&key, &intruder, 300).await.unwrap(),
@@ -349,10 +332,7 @@ mod tests {
         store.create(&key, &bases(), -1).await.unwrap();
         assert_eq!(store.peek(&key).await.unwrap(), None, "already expired");
 
-        let next = RetainedBases {
-            previous_request_base: b"later-prev".to_vec(),
-            input_required_response_base: b"later-irr".to_vec(),
-        };
+        let next = RetainedHandles::over(b"later-prev", b"later-irr");
         assert_eq!(
             store.create(&key, &next, 300).await.unwrap(),
             Creation::Stored
@@ -376,7 +356,7 @@ mod tests {
             fn create<'a>(
                 &'a self,
                 _key: &'a str,
-                _bases: &'a RetainedBases,
+                _bases: &'a RetainedHandles,
                 _ttl_secs: i64,
             ) -> ContinuationFuture<'a, Creation> {
                 Box::pin(async {
@@ -385,7 +365,10 @@ mod tests {
                     })
                 })
             }
-            fn peek<'a>(&'a self, _key: &'a str) -> ContinuationFuture<'a, Option<RetainedBases>> {
+            fn peek<'a>(
+                &'a self,
+                _key: &'a str,
+            ) -> ContinuationFuture<'a, Option<RetainedHandles>> {
                 Box::pin(async { Ok(None) })
             }
             fn consume<'a>(&'a self, _key: &'a str) -> ContinuationFuture<'a, bool> {

@@ -2208,9 +2208,23 @@ fn frozen_http_profile_corpus_verifies() {
                 let continuation: HttpContinuation =
                     serde_json::from_value(check.continuation.clone())
                         .expect("continuation parses");
+                // The vector states the bases; the verifier compares the handles a store
+                // retains for them, minted under their role labels.
+                let handle = |label: &str, b64: &str| {
+                    mcp_re_http_profile::RequestEvidenceDigest::over_labeled(
+                        label,
+                        &base64_std_decode(b64),
+                    )
+                };
                 match continuation.verify(
-                    &base64_std_decode(&check.previous_request_base_b64),
-                    &base64_std_decode(&check.input_required_response_base_b64),
+                    &handle(
+                        mcp_re_http_profile::ids::EVIDENCE_LABEL_REQUEST,
+                        &check.previous_request_base_b64,
+                    ),
+                    &handle(
+                        mcp_re_http_profile::ids::EVIDENCE_LABEL_RESPONSE,
+                        &check.input_required_response_base_b64,
+                    ),
                     &base64_std_decode(&check.request_state_b64),
                 ) {
                     Ok(()) => "verify_ok".to_owned(),

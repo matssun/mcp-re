@@ -46,9 +46,9 @@ use hyper::Response;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-use mcp_re_http_profile::rejection::build_delegated_rejection_with_owned_key;
-use mcp_re_http_profile::rejection::build_delegated_rejection_preflight_with_owned_key;
 use mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key;
+use mcp_re_http_profile::rejection::build_delegated_rejection_preflight_with_owned_key;
+use mcp_re_http_profile::rejection::build_delegated_rejection_with_owned_key;
 use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::HttpRequest;
@@ -69,7 +69,7 @@ use mcp_re_proxy::continuation_store::continuation_key;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
 use mcp_re_proxy::continuation_store::Creation;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
-use mcp_re_proxy::continuation_store::RetainedBases;
+use mcp_re_proxy::continuation_store::RetainedHandles;
 use mcp_re_proxy::http_inner::HttpInnerPool;
 use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_async_tier;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
@@ -290,8 +290,8 @@ async fn handle(
     };
     let continuation_ctx = match (&retained, &answer_state) {
         (Some(bases), Some(request_state)) => Some(RetainedContinuation::from_correlation(
-            &bases.previous_request_base,
-            &bases.input_required_response_base,
+            &bases.previous_request_evidence,
+            &bases.input_required_response_evidence,
             request_state.as_bytes(),
         )),
         // A continuation was signed but nothing was retained for it: pass None so the
@@ -425,10 +425,8 @@ async fn handle(
                 }
             };
             if let Some(request_state) = open_leg_state {
-                let bases = RetainedBases {
-                    previous_request_base: verified.request_signature_base().to_vec(),
-                    input_required_response_base: response_base,
-                };
+                let bases =
+                    RetainedHandles::over(verified.request_signature_base(), &response_base);
                 let key = continuation_key(
                     &expected_audience.audience_id,
                     &verified.resolved_actor().actor_id(),

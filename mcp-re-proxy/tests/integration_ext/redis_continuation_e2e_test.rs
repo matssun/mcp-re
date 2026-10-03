@@ -27,7 +27,7 @@
 use mcp_re_proxy::continuation_store::continuation_key;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
 use mcp_re_proxy::continuation_store::Creation;
-use mcp_re_proxy::continuation_store::RetainedBases;
+use mcp_re_proxy::continuation_store::RetainedHandles;
 use mcp_re_proxy::redis_continuation_store::RedisContinuationStore;
 
 /// The dispatch boundary the continuation key is scoped to; a second deployment on
@@ -64,11 +64,11 @@ fn redis_url() -> Option<String> {
     url
 }
 
-fn bases(tag: &str) -> RetainedBases {
-    RetainedBases {
-        previous_request_base: format!("prev-base-{tag}").into_bytes(),
-        input_required_response_base: format!("irr-base-{tag}").into_bytes(),
-    }
+fn bases(tag: &str) -> RetainedHandles {
+    RetainedHandles::over(
+        format!("prev-base-{tag}").as_bytes(),
+        format!("irr-base-{tag}").as_bytes(),
+    )
 }
 
 /// Two INDEPENDENT connections to the same Redis — replica A and replica B, which is

@@ -20,7 +20,7 @@ use mcp_re_http_profile::RetainedContinuation;
 
 use crate::continuation_store::continuation_key;
 use crate::continuation_store::ContinuationStoreError;
-use crate::continuation_store::RetainedBases;
+use crate::continuation_store::RetainedHandles;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::http_profile_serve::Exchange;
@@ -29,7 +29,7 @@ use crate::refusal::Refusal;
 use super::ContinuationPlane;
 
 impl ContinuationPlane {
-    /// CONTINUATION-PREPARED — recover the retained open-leg bases for an ANSWER leg.
+    /// CONTINUATION-PREPARED — recover the retained open-leg handles for an ANSWER leg.
     ///
     /// ```text
     /// ensures   Ok  => the continuation machine is NotInvolved or Peeked — never Consumed
@@ -99,8 +99,8 @@ impl ContinuationPlane {
 ///
 /// Neither outcome proceeds unbound, which is the property this exists to make checkable.
 fn peeked_or_refusal(
-    peeked: Result<Option<RetainedBases>, ContinuationStoreError>,
-) -> Result<Option<RetainedBases>, Refusal> {
+    peeked: Result<Option<RetainedHandles>, ContinuationStoreError>,
+) -> Result<Option<RetainedHandles>, Refusal> {
     peeked.map_err(|_| Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503))
 }
 
@@ -131,7 +131,7 @@ fn capability_absent() -> Refusal {
 pub(in crate::http_profile_serve) struct ContinuationPrep {
     answer_state: Option<String>,
     answer_key: Option<String>,
-    retained: Option<RetainedBases>,
+    retained: Option<RetainedHandles>,
 }
 
 impl ContinuationPrep {
@@ -148,8 +148,8 @@ impl ContinuationPrep {
     pub(in crate::http_profile_serve) fn binding(&self) -> Option<RetainedContinuation<'_>> {
         match (&self.retained, &self.answer_state) {
             (Some(bases), Some(state)) => Some(RetainedContinuation::from_correlation(
-                &bases.previous_request_base,
-                &bases.input_required_response_base,
+                &bases.previous_request_evidence,
+                &bases.input_required_response_evidence,
                 state.as_bytes(),
             )),
             _ => None,
@@ -424,7 +424,7 @@ pub(in crate::http_profile_serve) mod tests {
         fn create<'a>(
             &'a self,
             key: &'a str,
-            _bases: &'a RetainedBases,
+            _bases: &'a RetainedHandles,
             _ttl_secs: i64,
         ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
         {
@@ -435,12 +435,9 @@ pub(in crate::http_profile_serve) mod tests {
         fn peek<'a>(
             &'a self,
             key: &'a str,
-        ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>> {
+        ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>> {
             self.record(StoreCall::Peek(key.to_owned()));
-            let live = self.live.then(|| RetainedBases {
-                previous_request_base: b"req".to_vec(),
-                input_required_response_base: b"resp".to_vec(),
-            });
+            let live = self.live.then(|| RetainedHandles::over(b"req", b"resp"));
             Box::pin(async { Ok(live) })
         }
 
@@ -488,7 +485,7 @@ pub(in crate::http_profile_serve) mod tests {
     }
 
     #[test]
-    fn a_prep_with_no_retained_bases_offers_no_binding() {
+    fn a_prep_with_no_retained_handles_offers_no_binding() {
         // Every way the bases can be absent collapses to one answer, on purpose: the
         // dispatcher must fail closed on `continuation_binding_failed` in all of them, and
         // a continuation that was signed but cannot be bound is never admitted.
@@ -506,7 +503,7 @@ pub(in crate::http_profile_serve) mod tests {
     }
     /// D2b: an outage and a miss are different facts, and NEITHER proceeds unbound.
     ///
-    /// The miss leaves no bases, so the binding is absent and the dispatcher fails closed
+    /// The miss leaves no handles, so the binding is absent and the dispatcher fails closed
     /// on `continuation_binding_failed` — a statement about the caller. The outage refuses
     /// here, before admission, as a statement about this deployment. A single `Option`
     /// would report the first for both, which reads as a forged continuation every time the
@@ -516,7 +513,7 @@ pub(in crate::http_profile_serve) mod tests {
         let miss = peeked_or_refusal(Ok(None)).expect("a miss is not a refusal here");
         assert!(
             miss.is_none(),
-            "a miss must leave no bases, so the binding fails closed downstream"
+            "a miss must leave no handles, so the binding fails closed downstream"
         );
 
         let outage = peeked_or_refusal(Err(ContinuationStoreError::Unavailable {
@@ -529,11 +526,8 @@ pub(in crate::http_profile_serve) mod tests {
             crate::refusal::RefusalCause::from(McpReError::ReplayCacheUnavailable)
         );
 
-        let hit = peeked_or_refusal(Ok(Some(RetainedBases {
-            previous_request_base: b"req".to_vec(),
-            input_required_response_base: b"resp".to_vec(),
-        })))
-        .expect("a live entry is not a refusal");
+        let hit = peeked_or_refusal(Ok(Some(RetainedHandles::over(b"req", b"resp"))))
+            .expect("a live entry is not a refusal");
         assert!(hit.is_some(), "the positive control: a hit binds");
     }
 }

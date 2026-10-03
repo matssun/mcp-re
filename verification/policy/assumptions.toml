@@ -1715,13 +1715,13 @@ tool_specific_mechanism = "verus:external_body"
 id = "ASM-0047"
 description = "Write access to the `mcp-re:cont:` keyspace of the shared correlation tier is confined to the fleet's own replicas, so an entry found there was written by an open leg of this deployment."
 justification = """
-The answer leg is admitted on digest equality: `HttpContinuation::verify` hashes the bytes
-the store returned and compares them with the digests the client signed. Nothing in that
+The answer leg is admitted on handle equality: `HttpContinuation::verify` compares the
+evidence handles the store returned with the handles the client signed. Nothing in that
 check — and nothing that could be added to it without a second signature over the retained
-bases — establishes that those bytes were ever produced by an `InputRequiredResult` this
+handles — establishes that those handles were ever produced by an `InputRequiredResult` this
 fleet delegated-signed. The key is derived from the ANSWERING actor, so a party holding a
-verified client identity AND write access to the keyspace plants its own bases under its
-own key, signs an answer leg committing to their digests, and the binding passes. The
+verified client identity AND write access to the keyspace plants its own handles under its
+own key, signs an answer leg committing to them, and the binding passes. The
 deployment then records a completed human-approval round trip that no human approved.
 
 So the premise is about ACCESS, not about Redis behaving correctly (ASM-0048 carries that).

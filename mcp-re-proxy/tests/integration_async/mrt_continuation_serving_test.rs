@@ -848,7 +848,7 @@ impl AsyncContinuationStore for WriteFailingStore {
     fn create<'a>(
         &'a self,
         _key: &'a str,
-        _bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        _bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         _ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
@@ -867,7 +867,7 @@ impl AsyncContinuationStore for WriteFailingStore {
         key: &'a str,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
-        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+        Option<mcp_re_proxy::continuation_store::RetainedHandles>,
     > {
         self.0.peek(key)
     }
@@ -2136,7 +2136,7 @@ impl AsyncContinuationStore for PeekFailingStore {
     fn create<'a>(
         &'a self,
         key: &'a str,
-        bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
@@ -2149,7 +2149,7 @@ impl AsyncContinuationStore for PeekFailingStore {
         _key: &'a str,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
-        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+        Option<mcp_re_proxy::continuation_store::RetainedHandles>,
     > {
         Box::pin(async {
             Err(
@@ -2175,7 +2175,7 @@ impl AsyncContinuationStore for ConsumeFailingStore {
     fn create<'a>(
         &'a self,
         key: &'a str,
-        bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
@@ -2188,7 +2188,7 @@ impl AsyncContinuationStore for ConsumeFailingStore {
         key: &'a str,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
-        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+        Option<mcp_re_proxy::continuation_store::RetainedHandles>,
     > {
         self.0.peek(key)
     }

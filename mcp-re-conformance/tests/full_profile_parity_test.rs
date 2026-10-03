@@ -57,6 +57,7 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestEvidenceDigest;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
@@ -177,8 +178,31 @@ fn signed_request(block: &HttpRequestEvidenceBlock, nonce: &str) -> (HttpRequest
     (req, ev)
 }
 
+/// The correlation record the open leg retains for these bases: each handle minted under its
+/// own role label, as the proxy's store does.
+fn retained_over(
+    previous_request_base: &[u8],
+    input_required_response_base: &[u8],
+    request_state: &'static [u8],
+) -> RetainedContinuation<'static> {
+    let handle = |label: &str, base: &[u8]| -> &'static RequestEvidenceDigest {
+        Box::leak(Box::new(RequestEvidenceDigest::over_labeled(label, base)))
+    };
+    RetainedContinuation::from_correlation(
+        handle(
+            mcp_re_http_profile::ids::EVIDENCE_LABEL_REQUEST,
+            previous_request_base,
+        ),
+        handle(
+            mcp_re_http_profile::ids::EVIDENCE_LABEL_RESPONSE,
+            input_required_response_base,
+        ),
+        request_state,
+    )
+}
+
 fn matching_ctx() -> RetainedContinuation<'static> {
-    RetainedContinuation::from_correlation(PREV_BASE, IRR_BASE, REQ_STATE)
+    retained_over(PREV_BASE, IRR_BASE, REQ_STATE)
 }
 
 /// A shared/durable replay cache stand-in so the integrated path runs under the
@@ -417,8 +441,7 @@ fn continuation_mismatch_fails_in_integrated_path() {
     let cache = strict_cache();
 
     // Tampered requestState against the retained bases.
-    let bad_ctx =
-        RetainedContinuation::from_correlation(PREV_BASE, IRR_BASE, b"tampered-request-state");
+    let bad_ctx = retained_over(PREV_BASE, IRR_BASE, b"tampered-request-state");
     let err = dispatch_request(&verified, &cache, Some(bad_ctx), &strict_cfg()).unwrap_err();
     assert_eq!(
         err,

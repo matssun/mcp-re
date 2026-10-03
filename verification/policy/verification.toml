@@ -1854,7 +1854,7 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.continuation_binding"
 class = "V1"
-description = "MCPRE-97 continuation role-labeled binding discipline: an accepted continuation's three handles are the modeled digests of the three presented inputs, each under its OWN required role label. Collision-resistant separation BETWEEN roles is not proved and remains at boundary.crypto_primitives."
+description = "MCPRE-97 continuation role-labeled binding discipline: an accepted continuation's two evidence handles are the retained handles, compared each in its own slot, and its state handle is the modeled labeled digest of the presented `requestState`. Collision-resistant separation BETWEEN roles is not proved and remains at boundary.crypto_primitives."
 paths = [
   "mcp-re-http-profile/src/block.rs",
   "mcp-re-http-profile/src/ids.rs",
@@ -7839,6 +7839,7 @@ paths = [
   "mcp-re-proxy/src/continuation_store/mod.rs",
   "mcp-re-proxy/src/continuation_store/in_memory.rs",
   "mcp-re-proxy/src/continuation_store/key.rs",
+  "mcp-re-proxy/src/continuation_store/retained_handles.rs",
   # The shared-tier arm. In the closure because the key derivation and the peek/consume
   # split are claims about the STORE, and a backend that implemented them differently
   # would falsify them under a fingerprint that had not moved.
@@ -7865,7 +7866,7 @@ evidence = [
 #
 # WHAT IT DOES REST ON, registered rather than assumed silently: ASM-0047, that an entry in
 # the `mcp-re:cont:` keyspace was written by an open leg of this deployment — the answer
-# leg's admission is digest equality against bytes nothing proves this fleet produced — and
+# leg's admission is handle equality against handles nothing proves this fleet produced — and
 # ASM-0048, that a `DEL` reply of 1 means this call removed a key that existed, which is
 # where the one-shot verdict measured below comes from.
 tested_symbols = [
@@ -7889,13 +7890,18 @@ tested_symbols = [
   # claim that a refused or transiently-failed read cannot destroy a live approval rests on
   # no control at all.
   "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::tests::peek_does_not_consume_and_consume_is_one_shot",
+  # WHAT IS KEPT. The store retains the two role-labeled evidence handles and never a signature
+  # base, so a read of the tier yields no covered credential; the slots are minted under distinct
+  # role labels, so a swapped pair is not the retained one.
+  "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::retained_handles::tests::the_two_slots_are_minted_under_distinct_role_labels",
+  "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::retained_handles::tests::a_handle_does_not_contain_the_base_it_commits_to",
   # THE SHARED ARM, which is the reason `redis_continuation_store.rs` is in this closure:
   # both conjuncts are claims about the STORE, and a backend implementing them differently
   # would falsify them. The in-memory controls above cannot see that arm — it is compiled
   # only under `redis_replay` — so the same two facts are measured again where the shared
   # tier decides them: the read is non-destructive, the delete count is the one-shot
   # verdict, and a tier that does not answer fails closed rather than reading as absent.
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::reading_the_retained_bases_does_not_remove_them",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::reading_the_retained_handles_does_not_remove_them",
   "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::the_delete_count_is_the_one_shot_verdict",
   "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::every_error_reply_fails_closed_as_unavailable",
   # A stored value that did not come out of this encoder is not a continuation, and an
@@ -8077,7 +8083,7 @@ evidence = ["test://proxy/continuation_leg/no_unbound_answer", "mutation://proxy
 tested_symbols = [
   # Neither absence proceeds unbound, and the two are not the same fact.
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::answer_leg::tests::a_store_outage_is_refused_before_admission_and_is_not_a_miss",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::answer_leg::tests::a_prep_with_no_retained_bases_offers_no_binding",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::answer_leg::tests::a_prep_with_no_retained_handles_offers_no_binding",
   # A live approval is READ, never spent, before admission: prepare's only store call is peek.
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::answer_leg::tests::prepare_reads_a_live_approval_without_spending_it",
   # THE THIRD ABSENCE, and the one that was being reported as the caller's. A deployment

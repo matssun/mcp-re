@@ -26,6 +26,7 @@ use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
+use mcp_re_http_profile::RequestEvidenceDigest;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
@@ -254,8 +255,31 @@ fn continuation_block() -> HttpRequestEvidenceBlock {
     request_block(audience("verifier-1"), Some(cont))
 }
 
+/// The correlation record the open leg retains for these bases: each handle minted under its
+/// own role label, as the proxy's store does.
+fn retained_over(
+    previous_request_base: &[u8],
+    input_required_response_base: &[u8],
+    request_state: &'static [u8],
+) -> RetainedContinuation<'static> {
+    let handle = |label: &str, base: &[u8]| -> &'static RequestEvidenceDigest {
+        Box::leak(Box::new(RequestEvidenceDigest::over_labeled(label, base)))
+    };
+    RetainedContinuation::from_correlation(
+        handle(
+            mcp_re_http_profile::ids::EVIDENCE_LABEL_REQUEST,
+            previous_request_base,
+        ),
+        handle(
+            mcp_re_http_profile::ids::EVIDENCE_LABEL_RESPONSE,
+            input_required_response_base,
+        ),
+        request_state,
+    )
+}
+
 fn matching_ctx() -> RetainedContinuation<'static> {
-    RetainedContinuation::from_correlation(PREV_BASE, IRR_BASE, REQ_STATE)
+    retained_over(PREV_BASE, IRR_BASE, REQ_STATE)
 }
 
 /// A well-formed continuation verifies and is reported as such.
@@ -276,8 +300,7 @@ fn continuation_changed_request_state_fails() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
     let cache = InMemoryReplayCache::new(0);
-    let ctx =
-        RetainedContinuation::from_correlation(PREV_BASE, IRR_BASE, b"tampered-request-state");
+    let ctx = retained_over(PREV_BASE, IRR_BASE, b"tampered-request-state");
 
     let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
         .expect_err("changed requestState must fail");
@@ -294,11 +317,7 @@ fn continuation_wrong_previous_request_evidence_fails() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
     let cache = InMemoryReplayCache::new(0);
-    let ctx = RetainedContinuation::from_correlation(
-        b"a-different-previous-request",
-        IRR_BASE,
-        REQ_STATE,
-    );
+    let ctx = retained_over(b"a-different-previous-request", IRR_BASE, REQ_STATE);
 
     let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
         .expect_err("wrong previous-request evidence must fail");
@@ -314,11 +333,7 @@ fn continuation_wrong_input_required_response_evidence_fails() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
     let cache = InMemoryReplayCache::new(0);
-    let ctx = RetainedContinuation::from_correlation(
-        PREV_BASE,
-        b"a-different-input-required-response",
-        REQ_STATE,
-    );
+    let ctx = retained_over(PREV_BASE, b"a-different-input-required-response", REQ_STATE);
 
     let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
         .expect_err("wrong input-required response evidence must fail");
@@ -351,7 +366,7 @@ fn failed_continuation_does_not_burn_the_nonce() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
     let cache = InMemoryReplayCache::new(0);
-    let bad_ctx = RetainedContinuation::from_correlation(PREV_BASE, IRR_BASE, b"tampered");
+    let bad_ctx = retained_over(PREV_BASE, IRR_BASE, b"tampered");
 
     // First attempt fails on the continuation, before the replay insert.
     dispatch_request(&ev, &cache, Some(bad_ctx), &permissive_cfg())

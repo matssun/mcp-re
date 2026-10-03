@@ -284,12 +284,24 @@ impl RequestEvidenceDigest {
         }
     }
 
+    /// Whether this handle IS `other`: the same algorithm and the same value.
+    // ADR-MCPRE-059 ASM-0023: the handle comparator, trusted at exactly the strength the
+    // binding contract needs — a true answer means the two values are equal. The digest
+    // itself stays uninterpreted, so no cryptographic property is assumed here.
+    #[cfg_attr(feature = "verify", verus_verify(external_body))]
+    #[cfg_attr(feature = "verify", verus_spec(result =>
+        ensures
+            result ==> self.digest_value@ == other.digest_value@,
+    ))]
+    pub fn same_handle(&self, other: &RequestEvidenceDigest) -> bool {
+        self.digest_alg == other.digest_alg && self.digest_value == other.digest_value
+    }
+
     /// Constant-shape check that this handle commits to `bytes` IN ROLE `label`.
     /// A handle that commits to the same bytes in a different role does not match.
-    // ADR-MCPRE-059 ASM-0023: the digest comparator, trusted at exactly the strength the
-    // role-separation contract needs — a true answer means this handle's value IS the
-    // labeled digest of these bytes under this label. The digest itself stays
-    // uninterpreted, so no cryptographic property is assumed here.
+    // ADR-MCPRE-059 ASM-0023: trusted at exactly the strength the role-separation contract
+    // needs — a true answer means this handle's value IS the labeled digest of these bytes
+    // under this label. The digest itself stays uninterpreted.
     #[cfg_attr(feature = "verify", verus_verify(external_body))]
     #[cfg_attr(feature = "verify", verus_spec(result =>
         ensures
@@ -359,28 +371,21 @@ impl HttpContinuation {
         }
     }
 
-    /// Verify the continuation against the exact bytes the client re-presents.
-    /// A wrong type is malformed; any handle that does not commit to its input
-    /// is a continuation-binding failure (a splice across the continuation
-    /// boundary, or a tampered `requestState`).
-    // ADR-MCPRE-059 WP3 — the continuation role-labeled BINDING DISCIPLINE contract, and
-    // the discharge of what used to be ASM-0022. An accepted continuation's three handles
-    // are the modeled digests of the three presented inputs, each under its OWN required
-    // role label.
-    //
-    // What that is not: separation. Ruling out a wrong-role handle that happens to collide
-    // needs `digest(label_a, x) != digest(label_b, y)` for distinct labels — a domain-
-    // separation property of the construction, held at `boundary.crypto_primitives` and
-    // deliberately absent from the model here.
+    /// Verify the continuation against the evidence handles the correlation store retained
+    /// at the open leg, and the exact `requestState` bytes the client re-presents. A wrong
+    /// type is malformed; a handle that is not the retained one is a continuation-binding
+    /// failure (a splice across the continuation boundary, or a tampered `requestState`).
+    // ADR-MCPRE-059 WP3 — the continuation role-labeled BINDING DISCIPLINE contract. An
+    // accepted continuation's two evidence handles ARE the retained handles (minted under
+    // their own role labels at the open leg) and its state handle is the modeled labeled
+    // digest of the presented `requestState`. Role SEPARATION (distinct labels never
+    // collide) is `boundary.crypto_primitives`' and is absent from the model.
     #[cfg_attr(feature = "verify", verus_spec(out =>
         ensures
             out matches Ok(()) ==> {
-                &&& self.previous_request_evidence.digest_value@
-                        == crate::verus_std_specs::labeled_digest(
-                            crate::ids::EVIDENCE_LABEL_REQUEST@, previous_request_base@)
+                &&& self.previous_request_evidence.digest_value@ == previous_request.digest_value@
                 &&& self.input_required_response_evidence.digest_value@
-                        == crate::verus_std_specs::labeled_digest(
-                            crate::ids::EVIDENCE_LABEL_RESPONSE@, input_required_response_base@)
+                        == input_required_response.digest_value@
                 &&& self.request_state_digest.digest_value@
                         == crate::verus_std_specs::labeled_digest(
                             crate::ids::EVIDENCE_LABEL_REQUEST_STATE@, request_state@)
@@ -388,22 +393,20 @@ impl HttpContinuation {
     ))]
     pub fn verify(
         &self,
-        previous_request_base: &[u8],
-        input_required_response_base: &[u8],
+        previous_request: &RequestEvidenceDigest,
+        input_required_response: &RequestEvidenceDigest,
         request_state: &[u8],
     ) -> Result<(), HttpProfileError> {
         if self.continuation_type != CONTINUATION_TYPE_MCP_MRT {
             return Err(HttpProfileError::MalformedEvidence("continuation type"));
         }
-        // Each handle is checked IN ITS ROLE: a previous-request handle presented
-        // as the response handle (or vice versa) fails here even if the bytes
-        // behind it are otherwise legitimate evidence.
-        if !self
-            .previous_request_evidence
-            .matches_labeled(EVIDENCE_LABEL_REQUEST, previous_request_base)
+        // Each handle is compared IN ITS SLOT: the retained previous-request handle was
+        // minted under the request role and the response handle under the response role, so
+        // a handle presented in the wrong slot differs from the retained one.
+        if !self.previous_request_evidence.same_handle(previous_request)
             || !self
                 .input_required_response_evidence
-                .matches_labeled(EVIDENCE_LABEL_RESPONSE, input_required_response_base)
+                .same_handle(input_required_response)
             || !self
                 .request_state_digest
                 .matches_labeled(EVIDENCE_LABEL_REQUEST_STATE, request_state)
@@ -604,7 +607,11 @@ mod tests {
     use crate::ids::PROFILE_TAG;
 
     fn dpop_binding() -> ArtifactBinding {
-        ArtifactBinding::opaque_from_digest(ArtifactType::OauthDpop, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").expect("a legal binding")
+        ArtifactBinding::opaque_from_digest(
+            ArtifactType::OauthDpop,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        )
+        .expect("a legal binding")
     }
 
     fn block() -> HttpRequestEvidenceBlock {
@@ -663,7 +670,14 @@ mod tests {
     }
 
     fn pdp_reference_binding() -> ArtifactBinding {
-        ArtifactBinding::reference(ArtifactType::PdpDecision, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "sys", "scheme", "handle").expect("a legal binding")
+        ArtifactBinding::reference(
+            ArtifactType::PdpDecision,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "sys",
+            "scheme",
+            "handle",
+        )
+        .expect("a legal binding")
     }
 
     fn pdp_opaque_binding(credential: &[u8]) -> ArtifactBinding {
@@ -998,14 +1012,30 @@ mod tests {
     const IRR_BASE: &[u8] = b"input-required-response-signature-base";
     const REQ_STATE: &[u8] = b"opaque-request-state-blob";
 
+    /// Verify `c` against the handles the open leg would have retained for these bases.
+    fn verify_over(
+        c: &HttpContinuation,
+        previous_request_base: &[u8],
+        input_required_response_base: &[u8],
+        request_state: &[u8],
+    ) -> Result<(), HttpProfileError> {
+        c.verify(
+            &RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_REQUEST, previous_request_base),
+            &RequestEvidenceDigest::over_labeled(
+                EVIDENCE_LABEL_RESPONSE,
+                input_required_response_base,
+            ),
+            request_state,
+        )
+    }
+
     #[test]
     fn continuation_round_trips_and_verifies() {
         let c = HttpContinuation::build(PREV_BASE, IRR_BASE, REQ_STATE);
         let json = serde_json::to_string(&c).unwrap();
         let back: HttpContinuation = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);
-        c.verify(PREV_BASE, IRR_BASE, REQ_STATE)
-            .expect("binds its inputs");
+        verify_over(&c, PREV_BASE, IRR_BASE, REQ_STATE).expect("binds its inputs");
         // The type token is the MCP-specific mcp-mrt.
         assert_eq!(c.continuation_type, "mcp-mrt");
     }
@@ -1014,9 +1044,8 @@ mod tests {
     fn tampered_request_state_breaks_the_digest() {
         // requestState stays opaque (never interpreted) but IS digest-bound.
         let c = HttpContinuation::build(PREV_BASE, IRR_BASE, REQ_STATE);
-        let err = c
-            .verify(PREV_BASE, IRR_BASE, b"opaque-request-state-TAMPERED")
-            .unwrap_err();
+        let err =
+            verify_over(&c, PREV_BASE, IRR_BASE, b"opaque-request-state-TAMPERED").unwrap_err();
         assert_eq!(err, HttpProfileError::ContinuationBindingFailed);
         assert_eq!(err.wire_code(), "mcp-re.continuation_binding_failed");
     }
@@ -1027,14 +1056,12 @@ mod tests {
         // splice) must not verify.
         let c = HttpContinuation::build(PREV_BASE, IRR_BASE, REQ_STATE);
         assert_eq!(
-            c.verify(b"some-other-request-base", IRR_BASE, REQ_STATE)
-                .unwrap_err(),
+            verify_over(&c, b"some-other-request-base", IRR_BASE, REQ_STATE).unwrap_err(),
             HttpProfileError::ContinuationBindingFailed
         );
         // Likewise a different input-required response.
         assert_eq!(
-            c.verify(PREV_BASE, b"other-irr-base", REQ_STATE)
-                .unwrap_err(),
+            verify_over(&c, PREV_BASE, b"other-irr-base", REQ_STATE).unwrap_err(),
             HttpProfileError::ContinuationBindingFailed
         );
     }
@@ -1044,7 +1071,7 @@ mod tests {
         let mut c = HttpContinuation::build(PREV_BASE, IRR_BASE, REQ_STATE);
         c.continuation_type = "some-other-continuation".into();
         assert_eq!(
-            c.verify(PREV_BASE, IRR_BASE, REQ_STATE).unwrap_err(),
+            verify_over(&c, PREV_BASE, IRR_BASE, REQ_STATE).unwrap_err(),
             HttpProfileError::MalformedEvidence("continuation type")
         );
     }
@@ -1083,7 +1110,7 @@ mod tests {
             REQ_STATE,
         );
         assert_eq!(
-            c.verify(PREV_BASE, IRR_BASE, REQ_STATE).unwrap_err(),
+            verify_over(&c, PREV_BASE, IRR_BASE, REQ_STATE).unwrap_err(),
             HttpProfileError::ContinuationBindingFailed
         );
     }

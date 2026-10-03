@@ -549,20 +549,25 @@ depends_on = ["THM-0010"]
 
 [[theorem]]
 id = "THM-0010"
-title = "Continuation handles match their presented inputs in role"
+title = "Continuation handles match their retained evidence in slot"
 statement = """
-An accepted continuation's three handles are the labeled digests of the three presented
-inputs, each under its own role label.
+An accepted continuation's previous-request and input-required-response handles ARE the two
+evidence handles the correlation store retained, compared each in its own slot, and its
+request-state handle is the labeled digest of the presented `requestState` under its own
+role label.
 """
 security_consequence = """
-A response-role evidence handle cannot be presented in the request role, so the three
-positions of a continuation cannot be permuted.
+A response-role evidence handle cannot be presented in the request slot, so the positions of
+a continuation cannot be permuted. The store retains handles and never a signature base, so a
+read of the correlation tier yields no covered `authorization` or `dpop` credential.
 """
 direct_consequence_severity = "high"
 scope = """
 Assumes only that the labeled digest IS A FUNCTION of (label, bytes) — ASM-0023. It does
 NOT establish collision-resistant separation between roles; that obligation stays at
-boundary.crypto_primitives and is not discharged here.
+boundary.crypto_primitives and is not discharged here. That each retained handle was minted
+under its own role label is `RetainedHandles::over`'s, measured in the proxy's
+`proxy.continuation_correlation_store`, and not a clause of the proof.
 """
 owner = "http_profile.continuation_binding"
 review_requirement = "Owner security-specification review"
@@ -5208,12 +5213,12 @@ with the opaque `requestState`, never on anything the request asserts, and a rea
 not admit an answer leg does not consume the entry.
 """
 security_consequence = """
-A second verified actor who knows the open leg's public signature-base digests cannot obtain
-the victim's retained bases, so it cannot complete a human-approval round trip that was not
+A second verified actor who knows the open leg's public evidence handles cannot obtain
+the victim's retained handles, so it cannot complete a human-approval round trip that was not
 its own. A refused or transiently-failed read cannot destroy a live approval either.
 
 The consequence is about an actor reaching the store THROUGH this proxy. One that can write
-the keyspace directly needs no victim's bases — it plants its own — and that is ASM-0047's,
+the keyspace directly needs no victim's handles — it plants its own — and that is ASM-0047's,
 not this claim's.
 """
 direct_consequence_severity = "critical"
