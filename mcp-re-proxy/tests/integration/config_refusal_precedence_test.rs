@@ -171,7 +171,7 @@ fn the_boundary_refuses_in_this_order() {
     config.channel_credential.credential_chain = String::new();
     config.peer_trust_anchors = String::new();
     config.trust_path = String::new();
-    config.inner_http_urls.clear();
+    config.inner_http_urls = Vec::new().into();
     config.max_clock_skew = -1;
     config.limits.max_concurrent_connections = 0;
     config.limits.drain_grace = std::time::Duration::from_secs(0);

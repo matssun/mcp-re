@@ -8,11 +8,12 @@
 //! same reason [`super::SecretString`] exists next door, applied to a field whose secret
 //! is optional and positional rather than whole.
 //!
-//! The projection is owned by [`RedactedBackendUrls`]: the rendered text is its private
-//! representation and its sole constructor performs the redaction, so possession of one
-//! means the removal already happened. There is no path from a raw URL list to a
-//! rendered one that skips the redaction, and the type carries no `Debug` that would
-//! offer a second, unredacted rendering.
+//! The list is owned by [`InnerBackendUrls`]: its representation is private, its `Display`
+//! and `Debug` both render through [`RedactedBackendUrls`], and the raw strings leave only
+//! through [`InnerBackendUrls::expose`]. A request that carries the list can therefore be
+//! printed, logged or `{:?}`-formatted without a call site choosing to redact. The rendered
+//! form is itself owned by [`RedactedBackendUrls`]: its text is private and its sole
+//! constructor performs the redaction.
 //!
 //! What ONE locator becomes is [`super::RedactedLocator`]'s, not this type's: this is the
 //! list projection, and a second hand-written redaction beside that owner would be two
@@ -22,15 +23,45 @@ use std::fmt;
 
 use super::RedactedLocator;
 
+/// The configured inner-backend URL list. Every rendering of it is the redacted one.
+#[derive(Clone)]
+pub struct InnerBackendUrls(Vec<String>);
+
+impl InnerBackendUrls {
+    /// The raw configured URLs. Every call site is a place a credential can escape, as with
+    /// `SecretString::expose`: use it to build the pool or to inspect shape, never to print.
+    pub fn expose(&self) -> &[String] {
+        &self.0
+    }
+}
+
+impl From<Vec<String>> for InnerBackendUrls {
+    fn from(urls: Vec<String>) -> Self {
+        Self(urls)
+    }
+}
+
+impl fmt::Display for InnerBackendUrls {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&RedactedBackendUrls::of(&self.0), f)
+    }
+}
+
+impl fmt::Debug for InnerBackendUrls {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&RedactedBackendUrls::of(&self.0), f)
+    }
+}
+
 /// The inner-backend URL list as an operator may see it: scheme, host and port only,
 /// with every credential-bearing component removed and its removal reported.
-pub(crate) struct RedactedBackendUrls(String);
+struct RedactedBackendUrls(String);
 
 impl RedactedBackendUrls {
     /// Render `urls` for a log line. Infallible on purpose: this is a projection for
     /// human eyes, and a URL the inner pool will reject must still be *nameable* in the
     /// message an operator reads while diagnosing that rejection.
-    pub(crate) fn of(urls: &[String]) -> Self {
+    fn of(urls: &[String]) -> Self {
         let rendered = urls
             .iter()
             .map(|url| RedactedLocator::of(url).to_string())
@@ -99,6 +130,23 @@ mod tests {
         assert_eq!(rendered, "[<unparseable>]");
         let relative = RedactedBackendUrls::of(&["/mcp".to_string()]).to_string();
         assert_eq!(relative, "[<no-authority>]");
+    }
+
+    #[test]
+    fn the_request_debug_print_carries_no_backend_credential() {
+        let urls = InnerBackendUrls::from(vec![
+            "https://alice:hunter2@backend.internal/mcp".to_string()
+        ]);
+        for rendered in [format!("{urls:?}"), format!("{urls}")] {
+            assert!(
+                !rendered.contains("hunter2") && !rendered.contains("alice"),
+                "credentials survived a rendering of the owner: {rendered}"
+            );
+        }
+        assert_eq!(
+            urls.expose()[0],
+            "https://alice:hunter2@backend.internal/mcp"
+        );
     }
 
     #[test]

@@ -31,7 +31,7 @@ mod storage;
 pub use admission::{AdmissionAvailabilityRequest, AdmissionGateRequest, AdmissionRequest};
 pub use authorization::AuthorizationRequest;
 pub use delegated_signing::DelegatedSigningRequest;
-pub(crate) use inner_backend_display::RedactedBackendUrls;
+pub use inner_backend_display::InnerBackendUrls;
 pub use kinds::{AuditSinkKind, AuthzKind, VerifiedContextKind};
 pub use peer_identity::{
     AttestedIngressRequest, ChannelCredentialIdentityRequest, IngressAssertionRequest,
@@ -124,7 +124,7 @@ pub struct DeploymentRequest {
     /// value (comma-separated and/or repeated) adds a backend. At least one is
     /// REQUIRED — the proxy has no in-tree stdio inner mode (MCPRE-118); a
     /// stdio-only server is fronted by the out-of-TCB `mcp-re-stdio-bridge`.
-    pub inner_http_urls: Vec<String>,
+    pub inner_http_urls: InnerBackendUrls,
     /// ADR-MCPRE-051 §1: number of serving SHARDS (each an `SO_REUSEPORT` listener with
     /// its own runtime). `0` (default) means auto.
     ///

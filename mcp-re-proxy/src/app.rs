@@ -601,14 +601,12 @@ fn run_validated(
     // than defaulting, so dropping that clause is an outage, not a second opinion (R12-636).
     let configured = &values.limits;
     let inner_timeout = configured.read_timeout.ok_or("--read-timeout-secs unset")?;
-    let pool = HttpInnerPool::from_url_strs(values.inner_http_urls.clone(), inner_timeout)?;
+    let backends = &values.inner_http_urls;
+    let pool = HttpInnerPool::from_url_strs(backends.expose().to_vec(), inner_timeout)?;
     // Named where the pool that forwards to them is BUILT. Reporting them from the fleet
     // instead would mean carrying the URLs through serving purely to print them, and the
     // fleet does not forward — it accepts.
-    eprintln!(
-        "mcp-re-proxy: HTTP inner backends {}",
-        crate::deployment_request::RedactedBackendUrls::of(&values.inner_http_urls)
-    );
+    eprintln!("mcp-re-proxy: HTTP inner backends {backends}");
     let pool = crate::inner_plane_bound::raised_to_fleet_ceiling(
         pool,
         in_flight_limit,

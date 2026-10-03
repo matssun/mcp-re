@@ -150,7 +150,7 @@ impl Flags {
             peer_revocation: self.revocation.finish()?,
             peer_identity: self.peer_identity.finish()?,
             trust_path: serving.trust_path,
-            inner_http_urls: serving.inner_http_urls,
+            inner_http_urls: serving.inner_http_urls.into(),
             fleet: serving.fleet,
             allow_group_readable_key_files: serving.allow_group_readable_key_files,
             cores: runtime.cores,
@@ -1136,8 +1136,8 @@ mod tests {
             Some(std::time::Duration::from_secs(3600))
         );
         assert_eq!(
-            config.inner_http_urls,
-            vec!["http://127.0.0.1:8080/mcp".to_string()]
+            config.inner_http_urls.expose(),
+            ["http://127.0.0.1:8080/mcp".to_string()]
         );
     }
 
@@ -2642,8 +2642,8 @@ mod tests {
         ]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(
-            config.inner_http_urls,
-            vec![
+            config.inner_http_urls.expose(),
+            [
                 "http://10.0.0.1:8080/mcp".to_string(),
                 "http://10.0.0.2:8080/mcp".to_string(),
                 "http://10.0.0.3:8080/mcp".to_string(),

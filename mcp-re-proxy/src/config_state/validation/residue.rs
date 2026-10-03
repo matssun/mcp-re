@@ -272,7 +272,7 @@ pub(super) fn target_uri_violations(config: &DeploymentRequest) -> Vec<String> {
 /// **Why no narrower owner.** There is no inner-plane machine; the request carries a list and nothing classifies it into states.
 pub(super) fn inner_plane_presence_violations(config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
-    if config.inner_http_urls.is_empty() {
+    if config.inner_http_urls.expose().is_empty() {
         out.push(
             "the proxy serves over an async HTTP inner plane: pass --inner-http-url <url>. To \
              protect a local stdio MCP server, run it behind the mcp-re-stdio-bridge adapter \
@@ -292,6 +292,7 @@ pub(super) fn inner_plane_structure_violations(config: &DeploymentRequest) -> Ve
     let mut out = Vec::new();
     if config
         .inner_http_urls
+        .expose()
         .iter()
         .any(|url| url.trim().is_empty())
     {

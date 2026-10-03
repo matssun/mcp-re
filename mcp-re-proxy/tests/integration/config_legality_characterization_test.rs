@@ -96,7 +96,7 @@ fn refused_at_the_boundary() {
     // meant a configuration naming no inner server was rejected only after trust had read
     // its document and started its workers, by a plane with no stake in the question.
     let mut config = base();
-    config.inner_http_urls.clear();
+    config.inner_http_urls = Vec::new().into();
     let refusal =
         ValidatedDeployment::try_from(config).expect_err("a deployment must name an inner server");
     assert!(refusal.contains("--inner-http-url"), "{refusal}");
