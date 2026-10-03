@@ -51,7 +51,6 @@ use mcp_re_core::verify_ed25519;
 use mcp_re_core::VerificationKey;
 use zeroize::Zeroizing;
 
-use crate::communication_assurance::Ed25519PublicKeyValue;
 use crate::delegated_tls::RawEd25519TlsSigner;
 use crate::handshake_quota::HandshakeQuotaWindow;
 use crate::handshake_quota::QuotaGuarded;
@@ -66,7 +65,7 @@ use crate::remote_signer_call::RemoteSignerFailure;
 
 /// The only Cloud KMS key algorithm this adapter accepts.
 const ALGORITHM_ED25519: &str = "EC_SIGN_ED25519";
-/// Default Cloud KMS + metadata-server endpoints (overridable for emulators/tests).
+/// The Cloud KMS endpoint (overridable for emulators/tests) and the fixed metadata-server one.
 const DEFAULT_KMS_ENDPOINT: &str = "https://cloudkms.googleapis.com";
 const DEFAULT_METADATA_ENDPOINT: &str = "http://metadata.google.internal";
 /// Refresh a metadata-server token this long before its stated expiry.
@@ -229,13 +228,14 @@ const MAX_TOKEN_LIFETIME_SECS: u64 = 3600;
 /// trip, which is the per-handshake amplification [`UNKNOWN_EXPIRY_REUSE`] exists to
 /// prevent. A fact cannot be lost to clock granularity; a value coincidence can.
 ///
-/// Two inputs produce `None`. A zero `expires_in` — which is also what
+/// A zero `expires_in` produces `None` — which is also what
 /// [`token_from_metadata_response`] yields for an absent, non-numeric or negative field, so
-/// every unreadable response lands here. And an overflow: `SystemTime`'s `Add<Duration>`
-/// panics, and `expires_in` comes from the metadata server over PLAINTEXT http (the
-/// endpoint is fixed at [`DEFAULT_METADATA_ENDPOINT`] on every production path — the
-/// constructor's parameter exists for this module's tests), so a hostile near-`u64::MAX`
-/// value must not panic the blocking serve thread.
+/// every unreadable response lands here.
+///
+/// No stated value can overflow: `expires_in` comes from the metadata server over PLAINTEXT
+/// http, and the [`MAX_TOKEN_LIFETIME_SECS`] clamp is what makes a hostile near-`u64::MAX`
+/// value harmless. `checked_add` only keeps this function total (and the blocking serve
+/// thread panic-free) for a host clock within an hour of `SystemTime`'s maximum.
 fn stated_expiry(now: SystemTime, expires_in: u64) -> Option<SystemTime> {
     if expires_in == 0 {
         return None;
@@ -325,15 +325,15 @@ struct CachedToken {
 }
 
 impl MetadataServerTokenSource {
-    /// The token source for `endpoint`, or `None` for the metadata server itself.
-    ///
-    /// Fallible because the destination is vetted, not assumed. Production passes `None`.
-    pub(crate) fn new(endpoint: Option<String>) -> Result<Self, KeyError> {
-        let endpoint = endpoint.unwrap_or_else(|| DEFAULT_METADATA_ENDPOINT.to_string());
-        let locator = crate::deployment_request::RedactedLocator::of(&endpoint);
-        let unusable = format!("gcp-kms: metadata endpoint {locator} is not fetchable");
-        let destination = VettedDestination::operator_configured(&endpoint)
-            .ok_or(KeyError::Malformed(unusable))?;
+    /// The GCE/GKE metadata server at [`DEFAULT_METADATA_ENDPOINT`]: a constant rather than
+    /// a parameter, so no caller chooses who is asked for the root-signing bearer token.
+    pub(crate) fn new() -> Result<Self, KeyError> {
+        let destination = VettedDestination::operator_configured(DEFAULT_METADATA_ENDPOINT)
+            .ok_or_else(|| {
+                KeyError::Malformed(format!(
+                    "gcp-kms: metadata endpoint {DEFAULT_METADATA_ENDPOINT} is not fetchable"
+                ))
+            })?;
         Ok(MetadataServerTokenSource {
             egress: CredentialEgress::to(&destination, NETWORK_TIMEOUT),
             state: Mutex::new(TokenState::default()),
@@ -1022,72 +1022,12 @@ impl GcpKmsEd25519Backend {
     /// otherwise an operator-supplied `MCP_RE_GCP_ACCESS_TOKEN` is used.
     pub fn new(config: &GcpKmsConfig, use_metadata_server: bool) -> Result<Self, KeyError> {
         let token_source: Box<dyn GcpAccessTokenSource + Send + Sync> = if use_metadata_server {
-            Box::new(MetadataServerTokenSource::new(None)?)
+            Box::new(MetadataServerTokenSource::new()?)
         } else {
             Box::new(EnvAccessTokenSource)
         };
         let client = UreqGcpClient::new(token_source, config)?;
         Self::with_transport(Box::new(client))
-    }
-
-    /// TEST-ONLY (issue #61): build a backend over an in-memory FAKE Cloud KMS
-    /// transport backed by the LOCAL Ed25519 key with the given 32-byte `seed`, so an
-    /// integration test (`tests/tls_test.rs`) can drive the full delegated-TLS mTLS
-    /// handshake against a GCP backend with NO network and NO GCP credentials. The
-    /// fake transport answers `getPublicKey` with the key's RFC 8410 Ed25519 SPKI
-    /// (PEM-wrapped) and `asymmetricSign` with a PureEdDSA RAW signature over the raw
-    /// `data` — exactly what a real Cloud KMS `EC_SIGN_ED25519` key version returns.
-    /// There is NO production code path into this; it exists only to make the
-    /// crate-internal fake-transport reachable from the integration test that mints a
-    /// matching server certificate from the same `seed`.
-    #[doc(hidden)]
-    pub fn for_test_with_local_seed(seed: &[u8; 32]) -> Result<Self, KeyError> {
-        let transport = LocalKeyGcpTransport {
-            key: mcp_re_core::SigningKey::from_seed_bytes(seed),
-        };
-        Self::with_transport(Box::new(transport))
-    }
-}
-
-/// TEST-ONLY in-memory [`GcpKmsTransport`] backed by a LOCAL Ed25519 key — the same
-/// fake-Cloud-KMS shape used by this module's unit tests, exposed (only via the
-/// `#[doc(hidden)]` [`GcpKmsEd25519Backend::for_test_with_local_seed`]) so the
-/// delegated-TLS handshake integration test can use a real GCP backend with no
-/// network. NOT reachable from any production path.
-#[doc(hidden)]
-struct LocalKeyGcpTransport {
-    key: mcp_re_core::SigningKey,
-}
-
-impl GcpKmsTransport for LocalKeyGcpTransport {
-    fn get_public_key(&self) -> Result<Vec<u8>, RemoteSignerFailure> {
-        let der = Ed25519PublicKeyValue::spki_der_for_point(self.key.public_key().to_bytes());
-        let b64 = STANDARD.encode(&der);
-        let mut pem = String::from("-----BEGIN PUBLIC KEY-----\n");
-        for chunk in b64.as_bytes().chunks(64) {
-            pem.push_str(&String::from_utf8_lossy(chunk));
-            pem.push('\n');
-        }
-        pem.push_str("-----END PUBLIC KEY-----\n");
-        Ok(serde_json::json!({
-            "algorithm": ALGORITHM_ED25519,
-            "pem": pem,
-        })
-        .to_string()
-        .into_bytes())
-    }
-
-    fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
-        let v: serde_json::Value = serde_json::from_slice(body)
-            .map_err(|e| RemoteSignerFailure::malformed(format!("fake gcp kms: sign body: {e}")))?;
-        let data = STANDARD
-            .decode(v.get("data").and_then(|d| d.as_str()).unwrap_or(""))
-            .map_err(|e| RemoteSignerFailure::malformed(format!("fake gcp kms: data b64: {e}")))?;
-        let raw = mcp_re_core::b64url_decode(&self.key.sign(&data))
-            .map_err(|e| RemoteSignerFailure::malformed(format!("fake gcp kms: sign: {e}")))?;
-        Ok(serde_json::json!({ "signature": STANDARD.encode(&raw) })
-            .to_string()
-            .into_bytes())
     }
 }
 
@@ -1117,11 +1057,12 @@ impl KmsEd25519Backend for GcpKmsEd25519Backend {
 /// used for response signing (`EC_SIGN_ED25519`, PureEdDSA over the raw `data`, NOT a
 /// digest), so the TLS private key never leaves Cloud KMS.
 ///
-/// rustls verifies the handshake `CertificateVerify` it gets back, and the validated
-/// delegated build path (#58) both enforces the 64-byte length and fails closed when
-/// the (exportable, cached) public key here does not match the leaf TLS certificate —
-/// so verify-before-return is NOT repeated on this path (it stays on the
-/// object-signing `sign_raw_ed25519` path, which is reused unchanged).
+/// Before a handshake signature reaches rustls, `tls_sign_at` applies the same
+/// verify-before-return as `sign_raw_ed25519` (`accept_signature`), so a prehash or
+/// mismatched-key Cloud KMS signature is refused here
+/// (`a_non_verifying_kms_signature_is_refused_on_the_tls_path`). Separately, the validated
+/// delegated build path (#58) fails closed when this cached public key does not match the
+/// leaf TLS certificate.
 impl RawEd25519TlsSigner for GcpKmsEd25519Backend {
     fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
         self.tls_sign_at(message, &Instant::now)
@@ -1143,6 +1084,7 @@ mod tests {
     use mcp_re_core::TrustResolverError;
 
     use super::*;
+    use crate::communication_assurance::Ed25519PublicKeyValue;
 
     /// Build a PEM-wrapped RFC 8410 Ed25519 SPKI from a raw point (what GCP returns).
     fn pem_from_raw(raw: &[u8; 32]) -> String {
@@ -1233,8 +1175,7 @@ mod tests {
 
     fn token_source() -> MetadataServerTokenSource {
         // Never reached: every test below supplies its own `fetch`.
-        MetadataServerTokenSource::new(Some("http://127.0.0.1:1".to_string()))
-            .expect("a loopback http endpoint is admissible")
+        MetadataServerTokenSource::new().expect("the metadata endpoint is admissible")
     }
 
     /// A fetch result carrying a STATED expiry.
@@ -1901,6 +1842,46 @@ mod tests {
             .raw_point();
         let key = VerificationKey::from_bytes(&raw).unwrap();
         verify_ed25519(transcript, &b64url_encode(&sig), &key).expect("tls sig verifies");
+    }
+
+    /// The refusal direction of the delegated-TLS path: a signature that does not verify
+    /// under the advertised key is refused here, before rustls sees it. The prehash
+    /// signature is 64 bytes, so the length rule cannot be what refuses it; the text is
+    /// only `accept_signature`'s verify branch.
+    #[test]
+    fn a_non_verifying_kms_signature_is_refused_on_the_tls_path() {
+        let backend = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp {
+            prehash: true,
+            ..FakeGcp::good(24)
+        }))
+        .expect("construct");
+        let Err(KeyError::Malformed(why)) =
+            backend.sign_tls_ed25519(b"tls handshake transcript bytes")
+        else {
+            panic!("a non-verifying KMS signature must be refused on the TLS path");
+        };
+        assert!(why.contains("did NOT verify"), "{why}");
+    }
+
+    /// Issue #61: a full-WebPKI mTLS handshake whose delegated signer is this adapter over
+    /// the fake Cloud KMS transport, keyed to match the server leaf. The validating client
+    /// completes it only if the `asymmetricSign` output is a valid PureEdDSA signature
+    /// over the transcript; a non-verifying Cloud KMS signature fails it.
+    #[test]
+    fn gcp_kms_delegated_tls_handshake_completes_and_a_non_verifying_signature_fails_it() {
+        use crate::kms_keysource::handshake_control::complete_handshake;
+        let seed = [0x42u8; 32];
+        let backend =
+            GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(0x42))).expect("construct");
+        complete_handshake(&seed, std::sync::Arc::new(backend))
+            .expect("the adapter's signature completes the handshake");
+        let prehash = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp {
+            prehash: true,
+            ..FakeGcp::good(0x42)
+        }))
+        .expect("construct");
+        complete_handshake(&seed, std::sync::Arc::new(prehash))
+            .expect_err("a non-verifying Cloud KMS signature must fail the handshake");
     }
 
     /// A Cloud KMS transport that always reports the project is over quota, counting
@@ -2651,29 +2632,49 @@ mod tests {
             .expect("new version still verifies after the old is removed");
     }
 
-    /// LOAD-BEARING (Owner Ruling 6): the metadata endpoint is operator-supplied, and this
-    /// refusal is a SCHEME verdict — so it fires on a perfectly well-formed URL, which is
-    /// the shape that carries a password. Neither the credential nor the complete
-    /// configured string may reach the message.
-    ///
-    /// `token_source()` above is the positive control: a legitimate loopback endpoint is
-    /// still admitted, so the redaction changed what a failure says and nothing else.
+    /// The metadata-server wire call: the request carries the `Metadata-Flavor` header on
+    /// the token path, and the response's stated lifetime is what reaches `stated_expiry`.
     #[test]
-    fn a_metadata_endpoint_refusal_leaks_neither_the_credential_nor_the_configured_url() {
-        const CONFIGURED: &str = "ftp://ops:hunter2@metadata.internal/";
-        let Err(KeyError::Malformed(why)) =
-            MetadataServerTokenSource::new(Some(CONFIGURED.to_string()))
-        else {
-            panic!("a scheme no outbound fetch may use must not become a token source");
+    fn the_metadata_fetch_sends_the_flavor_header_and_wires_the_stated_lifetime() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 512];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).expect("read");
+                assert!(n > 0, "the client closed before finishing its request");
+                request.extend_from_slice(chunk.get(..n).expect("n <= chunk"));
+            }
+            let body = r#"{"access_token":"ya29.WIRE","expires_in":1800,"token_type":"Bearer"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).expect("write");
+            String::from_utf8_lossy(&request).to_lowercase()
+        });
+        let destination =
+            VettedDestination::operator_configured(format!("http://127.0.0.1:{port}"))
+                .expect("loopback http");
+        let source = MetadataServerTokenSource {
+            egress: CredentialEgress::to(&destination, NETWORK_TIMEOUT),
+            state: Mutex::new(TokenState::default()),
+            fetching: Mutex::new(()),
         };
-        assert!(!why.contains("hunter2"), "the credential was echoed: {why}");
+        let now = SystemTime::now();
+        let fetched = source.fetch_token(now).expect("fetch");
+        assert_eq!(&*fetched.token, "ya29.WIRE");
+        assert_eq!(fetched.expires_at, Some(now + Duration::from_secs(1800)));
+        let request = server.join().expect("server thread");
         assert!(
-            !why.contains(CONFIGURED),
-            "the complete configured endpoint was echoed: {why}"
+            request.starts_with(
+                "get /computemetadata/v1/instance/service-accounts/default/token http/1.1"
+            ),
+            "{request}"
         );
-        assert!(
-            why.contains("metadata.internal"),
-            "an operator still learns which endpoint was refused: {why}"
-        );
+        assert!(request.contains("metadata-flavor: google"), "{request}");
     }
 }

@@ -11,7 +11,7 @@
 //!
 //! Two entry points share one lane body:
 //!   * `*_offline_local_seed` — NOT ignored: runs in the blocking feature-gated
-//!     CI job via `AwsKmsEd25519Backend::for_test_with_local_seed` (no network),
+//!     CI job via a local-key `KmsEd25519Backend` (no network),
 //!     guarding the KMS-backend → seam wiring on every push.
 //!   * `*_live` — `#[ignore]`: the real AWS KMS backend; run from the cloud
 //!     script / nightly lane with `-- --ignored` and `MCP_RE_AWS_KMS_*` set. FAILS
@@ -90,13 +90,7 @@ fn live_signer() -> KmsResponseSigner {
     KmsResponseSigner::new(Box::new(backend))
 }
 
-/// An offline signer over the SAME backend adapter, using a local seed instead
-/// of a network round-trip — exercises the KMS-backend → seam wiring hermetically.
-fn offline_signer() -> KmsResponseSigner {
-    let backend = AwsKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32], "alias/offline")
-        .expect("local-seed KMS backend");
-    KmsResponseSigner::new(Box::new(backend))
-}
+use crate::local_seed_backend::offline_signer;
 
 /// The external-signer closure the profile seam expects: RFC 9421 base bytes in,
 /// raw 64-byte Ed25519 signature out. Wraps the KMS signer (which returns

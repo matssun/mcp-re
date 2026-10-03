@@ -35,8 +35,7 @@
 //!
 //! Entry points follow the offline/live pattern of the GCP sibling:
 //!   * `*_offline_local_seed` — NOT ignored: the feature-gated CI job runs it via
-//!     `AwsKmsEd25519Backend::for_test_with_local_seed` (no network, no AWS
-//!     credentials), guarding the KMS-root → serving/flip wiring on every push.
+//!     a local-key `KmsEd25519Backend` (no network, no AWS credentials), guarding the KMS-root → serving/flip wiring on every push.
 //!     This is wiring coverage, NOT AWS validation; only the live twin earns that.
 //!   * `*_live` — `#[ignore]`: the real AWS KMS backend. FAILS LOUDLY if
 //!     unconfigured; it never silently passes without verifying.
@@ -110,8 +109,6 @@ const TTL: i64 = 300;
 const OVERLAP: i64 = 60;
 // A batch comfortably larger than 1, to prove the KMS is not touched per request.
 const RESPONSES_PER_KEY: usize = 8;
-// The key id the offline fake transport reports; never a real AWS resource.
-const OFFLINE_KEY_ID: &str = "offline-local-seed-key";
 
 // --- KMS signer construction (identical policy to the sibling live test) --------
 
@@ -141,13 +138,7 @@ fn live_signer() -> KmsResponseSigner {
     KmsResponseSigner::new(Box::new(backend))
 }
 
-/// An offline signer over the SAME backend adapter (local seed, no network) —
-/// exercises the KMS-root → serving/flip wiring hermetically in CI.
-fn offline_signer() -> KmsResponseSigner {
-    let backend = AwsKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32], OFFLINE_KEY_ID)
-        .expect("local-seed KMS backend");
-    KmsResponseSigner::new(Box::new(backend))
-}
+use crate::local_seed_backend::offline_signer;
 
 /// A `ResponseSigner` that wraps the KMS root and counts EVERY real signing call.
 /// Passing this as the root to `build_delegated_signing` lets the SERVING lane

@@ -36,7 +36,6 @@ use crate::aws_sts::AwsCredentialSource;
 use crate::aws_sts::EnvCredentialSource;
 use crate::aws_sts::WebIdentityConfig;
 use crate::aws_sts::WebIdentityCredentialSource;
-use crate::communication_assurance::Ed25519PublicKeyValue;
 use crate::delegated_tls::RawEd25519TlsSigner;
 use crate::handshake_quota::HandshakeQuotaWindow;
 use crate::handshake_quota::QuotaGuarded;
@@ -553,71 +552,6 @@ impl AwsKmsEd25519Backend {
         })?;
         Ok(signature)
     }
-
-    /// TEST-ONLY (issue #60): build a backend over an in-memory FAKE KMS transport
-    /// backed by the LOCAL Ed25519 key with the given 32-byte `seed`, so an
-    /// integration test (`tests/tls_test.rs`) can drive the full delegated-TLS mTLS
-    /// handshake against an AWS backend with NO network and NO AWS credentials. The
-    /// fake transport answers `GetPublicKey` with the key's RFC 8410 Ed25519 SPKI and
-    /// `Sign` with a PureEdDSA RAW signature — exactly what a real KMS Ed25519 key
-    /// returns. There is NO production code path into this; it exists only to make the
-    /// crate-internal fake-transport reachable from the integration test that mints a
-    /// matching server certificate from the same `seed`.
-    #[doc(hidden)]
-    pub fn for_test_with_local_seed(seed: &[u8; 32], key_id: &str) -> Result<Self, KeyError> {
-        let client = LocalKeyKmsTransport {
-            key: mcp_re_core::SigningKey::from_seed_bytes(seed),
-        };
-        Self::with_client(Box::new(client), key_id.to_string())
-    }
-}
-
-/// TEST-ONLY in-memory [`KmsHttpClient`] backed by a LOCAL Ed25519 key — the same
-/// fake-KMS shape used by this module's unit tests, exposed (only via the
-/// `#[doc(hidden)]` [`AwsKmsEd25519Backend::for_test_with_local_seed`]) so the
-/// delegated-TLS handshake integration test can use a real AWS backend with no
-/// network. NOT reachable from any production path.
-#[doc(hidden)]
-struct LocalKeyKmsTransport {
-    key: mcp_re_core::SigningKey,
-}
-
-impl KmsHttpClient for LocalKeyKmsTransport {
-    fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
-        match target {
-            TARGET_GET_PUBLIC_KEY => {
-                let point = self.key.public_key().to_bytes();
-                let der = Ed25519PublicKeyValue::spki_der_for_point(point);
-                Ok(serde_json::json!({
-                    "KeySpec": KEY_SPEC_ED25519,
-                    "PublicKey": STANDARD.encode(&der),
-                })
-                .to_string()
-                .into_bytes())
-            }
-            TARGET_SIGN => {
-                let v: serde_json::Value = serde_json::from_slice(body).map_err(|e| {
-                    RemoteSignerFailure::malformed(format!("fake kms: Sign body: {e}"))
-                })?;
-                let msg = STANDARD
-                    .decode(v.get("Message").and_then(|m| m.as_str()).unwrap_or(""))
-                    .map_err(|e| {
-                        RemoteSignerFailure::malformed(format!("fake kms: Message b64: {e}"))
-                    })?;
-                let raw = mcp_re_core::b64url_decode(&self.key.sign(&msg))
-                    .map_err(|e| RemoteSignerFailure::malformed(format!("fake kms: sign: {e}")))?;
-                Ok(serde_json::json!({
-                    "Signature": STANDARD.encode(&raw),
-                    "SigningAlgorithm": SIGNING_ALGORITHM_ED25519,
-                })
-                .to_string()
-                .into_bytes())
-            }
-            other => Err(RemoteSignerFailure::malformed(format!(
-                "fake kms: unexpected target {other}"
-            ))),
-        }
-    }
 }
 
 impl KmsEd25519Backend for AwsKmsEd25519Backend {
@@ -669,6 +603,7 @@ mod tests {
     use mcp_re_core::SigningKey;
 
     use super::*;
+    use crate::communication_assurance::Ed25519PublicKeyValue;
 
     fn spki_from_raw(raw: &[u8; 32]) -> Vec<u8> {
         Ed25519PublicKeyValue::spki_der_for_point(*raw)
@@ -1174,6 +1109,30 @@ mod tests {
         .raw_point();
         let key = VerificationKey::from_bytes(&raw).unwrap();
         verify_ed25519(transcript, &b64url_encode(&sig), &key).expect("tls sig verifies");
+    }
+
+    /// Issue #60: a full-WebPKI mTLS handshake whose delegated signer is this adapter over
+    /// the fake KMS transport, keyed to match the server leaf. The validating client
+    /// completes it only if the KMS `Sign` output is a valid PureEdDSA signature over the
+    /// transcript; a non-verifying KMS signature fails it.
+    #[test]
+    fn aws_kms_delegated_tls_handshake_completes_and_a_non_verifying_signature_fails_it() {
+        use crate::kms_keysource::handshake_control::complete_handshake;
+        let seed = [0x42u8; 32];
+        let backend = |prehash| {
+            AwsKmsEd25519Backend::with_client(
+                Box::new(FakeKms {
+                    key: SigningKey::from_seed_bytes(&seed),
+                    prehash,
+                }),
+                "alias/mcp-re-tls".to_string(),
+            )
+            .expect("construct")
+        };
+        complete_handshake(&seed, std::sync::Arc::new(backend(false)))
+            .expect("the adapter's signature completes the handshake");
+        complete_handshake(&seed, std::sync::Arc::new(backend(true)))
+            .expect_err("a non-verifying KMS signature must fail the handshake");
     }
 
     #[test]

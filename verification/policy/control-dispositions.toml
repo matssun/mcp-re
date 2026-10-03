@@ -10428,22 +10428,6 @@ proposition = "NP-153"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19081"
-project = "mcp-re-proxy"
-control = "tests/integration/main.rs#tls_test::aws_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf"
-decision = "new-proposition"
-proposition = "NP-152"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19082"
-project = "mcp-re-proxy"
-control = "tests/integration/main.rs#tls_test::aws_kms_delegated_tls_handshake_round_trip_and_corruption_fails"
-decision = "new-proposition"
-proposition = "NP-152"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19083"
 project = "mcp-re-proxy"
 control = "tests/integration/main.rs#tls_test::cn_legacy_policy_reads_the_common_name"
@@ -10487,22 +10471,6 @@ recorded = "2026-09-19"
 id = "CD-19089"
 project = "mcp-re-proxy"
 control = "tests/integration/main.rs#tls_test::dns_san_policy_reads_the_dns_san"
-decision = "new-proposition"
-proposition = "NP-152"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19090"
-project = "mcp-re-proxy"
-control = "tests/integration/main.rs#tls_test::gcp_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf"
-decision = "new-proposition"
-proposition = "NP-152"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19091"
-project = "mcp-re-proxy"
-control = "tests/integration/main.rs#tls_test::gcp_kms_delegated_tls_handshake_round_trip_and_corruption_fails"
 decision = "new-proposition"
 proposition = "NP-152"
 recorded = "2026-09-19"
@@ -12550,14 +12518,6 @@ proposition = "NP-215"
 recorded = "2026-09-29"
 
 [[disposition]]
-id = "CD-20048"
-project = "mcp-re-proxy"
-control = "src/lib.rs#gcp_kms_keysource::tests::a_metadata_endpoint_refusal_leaks_neither_the_credential_nor_the_configured_url"
-decision = "new-proposition"
-proposition = "NP-215"
-recorded = "2026-09-29"
-
-[[disposition]]
 id = "CD-20049"
 project = "mcp-re-proxy"
 control = "src/lib.rs#key_source::file_key_source::tests::malformed_material_refuses_construction_without_leaking_it"
@@ -13766,4 +13726,12 @@ project = "sdk/typescript"
 control = "vitest#test/smoke.test.ts > mcp-re-sdk smoke (built package) > refuses a non-finite or fractional time input instead of saturating it"
 decision = "new-proposition"
 proposition = "NP-228"
+recorded = "2026-10-03"
+
+[[disposition]]
+id = "CD-20149"
+project = "mcp-re-proxy"
+control = "tests/integration_live/main.rs#local_seed_backend::tests::the_offline_signer_signs_under_its_advertised_key"
+decision = "new-proposition"
+proposition = "NP-149"
 recorded = "2026-10-03"

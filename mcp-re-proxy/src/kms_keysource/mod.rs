@@ -32,6 +32,8 @@ use crate::key_source::KeyError;
 use crate::key_source::KeySource;
 use crate::key_source::ResponseSigner;
 
+#[cfg(test)]
+pub(crate) mod handshake_control;
 mod protocol_operands;
 
 pub use protocol_operands::Ed25519SpkiDer;

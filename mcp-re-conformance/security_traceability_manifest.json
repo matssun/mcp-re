@@ -112,7 +112,7 @@
       "bazel_target": "//mcp-re-proxy:proxy_ext_unit_test",
       "source": "mcp-re-proxy/src/gcp_kms_keysource.rs",
       "test_fn": "gcp_backend_signs_and_verifies_end_to_end",
-      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7C native GCP Cloud KMS Ed25519 response signer. Offline positive control (for_test_with_local_seed, no network) exercised under the both-KMS-features proxy_ext_unit_test: a GCP-backed signature verifies under the production mcp-re-core path. The #[ignore]d gcp_kms_live_test is the online complement (manual live-infra lane)."
+      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7C native GCP Cloud KMS Ed25519 response signer. Offline positive control (in-crate fake transport, no network) exercised under the both-KMS-features proxy_ext_unit_test: a GCP-backed signature verifies under the production mcp-re-core path. The #[ignore]d gcp_kms_live_test is the online complement (manual live-infra lane)."
     },
     {
       "property": "GCP Cloud KMS backend fails closed: a non-Ed25519 key algorithm is rejected",
@@ -147,7 +147,7 @@
       "bazel_target": "//mcp-re-proxy:proxy_ext_unit_test",
       "source": "mcp-re-proxy/src/aws_kms_keysource.rs",
       "test_fn": "aws_backend_signs_and_verifies_end_to_end",
-      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7B native AWS KMS Ed25519 response signer (minimal audited SigV4, no async aws-sdk-kms). Offline positive control (for_test_with_local_seed, no network) under proxy_ext_unit_test: an AWS-backed signature verifies under the production mcp-re-core path. The #[ignore]d aws_kms_live_test is the online complement."
+      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7B native AWS KMS Ed25519 response signer (minimal audited SigV4, no async aws-sdk-kms). Offline positive control (in-crate fake transport, no network) under proxy_ext_unit_test: an AWS-backed signature verifies under the production mcp-re-core path. The #[ignore]d aws_kms_live_test is the online complement."
     },
     {
       "property": "AWS KMS backend fails closed: a non-Ed25519 key spec is rejected",

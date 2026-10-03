@@ -22,7 +22,7 @@
 //!
 //! Two entry points share one lane body:
 //!   * `*_offline_local_seed` — NOT ignored: runs in the blocking feature-gated
-//!     CI job via `GcpKmsEd25519Backend::for_test_with_local_seed` (no network),
+//!     CI job via a local-key `KmsEd25519Backend` (no network),
 //!     guarding the KMS-backend → custody-issuer wiring on every push.
 //!   * `*_live` — `#[ignore]`: the real Cloud KMS backend; run from the cloud
 //!     script / nightly lane with `-- --ignored` and `MCP_RE_GCP_*` set. FAILS
@@ -116,14 +116,7 @@ fn live_signer() -> KmsResponseSigner {
     KmsResponseSigner::new(Box::new(backend))
 }
 
-/// An offline signer over the SAME backend adapter, using a local seed instead of
-/// a network round-trip — exercises the KMS-backend → custody-issuer wiring
-/// hermetically.
-fn offline_signer() -> KmsResponseSigner {
-    let backend =
-        GcpKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32]).expect("local-seed KMS backend");
-    KmsResponseSigner::new(Box::new(backend))
-}
+use crate::local_seed_backend::offline_signer;
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)

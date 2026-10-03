@@ -34,7 +34,7 @@
 //!
 //! Both lanes share the offline/live entry-point pattern of the sibling test:
 //!   * `*_offline_local_seed` — NOT ignored: the feature-gated CI job runs it via
-//!     `GcpKmsEd25519Backend::for_test_with_local_seed` (no network), guarding the
+//!     a local-key `KmsEd25519Backend` (no network), guarding the
 //!     KMS-root → serving/flip wiring on every push.
 //!   * `*_live` — `#[ignore]`: the real Cloud KMS backend; run from
 //!     `work/test-gcp-cloud.sh` (or `docs/security/gcp-kms-delegated-required.sh`)
@@ -137,13 +137,7 @@ fn live_signer() -> KmsResponseSigner {
     KmsResponseSigner::new(Box::new(backend))
 }
 
-/// An offline signer over the SAME backend adapter (local seed, no network) —
-/// exercises the KMS-root → serving/flip wiring hermetically in CI.
-fn offline_signer() -> KmsResponseSigner {
-    let backend =
-        GcpKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32]).expect("local-seed KMS backend");
-    KmsResponseSigner::new(Box::new(backend))
-}
+use crate::local_seed_backend::offline_signer;
 
 /// A `ResponseSigner` that wraps the KMS root and counts EVERY real signing call.
 /// Passing this as the root to `build_delegated_signing` lets the SERVING lane
