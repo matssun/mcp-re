@@ -33,7 +33,7 @@ const CRL_NEAR_EXPIRY_WARN_SECS: i64 = 6 * 3600;
 /// only constructor, so possessing one means every CRL in it was inside its own
 /// `nextUpdate` window when it was built. That is what makes the startup gate and the
 /// reload gate the same gate rather than two checks that agreed for a while.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientCrlEvidence {
     /// One entry per loaded CRL. Empty when offline client-cert revocation is not
     /// configured, which is a different posture — not an empty one.
@@ -58,7 +58,9 @@ impl ClientCrlEvidence {
     ) -> Result<Self, String> {
         let mut postures = Vec::with_capacity(crls.len());
         for (index, crl) in crls.iter().enumerate() {
-            require_in_force(crl.as_ref(), index, now_unix)?;
+            if let Some(next_update_unix) = require_in_force(crl.as_ref(), index, now_unix)? {
+                warn_near_expiry(index, next_update_unix);
+            }
             postures.push(
                 crate::client_crl_publication::crl_posture(crl.as_ref())
                     .map_err(|e| e.to_string())?,
@@ -114,35 +116,42 @@ impl ClientCrlEvidence {
 ///
 /// Separate from the loop so that "which classes are admissible" is one readable statement
 /// rather than a nest, and so that adding a class is an edit to a match with one arm per
-/// outcome.
+/// outcome. Returns the near-expiry instant, when there is one, rather than warning: the
+/// predicate decides and the caller reports.
 ///
 /// NOT named `admit`: `tools/verification`'s escape-hatch detector reads that identifier as
 /// Verus' proof-discharge `admit()` and refuses the build, which is the conservative
 /// direction and the right one — a security predicate sharing a name with a way to delete a
 /// proof obligation is worth renaming whether or not a tool objects.
-fn require_in_force(crl_der: &[u8], index: usize, now_unix: i64) -> Result<(), String> {
+fn require_in_force(crl_der: &[u8], index: usize, now_unix: i64) -> Result<Option<i64>, String> {
     match crate::client_crl_publication::crl_freshness(crl_der, now_unix, CRL_NEAR_EXPIRY_WARN_SECS)
         .map_err(|e| e.to_string())?
     {
-        CrlFreshness::Fresh => Ok(()),
-        CrlFreshness::NoNextUpdate => {
-            crate::client_crl_publication::crl_next_update_required(crl_der, index)
-                .map_err(|e| format!("client CRL that never falls out of force: {e}"))
-        }
-        CrlFreshness::NearExpiry { next_update_unix } => {
-            eprintln!(
-                "mcp-re-proxy: WARNING: client CRL #{index} is near expiry \
-                 (nextUpdate={next_update_unix}); install a refreshed CRL before then, or new \
-                 handshakes will fail closed."
-            );
-            Ok(())
-        }
+        CrlFreshness::Fresh => Ok(None),
+        CrlFreshness::NoNextUpdate => Err(crate::client_crl_publication::crl_next_update_required(
+            crl_der, index,
+        )
+        .err()
+        .map_or_else(
+            || format!("client CRL #{index} omits nextUpdate, so it never falls out of force"),
+            |e| format!("client CRL that never falls out of force: {e}"),
+        )),
+        CrlFreshness::NearExpiry { next_update_unix } => Ok(Some(next_update_unix)),
         CrlFreshness::Stale { next_update_unix } => Err(format!(
             "client CRL #{index} is STALE (nextUpdate={next_update_unix} <= now={now_unix}): \
              with CRL expiration enforced, every new client handshake fails closed. Install a \
              CRL published within its nextUpdate window."
         )),
     }
+}
+
+/// The operator signal that a refreshed CRL should be installed before the cutover.
+fn warn_near_expiry(index: usize, next_update_unix: i64) {
+    eprintln!(
+        "mcp-re-proxy: WARNING: client CRL #{index} is near expiry \
+         (nextUpdate={next_update_unix}); install a refreshed CRL before then, or new \
+         handshakes will fail closed."
+    );
 }
 
 // Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
@@ -193,5 +202,40 @@ mod tests {
         assert!(!evidence.revocation_index().expect("index").is_empty());
         let none = ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal");
         assert!(none.revocation_index().is_err());
+    }
+
+    /// A CRL that never falls out of force has no inhabitant.
+    #[test]
+    fn a_crl_that_never_falls_out_of_force_produces_no_evidence() {
+        use der::{Decode, Encode};
+        let crl = crate::client_crl_publication::test_support::crl_with_next_update();
+        let mut list = x509_cert::crl::CertificateList::from_der(crl.as_ref()).expect("decode");
+        list.tbs_cert_list.next_update = None;
+        let der =
+            rustls_pki_types::CertificateRevocationListDer::from(list.to_der().expect("encode"));
+        let refusal = ClientCrlEvidence::from_checked(vec![der], 0).expect_err("never expires");
+        assert!(
+            refusal.contains("#0") && refusal.contains("nextUpdate"),
+            "{refusal}"
+        );
+    }
+
+    /// Near expiry is admitted and names its deadline.
+    #[test]
+    fn a_near_expiry_crl_is_installable_and_names_its_deadline() {
+        let crl = crate::client_crl_publication::test_support::crl_with_next_update();
+        let next_update = crate::client_crl_publication::crl_posture(crl.as_ref())
+            .expect("posture")
+            .next_update_unix
+            .expect("the fixture states one");
+        assert_eq!(
+            require_in_force(crl.as_ref(), 0, next_update - 60),
+            Ok(Some(next_update))
+        );
+        assert_eq!(
+            require_in_force(crl.as_ref(), 0, next_update - 7 * 3600),
+            Ok(None)
+        );
+        assert!(ClientCrlEvidence::from_checked(vec![crl], next_update - 60).is_ok());
     }
 }

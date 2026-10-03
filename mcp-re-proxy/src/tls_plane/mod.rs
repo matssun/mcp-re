@@ -161,7 +161,7 @@ impl TlsPlane {
             snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(server))),
             revocation: None,
             currency: Arc::new(ClientRevocationCurrency::new(
-                ClientCrlEvidence::default(),
+                ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
                 true,
             )),
             key_exposure: PrivateKeyExposure::ProcessReadable,
@@ -440,7 +440,7 @@ mod handle_lifetime_tests {
             snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(config)),
             revocation: None,
             currency: Arc::new(ClientRevocationCurrency::new(
-                ClientCrlEvidence::default(),
+                ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
                 true,
             )),
             key_exposure: PrivateKeyExposure::ProcessReadable,
@@ -677,7 +677,11 @@ mod trust_epoch_binding_tests {
         let state = TlsListenerSecurityState::new(anchors.clone());
 
         let first = material
-            .rebuild(chain.clone(), &ClientCrlEvidence::default(), &state)
+            .rebuild(
+                chain.clone(),
+                &ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+                &state,
+            )
             .expect("initial build");
         assert!(first
             .session_storage
@@ -685,7 +689,11 @@ mod trust_epoch_binding_tests {
         let after_first = *state.epoch();
 
         material
-            .rebuild(chain, &ClientCrlEvidence::default(), &state)
+            .rebuild(
+                chain,
+                &ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+                &state,
+            )
             .expect("rebuild");
         assert_eq!(
             *state.epoch(),
