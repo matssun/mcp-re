@@ -15,9 +15,8 @@
 //! 64-byte signature, RFC 8410 public-key parsing, and fail-closed on every
 //! deviation — is unit-tested with the REAL `mcp-re-core` verifier and no network.
 //!
-//! TLS material is delegated to an inner [`FileKeySource`]; delegated TLS signing
-//! through the KMS (so the TLS private key also never leaves the device) is the
-//! companion hardening item (ADR-MCPS-028 §G), not delivered here.
+//! The TLS cert chain and client-CA roots come from an inner [`FileKeySource`]; the
+//! TLS key is either file-backed or delegated to a second KMS key (ADR-MCPS-028 §G).
 
 use std::sync::Arc;
 
@@ -68,15 +67,20 @@ pub trait KmsEd25519Backend {
 ///
 /// Holds only a [`KmsEd25519Backend`]; it carries no TLS material, so its signing
 /// behavior is testable in isolation. [`KmsKeySource`] composes it with a
-/// [`FileKeySource`] for the (still-exported, by ADR-028 §G) TLS material.
+/// [`FileKeySource`] for the TLS material. The advertised public key is read from the
+/// backend once and fixed for the signer's lifetime.
 pub struct KmsResponseSigner {
     backend: Box<dyn KmsEd25519Backend + Send + Sync>,
+    advertised: std::sync::OnceLock<VerificationKey>,
 }
 
 impl KmsResponseSigner {
     /// Build a signer over the given KMS backend.
     pub fn new(backend: Box<dyn KmsEd25519Backend + Send + Sync>) -> Self {
-        KmsResponseSigner { backend }
+        KmsResponseSigner {
+            backend,
+            advertised: std::sync::OnceLock::new(),
+        }
     }
 }
 
@@ -89,15 +93,9 @@ impl ResponseSigner for KmsResponseSigner {
             .sign_raw_ed25519(RawEd25519Message::for_preimage(preimage))?;
         // Match SigningKey::sign EXACTLY: Base64URL-no-pad of the raw 64 bytes.
         let encoded = b64url_encode(signature.bytes());
-        // ADR-MCPS-028 §D, enforced AT THE SEAM (mirroring DelegatedResponseSigner):
-        // re-verify the backend's signature against THIS signer's advertised public
-        // key (`response_public_key`) before emitting. The concrete AWS/GCP backends
-        // already self-verify (defense in depth, kept), but centralizing the check
-        // here makes the "EVERY signature is verified locally before it is emitted"
-        // property hold for ANY `KmsEd25519Backend` — including a future backend that
-        // forgot to self-verify, or one wired to a mismatched key. Fail closed: never
-        // emit a response signature the proxy's own advertised key cannot verify.
-        // One verify per response sign — negligible.
+        // ADR-MCPS-028 §D, at the seam: every signature is verified against the advertised
+        // key, fixed on first read, before it is emitted, so no backend can move its key to
+        // fit a signature. Fail closed.
         let public_key = self.response_public_key()?;
         verify_ed25519(preimage, &encoded, &public_key).map_err(|_| {
             KeyError::Malformed(
@@ -112,9 +110,13 @@ impl ResponseSigner for KmsResponseSigner {
     fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
         // The backend hands over an already-interpreted key: RFC 8410 parsing happened
         // once, at the seam, rather than here and again in each provider adapter.
+        if let Some(key) = self.advertised.get() {
+            return Ok(key.clone());
+        }
         let raw = self.backend.public_key_spki_der()?.raw_point();
-        VerificationKey::from_bytes(&raw)
-            .map_err(|e| KeyError::Malformed(format!("kms: invalid Ed25519 public key: {e}")))
+        let key = VerificationKey::from_bytes(&raw)
+            .map_err(|e| KeyError::Malformed(format!("kms: invalid Ed25519 public key: {e}")))?;
+        Ok(self.advertised.get_or_init(|| key).clone())
     }
 }
 
@@ -123,26 +125,20 @@ impl ResponseSigner for KmsResponseSigner {
 /// [`FileKeySource`] (cert chain + client-CA roots always; the exported TLS *key*
 /// only on the non-delegated path).
 ///
-/// Issue #60 (ADR-MCPS-028 §G): when `tls_signer` is `Some`, the TLS server key is
-/// ALSO non-exporting — a SECOND, DISTINCT KMS key (a separate key id, and the
-/// operator SHOULD scope it with a distinct authz policy) custodies it, and rustls
-/// drives the handshake signature through that backend (a [`RawEd25519TlsSigner`])
-/// so the TLS private key never leaves KMS. `None` keeps the file-backed TLS key.
-/// The two KMS keys are independent: neither requires the other, and they are NOT
-/// required to differ in code beyond being separate config fields.
+/// When `tls_signer` is `Some`, the TLS server key is ALSO non-exporting: a second KMS
+/// key custodies it and rustls drives the handshake signature through that backend (a
+/// [`RawEd25519TlsSigner`]); [`KeySource::tls_server_key`] then refuses. `None` keeps
+/// the file-backed TLS key.
 pub struct KmsKeySource {
     signer: KmsResponseSigner,
     tls: FileKeySource,
-    /// Optional DELEGATED TLS handshake signer (issue #60). `Some` when a distinct
-    /// TLS KMS key id is configured; returned from [`KeySource::tls_delegated_signer`]
-    /// so the #58 validated build path fails closed on a cert/key mismatch.
+    /// Delegated TLS handshake signer, returned from [`KeySource::tls_delegated_signer`].
     tls_signer: Option<Arc<dyn RawEd25519TlsSigner>>,
 }
 
 impl KmsKeySource {
     /// Build a KMS key source from a KMS signing backend and a file source for the
-    /// TLS materials (cert chain, TLS key, client-CA roots). No delegated TLS: the
-    /// TLS key is read from the file source unchanged.
+    /// TLS materials (cert chain, TLS key, client-CA roots); no delegated TLS.
     pub fn new(backend: Box<dyn KmsEd25519Backend + Send + Sync>, tls: FileKeySource) -> Self {
         KmsKeySource {
             signer: KmsResponseSigner::new(backend),
@@ -151,12 +147,9 @@ impl KmsKeySource {
         }
     }
 
-    /// Build a KMS key source whose TLS handshake is ALSO delegated to a
-    /// non-exporting KMS key (issue #60, ADR-MCPS-028 §G): `tls_signer` is a SECOND,
-    /// DISTINCT KMS key from `backend` (the object-signing key). The file source
-    /// still provides the (public) TLS cert chain and client-CA roots; its TLS *key*
-    /// path is NOT consulted (the exclusivity guard forbids an exported `--tls-key`
-    /// on this path).
+    /// Build a KMS key source whose TLS handshake is ALSO delegated to a second,
+    /// non-exporting KMS key. The file source still provides the (public) TLS cert
+    /// chain and client-CA roots; its TLS key is never consulted.
     pub fn new_with_delegated_tls(
         backend: Box<dyn KmsEd25519Backend + Send + Sync>,
         tls: FileKeySource,
@@ -184,6 +177,11 @@ impl KeySource for KmsKeySource {
         self.tls.tls_server_cert_chain()
     }
     fn tls_server_key(&self) -> Result<PrivateKeyDer<'static>, KeyError> {
+        if self.tls_signer.is_some() {
+            return Err(KeyError::NotFound(
+                "kms: the TLS key is delegated to KMS; no exported TLS server key".to_string(),
+            ));
+        }
         self.tls.tls_server_key()
     }
     fn client_ca_roots(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
@@ -446,5 +444,81 @@ mod tests {
             expected_spki,
             "the delegated signer advertises the TLS key's SPKI (the #58 cert-match basis)"
         );
+    }
+
+    /// A backend that advertises key A on its first read and key B afterwards, and signs
+    /// with B, cannot move the advertised key: the first read is fixed, so the signature
+    /// fails the seam and `response_public_key` still reports A.
+    #[test]
+    fn an_adaptive_backend_cannot_move_the_advertised_key() {
+        struct AdaptiveKms {
+            first: SigningKey,
+            later: SigningKey,
+            reads: std::sync::atomic::AtomicUsize,
+        }
+        impl KmsEd25519Backend for AdaptiveKms {
+            fn sign_raw_ed25519(
+                &self,
+                message: RawEd25519Message<'_>,
+            ) -> Result<RawEd25519Signature, KeyError> {
+                let raw = b64url_decode(&self.later.sign(message.bytes())).expect("b64url");
+                RawEd25519Signature::interpret(&raw, "fake-kms")
+            }
+            fn public_key_spki_der(&self) -> Result<Ed25519SpkiDer, KeyError> {
+                let n = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let key = if n == 0 { &self.first } else { &self.later };
+                Ed25519SpkiDer::interpret(&ed25519_spki_from_raw(&key.public_key().to_bytes()))
+            }
+        }
+        let first = SigningKey::from_seed_bytes(&[21u8; 32]);
+        let signer = KmsResponseSigner::new(Box::new(AdaptiveKms {
+            first: SigningKey::from_seed_bytes(&[21u8; 32]),
+            later: SigningKey::from_seed_bytes(&[22u8; 32]),
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        }));
+        let advertised = signer.response_public_key().expect("first read");
+        assert!(matches!(
+            signer.sign_response(b"preimage"),
+            Err(KeyError::Malformed(_))
+        ));
+        assert_eq!(
+            signer.response_public_key().expect("fixed").to_bytes(),
+            advertised.to_bytes()
+        );
+        assert_eq!(advertised.to_bytes(), first.public_key().to_bytes());
+    }
+
+    /// With a delegated TLS signer installed the source never projects an exported TLS
+    /// key, even when its file source holds one; without one it does.
+    #[cfg(unix)]
+    #[test]
+    fn a_delegated_tls_source_never_projects_an_exported_key() {
+        use crate::capability_materialization::key_file_custody::CheckedKeyFile;
+        use crate::config_state::KeyFileAccessPolicy;
+        use std::os::unix::fs::PermissionsExt;
+
+        let pem = rcgen::KeyPair::generate().expect("keypair").serialize_pem();
+        let file_source = |name: &str| {
+            let path =
+                std::env::temp_dir().join(format!("mcp_re_kms_tls_{}_{name}", std::process::id()));
+            std::fs::write(&path, pem.as_bytes()).expect("write");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+            let key = CheckedKeyFile::open(&path.to_string_lossy(), KeyFileAccessPolicy::OwnerOnly)
+                .expect("admitted");
+            let _ = std::fs::remove_file(&path);
+            FileKeySource::tls_only("/dev/null", Some(key), "/dev/null").expect("valid key")
+        };
+        let plain = KmsKeySource::new(Box::new(FakeKms { key: test_key() }), file_source("a"));
+        assert!(plain.tls_server_key().is_ok(), "positive control");
+
+        let delegated = KmsKeySource::new_with_delegated_tls(
+            Box::new(FakeKms { key: test_key() }),
+            file_source("b"),
+            Arc::new(LocalTlsSigner(SigningKey::from_seed_bytes(&[31u8; 32]))),
+        );
+        assert!(matches!(
+            delegated.tls_server_key(),
+            Err(KeyError::NotFound(_))
+        ));
     }
 }

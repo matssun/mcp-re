@@ -8968,6 +8968,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#kms_keysource::protocol_operands::tests::a_raw_message_is_the_preimage_itself",
   "//mcp-re-proxy:proxy_unit_test#kms_keysource::protocol_operands::tests::only_sixty_four_bytes_make_a_signature",
   "//mcp-re-proxy:proxy_unit_test#kms_keysource::protocol_operands::tests::the_signature_bytes_survive_the_seam",
+  "//mcp-re-proxy:proxy_unit_test#kms_keysource::tests::an_adaptive_backend_cannot_move_the_advertised_key",
+  "//mcp-re-proxy:proxy_unit_test#kms_keysource::tests::a_delegated_tls_source_never_projects_an_exported_key",
   "//mcp-re-proxy:proxy_unit_test#kms_keysource::tests::kms_signature_verifies_under_mcp_re_core_verifier",
   "//mcp-re-proxy:proxy_unit_test#kms_keysource::tests::mismatched_key_signature_fails_closed_at_the_seam",
   "//mcp-re-proxy:proxy_unit_test#kms_keysource::tests::non_ed25519_public_key_fails_closed",
