@@ -546,8 +546,12 @@ mod currency_policy_tests {
     use crate::client_revocation::SharedClientRevocation;
     use crate::communication_assurance::CredentialCurrencyPolicy;
 
-    fn shared() -> Arc<SharedClientRevocation> {
-        Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()))
+    fn shared() -> (
+        Arc<SharedClientRevocation>,
+        crate::client_revocation::ClientRevocationPublisher,
+    ) {
+        let (reader, publisher) = SharedClientRevocation::establish(ClientRevocationIndex::empty());
+        (Arc::new(reader), publisher)
     }
 
     #[test]
@@ -555,7 +559,7 @@ mod currency_policy_tests {
         // A total selector, and the reason the policy is an enum: the fifth combination two
         // `Option`s would admit — evaluating with nothing configured — cannot be written.
         let ceiling = Duration::from_secs(3600);
-        let revocation = shared();
+        let (revocation, _publisher) = shared();
 
         assert!(matches!(
             currency_policy(&ServerOptions::default()),
@@ -591,7 +595,7 @@ mod currency_policy_tests {
         // index as a value. The broken implementation this catches is hoisting `load()` out
         // of the per-request decision — caching it per connection is exactly the
         // handshake-only posture the per-request check exists to replace.
-        let revocation = shared();
+        let (revocation, publisher) = shared();
         let options = ServerOptions {
             client_revocation: Some(Arc::clone(&revocation)),
             ..Default::default()
@@ -604,7 +608,7 @@ mod currency_policy_tests {
             "the first snapshot is the empty index that was in force"
         );
 
-        revocation.store(ClientRevocationIndex::empty());
+        publisher.publish(ClientRevocationIndex::empty());
         let after = currency_policy(&options);
         assert!(
             !std::ptr::eq(

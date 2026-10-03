@@ -42,7 +42,7 @@ pub(super) fn start_reload_worker(
     snapshot: &Arc<config_snapshot::ServerConfigSnapshot>,
     reload_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
     reload_crl_paths: Vec<String>,
-    revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
+    publisher: Option<client_revocation::ClientRevocationPublisher>,
     rebuild_state: &Arc<TlsListenerSecurityState>,
     crls: ClientCrlEvidence,
 ) -> (WorkerSet, Arc<ClientRevocationCurrency>) {
@@ -63,7 +63,7 @@ pub(super) fn start_reload_worker(
             material,
             crl_paths: reload_crl_paths,
             interval_secs: cadence_secs,
-            revocation: revocation.clone(),
+            publisher,
             rebuild_state: Arc::clone(rebuild_state),
             currency: Arc::clone(&currency),
         },
@@ -85,9 +85,10 @@ pub(super) struct CrlReloadTask {
     pub(super) material: TlsKeyMaterial,
     pub(super) crl_paths: Vec<String>,
     pub(super) interval_secs: u64,
-    /// The per-request revocation index — the half of a reload that reaches connections
-    /// already open. `None` where no CRLs are configured.
-    pub(super) revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
+    /// The capability to publish into the per-request revocation index — the half of a reload
+    /// that reaches connections already open. The only one there is: the plane hands out the
+    /// read handle alone. `None` where no CRLs are configured.
+    pub(super) publisher: Option<client_revocation::ClientRevocationPublisher>,
     /// The listener's own security state — anchors, epoch, session cache and
     /// handshake-signature budget. The same one startup built, so a reload rebuilds
     /// against the anchor set in force and neither empties the cache nor refills the
@@ -147,8 +148,8 @@ fn attempt_reload(
         let rebuilt =
             task.material
                 .rebuild(task.server_chain.clone(), &evidence, &task.rebuild_state)?;
-        if let Some(revocation) = task.revocation.as_ref() {
-            revocation.store(index);
+        if let Some(publisher) = task.publisher.as_ref() {
+            publisher.publish(index);
         }
         installed = Some(evidence);
         Ok(Arc::new(rebuilt))
@@ -210,7 +211,7 @@ mod tests {
     fn task(
         server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
         crl_paths: Vec<String>,
-        revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
+        publisher: Option<client_revocation::ClientRevocationPublisher>,
         currency: Arc<ClientRevocationCurrency>,
         anchors: Vec<rustls_pki_types::CertificateDer<'static>>,
     ) -> CrlReloadTask {
@@ -239,7 +240,7 @@ mod tests {
             material: TlsKeyMaterial::Exported(key_der()),
             crl_paths,
             interval_secs: 1,
-            revocation,
+            publisher,
             rebuild_state,
             currency,
         }
@@ -301,11 +302,12 @@ mod tests {
             true,
         ));
         currency.mark_degraded();
-        let revocation = Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()));
+        let (reader, publisher) = SharedClientRevocation::establish(ClientRevocationIndex::empty());
+        let revocation = Arc::new(reader);
         let t = task(
             chain_for_task(),
             vec![path.clone()],
-            Some(Arc::clone(&revocation)),
+            Some(publisher),
             Arc::clone(&currency),
             vec![issuer],
         );
@@ -331,12 +333,13 @@ mod tests {
             ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
             true,
         ));
-        let revocation = Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()));
+        let (reader, publisher) = SharedClientRevocation::establish(ClientRevocationIndex::empty());
+        let revocation = Arc::new(reader);
         let before = revocation.load();
         let t = task(
             chain_for_task(),
             vec![path.clone()],
-            Some(Arc::clone(&revocation)),
+            Some(publisher),
             Arc::clone(&currency),
             chain_for_task(),
         );
@@ -356,12 +359,13 @@ mod tests {
             ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
             true,
         ));
-        let revocation = Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()));
+        let (reader, publisher) = SharedClientRevocation::establish(ClientRevocationIndex::empty());
+        let revocation = Arc::new(reader);
         let before = revocation.load();
         let t = task(
             Vec::new(),
             vec![path.clone()],
-            Some(Arc::clone(&revocation)),
+            Some(publisher),
             Arc::clone(&currency),
             vec![issuer],
         );

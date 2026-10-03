@@ -70,6 +70,7 @@ mod shared;
 /// What the index answers about one certificate, and how a certificate is named to it.
 mod verdict;
 
+pub use shared::ClientRevocationPublisher;
 pub use shared::SharedClientRevocation;
 pub use verdict::CertificateCoordinate;
 pub use verdict::RevocationVerdict;

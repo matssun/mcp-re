@@ -61,21 +61,32 @@ pub(super) fn load_and_check_crls(
 }
 
 /// The PER-REQUEST revocation index, built from the gated evidence the handshake verifier
-/// is about to be given.
+/// is about to be given: the read handle the serving path takes, and the one capability to
+/// publish into it.
 ///
 /// Without it revocation reaches only NEW connections: rustls runs client authentication on
 /// a full handshake alone, so a peer added to a reloaded CRL keeps serving every request on
 /// the connection it already holds.
+///
+/// The publisher goes to the reload worker and nowhere else; the plane keeps and hands out
+/// only the read handle, so no holder of the plane's `Arc` can replace the index.
 pub(super) fn build_revocation_index(
     evidence: &ClientCrlEvidence,
-) -> Result<Option<Arc<client_revocation::SharedClientRevocation>>, String> {
+) -> Result<RevocationCell, String> {
     if evidence.is_empty() {
-        return Ok(None);
+        return Ok((None, None));
     }
-    Ok(Some(Arc::new(
-        client_revocation::SharedClientRevocation::new(evidence.revocation_index()?),
-    )))
+    let (reader, publisher) =
+        client_revocation::SharedClientRevocation::establish(evidence.revocation_index()?);
+    Ok((Some(Arc::new(reader)), Some(publisher)))
 }
+
+/// What [`build_revocation_index`] establishes: the read handle, and the publisher that is
+/// present exactly when the handle is.
+pub(super) type RevocationCell = (
+    Option<Arc<client_revocation::SharedClientRevocation>>,
+    Option<client_revocation::ClientRevocationPublisher>,
+);
 
 /// ADR-MCPS-023 §A1 (MCPS-58) — the operator-visible revocation posture, as lines.
 ///

@@ -254,7 +254,7 @@ impl TlsPlane {
         // re-reads only the CRLs, never this.
         let reload_chain = server_chain.clone();
         let reload_crl_paths = crl_paths.to_vec();
-        let revocation = build_revocation_index(&crls)?;
+        let (revocation, publisher) = build_revocation_index(&crls)?;
 
         // Created once, before the first build, and handed to every later one: the trust
         // anchors, the session cache and the trust epoch survive a reload, and so does the
@@ -279,7 +279,7 @@ impl TlsPlane {
             &snapshot,
             reload_chain,
             reload_crl_paths,
-            revocation.clone(),
+            publisher,
             &rebuild_state,
             crls,
         );

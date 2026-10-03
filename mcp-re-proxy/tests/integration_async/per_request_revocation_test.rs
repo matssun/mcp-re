@@ -367,7 +367,8 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>, revocation: Arc<SharedClientRevoca
 #[test]
 fn a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection() {
     let ca = make_ca("client-ca-revocation");
-    let revocation = Arc::new(SharedClientRevocation::new(index_revoking(&ca, &[])));
+    let (revocation, publisher) = SharedClientRevocation::establish(index_revoking(&ca, &[]));
+    let revocation = Arc::new(revocation);
     let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca)));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
@@ -381,7 +382,7 @@ fn a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection() {
 
     // The CRL reload: the peer's certificate is now revoked. The TLS connection is
     // untouched and the peer never reconnects.
-    revocation.store(index_revoking(&ca, &[REVOKED_SERIAL]));
+    publisher.publish(index_revoking(&ca, &[REVOKED_SERIAL]));
 
     assert_eq!(
         warm.request().expect("second request answered"),
@@ -396,7 +397,8 @@ fn a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection() {
 #[test]
 fn a_peer_absent_from_the_crl_keeps_being_served_across_the_reload() {
     let ca = make_ca("client-ca-revocation");
-    let revocation = Arc::new(SharedClientRevocation::new(index_revoking(&ca, &[])));
+    let (revocation, publisher) = SharedClientRevocation::establish(index_revoking(&ca, &[]));
+    let revocation = Arc::new(revocation);
     let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca)));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
@@ -404,7 +406,7 @@ fn a_peer_absent_from_the_crl_keeps_being_served_across_the_reload() {
         .expect("handshake succeeds");
     assert_eq!(innocent.request().expect("served"), 200);
 
-    revocation.store(index_revoking(&ca, &[REVOKED_SERIAL]));
+    publisher.publish(index_revoking(&ca, &[REVOKED_SERIAL]));
 
     assert_eq!(
         innocent.request().expect("still served"),
@@ -419,7 +421,8 @@ fn a_peer_absent_from_the_crl_keeps_being_served_across_the_reload() {
 #[test]
 fn every_request_on_a_warm_connection_is_checked_not_just_the_first() {
     let ca = make_ca("client-ca-revocation");
-    let revocation = Arc::new(SharedClientRevocation::new(index_revoking(&ca, &[])));
+    let (revocation, publisher) = SharedClientRevocation::establish(index_revoking(&ca, &[]));
+    let revocation = Arc::new(revocation);
     let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca)));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
@@ -428,7 +431,7 @@ fn every_request_on_a_warm_connection_is_checked_not_just_the_first() {
     for i in 0..8 {
         assert_eq!(warm.request().expect("served"), 200, "request {i}");
     }
-    revocation.store(index_revoking(&ca, &[REVOKED_SERIAL]));
+    publisher.publish(index_revoking(&ca, &[REVOKED_SERIAL]));
     for i in 0..3 {
         assert_eq!(
             warm.request().expect("answered"),
@@ -512,12 +515,9 @@ fn client_config_with_chain(intermediate: &Ca, serial: u64) -> ClientConfig {
 fn revoking_an_intermediate_refuses_the_next_request_on_an_open_connection() {
     let root = make_ca("client-root-ca-revocation");
     let intermediate = make_intermediate(&root, "client-intermediate-ca", INTERMEDIATE_SERIAL);
-    let revocation = Arc::new(SharedClientRevocation::new(index_for_chain(
-        &root,
-        &intermediate,
-        &[],
-        &[],
-    )));
+    let (revocation, publisher) =
+        SharedClientRevocation::establish(index_for_chain(&root, &intermediate, &[], &[]));
+    let revocation = Arc::new(revocation);
     let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&root)));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
@@ -534,7 +534,7 @@ fn revoking_an_intermediate_refuses_the_next_request_on_an_open_connection() {
 
     // The intermediate is compromised and published on the ROOT's CRL. The leaf is
     // still not named anywhere.
-    revocation.store(index_for_chain(
+    publisher.publish(index_for_chain(
         &root,
         &intermediate,
         &[INTERMEDIATE_SERIAL],
@@ -556,12 +556,9 @@ fn an_unrevoked_intermediate_keeps_its_peers_served() {
     let root = make_ca("client-root-ca-revocation");
     let intermediate = make_intermediate(&root, "client-intermediate-ca", INTERMEDIATE_SERIAL);
     let other = make_intermediate(&root, "another-intermediate-ca", INTERMEDIATE_SERIAL + 1);
-    let revocation = Arc::new(SharedClientRevocation::new(index_for_chain(
-        &root,
-        &intermediate,
-        &[],
-        &[],
-    )));
+    let (revocation, publisher) =
+        SharedClientRevocation::establish(index_for_chain(&root, &intermediate, &[], &[]));
+    let revocation = Arc::new(revocation);
     let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&root)));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
@@ -573,7 +570,7 @@ fn an_unrevoked_intermediate_keeps_its_peers_served() {
     assert_eq!(warm.request().expect("served"), 200);
 
     // A DIFFERENT intermediate is revoked.
-    revocation.store(index_for_chain(
+    publisher.publish(index_for_chain(
         &root,
         &intermediate,
         &[INTERMEDIATE_SERIAL + 1],
