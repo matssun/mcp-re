@@ -3,16 +3,17 @@
 
 /// A secret string that does not leak through `Debug` and is scrubbed on drop.
 ///
-/// [`DeploymentRequest`] derives `Debug`, so any structured log, panic message, or debug print of
-/// the config would otherwise carry the PKCS#11 User PIN verbatim. The PIN is the
-/// credential that unlocks a token holding the response-signing and (optionally) TLS
+/// The PKCS#11 User PIN travels in a `SecretString` from its file
+/// (`capability_materialization::key_source::pin`) to the token login
+/// (`key_source::pkcs11`), so any `Debug` of a value holding it renders the redaction
+/// marker. The PIN unlocks a token holding the response-signing and (optionally) TLS
 /// private keys, so it belongs in the same custody class as the keys themselves.
 ///
 /// `Zeroizing` wipes the heap allocation when the value drops. That is a best effort
 /// against a core dump or a freed-page read, not a guarantee: the string was already
-/// copied by whatever read it in, and `Clone` (needed because `DeploymentRequest` is `Clone`)
-/// makes another copy. It removes the copies this code controls.
-#[derive(Clone, PartialEq, Eq)]
+/// copied by whatever read it in. The type derives neither `Clone` nor equality: no
+/// consumer needs either, a clone is a copy the wipe cannot reach, and a derived `==` is
+/// a short-circuiting comparison over secret material.
 pub struct SecretString(zeroize::Zeroizing<String>);
 
 impl SecretString {
@@ -53,5 +54,12 @@ mod tests {
     #[test]
     fn the_value_is_still_readable_where_it_is_needed() {
         assert_eq!(SecretString::new("pin").expose(), "pin");
+    }
+
+    #[test]
+    fn the_representation_is_the_zeroizing_wrapper() {
+        let secret = SecretString::new("pin");
+        // The wipe-on-drop is `zeroize::Zeroizing`'s; this stops compiling if the field becomes a plain `String`.
+        let _wiped_on_drop: &zeroize::Zeroizing<String> = &secret.0;
     }
 }
