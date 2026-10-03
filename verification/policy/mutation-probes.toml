@@ -3683,10 +3683,10 @@ theorem = "THM-0105"
 conjunct = "retention is charged to the PRINCIPAL the verifier resolved, never to the signer slot, so one subject gets one budget however many keys it enrols"
 path = "mcp-re-proxy/src/async_replay/mod.rs"
 anchor = """
-        let charge = Charge::reserve(&self.ledger, &key.principal, now_unix, retain_until)
+        let charge = Charge::reserve(&self.ledger, key.principal(), now_unix, retain_until)
 """
 weakening = """
-        let charge = Charge::reserve(&self.ledger, &key.signer, now_unix, retain_until)
+        let charge = Charge::reserve(&self.ledger, key.signer(), now_unix, retain_until)
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#async_replay::tests::one_subject_gets_one_budget_however_many_keys_it_holds",

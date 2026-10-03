@@ -8375,7 +8375,7 @@ evidence = [
 tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#replay::tests::composite_slots_are_injective",
   "//mcp-re-http-profile:mcp_re_http_profile_test#replay::tests::every_component_discriminates",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#replay::tests::core_replay_key_carries_the_same_injective_slots",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#replay::tests::the_replay_key_carries_the_same_injective_slots",
   "//mcp-re-http-profile:mcp_re_http_profile_test#replay::tests::first_insert_is_fresh_replay_is_detected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#replay::tests::the_principal_slot_is_the_subject_without_its_keyid",
   "//mcp-re-http-profile:dispatch_test#duplicate_nonce_same_actor_audience_profile_is_replay",

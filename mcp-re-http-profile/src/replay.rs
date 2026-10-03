@@ -97,27 +97,71 @@ impl HttpReplayKey {
         )
     }
 
-    /// Project this five-tuple onto the core [`mcp_re_core::ReplayKey`] the
-    /// AUTHORITATIVE async replay tier (ADR-MCPRE-051 §4) consumes.
+    /// Project this five-tuple onto the [`ReplayKey`] the AUTHORITATIVE async replay tier
+    /// (ADR-MCPRE-051 §4) consumes. The one constructor of a [`ReplayKey`]: the burn
+    /// identity and the budget identity are both derived here from the one five-tuple, so
+    /// no caller can supply either.
     ///
-    /// The async tier (`AsyncReplayTier::check_and_insert`) derives its store key
-    /// from `(signer, audience, nonce)` via the same `composite_replay_key`
-    /// serialization the sync [`ReplayCache`] uses, so feeding it the injective
-    /// composite slots ([`signer_slot`](Self::signer_slot) /
-    /// [`audience_slot`](Self::audience_slot)) yields a store key BYTE-IDENTICAL to
-    /// the sync path — the HTTP-profile serving path awaits the same authoritative
-    /// tier the object path did, with the profile id + signature label folded into
-    /// the signer slot so evidence from a different profile/role can never satisfy
-    /// another's replay check. `expires_at_unix` is the RFC 9421 `expires`
-    /// parameter (the tier folds its own clock skew onto it).
-    pub fn to_core_replay_key(&self, expires_at_unix: i64) -> mcp_re_core::ReplayKey {
-        mcp_re_core::ReplayKey {
+    /// The async tier derives its store key from `(signer, audience, nonce)` via the same
+    /// `composite_replay_key` serialization the sync [`ReplayCache`] uses, so feeding it
+    /// the injective composite slots yields a store key BYTE-IDENTICAL to the sync path,
+    /// with the profile id and signature label folded into the signer slot so evidence from
+    /// a different profile/role can never satisfy another's replay check.
+    /// `expires_at_unix` is the RFC 9421 `expires` parameter (the tier folds its own clock
+    /// skew onto it).
+    pub fn to_replay_key(&self, expires_at_unix: i64) -> ReplayKey {
+        ReplayKey {
             signer: self.signer_slot(),
             principal: self.principal_slot(),
             audience: self.audience_slot().to_owned(),
             nonce: self.nonce.clone(),
             expires_at_unix,
         }
+    }
+}
+
+/// What the authoritative async replay tier needs to burn a nonce and charge its retention:
+/// the `(signer, audience, nonce)` logical identity of the active profile plus the parsed
+/// `expires_at`. Its representation is private and [`HttpReplayKey::to_replay_key`] is its
+/// only constructor, so the burn identity and the budget identity cannot be supplied
+/// independently by a caller; the tier reads them through the projections.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayKey {
+    signer: String,
+    principal: String,
+    audience: String,
+    nonce: String,
+    expires_at_unix: i64,
+}
+
+impl ReplayKey {
+    /// The composite signer slot `profile ⟴ label ⟴ actor_id`. It carries the keyid, so two
+    /// keys of one subject never collapse onto one replay key.
+    pub fn signer(&self) -> &str {
+        &self.signer
+    }
+
+    /// The verified PRINCIPAL the entry is accounted to: the signer slot with the keyid
+    /// dropped. An occupancy budget charged per key would hand a subject one budget per key
+    /// it holds, which is routine during rotation.
+    pub fn principal(&self) -> &str {
+        &self.principal
+    }
+
+    /// The audience slot (the opaque audience hash).
+    pub fn audience(&self) -> &str {
+        &self.audience
+    }
+
+    /// The RFC 9421 `nonce`.
+    pub fn nonce(&self) -> &str {
+        &self.nonce
+    }
+
+    /// The RAW parsed `expires_at` (Unix seconds), pre-skew-fold: the tier folds in the
+    /// clock skew when it derives the store retention.
+    pub fn expires_at_unix(&self) -> i64 {
+        self.expires_at_unix
     }
 }
 
@@ -186,9 +230,9 @@ mod tests {
     /// byte-identical composite key — the HTTP profile natively reuses the standard
     /// §4 replay tier, no separate keyspace.
     #[test]
-    fn core_replay_key_carries_the_same_injective_slots() {
+    fn the_replay_key_carries_the_same_injective_slots() {
         let k = key();
-        let core = k.to_core_replay_key(EXPIRES);
+        let core = k.to_replay_key(EXPIRES);
         assert_eq!(
             core.signer,
             "mcp-re-http-v1\u{1f}mcp-re\u{1f}host:example.com:did%3Aexample%3Ahost:client-key-1"

@@ -183,7 +183,7 @@ pub async fn dispatch_request_with_async_tier(
     //    failure fails closed (`replay_cache_unavailable`), never an admit.
     let decision = tier
         .check_and_insert(
-            &prepared.replay_key().to_core_replay_key(verified.expires()),
+            &prepared.replay_key().to_replay_key(verified.expires()),
             now_unix,
         )
         .await
