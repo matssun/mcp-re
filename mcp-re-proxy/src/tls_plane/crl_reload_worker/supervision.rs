@@ -42,17 +42,27 @@ pub(super) fn spawn_crl_reload_task(
 ) {
     let halt = workers.halt();
     let currency = Arc::clone(&task.currency);
-    workers.spawn("client CRL reload", move || {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crl_reload_loop(task, &halt);
-        }));
-        if outcome.is_ok() {
+    workers.spawn(
+        "client CRL reload",
+        supervise_crl_reload(currency, plan, move || crl_reload_loop(task, &halt)),
+    );
+}
+
+/// Wrap `body` so that a panic in it latches the fault and retracts the advertised cadence.
+/// Taking the body is what lets a test run THIS supervisor with only the body replaced.
+fn supervise_crl_reload(
+    currency: Arc<ClientRevocationCurrency>,
+    plan: crate::startup_plan::ChannelEstablishmentPlan,
+    body: impl FnOnce() + Send + 'static,
+) -> impl FnOnce() + Send + 'static {
+    move || {
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).is_ok() {
             return;
         }
         for line in stop_and_retract(&currency, &plan) {
             eprintln!("{line}");
         }
-    });
+    }
 }
 
 /// Latch the fault and say what the deployment no longer has.
@@ -138,9 +148,9 @@ mod tests {
         );
     }
 
-    /// A reload that fails is not a reload that stopped, and the posture distinguishes them.
+    /// A worker whose last reload failed and which then dies is reported stopped, not degraded: the latch outranks the recoverable state.
     #[test]
-    fn a_failed_reload_is_degraded_and_a_dead_worker_is_stopped() {
+    fn a_degraded_worker_that_dies_is_reported_stopped_not_degraded() {
         let plan = plan_with_cadence(300);
         let currency = ClientRevocationCurrency::new(
             ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
@@ -152,9 +162,51 @@ mod tests {
         assert!(degraded[0].contains("crl_reload=degraded"), "{degraded:?}");
 
         let stopped = stop_and_retract(&currency, &plan);
+        assert_eq!(currency.maintenance(), CrlMaintenance::Stopped);
         assert!(
             stopped.iter().any(|l| l.contains("crl_reload=stopped")),
             "{stopped:?}"
+        );
+        assert!(
+            !stopped.iter().any(|l| l.contains("crl_reload=degraded")),
+            "{stopped:?}"
+        );
+    }
+
+    /// The supervisor itself converts a panic in the reload body into the latch and the
+    /// retraction; a body that returns normally retracts nothing.
+    #[test]
+    fn a_panicking_crl_reload_body_latches_stopped_and_retracts_the_cadence() {
+        let plan = plan_with_cadence(300);
+        let currency = Arc::new(ClientRevocationCurrency::new(
+            ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
+            true,
+        ));
+
+        let supervised = supervise_crl_reload(Arc::clone(&currency), plan.clone(), || {});
+        std::thread::spawn(supervised)
+            .join()
+            .expect("a normal return joins Ok");
+        assert_eq!(currency.maintenance(), CrlMaintenance::Maintained);
+
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let supervised = supervise_crl_reload(Arc::clone(&currency), plan.clone(), || {
+            panic!("injected: the reload body died")
+        });
+        let joined = std::thread::spawn(supervised).join();
+        std::panic::set_hook(hook);
+
+        assert!(joined.is_ok(), "the supervisor converts the panic");
+        assert_eq!(currency.maintenance(), CrlMaintenance::Stopped);
+        let lines = revocation_posture_lines(&plan, &currency);
+        assert!(
+            lines.iter().any(|l| l.contains("crl_reload=stopped")),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.contains("crl_reload=every_300s")),
+            "{lines:?}"
         );
     }
 }
