@@ -135,10 +135,11 @@ pub(super) mod tests {
     /// cannot be equal.
     #[test]
     fn a_non_ed25519_credential_is_incomparable_rather_than_a_failure() {
-        let garbage = vec![0x30, 0x03, 0x02, 0x01, 0x00];
-        assert!(CertificateChainEvidence::from_leaf_der(&garbage)
-            .interpret_credential_public_key()
-            .is_err());
+        let fixture = RolesFixture {
+            response: ed25519_leaf().1,
+            channel_leaf: vec![0x30, 0x03, 0x02, 0x01, 0x00],
+        };
+        assert_eq!(channel_role_identity(&fixture), RoleIdentity::NoKey);
     }
 
     /// A key source whose two roles are whatever the fixture says they are.
