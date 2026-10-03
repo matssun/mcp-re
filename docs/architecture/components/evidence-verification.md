@@ -398,7 +398,7 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 |---|---|---|---|
 | S01 | crate boundary | a cryptographic-floor bound response is not a fully verified response | `E0308` |
 | S02 | crate boundary | a delegated UNBOUND response is not a delegated BOUND one | `E0308` |
-| S03 | crate boundary | a delegation-authorized response is not a trust-seam-authorized one | `E0609` |
+| S03 | crate boundary | a delegation-authorized response is not a trust-seam-authorized one | `E0308` |
 | S05 | crate boundary | a cryptographic-floor verified REQUEST is not a fully verified request | `E0308` |
 | S04 | in-crate | no code outside `config_state::client_credential_window` can assemble a `ClientCredentialWindow` | `E0451` |
 | S06 | in-crate | no code outside `delegated_tls::resolver` can assemble a `DelegatedCertResolver` | `E0451` |

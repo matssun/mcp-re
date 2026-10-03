@@ -98,7 +98,7 @@ doc_path = "mcp-re-http-profile/src/verified_response/bound.rs"
 doc_item = "doc#verified_response::bound::VerifiedDelegatedMcpResponse"
 insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s03.rs"
 marker = "STRUCTURAL-PROBE-SITE"
-error_code = "E0609"
+error_code = "E0308"
 construction = """
 // ADR-MCPRE-068 structural probe S03. Injected into a scratch copy by verify-structural.
 use mcp_re_http_profile::{VerifiedDelegatedMcpResponse, VerifiedMcpResponse};
@@ -106,12 +106,12 @@ use mcp_re_http_profile::{VerifiedDelegatedMcpResponse, VerifiedMcpResponse};
 fn needs_seam_authorized(_: &VerifiedMcpResponse) {}
 
 pub fn hostile(delegated: &VerifiedDelegatedMcpResponse) {
-    needs_seam_authorized(&delegated.response); // STRUCTURAL-PROBE-SITE
+    needs_seam_authorized(delegated); // STRUCTURAL-PROBE-SITE
 }
 """
 [probe.producer_paths]
 module-tree-visibility = "integration test: a separate crate against the public surface"
-alternate-constructors = "there is no field, projection or conversion on the delegation-authorized product that yields the seam-authorized one — the probe names the projection a consumer would reach for and the compiler refuses it"
+alternate-constructors = "the probe passes the delegated product itself where the seam-authorized one is required and the compiler refuses the coercion (no Deref, no field)"
 generated-or-deserialization = "neither product derives Serialize/Deserialize"
 test-only-construction = "the probe itself is the downstream test-code route"
 

@@ -262,7 +262,7 @@ fn full_exchange_activates_all_blocks() {
         rv.request_evidence_agreement.body_request_evidence,
         "response binds request evidence"
     );
-    assert_eq!(rv.server_signer.keyid, "server-key-1");
+    assert_eq!(rv.floor.resolved_server_actor.identity.keyid, "server-key-1");
 }
 
 // ---------- #1 request body tamper -----------------------------------------

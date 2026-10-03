@@ -9,7 +9,6 @@
 //! They live apart from the unbound products because bound and unbound are different
 //! propositions rather than an API convenience, which is the whole argument in [`super`].
 
-use crate::block::ActorIdentity;
 use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolvedActor;
 use crate::RequestEvidence;
@@ -59,9 +58,10 @@ impl CryptographicFloorVerifiedBoundResponse {
 ///
 /// A successful `verify_bound_response` establishes everything
 /// [`CryptographicFloorVerifiedBoundResponse`] does, and in
-/// addition that the response evidence block parsed and validated, that its `server_signer`
-/// is the identity the signature was actually accepted under, and that its
-/// `request_evidence` equals the handle the caller expected.
+/// addition that the response evidence block parsed and validated, that the block's
+/// `server_signer.keyid` equals the keyid the signature was accepted under, and that its
+/// `request_evidence` equals the handle the caller expected. The signer identity this
+/// product carries is `floor.resolved_server_actor.identity`, the seam's answer.
 ///
 /// The expected handle is an INPUT, not a second assurance axis. A server passes
 /// `verified_request.evidence()`; a client passes the handle it kept from signing. Where
@@ -83,11 +83,6 @@ pub struct VerifiedMcpResponse {
     pub floor: CryptographicFloorVerifiedBoundResponse,
     /// The block agreement with the caller's expected request-evidence handle.
     pub request_evidence_agreement: BoundRequestEvidenceAgreement,
-    /// The `server_signer` identity the block declared, verified to carry the keyid the
-    /// signature was accepted under. It is retained separately from
-    /// `floor.resolved_server_actor.identity` because only the KEYID was compared: the
-    /// remaining coordinates are the block's claim, not the seam's answer.
-    pub server_signer: ActorIdentity,
 }
 
 /// A **delegation-authorized** bound response: the full bound proposition, with the signer
@@ -125,7 +120,7 @@ pub struct VerifiedMcpResponse {
 /// use mcp_re_http_profile::{VerifiedDelegatedMcpResponse, VerifiedMcpResponse};
 /// fn needs_seam_authorized(_: &VerifiedMcpResponse) {}
 /// fn from_delegated(delegated: &VerifiedDelegatedMcpResponse) {
-///     needs_seam_authorized(&delegated.response);
+///     needs_seam_authorized(delegated);
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -156,7 +151,6 @@ impl VerifiedMcpResponse {
         VerifiedMcpResponse {
             floor,
             request_evidence_agreement: block_agreement(bound_request_evidence, block),
-            server_signer: block.server_signer.clone(),
         }
     }
 }
@@ -179,7 +173,10 @@ pub(crate) fn block_agreement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::ActorIdentity;
+    use crate::block::RequestEvidenceDigest;
     use crate::block::SignerSlot;
+    use crate::PROFILE_TAG;
     use mcp_re_core::SigningKey;
 
     fn actor(keyid: &str) -> ResolvedActor {
@@ -212,20 +209,29 @@ mod tests {
     #[test]
     fn a_bound_full_response_states_its_binding_without_an_option() {
         let expected = RequestEvidence::from_signature_base(b"req");
-        let full = VerifiedMcpResponse {
-            floor: bound_floor(),
-            request_evidence_agreement: agreement(expected.clone()),
+        let other = RequestEvidence::from_signature_base(b"other");
+        let block = HttpResponseEvidenceBlock {
+            profile: PROFILE_TAG.into(),
             server_signer: actor("resp-1").identity,
+            server_delegation: None,
+            request_evidence: RequestEvidenceDigest {
+                digest_alg: other.digest_alg.clone(),
+                digest_value: other.digest_value.clone(),
+            },
         };
+        let full = VerifiedMcpResponse::from_block(bound_floor(), expected.clone(), &block);
         assert_eq!(
             full.request_evidence_agreement.bound_request_evidence,
             expected
         );
         assert_eq!(
             full.request_evidence_agreement.body_request_evidence,
-            full.request_evidence_agreement.bound_request_evidence
+            other
         );
-        assert_eq!(full.server_signer.keyid, "resp-1");
+        assert_ne!(
+            full.request_evidence_agreement.body_request_evidence,
+            expected
+        );
     }
 
     #[test]
