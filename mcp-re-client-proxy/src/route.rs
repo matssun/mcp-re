@@ -18,9 +18,11 @@ use std::sync::RwLock;
 
 /// The per-route trust seam: resolve the response signer keyid to a structured
 /// actor for RFC 9421 response verification.
-/// The client route's trust seam. Returns a [`ResolverOutcome`] so a resolver outage is
-/// distinguishable from an unknown keyid (C079); both fail closed.
-pub type RouteActorResolver = Box<dyn Fn(&str, SignerSlot) -> ResolverOutcome + Send + Sync>;
+/// The client route's trust seam. The third argument is the request's verification time
+/// (Unix seconds), so a time-bounded trust decision is expressible. Returns a
+/// [`ResolverOutcome`] so a resolver outage is distinguishable from an unknown keyid
+/// (C079); both fail closed.
+pub type RouteActorResolver = Box<dyn Fn(&str, SignerSlot, i64) -> ResolverOutcome + Send + Sync>;
 
 /// How the proxy verifies the server's response for a route. Delegated-signing is the
 /// ONLY response mode (ADR-MCPRE-052, MCPRE-122): the client enforces the same
@@ -45,9 +47,8 @@ pub enum ClientVerification {
     /// step 7); an operator relying on short TTLs alone passes an explicit empty
     /// `StaticRevocationList` — a visible choice, not a default.
     ///
-    /// The resolver receives no `now`, so it cannot express a time-bounded trust
-    /// decision. Use [`ClientVerification::DelegatedAnchored`] for anything with an
-    /// overlap window.
+    /// The resolver is called with the request's verification time, so it can express a
+    /// time-bounded trust decision.
     DelegatedRequired(
         DelegationPolicy,
         RouteActorResolver,

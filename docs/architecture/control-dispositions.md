@@ -2660,7 +2660,7 @@ And the eight that did not leave, with the clause that decides each:
 
 ## NP-111 — a rebuilt plain reply is a JSON-RPC response or it is nothing
 
-**Controls:** `mcp-re-client-proxy/src/proxy.rs`'s `plain_response_from_verified` (6).
+**Controls:** `mcp-re-client-proxy/src/proxy.rs`'s `plain_response_from_verified` (7).
 **Statement.** *Rebuilding the plain MCP reply from the verified bytes yields a JSON-RPC
 response or it yields a refusal, and never something in between: a JSON-RPC `error` reply is
 carried through rather than flattened to a null result; a body that is not a single response
@@ -2669,7 +2669,8 @@ scalar, both members at once, a legal result beside a top-level `method` — fai
 bytes that are not JSON at all are a VERIFICATION failure and never a malformed REQUEST,
 because the exchange has already run; an ordinary result still rebuilds; the proxy-owned
 `_meta` block is stripped from both positions; and the reply carries the id THE PROXY SIGNED
-rather than the one the server echoed.*
+rather than the one the server echoed; and a backend-supplied `error.data.mcp_re_error` is
+removed from a carried error, so that member on the plain surface is only ever the proxy's.*
 **If false.** A signed reply the local client cannot act on is delivered as a completed tool
 call returning `null`, or a caller "fixes" its request after a 400 and retries a side effect
 the server already performed, or a server addresses its answer to a different outstanding
@@ -4382,3 +4383,25 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** Under THM-0077: no deployment serves a posture nobody selected; the async-path analogue of NP-138.
 **Recorded:** 2026-10-04, round-12 remediation of f301bf012bce3e0f, 2254e76746abebba, 9cf3cbb8703b2ba0, aee0392415be35e5.
+
+## NP-230 — every trust control a client route configures is applied on both the bodied and the 202 path
+
+**Controls:** `mcp-re-client-proxy/src/proxy.rs` (3).
+**Carrier:** `mcp-re-client-proxy/src/proxy.rs` (`verify_reply`, `verify_notification_ack`).
+**Statement.** *The route's issuer pin and its resolver's time-bounded decision reach verification through `ClientProxy::handle` on both variants and both paths: a reply or a notification 202 from a root other than the pinned one is refused as a binding mismatch, and a `DelegatedRequired` resolver is called with the request's own `now`.*
+**If false.** A pin or a deadline an operator configured governs one path and not the other, so a sibling holding a delegated key under another listed root answers for the route, or a root trusted only until a deadline is trusted past it.
+**Likely owner:** none; `client.response_signer_authorization` takes the pin as given.
+**Severity:** `high`.
+**Root relationship.** Beside `client.response_signer_authorization`, which states what the pin entitles but not that the proxy applies it.
+**Recorded:** 2026-10-04, round-12 remediation of a8411a2af032a13f, ce0da0873e9aa42f.
+
+## NP-231 — the client proxy signs only the request its caller sent
+
+**Controls:** `mcp-re-client-proxy/src/proxy.rs` (1).
+**Carrier:** `mcp-re-client-proxy/src/proxy.rs` (`sign_request`).
+**Statement.** *A present `params` that is not an object is refused as a malformed request before anything is signed or sent; absent or null `params` carry no arguments and are signed as `{}`.*
+**If false.** The ambassador signs `{}` in place of arguments the caller sent, so the server executes a call the caller did not make.
+**Likely owner:** none.
+**Severity:** `medium`.
+**Root relationship.** Beside NP-111: the request half of the plain surface, which no unit states.
+**Recorded:** 2026-10-04, round-12 remediation of ce065a6090b1d7b8.

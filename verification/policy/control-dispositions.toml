@@ -13561,6 +13561,24 @@ consequence = "high"
 root_relationship = "under THM-0077 — no deployment serves a posture nobody selected; the async-path analogue of NP-138"
 record = "docs/architecture/control-dispositions.md#np-229"
 
+[[proposition]]
+id = "NP-230"
+title = "Every trust control a client route configures is applied on both the bodied and the 202 path"
+carrier = "mcp-re-client-proxy/src/proxy.rs (verify_reply, verify_notification_ack)"
+likely_owner = ""
+consequence = "high"
+root_relationship = "Beside client.response_signer_authorization, which takes the pin as given."
+record = "docs/architecture/control-dispositions.md#np-230"
+
+[[proposition]]
+id = "NP-231"
+title = "The client proxy signs only the request its caller sent"
+carrier = "mcp-re-client-proxy/src/proxy.rs (sign_request)"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "Beside NP-111: the request half of the plain surface, which no unit states."
+record = "docs/architecture/control-dispositions.md#np-231"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -13880,4 +13898,44 @@ project = "mcp-re-http-profile"
 control = "src/lib.rs#verify::floor::sf_dictionary::tests::a_label_member_without_a_value_is_refused_not_skipped"
 decision = "new-proposition"
 proposition = "NP-098"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20192"
+project = "mcp-re-client-proxy"
+control = "src/lib.rs#proxy::tests::a_pinned_route_refuses_a_reply_from_another_root_through_handle"
+decision = "new-proposition"
+proposition = "NP-230"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20193"
+project = "mcp-re-client-proxy"
+control = "src/lib.rs#proxy::tests::a_pinned_route_refuses_a_202_from_another_root_through_handle"
+decision = "new-proposition"
+proposition = "NP-230"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20194"
+project = "mcp-re-client-proxy"
+control = "src/lib.rs#proxy::tests::a_delegated_required_resolver_decides_at_the_request_now"
+decision = "new-proposition"
+proposition = "NP-230"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20195"
+project = "mcp-re-client-proxy"
+control = "src/lib.rs#proxy::tests::a_backend_error_cannot_speak_in_the_boundary_mcp_re_error_member"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20196"
+project = "mcp-re-client-proxy"
+control = "src/lib.rs#proxy::tests::non_object_params_are_refused_before_anything_is_signed"
+decision = "new-proposition"
+proposition = "NP-231"
 recorded = "2026-10-04"

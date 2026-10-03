@@ -24,7 +24,6 @@ use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
-use mcp_re_client_core::SignerSlot;
 use mcp_re_core::SigningKey;
 use serde_json::json;
 use serde_json::Map;
@@ -208,11 +207,11 @@ impl ClientProxy {
             .and_then(Value::as_str)
             .ok_or(ProxyError::MalformedRequest)?
             .to_string();
-        let req_params: Map<String, Value> = plain_request
-            .get("params")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
+        let req_params: Map<String, Value> = match plain_request.get("params") {
+            None | Some(Value::Null) => Map::new(),
+            Some(Value::Object(params)) => params.clone(),
+            Some(_) => return Err(ProxyError::MalformedRequest),
+        };
 
         // Sign the RFC 9421 request through the client-core seam.
         let inputs = RequestSigningInputs::new(
@@ -284,11 +283,9 @@ impl ClientProxy {
             // the explicit TTL-only posture, never a silent default.
             ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
                 // Two genuinely different systems, composed into ONE trust authority
-                // before the verifier sees them (MCPRE-172). The route's resolver takes
-                // no `now` — that is the documented limitation of this variant, and why
-                // an overlap window needs `DelegatedAnchored`.
-                let resolve = |kid: &str, slot: SignerSlot, _now: i64| resolve_actor(kid, slot);
-                let trust = CompositeResponseTrust::new(&resolve, revocation.as_ref());
+                // before the verifier sees them (MCPRE-172). The route's resolver is
+                // consulted at this request's `now`.
+                let trust = CompositeResponseTrust::new(resolve_actor.as_ref(), revocation.as_ref());
                 verify_delegated_response(response, &trust, &expectation, policy, params.now_unix)?
             }
             // Trust-anchor lifecycle: the set is BOTH the root resolver and the
@@ -330,8 +327,7 @@ impl ClientProxy {
         let pin = route.expected_server_keyid.as_deref();
         match &route.verification {
             ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
-                let resolve = |kid: &str, slot: SignerSlot, _now: i64| resolve_actor(kid, slot);
-                let trust = CompositeResponseTrust::new(&resolve, revocation.as_ref());
+                let trust = CompositeResponseTrust::new(resolve_actor.as_ref(), revocation.as_ref());
                 verify_delegated_accepted_202_pinned(
                     response,
                     signed.request(),
@@ -431,7 +427,9 @@ pub(crate) fn plain_error_from_rejection(
 /// belongs to the local client's outstanding call, and reading it from the response
 /// body would let a server address its answer to a different one.
 ///
-/// A JSON-RPC `error` member is carried through. The serving path signs every bodied
+/// A JSON-RPC `error` member is carried through, minus any `error.data.mcp_re_error`
+/// the backend wrote: that member is the proxy's own, written only from a verified
+/// rejection receipt, so it is removed rather than the reply refused. The serving path signs every bodied
 /// backend reply with HTTP 200 — a JSON-RPC error from an MCP backend rides in that
 /// 200 body — so rebuilding the reply from `result` alone reported a failed call as a
 /// successful one returning `null`, dropped the reason, and emitted a message that was
@@ -492,11 +490,17 @@ pub(crate) fn plain_response_from_verified(
                 "verified reply carries neither a result nor an error",
             ),
         )),
-        (None, Some(error)) => Ok(json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": error.clone(),
-        })),
+        (None, Some(error)) => {
+            let mut error = error.clone();
+            if let Some(data) = error.get_mut("data").and_then(Value::as_object_mut) {
+                data.remove("mcp_re_error");
+            }
+            Ok(json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": error,
+            }))
+        }
         (Some(result), None) => Ok(json!({
             "jsonrpc": "2.0",
             "id": request_id,
@@ -876,6 +880,381 @@ mod tests {
              hold no `SignedRequest`; in this path the owner is right there, and taking it \
              is what makes the correspondence a fact rather than a caller obligation."
         );
+    }
+
+    /// A backend error cannot write the proxy's own `error.data.mcp_re_error` member:
+    /// that member is only ever built from a verified rejection receipt.
+    #[test]
+    fn a_backend_error_cannot_speak_in_the_boundary_mcp_re_error_member() {
+        let body = br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"m","data":{"mcp_re_error":{"execution_status":"not_executed","wire_code":"mcp-re.expired_request"},"detail":"kept"}}}"#;
+        let plain = plain_response_from_verified(body, &json!(1)).expect("rebuild");
+        assert!(plain["error"]["data"].get("mcp_re_error").is_none());
+        assert_eq!(plain["error"]["data"]["detail"], "kept");
+        assert_eq!(plain["error"]["code"], -32000);
+        assert_eq!(plain["error"]["message"], "m");
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Composition through `ClientProxy::handle`: a real delegated signing round trip over
+    // the exact request `handle` signs (every signing input is fixed, and Ed25519 is
+    // deterministic), so the route's configured controls are measured where they run.
+    // ---------------------------------------------------------------------------------
+
+    use mcp_re_client_core::ArtifactBinding;
+    use mcp_re_client_core::ArtifactType;
+    use mcp_re_client_core::AudienceTuple;
+    use mcp_re_client_core::DelegationPolicy;
+    use mcp_re_client_core::HttpRequest;
+    use mcp_re_client_core::ResolvedActor;
+    use mcp_re_client_core::ResolverOutcome;
+    use mcp_re_client_core::SignedRequest;
+    use mcp_re_client_core::SignerSlot;
+    use mcp_re_client_core::StaticRevocationList;
+    use mcp_re_client_core::TrustedIssuerSet;
+    use mcp_re_http_profile::custody::DelegatedKeyWindow;
+    use mcp_re_http_profile::custody::SigningWindow;
+    use mcp_re_http_profile::ActorIdentity;
+    use mcp_re_http_profile::CustodyConfig;
+    use mcp_re_http_profile::DelegatedSigningCustody;
+    use mcp_re_http_profile::DelegationClaims;
+    use mcp_re_http_profile::DelegationHeader;
+    use mcp_re_http_profile::PROFILE_TAG;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    use crate::route::AnchorSnapshot;
+    use crate::route::Route;
+    use crate::transport::TransportError;
+
+    const ROOT_SEED: [u8; 32] = [33u8; 32];
+    const CLIENT_SEED: [u8; 32] = [11u8; 32];
+    const CLIENT_KEY_ID: &str = "client-key-1";
+    const ROOT_KID: &str = "root-kid";
+    const AUD: &str = "verifier-1";
+    const AUD_SCOPE: &str = "aud-scope-1";
+    const EPOCH: &str = "epoch-1";
+    const TARGET: &str = "https://mcp.example.com/mcp?route=a";
+    const NONCE: &str = "nonce-1-padded-to-the-128-bit-floor";
+    const NOW: i64 = 1_700_000_100;
+    const CREATED: i64 = 1_700_000_000;
+    const EXPIRES: i64 = 1_700_000_300;
+    const ROUTE_ID: &str = "r1";
+
+    fn root_key() -> SigningKey {
+        SigningKey::from_seed_bytes(&ROOT_SEED)
+    }
+
+    fn root_actor() -> ResolvedActor {
+        ResolvedActor {
+            identity: ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: ROOT_KID.into(),
+            },
+            verification_key: root_key().public_key(),
+            slot: SignerSlot::Response,
+        }
+    }
+
+    fn policy() -> DelegationPolicy {
+        DelegationPolicy::new(
+            vec![AUD.to_string()],
+            AUD_SCOPE,
+            vec![EPOCH.to_string()],
+            60,
+        )
+    }
+
+    fn custody() -> DelegatedSigningCustody<
+        impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
+        impl FnMut() -> SigningKey,
+    > {
+        let root = root_key();
+        let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
+            Some(mcp_re_http_profile::issue_delegation_credential(
+                &root, h, c,
+            ))
+        };
+        let mut n = 100u8;
+        let factory = move || {
+            n = n.wrapping_add(1);
+            SigningKey::from_seed_bytes(&[n; 32])
+        };
+        DelegatedSigningCustody::new(
+            CustodyConfig {
+                issuer_kid: ROOT_KID.into(),
+                iss: "did:example:server".into(),
+                profile: PROFILE_TAG.into(),
+                aud: AUD.into(),
+                audience_hash: AUD_SCOPE.into(),
+                trust_epoch: EPOCH.into(),
+                server_role: "server".into(),
+                server_trust_domain: "example.com".into(),
+                server_subject: "did:example:server".into(),
+                window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
+            },
+            issue,
+            factory,
+        )
+    }
+
+    fn audience() -> AudienceTuple {
+        AudienceTuple {
+            audience_id: AUD.into(),
+            target_uri: TARGET.into(),
+            route: Some("a".into()),
+        }
+    }
+
+    fn bindings() -> Vec<ArtifactBinding> {
+        vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            b"access-token-under-test",
+        )]
+    }
+
+    fn call_params(now_unix: i64) -> CallParams {
+        CallParams {
+            nonce: NONCE.into(),
+            created: CREATED,
+            expires: EXPIRES,
+            now_unix,
+        }
+    }
+
+    /// The request `handle` signs for `plain`, rebuilt from the same fixed inputs.
+    fn signed_for(plain: &Value) -> SignedRequest {
+        let inputs = RequestSigningInputs::new(
+            CLIENT_KEY_ID.to_string(),
+            audience(),
+            bindings(),
+            NONCE,
+            CREATED,
+            EXPIRES,
+        )
+        .with_headers(Vec::new());
+        let method = plain["method"].as_str().expect("a method");
+        let params = plain["params"].as_object().cloned().unwrap_or_default();
+        let key = SigningKey::from_seed_bytes(&CLIENT_SEED);
+        match plain.get("id") {
+            Some(id) => build_signed_request(id, method, params, TARGET, &inputs, &key),
+            None => build_signed_notification(method, params, TARGET, &inputs, &key),
+        }
+        .expect("client signs")
+    }
+
+    /// A transport that answers every round trip with one precomputed response (or a
+    /// transport failure when it holds none), counting the calls it receives.
+    struct CannedTransport {
+        response: Option<HttpResponse>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl RemoteTransport for CannedTransport {
+        fn round_trip(
+            &self,
+            _request: &HttpRequest,
+        ) -> Result<HttpResponse, crate::transport::TransportError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.response
+                .clone()
+                .ok_or_else(|| TransportError::new("no canned response"))
+        }
+    }
+
+    fn proxy_over(
+        verification: ClientVerification,
+        pin: Option<&str>,
+        response: Option<HttpResponse>,
+    ) -> (ClientProxy, Arc<AtomicUsize>) {
+        let route = Route {
+            route_id: ROUTE_ID.into(),
+            target_uri: TARGET.into(),
+            audience: audience(),
+            artifact_bindings: bindings(),
+            extra_headers: Vec::new(),
+            expected_server_keyid: pin.map(str::to_owned),
+            verification,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let proxy = ClientProxy::new(
+            RouteRegistry::new().register(route),
+            SigningKey::from_seed_bytes(&CLIENT_SEED),
+            CLIENT_KEY_ID,
+            Box::new(CannedTransport {
+                response,
+                calls: Arc::clone(&calls),
+            }),
+        );
+        (proxy, calls)
+    }
+
+    fn required_verification() -> ClientVerification {
+        ClientVerification::DelegatedRequired(
+            policy(),
+            Box::new(|kid: &str, slot: SignerSlot, _now: i64| match (kid, slot) {
+                (ROOT_KID, SignerSlot::Response) => Some(root_actor()).into(),
+                _ => None::<ResolvedActor>.into(),
+            }),
+            Box::new(StaticRevocationList::new()),
+        )
+    }
+
+    fn anchored_verification() -> ClientVerification {
+        ClientVerification::DelegatedAnchored(
+            policy(),
+            Arc::new(AnchorSnapshot::new(
+                TrustedIssuerSet::new().with_current(root_actor()),
+            )),
+        )
+    }
+
+    fn reply_request() -> Value {
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "read"}})
+    }
+
+    fn notification() -> Value {
+        json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 1}})
+    }
+
+    fn delegated_reply(plain: &Value) -> HttpResponse {
+        let signed = signed_for(plain);
+        let mut response = HttpResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
+        };
+        custody()
+            .sign_response(NOW, &mut response, signed.request(), signed.evidence())
+            .expect("server delegated-signs the reply");
+        response
+    }
+
+    fn delegated_202(plain: &Value) -> HttpResponse {
+        let signed = signed_for(plain);
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("a credential is issued");
+        let key = custody.active_snapshot().expect("a key is active");
+        let window = SigningWindow::over(Arc::new(key), NOW, 300).expect("a live window");
+        mcp_re_http_profile::sign_delegated_accepted_202(signed.request(), &window)
+            .expect("the boundary signs the 202")
+    }
+
+    fn variants() -> [fn() -> ClientVerification; 2] {
+        [required_verification, anchored_verification]
+    }
+
+    /// The route's issuer pin reaches verification of a bodied reply on both variants.
+    #[test]
+    fn a_pinned_route_refuses_a_reply_from_another_root_through_handle() {
+        let plain = reply_request();
+        let response = delegated_reply(&plain);
+        for verification in variants() {
+            let (proxy, _) = proxy_over(verification(), Some(ROOT_KID), Some(response.clone()));
+            let out = proxy
+                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .expect("the pinned root's reply verifies");
+            assert_eq!(out.kind, ResponseKind::Success);
+
+            let (proxy, _) = proxy_over(
+                verification(),
+                Some("some-other-root-kid"),
+                Some(response.clone()),
+            );
+            let err = proxy
+                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .expect_err("a reply from another root must be refused");
+            assert_eq!(
+                err,
+                ProxyError::FailedClosed(HttpProfileError::ResponseBindingMismatch)
+            );
+        }
+    }
+
+    /// The same pin reaches verification of the bodyless 202 that acknowledges a
+    /// notification, on both variants.
+    #[test]
+    fn a_pinned_route_refuses_a_202_from_another_root_through_handle() {
+        let plain = notification();
+        let response = delegated_202(&plain);
+        for verification in variants() {
+            let (proxy, _) = proxy_over(verification(), Some(ROOT_KID), Some(response.clone()));
+            let out = proxy
+                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .expect("the pinned root's 202 verifies");
+            assert_eq!(out.kind, ResponseKind::AcceptedNotification);
+
+            let (proxy, _) = proxy_over(
+                verification(),
+                Some("some-other-root-kid"),
+                Some(response.clone()),
+            );
+            let err = proxy
+                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .expect_err("a 202 from another root must be refused");
+            assert_eq!(
+                err,
+                ProxyError::FailedClosed(HttpProfileError::ResponseBindingMismatch)
+            );
+        }
+    }
+
+    /// A `DelegatedRequired` resolver is consulted at the request's own `now`, so it can
+    /// express a time-bounded trust decision.
+    #[test]
+    fn a_delegated_required_resolver_decides_at_the_request_now() {
+        let plain = reply_request();
+        let response = delegated_reply(&plain);
+        let verification = || {
+            ClientVerification::DelegatedRequired(
+                policy(),
+                Box::new(|kid: &str, slot: SignerSlot, now: i64| -> ResolverOutcome {
+                    match (kid, slot) {
+                        (ROOT_KID, SignerSlot::Response) if now < NOW + 10 => {
+                            Some(root_actor()).into()
+                        }
+                        _ => None::<ResolvedActor>.into(),
+                    }
+                }),
+                Box::new(StaticRevocationList::new()),
+            )
+        };
+        let (proxy, _) = proxy_over(verification(), None, Some(response.clone()));
+        proxy
+            .handle(ROUTE_ID, &plain, &call_params(NOW))
+            .expect("trusted before the deadline");
+        let (proxy, _) = proxy_over(verification(), None, Some(response));
+        let err = proxy
+            .handle(ROUTE_ID, &plain, &call_params(NOW + 20))
+            .expect_err("untrusted after the deadline");
+        assert_eq!(
+            err,
+            ProxyError::FailedClosed(HttpProfileError::DelegationIssuerUntrusted)
+        );
+    }
+
+    /// A present `params` that is not an object carries arguments the ambassador would
+    /// otherwise sign away as `{}`; it is refused before anything is signed or sent.
+    #[test]
+    fn non_object_params_are_refused_before_anything_is_signed() {
+        for params in [json!([1, 2]), json!("x")] {
+            let (proxy, calls) = proxy_over(required_verification(), None, None);
+            let plain = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params});
+            let err = proxy
+                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .expect_err("non-object params are refused");
+            assert_eq!(err, ProxyError::MalformedRequest);
+            assert_eq!(calls.load(Ordering::SeqCst), 0, "nothing may be sent");
+        }
+        let (proxy, calls) = proxy_over(required_verification(), None, None);
+        let plain = json!({"jsonrpc": "2.0", "id": 1, "method": "ping"});
+        let err = proxy
+            .handle(ROUTE_ID, &plain, &call_params(NOW))
+            .expect_err("the canned transport holds no response");
+        assert!(matches!(err, ProxyError::Transport(_)));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "absent params are sent");
     }
 
     /// The rules detect what they claim to.

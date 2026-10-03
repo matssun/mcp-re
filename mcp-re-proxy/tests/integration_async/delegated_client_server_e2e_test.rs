@@ -281,8 +281,8 @@ fn client_trust() -> CompositeResponseTrust<'static> {
     // `Box::leak` keeps the composed halves alive for the whole test binary. A test
     // fixture, not a pattern for production wiring.
     let resolve: &'static (dyn Fn(&str, SignerSlot, i64) -> ResolverOutcome + Send + Sync) =
-        Box::leak(Box::new(|kid: &str, slot: SignerSlot, _now: i64| {
-            client_resolver()(kid, slot)
+        Box::leak(Box::new(|kid: &str, slot: SignerSlot, now: i64| {
+            client_resolver()(kid, slot, now)
         }));
     let revocation: &'static StaticRevocationList =
         Box::leak(Box::new(StaticRevocationList::new()));
@@ -290,7 +290,7 @@ fn client_trust() -> CompositeResponseTrust<'static> {
 }
 
 fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
-    Box::new(move |key_id: &str, slot: SignerSlot| {
+    Box::new(move |key_id: &str, slot: SignerSlot, _now: i64| {
         match (key_id, slot) {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {

@@ -369,7 +369,7 @@ fn delegation_policy() -> DelegationPolicy {
 }
 
 fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
-    Box::new(move |key_id: &str, slot: SignerSlot| {
+    Box::new(move |key_id: &str, slot: SignerSlot, _now: i64| {
         match (key_id, slot) {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
