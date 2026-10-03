@@ -46,4 +46,5 @@ mod unbound;
 pub use expectations::DelegationExpectations;
 
 pub(crate) use bound::delegated_bound_response;
+pub(crate) use credential_chain::speaks_for;
 pub(crate) use unbound::delegated_unbound_response;

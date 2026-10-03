@@ -110,7 +110,9 @@ pub(super) fn chain_to_root<R: Into<ResolverOutcome>>(
 /// A root may only scope credentials to its own principal: the role, trust domain and
 /// subject it was resolved as must be those the credential names as the server signer. The
 /// keyid differs by construction (the delegated key is not the root key).
-fn speaks_for(root: &ActorIdentity, server_signer: &ActorIdentity) -> bool {
+// pub(crate): the bodied and bodyless delegated verifiers apply this one root-entitlement
+// rule, so the bodyless path must not carry a second copy of it.
+pub(crate) fn speaks_for(root: &ActorIdentity, server_signer: &ActorIdentity) -> bool {
     root.role == server_signer.role
         && root.trust_domain == server_signer.trust_domain
         && root.subject == server_signer.subject
