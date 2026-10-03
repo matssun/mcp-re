@@ -52,14 +52,25 @@ pub struct RegistrationTarget {
     protocol: RegistrationProtocol,
 }
 
-/// Whether `url` names the loopback interface, the one host plaintext is admitted to.
+/// Whether `url` names the loopback interface, the one host plaintext is admitted to:
+/// the authority is exactly a loopback host and an optional numeric port, no userinfo.
 fn is_loopback(url: &str) -> bool {
-    let rest = url.trim_start_matches("http://");
-    ["127.0.0.1", "[::1]", "localhost"].iter().any(|host| {
-        rest == *host
-            || rest.starts_with(&format!("{host}:"))
-            || rest.starts_with(&format!("{host}/"))
-    })
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    ["127.0.0.1", "[::1]", "localhost"]
+        .iter()
+        .filter_map(|host| authority.strip_prefix(host))
+        .any(is_port_suffix)
+}
+
+/// Whether `rest`, the authority after its host, is empty or `:` and one or more digits.
+fn is_port_suffix(rest: &str) -> bool {
+    rest.is_empty()
+        || rest
+            .strip_prefix(':')
+            .is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
 }
 
 impl RegistrationTarget {
@@ -206,6 +217,12 @@ mod tests {
             "http://10.0.0.1:8080",
             "http://127.0.0.1.evil.test",
             "http://localhost.evil.test",
+            "http://localhost:8600@evil.test/",
+            "http://127.0.0.1:1@attacker.example/",
+            "http://[::1]:1@evil.test/",
+            "http://http://localhost:1/",
+            "http://localhost:8600\\@evil.test/",
+            "http://127.0.0.1:86x0",
         ] {
             let refused = target(url).expect_err("plaintext off loopback");
             assert!(refused.contains("HTTPS"), "{url}: {refused}");
@@ -214,6 +231,8 @@ mod tests {
             "http://127.0.0.1:8600",
             "http://[::1]:8600/scitt",
             "http://localhost:8600",
+            "http://127.0.0.1",
+            "http://localhost/scitt",
         ] {
             assert!(target(url).is_ok(), "{url}");
         }
