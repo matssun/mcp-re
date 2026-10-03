@@ -81,7 +81,7 @@ pub(crate) fn validate_sf_string(value: &str, what: &'static str) -> Result<(), 
     }
 }
 
-/// The longest `nonce` this profile carries, in characters.
+/// The longest `nonce` this profile carries, in bytes (`str::len`).
 ///
 /// A generous ceiling, not a format: 128 bits of base64url is 22 characters, and the
 /// replay key retains the nonce verbatim for the life of the signature window. Applied
@@ -89,11 +89,11 @@ pub(crate) fn validate_sf_string(value: &str, what: &'static str) -> Result<(), 
 /// cannot carry must not be emitted, not merely rejected on the way back in. Enforced
 /// only at parse, a signer could emit a nonce every conforming MCP-RE verifier refuses
 /// as malformed evidence, and the far end is where the operator would find out.
-pub(crate) const MAX_NONCE_CHARS: usize = 256;
+pub(crate) const MAX_NONCE_BYTES: usize = 256;
 
-/// Refuse a `nonce` longer than [`MAX_NONCE_CHARS`].
+/// Refuse a `nonce` longer than [`MAX_NONCE_BYTES`].
 pub(crate) fn validate_nonce_length(nonce: &str) -> Result<(), HttpProfileError> {
-    if nonce.len() > MAX_NONCE_CHARS {
+    if nonce.len() > MAX_NONCE_BYTES {
         return Err(HttpProfileError::MalformedEvidence(
             "nonce signature parameter exceeds the length bound",
         ));
@@ -235,7 +235,7 @@ fn resolve_component_value(
         };
     }
 
-    // A field component: exact-once lookup on whichever message it targets.
+    // A field component: exact-once lookup; only OWS (SP/HTAB) is trimmed, so CR/LF reaches the guard.
     let headers = match (request, response) {
         (Some(r), None) => &r.headers,
         (None, Some(rsp)) => &rsp.headers,
@@ -249,19 +249,19 @@ fn resolve_component_value(
                 // duplicated covered fields (v0.11 grill B.1 exactly-once rule).
                 return Err(HttpProfileError::MissingCoveredComponent(component.name));
             }
-            found = Some(v.trim());
+            found = Some(v.trim_matches([' ', '\t']));
         }
     }
     let value = found.ok_or(HttpProfileError::MissingCoveredComponent(component.name))?;
     Ok(value.to_owned())
 }
 
-/// `host[:port]` from an absolute URI, lowercased (RFC 9421 `@authority`).
+/// `host[:port]` from an absolute URI, lowercased; userinfo is refused (RFC 9421 `@authority`).
 fn authority_of(target_uri: &str) -> Option<String> {
     let rest = target_uri.split_once("://")?.1;
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..end];
-    if authority.is_empty() {
+    if authority.is_empty() || authority.contains('@') {
         None
     } else {
         Some(authority.to_ascii_lowercase())
@@ -446,8 +446,8 @@ mod tests {
     /// carry must not be EMITTED, not merely rejected on the way back in.
     #[test]
     fn a_nonce_the_profile_cannot_carry_is_never_emitted() {
-        let oversized = "n".repeat(MAX_NONCE_CHARS + 1);
-        let at_bound = "n".repeat(MAX_NONCE_CHARS);
+        let oversized = "n".repeat(MAX_NONCE_BYTES + 1);
+        let at_bound = "n".repeat(MAX_NONCE_BYTES);
         let components = [CoveredComponent::new("@method")];
 
         let params_with = |nonce: &str| SignatureParams {
@@ -507,6 +507,100 @@ mod tests {
     }
 
     #[test]
+    fn a_string_parameter_the_profile_cannot_carry_is_never_emitted() {
+        let components = [CoveredComponent::new("@method")];
+        let with = |field: usize, value: &str| {
+            let mut p = SignatureParams::default();
+            let v = Some(value.to_owned());
+            match field {
+                0 => p.nonce = v,
+                1 => p.keyid = v,
+                2 => p.alg = v,
+                _ => p.tag = v,
+            }
+            p
+        };
+        let labels = [
+            "nonce signature parameter",
+            "keyid signature parameter",
+            "alg signature parameter",
+            "tag signature parameter",
+        ];
+        for (field, label) in labels.iter().enumerate() {
+            for bad in ["a\"b", "a\\b", "a\u{1}b", "a\u{7f}b", "a\u{e9}b"] {
+                assert_eq!(
+                    with(field, bad).serialize_with(&components).unwrap_err(),
+                    HttpProfileError::MalformedEvidence(label),
+                    "{label}: {bad:?}"
+                );
+            }
+            with(field, "ab")
+                .serialize_with(&components)
+                .expect("a carriable value serializes");
+        }
+        assert_eq!(
+            crate::sign::sign_request(
+                &mut request(),
+                &mcp_re_core::SigningKey::from_seed_bytes(&[9u8; 32]),
+                "k\"x",
+                1_700_000_000,
+                1_700_000_300,
+                "n",
+            )
+            .unwrap_err(),
+            HttpProfileError::MalformedEvidence("keyid signature parameter"),
+        );
+    }
+
+    #[test]
+    fn crlf_at_the_edge_of_a_field_value_fails_closed() {
+        let base_for = |value: &str| {
+            let mut r = request();
+            r.headers = vec![("Content-Type".into(), value.into())];
+            signature_base(
+                &[CoveredComponent::new("content-type")],
+                &SignatureParams::default(),
+                &SourceMessage::Request(&r),
+            )
+        };
+        for bad in [
+            "application/json\n",
+            "\r\napplication/json",
+            "application/json\r\n",
+        ] {
+            assert_eq!(
+                base_for(bad).unwrap_err(),
+                HttpProfileError::MalformedEvidence("covered component value contains CR or LF"),
+                "{bad:?}"
+            );
+        }
+        let ows =
+            String::from_utf8(base_for(" application/json\t").expect("OWS is trimmed")).unwrap();
+        assert!(ows.contains("\"content-type\": application/json"));
+        let plain = base_for("application/json").unwrap();
+        assert_ne!(base_for("application/json\u{a0}").unwrap(), plain);
+    }
+
+    #[test]
+    fn userinfo_in_the_target_uri_has_no_authority() {
+        let base_for = |uri: &str| {
+            let mut r = request();
+            r.target_uri = uri.into();
+            signature_base(
+                &[CoveredComponent::new("@authority")],
+                &SignatureParams::default(),
+                &SourceMessage::Request(&r),
+            )
+        };
+        assert_eq!(
+            base_for("https://User:Pass@example.com/foo").unwrap_err(),
+            HttpProfileError::MissingCoveredComponent("@authority")
+        );
+        let ok = String::from_utf8(base_for("https://Example.COM:8443/foo").unwrap()).unwrap();
+        assert!(ok.contains("\"@authority\": example.com:8443"));
+    }
+
+    #[test]
     fn crlf_in_a_field_value_fails_closed() {
         let mut r = request();
         r.headers = vec![("Content-Type".into(), "application/json\r\nx: y".into())];
@@ -533,5 +627,35 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, HttpProfileError::MissingCoveredComponent(_)));
+    }
+
+    #[test]
+    fn req_component_on_a_response_only_source_fails_closed() {
+        let rsp = HttpResponse {
+            status: 401,
+            headers: vec![("Content-Type".into(), "application/json".into())],
+            body: Vec::new(),
+        };
+        let src = SourceMessage::ResponseOnly(&rsp);
+        for name in ["content-type", "@target-uri"] {
+            assert_eq!(
+                signature_base(
+                    &[CoveredComponent::req(name)],
+                    &SignatureParams::default(),
+                    &src,
+                )
+                .unwrap_err(),
+                HttpProfileError::MissingCoveredComponent(name)
+            );
+        }
+        let base = signature_base(
+            &[CoveredComponent::new("content-type")],
+            &SignatureParams::default(),
+            &src,
+        )
+        .expect("the plain field resolves");
+        assert!(String::from_utf8(base)
+            .unwrap()
+            .contains("\"content-type\": application/json"));
     }
 }

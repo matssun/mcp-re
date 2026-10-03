@@ -13744,3 +13744,35 @@ control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_
 decision = "new-proposition"
 proposition = "NP-042"
 recorded = "2026-10-03"
+
+[[disposition]]
+id = "CD-20176"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sigbase::tests::a_string_parameter_the_profile_cannot_carry_is_never_emitted"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20177"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sigbase::tests::req_component_on_a_response_only_source_fails_closed"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20178"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sigbase::tests::crlf_at_the_edge_of_a_field_value_fails_closed"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20179"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sigbase::tests::userinfo_in_the_target_uri_has_no_authority"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-10-04"
