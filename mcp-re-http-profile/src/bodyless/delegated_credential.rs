@@ -16,7 +16,6 @@ use crate::block::SignerSlot;
 use crate::error::HttpProfileError;
 use crate::ids::PROFILE_TAG;
 use crate::message::single_header;
-use crate::verify::floor::trust_slot::resolve_actor_for_slot;
 
 /// The delegation credential: present EXACTLY once and size-bounded.
 ///
@@ -62,8 +61,7 @@ pub(super) fn verify_credential<R: Into<ResolverOutcome>>(
         credential,
         &params,
         |issuer_kid| {
-            match resolve_actor_for_slot(verifier.resolve_actor(), issuer_kid, SignerSlot::Response)
-            {
+            match verifier.resolve_for_slot(issuer_kid, SignerSlot::Response) {
                 Ok(actor) => Some(actor.verification_key),
                 // A definitive "not trusted" stays the credential layer's verdict; only
                 // an outage and a wrong-slot actor are propagated. See `verify.rs`.
