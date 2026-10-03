@@ -349,7 +349,8 @@ fn cross_core_same_key_admits_exactly_one_fresh_etcd() {
         eprintln!("skipping replay-race etcd lane: MCP_RE_TEST_ETCD_URL unset");
         return;
     };
-    let store = EtcdAtomicReplayStore::connect(&endpoint);
+    let store =
+        EtcdAtomicReplayStore::connect(&endpoint).expect("an http etcd endpoint is admitted");
     let store: Arc<dyn AtomicReplayStore + Send + Sync> = Arc::new(store);
     assert_exactly_one_fresh_per_round_salted(store, &unique_salt("etcd-sync"));
 }

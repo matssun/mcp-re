@@ -45,6 +45,7 @@ use base64::Engine;
 use serde_json::json;
 use serde_json::Value;
 
+use crate::outbound_fetch::VettedDestination;
 use crate::shared_replay::AtomicReplayStore;
 use crate::shared_replay::ReplayStoreError;
 use mcp_re_core::ReplayDecision;
@@ -84,11 +85,9 @@ pub fn system_clock() -> UnixClock {
 /// (~1.78e9 s ≈ 56 years, which would make leases never expire → unbounded
 /// keyspace growth / DoS).
 ///
-/// Clamps to a non-negative duration with a minimum of 1 second (etcd rejects a
-/// non-positive lease TTL): if the retain-until has already passed, a minimal 1s
-/// TTL records the sighting just long enough to answer a same-instant racing
-/// replay, matching the in-memory / Redis stores retaining the entry at its
-/// retain-until boundary.
+/// The `.max(1)` floor is defensive to this pure function only: both callers
+/// reject a non-positive window via `shared_replay::is_stale_pre_store` before
+/// reaching it, and etcd rejects a non-positive lease TTL.
 pub(crate) fn compute_ttl_secs(expires_at_unix: i64, now_unix: i64) -> i64 {
     expires_at_unix.saturating_sub(now_unix).max(1)
 }
@@ -129,7 +128,7 @@ pub(crate) fn build_txn_body(key_b64: &str, value_b64: &str, lease_id: i64) -> V
 
 /// Parse the lease id from an etcd `lease/grant` response. The JSON gateway
 /// returns `{ "ID": "<int-as-string>", "TTL": "<int-as-string>", ... }` (64-bit
-/// ints as strings). A missing/zero/unparseable id is an operational failure →
+/// ints as strings). A missing/non-positive/unparseable id is an operational failure →
 /// fail closed (an unleased put would never expire — the very DoS we guard).
 pub(crate) fn parse_lease_id(resp: &Value) -> Result<i64, ReplayStoreError> {
     let raw = resp
@@ -146,10 +145,11 @@ pub(crate) fn parse_lease_id(resp: &Value) -> Result<i64, ReplayStoreError> {
     .ok_or_else(|| ReplayStoreError::Unavailable {
         details: format!("etcd lease/grant ID not an integer: {raw}"),
     })?;
-    if id == 0 {
+    if id <= 0 {
         return Err(ReplayStoreError::Unavailable {
-            details: "etcd lease/grant returned lease id 0 (unleased put would never expire)"
-                .to_string(),
+            details:
+                "etcd lease/grant returned a non-positive lease id (etcd issues only positive ids)"
+                    .to_string(),
         });
     }
     Ok(id)
@@ -208,9 +208,9 @@ impl EtcdTransport for UreqEtcdTransport {
         let bytes = serde_json::to_vec(body).map_err(|e| ReplayStoreError::Unavailable {
             details: format!("etcd POST {path} request serialize failed: {e}"),
         })?;
-        // A non-2xx status surfaces as `ureq::Error::Status` (also fail closed) —
-        // both arms map to Unavailable so an outage / etcd error never serves
-        // through as a fresh nonce.
+        // A transport failure or an `Error::Status` maps to Unavailable, and a 3xx
+        // (redirects are off, so ureq returns it as Ok) is refused below, so no
+        // non-2xx reply is read as an etcd decision.
         let response = self
             .agent
             .post(&url)
@@ -220,6 +220,11 @@ impl EtcdTransport for UreqEtcdTransport {
             .map_err(|e| ReplayStoreError::Unavailable {
                 details: format!("etcd POST {path} failed: {e}"),
             })?;
+        if !(200..300).contains(&response.status()) {
+            return Err(ReplayStoreError::Unavailable {
+                details: format!("etcd POST {path} returned status {}", response.status()),
+            });
+        }
         // Bounded read: an overridden/hostile endpoint could otherwise return an
         // arbitrarily large body.
         let mut buf = Vec::new();
@@ -258,24 +263,34 @@ impl EtcdAtomicReplayStore {
     /// `http://127.0.0.1:2379`) with the bounded default timeout and the
     /// production system clock. Convenience over [`connect_with`](Self::connect_with);
     /// prefer that from the CLI so the configured socket timeouts bound the op.
-    pub fn connect(endpoint: &str) -> Self {
+    pub fn connect(endpoint: &str) -> Result<Self, ReplayStoreError> {
         Self::connect_with(endpoint, DEFAULT_ETCD_TIMEOUT, system_clock())
     }
 
     /// Connect with an explicit bounded per-request `timeout` and injected
     /// `clock`. No network I/O happens here (etcd's gateway is stateless HTTP and
-    /// `ureq` opens connections lazily per request); construction cannot fail. The
-    /// FIRST `insert_if_absent` is what surfaces an unreachable endpoint as
-    /// [`ReplayStoreError::Unavailable`] (fail closed) at runtime.
-    pub fn connect_with(endpoint: &str, timeout: Duration, clock: UnixClock) -> Self {
-        EtcdAtomicReplayStore {
+    /// `ureq` opens connections lazily per request). An endpoint whose scheme the
+    /// outbound-destination authority refuses is [`ReplayStoreError::Unavailable`]
+    /// (the details omit the endpoint); the FIRST `insert_if_absent` surfaces an
+    /// unreachable endpoint the same way (fail closed).
+    pub fn connect_with(
+        endpoint: &str,
+        timeout: Duration,
+        clock: UnixClock,
+    ) -> Result<Self, ReplayStoreError> {
+        let destination = VettedDestination::operator_configured(endpoint).ok_or_else(|| {
+            ReplayStoreError::Unavailable {
+                details: "etcd endpoint refused: scheme is not http or https".to_string(),
+            }
+        })?;
+        Ok(EtcdAtomicReplayStore {
             transport: Box::new(UreqEtcdTransport {
-                agent: ureq::AgentBuilder::new().build(),
-                base_url: endpoint.trim_end_matches('/').to_string(),
+                agent: destination.agent(timeout),
+                base_url: destination.url().trim_end_matches('/').to_string(),
                 timeout,
             }),
             clock,
-        }
+        })
     }
 
     /// Construct over an injected [`EtcdTransport`] — the deterministic unit-test
@@ -300,16 +315,6 @@ pub(crate) fn build_lease_revoke_body(lease_id: i64) -> Value {
 /// unbounded.
 const MAX_RESPONSE_BYTES: u64 = 256 * 1024;
 
-/// The clock-WIRING path, isolated from any etcd connection: read `clock` for the
-/// current Unix time and derive the lease TTL (seconds). This is the exact
-/// computation [`EtcdAtomicReplayStore::insert_if_absent`] performs, so a unit
-/// test that injects a fixed clock proves the store derives the TTL from a REAL
-/// `now` (the MCPS-090 fix), not the trait's hard-wired `0`, with NO live etcd.
-#[cfg(test)]
-fn ttl_secs_via_clock(clock: &UnixClock, expires_at_unix: i64) -> i64 {
-    compute_ttl_secs(expires_at_unix, clock())
-}
-
 impl AtomicReplayStore for EtcdAtomicReplayStore {
     fn insert_if_absent(
         &self,
@@ -317,20 +322,11 @@ impl AtomicReplayStore for EtcdAtomicReplayStore {
         expires_at_unix: i64,
         _now_unix: i64,
     ) -> Result<ReplayDecision, ReplayStoreError> {
-        // Read the store's OWN clock ONCE and reuse it for both the MCPS-08
-        // pre-store staleness guard and the lease-TTL derivation, so the guard and
-        // the granted lease agree on a single `now`.
+        // One `now` from the store's own clock serves both the pre-store staleness
+        // guard and the lease TTL. A retain-until at or before it is already stale
+        // and is rejected before any etcd call (fail closed).
         let now_unix = (self.clock)();
 
-        // MCPS-08 defensive pre-store rejection (#142): if the (already skew-folded)
-        // retain-until is at or before `now`, the request is ALREADY STALE. Reject it
-        // BEFORE granting a lease or issuing the txn (fail closed → `Unavailable`),
-        // instead of the old behaviour that clamped the window up to a minimal 1 s
-        // lease, put-if-absent'd it, and reported `Fresh`. This enforces the ADR's
-        // pre-store rejection AT THIS LAYER — the LINEARIZABLE production backend —
-        // rather than relying solely on the upstream `mcp-re-core` freshness step
-        // running before replay; if that ordering ever regressed, an expired nonce
-        // would otherwise be admitted here. Mirrors the redis_store guard.
         if crate::shared_replay::is_stale_pre_store(expires_at_unix, now_unix) {
             return Err(ReplayStoreError::Unavailable {
                 details: format!(
@@ -341,14 +337,8 @@ impl AtomicReplayStore for EtcdAtomicReplayStore {
             });
         }
 
-        // Derive a server-side lease TTL from the (already skew-folded)
-        // retain-until instant relative to the SAME `now` read above — NOT the
-        // trait's `now_unix`, which is 0 (the pure `ReplayCache` carries no clock).
-        // Trusting that 0 was the MCPS-090 bug: it made the lease TTL ≈ the
-        // absolute Unix epoch (~56 years), so keys ~never expired → unbounded
-        // keyspace growth (DoS). Reading the real `now` here makes the TTL the
-        // intended `retain_until - now` WINDOW (seconds), clamped to a positive
-        // value etcd accepts.
+        // The TTL is `retain_until - now` against the `now` read above, not the
+        // trait's `now_unix`, which is always 0.
         let ttl_secs = compute_ttl_secs(expires_at_unix, now_unix);
 
         // 1) Grant a lease bounded by that TTL, so the nonce self-evicts after its
@@ -409,13 +399,13 @@ mod tests {
     use super::compute_ttl_secs;
     use super::decision_from_txn;
     use super::parse_lease_id;
-    use super::ttl_secs_via_clock;
     use super::EtcdTransport;
     use super::ReplayDecision;
     use super::ReplayStoreError;
     use super::UnixClock;
     use super::Value;
     use serde_json::json;
+    use std::time::Duration;
 
     /// PURE, no-etcd proof that the MCPS-090 `now = 0` bug is gone: with a real
     /// `now`, the lease TTL is the intended `retain_until - now` WINDOW (seconds),
@@ -441,29 +431,8 @@ mod tests {
         );
     }
 
-    /// PURE proof of the MCPS-090 clock WIRING: the store derives the TTL from a
-    /// REAL `now` read through its INJECTED clock, NOT the trait's hard-wired
-    /// `now = 0`. A regression to `now = 0` would make the TTL the absolute epoch —
-    /// caught here deterministically, everywhere, with no etcd.
-    #[test]
-    fn injected_clock_makes_ttl_the_window_not_the_now_zero_epoch() {
-        let retain_until: i64 = 1_779_998_730;
-        let fixed_now: i64 = retain_until - 600;
-        let clock: UnixClock = Box::new(move || fixed_now);
-        let ttl = ttl_secs_via_clock(&clock, retain_until);
-        assert_eq!(
-            ttl, 600,
-            "TTL must be (retain_until - injected_now), proving the clock is read, not 0"
-        );
-        assert_ne!(
-            ttl,
-            compute_ttl_secs(retain_until, 0),
-            "the injected-clock TTL must differ from the now=0 absolute-epoch TTL"
-        );
-    }
-
-    /// A retain-until at/before `now` clamps to a minimal positive TTL (never 0,
-    /// never negative — etcd rejects a non-positive lease TTL).
+    /// The pure function's floor: a retain-until at/before `now` clamps to 1s. The
+    /// stores reject such a window pre-store, so this is unreachable from them.
     #[test]
     fn ttl_secs_clamps_to_minimal_when_already_expired() {
         assert_eq!(compute_ttl_secs(1_000, 1_000), 1, "exactly-now → 1s");
@@ -558,6 +527,12 @@ mod tests {
             parse_lease_id(&json!({ "ID": "0" })),
             Err(ReplayStoreError::Unavailable { .. })
         ));
+        for negative in [json!({ "ID": "-7" }), json!({ "ID": -7 })] {
+            assert!(matches!(
+                parse_lease_id(&negative),
+                Err(ReplayStoreError::Unavailable { .. })
+            ));
+        }
         assert!(matches!(
             parse_lease_id(&json!({ "ID": "not-an-int" })),
             Err(ReplayStoreError::Unavailable { .. })
@@ -708,6 +683,105 @@ mod tests {
              rejected BEFORE touching etcd, got calls: {:?}",
             transport.paths()
         );
+    }
+
+    /// The `v3/lease/grant` body the real `insert_if_absent` POSTs carries the
+    /// retain-until minus the injected clock, not the trait's `now = 0`.
+    #[test]
+    fn the_lease_grant_on_the_wire_carries_the_retention_window() {
+        let transport = Arc::new(ScriptedTransport::new(json!({ "succeeded": true }), false));
+        let store =
+            EtcdAtomicReplayStore::with_transport(Box::new(Arc::clone(&transport)), fixed_clock());
+        store
+            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0)
+            .expect("fresh decision must not error");
+        let grant = transport
+            .calls
+            .lock()
+            .expect("calls lock")
+            .iter()
+            .find(|(p, _)| p == "v3/lease/grant")
+            .map(|(_, b)| b.clone())
+            .expect("a lease grant must have been recorded");
+        assert_eq!(grant["TTL"], json!(600));
+    }
+
+    /// A gateway that answers a redirect is not followed: its target is never
+    /// reached and the 3xx body is never read as an etcd decision.
+    #[test]
+    fn a_redirecting_gateway_is_refused_and_its_target_never_reached() {
+        use std::io::Read;
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::atomic::Ordering;
+
+        const BODY: &str = r#"{"ID":"424242","succeeded":true}"#;
+        let elsewhere = TcpListener::bind("127.0.0.1:0").expect("bind the redirect target");
+        let elsewhere_port = elsewhere.local_addr().expect("addr").port();
+        let reached = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&reached);
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = elsewhere.accept() {
+                flag.store(true, Ordering::SeqCst);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{BODY}",
+                        BODY.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        let gateway = TcpListener::bind("127.0.0.1:0").expect("bind the gateway");
+        let gateway_port = gateway.local_addr().expect("addr").port();
+        std::thread::spawn(move || {
+            while let Ok((mut stream, _)) = gateway.accept() {
+                let mut buf = [0_u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{elsewhere_port}/v3/lease/grant\r\n\
+                         Content-Length: {}\r\n\r\n{BODY}",
+                        BODY.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+
+        let store = EtcdAtomicReplayStore::connect_with(
+            &format!("http://127.0.0.1:{gateway_port}"),
+            Duration::from_secs(5),
+            fixed_clock(),
+        )
+        .expect("an http endpoint is admitted");
+        let result = store.insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0);
+        assert!(
+            matches!(result, Err(ReplayStoreError::Unavailable { .. })),
+            "a redirecting gateway must fail closed, got {result:?}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            !reached.load(Ordering::SeqCst),
+            "the redirect target was connected to"
+        );
+    }
+
+    /// A scheme outside http/https is refused, and the refusal does not echo the
+    /// configured endpoint (userinfo or host).
+    #[test]
+    fn a_non_http_endpoint_is_refused_without_echoing_it() {
+        let err = EtcdAtomicReplayStore::connect_with(
+            "ftp://user:s3cret@etcd.internal:2379",
+            Duration::from_secs(5),
+            fixed_clock(),
+        )
+        .err()
+        .expect("an ftp endpoint must be refused");
+        let shown = format!("{err:?}");
+        assert!(!shown.contains("s3cret"), "{shown}");
+        assert!(!shown.contains("etcd.internal"), "{shown}");
     }
 
     /// A Replay outcome (txn `succeeded: false`) triggers a best-effort

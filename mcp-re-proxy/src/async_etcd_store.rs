@@ -499,8 +499,14 @@ mod tests {
 
     /// A scripted etcd JSON gateway: answers `/v3/lease/grant` with an incrementing
     /// lease id and `/v3/kv/txn` with a successful compare, counting the calls to each.
-    /// Returns its base URL and the two counters (grants, txns).
-    async fn counting_gateway() -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    /// Returns its base URL, the two counters (grants, txns) and the `TTL` of every
+    /// lease-grant request body, in arrival order.
+    async fn counting_gateway() -> (
+        String,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        Arc<std::sync::Mutex<Vec<i64>>>,
+    ) {
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
 
@@ -510,10 +516,11 @@ mod tests {
         let addr = listener.local_addr().expect("addr");
         let grants = Arc::new(AtomicUsize::new(0));
         let txns = Arc::new(AtomicUsize::new(0));
-        let (g, t) = (Arc::clone(&grants), Arc::clone(&txns));
+        let ttls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (g, t, l) = (Arc::clone(&grants), Arc::clone(&txns), Arc::clone(&ttls));
         tokio::spawn(async move {
             while let Ok((mut stream, _)) = listener.accept().await {
-                let (g, t) = (Arc::clone(&g), Arc::clone(&t));
+                let (g, t, l) = (Arc::clone(&g), Arc::clone(&t), Arc::clone(&l));
                 tokio::spawn(async move {
                     let mut seen = Vec::new();
                     let mut buf = [0u8; 1024];
@@ -541,6 +548,11 @@ mod tests {
                         }
                         let body = if text.contains("/v3/lease/grant") {
                             let id = g.fetch_add(1, Ordering::SeqCst) + 1;
+                            let request: serde_json::Value =
+                                serde_json::from_slice(&seen[head_len + 4..]).unwrap_or_default();
+                            if let Some(ttl) = request["TTL"].as_i64() {
+                                l.lock().expect("ttls").push(ttl);
+                            }
                             format!("{{\"ID\":\"{id}\",\"TTL\":\"300\"}}")
                         } else {
                             t.fetch_add(1, Ordering::SeqCst);
@@ -558,7 +570,7 @@ mod tests {
                 });
             }
         });
-        (format!("http://{addr}"), grants, txns)
+        (format!("http://{addr}"), grants, txns, ttls)
     }
 
     /// One lease per admitted nonce makes the outstanding-lease count grow with request
@@ -569,7 +581,7 @@ mod tests {
     /// the freshness window instead.
     #[tokio::test]
     async fn nonces_retained_to_the_same_instant_share_one_lease() {
-        let (base, grants, txns) = counting_gateway().await;
+        let (base, grants, txns, ttls) = counting_gateway().await;
         let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock());
         for i in 0..25 {
             assert_eq!(
@@ -607,13 +619,18 @@ mod tests {
             .await
             .expect("records");
         assert_eq!(grants.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            *ttls.lock().expect("ttls"),
+            vec![300, 600],
+            "each lease is granted for retain_until minus the injected clock"
+        );
     }
 
     /// The pool holds leases only while they are live: one whose instant has passed has
     /// been revoked by etcd, and attaching a key to it would leave the key unretained.
     #[tokio::test]
     async fn an_expired_lease_is_never_reused() {
-        let (base, grants, _txns) = counting_gateway().await;
+        let (base, grants, _txns, _ttls) = counting_gateway().await;
         let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock());
         store
             .atomic_insert_if_absent(ReplayInsert::new("k|a|n1", TEST_ACTOR, NOW + 5, 0))
