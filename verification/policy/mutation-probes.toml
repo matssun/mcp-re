@@ -4424,9 +4424,7 @@ conjunct = "a DegradedCandidate becomes a serve only while this replica's own mo
 # outage, so refetching satisfies the assertion-level rule for as long as the outage runs.
 path = "mcp-re-proxy/src/admission_enforcer/mod.rs"
 anchor = """
-            AdmissionVerdict::DegradedCandidate(_)
-                if self.window.exhausted(&self.policy, elapsed_at) =>
-            {
+            AdmissionVerdict::DegradedCandidate(_) if self.window.exhausted(&self.policy) => {
                 Err(HttpProfileError::AdmissionStateUnavailable)
             }
 """
