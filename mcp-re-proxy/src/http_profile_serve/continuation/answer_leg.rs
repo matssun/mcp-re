@@ -353,7 +353,7 @@ pub(in crate::http_profile_serve) mod tests {
         // A store that answers a MISS and records what it was asked for. The plane must be
         // wired: a deployment holding no capability now refuses this leg outright, and the
         // fact under test is which key a deployment that CAN look one up asks with.
-        let store = Arc::new(PeekRecordingStore::default());
+        let store = Arc::new(RecordingStore::default());
         let established = ContinuationPlane::wired(store.clone(), 300)
             .prepare(&ex, "aud")
             .await
@@ -374,24 +374,61 @@ pub(in crate::http_profile_serve) mod tests {
         assert_eq!(store.keys(), vec![carried]);
     }
 
-    /// A store that misses every read and remembers the keys it was asked for.
-    #[derive(Default)]
-    struct PeekRecordingStore(std::sync::Mutex<Vec<String>>);
+    /// One store method call, with the key it was made under.
+    #[derive(Debug, PartialEq, Eq)]
+    enum StoreCall {
+        Create(String),
+        Peek(String),
+        Consume(String),
+    }
 
-    impl PeekRecordingStore {
+    /// A store that records every method it is asked for, and answers every read with a
+    /// miss or, when built with [`RecordingStore::hit`], a live entry.
+    #[derive(Default)]
+    struct RecordingStore {
+        calls: std::sync::Mutex<Vec<StoreCall>>,
+        live: bool,
+    }
+
+    impl RecordingStore {
+        fn hit() -> Self {
+            Self {
+                live: true,
+                ..Self::default()
+            }
+        }
+
+        fn record(&self, call: StoreCall) {
+            self.calls
+                .lock()
+                .expect("no test thread panics here")
+                .push(call);
+        }
+
+        fn calls(&self) -> Vec<StoreCall> {
+            std::mem::take(&mut *self.calls.lock().expect("no test thread panics here"))
+        }
+
         fn keys(&self) -> Vec<String> {
-            self.0.lock().expect("no test thread panics here").clone()
+            self.calls()
+                .into_iter()
+                .filter_map(|call| match call {
+                    StoreCall::Peek(key) => Some(key),
+                    StoreCall::Create(_) | StoreCall::Consume(_) => None,
+                })
+                .collect()
         }
     }
 
-    impl AsyncContinuationStore for PeekRecordingStore {
+    impl AsyncContinuationStore for RecordingStore {
         fn create<'a>(
             &'a self,
-            _key: &'a str,
+            key: &'a str,
             _bases: &'a RetainedBases,
             _ttl_secs: i64,
         ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
         {
+            self.record(StoreCall::Create(key.to_owned()));
             Box::pin(async { Ok(crate::continuation_store::Creation::Stored) })
         }
 
@@ -399,19 +436,55 @@ pub(in crate::http_profile_serve) mod tests {
             &'a self,
             key: &'a str,
         ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>> {
-            self.0
-                .lock()
-                .expect("no test thread panics here")
-                .push(key.to_owned());
-            Box::pin(async { Ok(None) })
+            self.record(StoreCall::Peek(key.to_owned()));
+            let live = self.live.then(|| RetainedBases {
+                previous_request_base: b"req".to_vec(),
+                input_required_response_base: b"resp".to_vec(),
+            });
+            Box::pin(async { Ok(live) })
         }
 
         fn consume<'a>(
             &'a self,
-            _key: &'a str,
+            key: &'a str,
         ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
+            self.record(StoreCall::Consume(key.to_owned()));
             Box::pin(async { Ok(false) })
         }
+    }
+
+    /// The plane-level control that nothing before the retirement spends anything: a
+    /// request refused after `prepare` leaves the live approval intact.
+    ///
+    /// A HIT is used because a refactor that spends only what it found would pass on a miss.
+    #[tokio::test]
+    async fn prepare_reads_a_live_approval_without_spending_it() {
+        let verified = verified_as("did:example:host-a", "key-1");
+        let actor_id = verified.resolved_actor().actor_id();
+        let http_req = http_request(br#"{"params":{"requestState":"s-1"}}"#);
+        let ex = Exchange {
+            http_req: &http_req,
+            verified: &verified,
+            actor_id: &actor_id,
+            now: 1,
+            key: None,
+            verdicts: Default::default(),
+        };
+
+        let store = Arc::new(RecordingStore::hit());
+        let established = ContinuationPlane::wired(store.clone(), 300)
+            .prepare(&ex, "aud")
+            .await
+            .expect("a live approval is not a refusal");
+        let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
+
+        assert!(prep.was_peeked(), "the live approval was read");
+        assert!(prep.binding().is_some());
+        assert_eq!(
+            store.calls(),
+            vec![StoreCall::Peek(continuation_key("aud", &actor_id, b"s-1"))],
+            "prepare reads once and neither consumes nor creates"
+        );
     }
 
     #[test]

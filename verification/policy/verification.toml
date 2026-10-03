@@ -947,7 +947,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::revocation_currency::tests::the_maintenance_token_names_the_cadence_it_is_or_is_not_keeping",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::no_crls_is_evidence_of_a_deployment_without_them",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::supervision::tests::a_dead_reload_worker_retracts_the_cadence_it_advertised",
-  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::supervision::tests::a_failed_reload_is_degraded_and_a_dead_worker_is_stopped",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::supervision::tests::a_degraded_worker_that_dies_is_reported_stopped_not_degraded",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::supervision::tests::a_panicking_crl_reload_body_latches_stopped_and_retracts_the_cadence",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::client_revocation_posture::revocation_posture_tests::with_no_crl_the_per_request_check_is_reported_as_not_configured",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::client_revocation_posture::revocation_posture_tests::every_loaded_crl_reports_its_own_digest_and_window",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_crl_that_never_falls_out_of_force_produces_no_evidence",
@@ -1541,9 +1542,9 @@ paths = [
   # The path follows the ITEM: a unit whose path set no longer covers its own
   # specification stops asking rather than going red.
   "mcp-re-http-profile/src/block/artifact_binding.rs",
-  "mcp-re-http-profile/src/verus_std_specs.rs",
   "mcp-re-http-profile/src/block/artifact_binding/unchecked.rs",
   "mcp-re-http-profile/src/block/artifact_binding/vocabulary.rs",
+  "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
 exported_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 evidence_class = "proved"
@@ -1624,9 +1625,9 @@ description = "The closed artifact-type dispatch of full-request verification: a
 paths = [
   # The vocabulary the relation is over, and the structural validity every branch demands.
   "mcp-re-http-profile/src/block/artifact_binding.rs",
-  # The block rules that decide whether the carried-decision evidence form is even
   "mcp-re-http-profile/src/block/artifact_binding/unchecked.rs",
   "mcp-re-http-profile/src/block/artifact_binding/vocabulary.rs",
+  # The block rules that decide whether the carried-decision evidence form is even
   # presentable: both halves or neither, exactly one applicable binding, never the
   # reference form.
   "mcp-re-http-profile/src/block.rs",
@@ -1676,12 +1677,12 @@ tested_symbols = [
   "//mcp-re-http-profile:binding_identifier_test#reference_binding_missing_its_reference_fields_is_malformed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::tests::a_foreign_digest_alg_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::tests::an_opaque_binding_with_a_reference_field_is_refused",
-]
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::tests::deserialization_refuses_what_construction_refuses",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::tests::an_opaque_binding_over_a_held_digest_is_checked",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::unchecked::tests::the_unchecked_form_holds_what_a_binding_refuses",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::vocabulary::tests::the_tags_serialize_to_their_registry_tokens",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::a_block_carrying_a_malformed_binding_does_not_parse",
+]
 
 # ---------------------------------------------------------------------------
 # WP2 — continuation unbypassability
@@ -6942,6 +6943,10 @@ tested_symbols = [
   # first URL and no other. The control drives a real responder that answers `302` at a
   # second listener and asserts the second is never reached.
   "//mcp-re-proxy:proxy_ext_unit_test#outbound_fetch::binding::tests::an_agent_does_not_follow_a_redirect_and_never_reaches_the_second_authority",
+  # The certificate-derived agent actually installs the resolved-address vetting the
+  # statement names: a resolver refusal means the listener is never connected to, while the
+  # operator-configured agent reaches the same shape of listener.
+  "//mcp-re-proxy:proxy_ext_unit_test#outbound_fetch::binding::tests::a_certificate_derived_agent_never_connects_to_an_address_its_resolver_refused",
   # NO SECOND WAY TO ADDRESS A REQUEST. The join's property belongs to `url.rs` and is
   # measured there; what this establishes is that the capability still addresses THROUGH
   # it — a type that started formatting its own URL would keep every control above green.
@@ -8073,6 +8078,8 @@ tested_symbols = [
   # Neither absence proceeds unbound, and the two are not the same fact.
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::answer_leg::tests::a_store_outage_is_refused_before_admission_and_is_not_a_miss",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::answer_leg::tests::a_prep_with_no_retained_bases_offers_no_binding",
+  # A live approval is READ, never spent, before admission: prepare's only store call is peek.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::answer_leg::tests::prepare_reads_a_live_approval_without_spending_it",
   # THE THIRD ABSENCE, and the one that was being reported as the caller's. A deployment
   # holding no correlation capability refuses a leg that needs one, with the classification
   # an outage earns — never `continuation_binding_failed`.
