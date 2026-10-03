@@ -168,7 +168,7 @@ impl AsyncAtomicReplayStore for InMemoryAsyncAtomicReplayStore {
             self.insert_locked(
                 insert.key,
                 insert.actor,
-                insert.expires_at_unix,
+                insert.retain_until,
                 insert.now_unix,
             )
         })

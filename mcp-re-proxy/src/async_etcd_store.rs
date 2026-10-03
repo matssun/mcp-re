@@ -254,7 +254,7 @@ impl AsyncAtomicReplayStore for EtcdAsyncAtomicReplayStore {
         // backend quota raises a NOSPACE alarm that stays raised, read-only, until an
         // operator compacts, defragments and disarms it, taking every co-tenant of that
         // etcd down with the replay tier.
-        let (key, expires_at_unix) = (insert.key, insert.expires_at_unix);
+        let (key, expires_at_unix) = (insert.key, insert.retain_until);
         // Read the store's OWN clock once (the trait's vestigial now_unix=0 is
         // ignored), and reuse it for the lease-TTL arithmetic.
         let now = (self.clock)();

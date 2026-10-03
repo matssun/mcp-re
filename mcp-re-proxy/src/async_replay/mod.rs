@@ -89,9 +89,9 @@ pub struct ReplayInsert<'a> {
     /// the charge buys.
     pub actor: &'a str,
     /// The skew-folded retain-until the tier computed.
-    pub expires_at_unix: i64,
+    pub retain_until: i64,
     /// The instant the VERIFIER used for this request, and never a constant. The DEFAULT
-    /// in-memory backend judges an already-past `expires_at_unix` against it (MCPS-08);
+    /// in-memory backend judges an already-past `retain_until` against it (MCPS-08);
     /// one deriving a server-side TTL reads its own clock and ignores it. The sync
     /// `AtomicReplayStore` carries a vestigial `0` here and this contract does not, so a
     /// caller passing one disables that guard in the backend a default build selects.
@@ -100,11 +100,11 @@ pub struct ReplayInsert<'a> {
 
 impl<'a> ReplayInsert<'a> {
     /// Build an insert charged to `actor`.
-    pub fn new(key: &'a str, actor: &'a str, expires_at_unix: i64, now_unix: i64) -> Self {
+    pub fn new(key: &'a str, actor: &'a str, retain_until: i64, now_unix: i64) -> Self {
         ReplayInsert {
             key,
             actor,
-            expires_at_unix,
+            retain_until,
             now_unix,
         }
     }
@@ -116,7 +116,7 @@ impl<'a> ReplayInsert<'a> {
 /// worker.
 pub trait AsyncAtomicReplayStore: Send + Sync {
     /// Atomically insert `insert.key` iff absent, with a TTL derived from the
-    /// skew-folded `insert.expires_at_unix` relative to the store's OWN clock.
+    /// skew-folded `insert.retain_until` relative to the store's OWN clock.
     ///
     /// `Fresh` iff the key was absent and is now recorded (this caller won the
     /// insert), `Replay` if already present, or [`ReplayStoreError`] on operational
