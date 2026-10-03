@@ -131,6 +131,7 @@ pub trait TransparencyRegistration {
 pub struct RegisteredStatement {
     receipt_bytes: Vec<u8>,
     protocol: &'static str,
+    statement: Vec<u8>,
 }
 
 impl RegisteredStatement {
@@ -146,6 +147,11 @@ impl RegisteredStatement {
     /// receipt would have to ask the invocation, which is not archived beside it.
     pub fn protocol(&self) -> &'static str {
         self.protocol
+    }
+
+    /// The exact statement octets the receipt verified against.
+    pub(in crate::transparency::auditor) fn statement_bytes(&self) -> &[u8] {
+        &self.statement
     }
 }
 
@@ -182,6 +188,7 @@ pub fn register_and_verify(
     Ok(RegisteredStatement {
         receipt_bytes: response.bytes().to_vec(),
         protocol: mechanism.protocol(),
+        statement: statement.to_cose().to_vec(),
     })
 }
 
@@ -224,6 +231,58 @@ mod tests {
             "canned",
             "the established registration records WHICH mechanism established it",
         );
+    }
+
+    /// An artifact built around `statement`, as a reader would hold it.
+    fn artifact_carrying(
+        statement: &SignedStatement,
+    ) -> crate::transparency::auditor::AttestationArtifact {
+        let document = format!(
+            r#"{{"schema":"mcp-re-attestation/v1","issuer_kid":"auditor-1",
+            "issued_at":1700000100,"signed_statement":"{}","hops":[],
+            "chain":{{"label":"complete"}},"correspondence":"bound-to-verified-call",
+            "transparency_service":{{"service_identifier":"example-ts","kid":"ts-1"}}}}"#,
+            mcp_re_core::b64url_encode(statement.to_cose()),
+        );
+        crate::transparency::auditor::AttestationArtifact::parse(document.as_bytes())
+            .expect("the document parses")
+    }
+
+    /// A receipt attaches to the artifact carrying the statement it verified against.
+    #[test]
+    fn an_attached_receipt_carries_the_protocol_that_established_it() {
+        let statement = a_statement();
+        let registered = register_and_verify(
+            &Canned(Ok(receipt_for(&statement))),
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+        )
+        .expect("the receipt verifies");
+        let artifact = artifact_carrying(&statement)
+            .with_verified_receipt(&registered)
+            .expect("the artifact carries the registered statement");
+        assert_eq!(
+            artifact.receipt().expect("a receipt is present").expect("decodes"),
+            registered.receipt_bytes(),
+        );
+        assert_eq!(artifact.registration_protocol(), Some("canned"));
+    }
+
+    /// A receipt cannot be attached to an artifact carrying a different statement.
+    #[test]
+    fn a_receipt_is_refused_by_an_artifact_carrying_another_statement() {
+        let statement = a_statement();
+        let registered = register_and_verify(
+            &Canned(Ok(receipt_for(&statement))),
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+        )
+        .expect("the receipt verifies");
+        artifact_carrying(&another_statement())
+            .with_verified_receipt(&registered)
+            .expect_err("the receipt is about another statement");
     }
 
     /// A receipt for a DIFFERENT statement is refused, however well the HTTP went.

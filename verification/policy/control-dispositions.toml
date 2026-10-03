@@ -13729,3 +13729,18 @@ decision = "new-proposition"
 proposition = "NP-032"
 recorded = "2026-10-03"
 
+[[disposition]]
+id = "CD-20174"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::capability::tests::an_attached_receipt_carries_the_protocol_that_established_it"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-10-03"
+
+[[disposition]]
+id = "CD-20175"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_is_refused_by_an_artifact_carrying_another_statement"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-10-03"

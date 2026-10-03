@@ -113,7 +113,9 @@ pub fn attest(invocation: &AuditInvocation) -> Result<AttestationArtifact, Audit
             &inputs.pin,
         )
         .map_err(AuditError::Registration)?;
-    let artifact = artifact.with_verified_receipt(&registered);
+    let artifact = artifact
+        .with_verified_receipt(&registered)
+        .map_err(AuditError::ReceiptNotRecorded)?;
     record_receipt(&invocation.out, &artifact)?;
     Ok(artifact)
 }

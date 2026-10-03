@@ -93,16 +93,22 @@ impl AttestationArtifact {
     /// The argument is the proof: a `RegisteredStatement` is constructible only by the
     /// function that put the service's answer through the offline verifier against the
     /// exact statement submitted and the operator's pin. There is no way to attach a
-    /// receipt that merely arrived.
+    /// receipt that merely arrived. It is refused unless this artifact carries the very
+    /// statement the receipt verified against.
     pub fn with_verified_receipt(
         mut self,
         registered: &crate::transparency::auditor::registration::RegisteredStatement,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        if self.signed_statement()? != registered.statement_bytes() {
+            return Err(
+                "attestation artifact: the receipt is about a different statement".to_owned(),
+            );
+        }
         self.receipt = Some(mcp_re_core::b64url_encode(registered.receipt_bytes()));
         // Set HERE, from the same value, so a receipt and the contract that produced it
         // arrive together or not at all.
         self.registration_protocol = Some(registered.protocol().to_owned());
-        self
+        Ok(self)
     }
 
     /// The contract that established the registration, if this attestation was registered.
