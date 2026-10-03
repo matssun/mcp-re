@@ -13606,6 +13606,15 @@ consequence = "high"
 root_relationship = "The availability half of the delegated-TLS signer NP-164 establishes; stated by no theorem."
 record = "docs/architecture/control-dispositions.md#np-226"
 
+[[proposition]]
+id = "NP-227"
+title = "An audit artifact is replaced whole, and a failure after registration never reads as no artifact"
+carrier = "mcp-re-proxy/src/transparency/auditor/durable_file.rs and run.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "Beside NP-043: the artifact's persistence, which no unit states."
+record = "docs/architecture/control-dispositions.md#np-227"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -13709,3 +13718,35 @@ control = "gate#scripts/extraction_image_gate.py"
 decision = "not-evidence"
 reason_family = "ND-004"
 recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20134"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::durable_file::tests::a_failed_replace_leaves_the_previous_artifact_whole"
+decision = "new-proposition"
+proposition = "NP-227"
+recorded = "2026-10-03"
+
+[[disposition]]
+id = "CD-20135"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::durable_file::tests::a_replace_leaves_no_staging_file"
+decision = "new-proposition"
+proposition = "NP-227"
+recorded = "2026-10-03"
+
+[[disposition]]
+id = "CD-20136"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::run::tests::a_receipt_that_cannot_be_recorded_reports_the_registration"
+decision = "new-proposition"
+proposition = "NP-227"
+recorded = "2026-10-03"
+
+[[disposition]]
+id = "CD-20137"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::run::tests::a_write_that_fails_before_registration_is_an_output_refusal"
+decision = "new-proposition"
+proposition = "NP-227"
+recorded = "2026-10-03"

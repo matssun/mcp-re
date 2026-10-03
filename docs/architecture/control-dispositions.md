@@ -4338,3 +4338,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** The availability half of the delegated-TLS signer NP-164 establishes; stated by no theorem.
 **Recorded:** 2026-09-29, owner ruling: THM-0116's TLS-path rows re-attributed.
+
+## NP-227 — an audit artifact is replaced whole, and a failure after registration never reads as no artifact
+
+**Controls:** `mcp-re-proxy/src/transparency/auditor/durable_file.rs` (2), `mcp-re-proxy/src/transparency/auditor/run.rs` (2).
+**Carrier:** `mcp-re-proxy/src/transparency/auditor/durable_file.rs` and `run.rs`.
+**Statement.** *The artifact path holds either its previous bytes or the new bytes, never a truncated mixture; and once a statement is registered, a failure to record its receipt is reported as `ReceiptNotRecorded` (artifact durable, statement registered, do not re-submit), not as an `Output` refusal that means no artifact exists.*
+**If false.** An operator whose receipt write failed is told no artifact exists, discards a durable attestation, and re-submits a statement that is already registered; or an in-place truncation destroys the only portable record.
+**Likely owner:** none; NP-043 states the artifact's schema, not its persistence.
+**Severity:** `high`.
+**Root relationship.** Beside NP-043: the artifact's persistence, which no unit states.
+**Recorded:** 2026-10-03, round-12 remediation of finding 9df9f206fdc2b8e0.

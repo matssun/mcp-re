@@ -35,9 +35,11 @@
 //! It runs after the artifact is on disk. A submission that does not succeed therefore
 //! costs the receipt and nothing else: the attestation is durable, offline-verifiable, and
 //! reproducible byte for byte by re-running with the same `--at`. That is why
-//! [`AuditError::Registration`] is its own variant — every other one means no artifact
-//! exists, and collapsing the two would have an operator discard a portable record because
-//! a network was down.
+//! [`AuditError::Registration`] is its own variant. [`AuditError::ReceiptNotRecorded`] is
+//! the second surviving outcome: the statement IS registered and the artifact on disk is
+//! the attestation without its receipt. Every other variant means no artifact exists, and
+//! collapsing them would have an operator discard a portable record because a network was
+//! down.
 //!
 //! # It opens the archive for READING, and holds no more than that
 //!
@@ -64,6 +66,7 @@ use crate::transparency::RetainedArchive;
 use crate::trust_document::TrustDocument;
 
 use super::artifact::AttestationArtifact;
+use super::durable_file::replace_atomically;
 use super::inputs::AuditInputs;
 use super::invocation::AuditInvocation;
 use super::profile::AuditProfile;
@@ -111,14 +114,20 @@ pub fn attest(invocation: &AuditInvocation) -> Result<AttestationArtifact, Audit
         )
         .map_err(AuditError::Registration)?;
     let artifact = artifact.with_verified_receipt(&registered);
-    write(&invocation.out, &artifact)?;
+    record_receipt(&invocation.out, &artifact)?;
     Ok(artifact)
 }
 
 /// Write the artifact, replacing whatever is there.
 fn write(path: &Path, artifact: &AttestationArtifact) -> Result<(), AuditError> {
     let bytes = artifact.to_json().map_err(AuditError::Input)?;
-    std::fs::write(path, &bytes).map_err(AuditError::Output)
+    replace_atomically(path, &bytes).map_err(AuditError::Output)
+}
+
+/// Replace the artifact with its receipt-bearing form after the statement is registered.
+fn record_receipt(path: &Path, artifact: &AttestationArtifact) -> Result<(), AuditError> {
+    let bytes = artifact.to_json().map_err(AuditError::ReceiptNotRecorded)?;
+    replace_atomically(path, &bytes).map_err(|e| AuditError::ReceiptNotRecorded(e.to_string()))
 }
 
 /// The posture, assembled and spent in one place.
@@ -172,4 +181,46 @@ fn reconstruct_and_issue(
             },
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Once the statement is registered, a failure to record its receipt is not an
+    /// `Output` refusal: it names the registration and says not to re-submit.
+    #[test]
+    fn a_receipt_that_cannot_be_recorded_reports_the_registration() {
+        let document = br#"{"schema":"mcp-re-attestation/v1","issuer_kid":"auditor-1",
+            "issued_at":1700000100,"signed_statement":"eA","hops":[],
+            "chain":{"label":"complete"},"correspondence":"bound-to-verified-call",
+            "transparency_service":{"service_identifier":"example-ts","kid":"ts-1"}}"#;
+        let artifact = AttestationArtifact::parse(document).expect("parses");
+        let dir = std::env::temp_dir().join(format!("auditor-run-receipt-{}", std::process::id()));
+        let out = dir.join("missing-parent").join("artifact.json");
+
+        let err = record_receipt(&out, &artifact).expect_err("parent is absent");
+        assert!(matches!(err, AuditError::ReceiptNotRecorded(_)));
+        let shown = err.to_string();
+        assert!(shown.contains("IS registered"));
+        assert!(!shown.contains("writing the attestation artifact"));
+    }
+
+    /// An unwritable artifact path before registration is still `Output`: no artifact
+    /// exists.
+    #[test]
+    fn a_write_that_fails_before_registration_is_an_output_refusal() {
+        let document = br#"{"schema":"mcp-re-attestation/v1","issuer_kid":"auditor-1",
+            "issued_at":1700000100,"signed_statement":"eA","hops":[],
+            "chain":{"label":"complete"},"correspondence":"bound-to-verified-call",
+            "transparency_service":{"service_identifier":"example-ts","kid":"ts-1"}}"#;
+        let artifact = AttestationArtifact::parse(document).expect("parses");
+        let out = std::env::temp_dir()
+            .join(format!("auditor-run-output-{}", std::process::id()))
+            .join("missing-parent")
+            .join("artifact.json");
+
+        let err = write(&out, &artifact).expect_err("parent is absent");
+        assert!(matches!(err, AuditError::Output(_)));
+    }
 }

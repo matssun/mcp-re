@@ -307,6 +307,7 @@ _PROXY_LIB_SRCS = [
     "src/transparency/auditor/artifact/derivation.rs",
     "src/transparency/auditor/inputs.rs",
     "src/transparency/auditor/refusal.rs",
+    "src/transparency/auditor/durable_file.rs",
     "src/transparency/auditor/run.rs",
     # #841 G-1: the registration capability, its budget, its target, and the SCRAPI
     # mechanism leaf. Every file is compiled by every flavor; only `ureq_exchange` is

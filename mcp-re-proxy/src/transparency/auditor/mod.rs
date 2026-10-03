@@ -90,6 +90,9 @@ mod inputs;
 /// WHAT a run refuses in, and which refusal still leaves an attestation behind.
 mod refusal;
 
+/// The one way an artifact reaches disk: staged beside its path and renamed over it.
+mod durable_file;
+
 /// The composition: open the archive, load the posture, reconstruct, attest, write.
 mod run;
 
