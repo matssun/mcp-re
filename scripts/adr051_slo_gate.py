@@ -27,17 +27,17 @@ Usage — prefer the lane script, which does both steps and refuses the known tr
 By hand (see docs/dev/local-gate-order.md before you do):
 
     # 1. produce a fresh report at the baseline anchor config. `--exact`, NEVER
-    #    `--ignored`: this bench is not an #[ignore] test (the file is gated to the
-    #    redis_replay feature lane), so `--ignored` selects ZERO tests, exits 0 and
-    #    writes no report. MCP_RE_LOADGEN_OUT must be ABSOLUTE — cargo runs the test
-    #    binary from the package root. The harness spawns the real CLI, so the BIN
-    #    must be built with the same features, not just the test target.
-    cargo build --release -p mcp-re-proxy --features async_serve,redis_replay --bins
+    #    `--ignored`: this bench is not an #[ignore] test (the target is built with the
+    #    redis_replay feature), so `--ignored` selects ZERO tests, exits 0 and writes no
+    #    report. MCP_RE_LOADGEN_OUT must be ABSOLUTE — `bazel run` starts the test binary
+    #    in its runfiles tree. The harness spawns the real CLI, which the target depends on,
+    #    so it is built with the same features as the test.
+    bazel build -c opt //mcp-re-proxy:tls_load_harness_bench
     MCP_RE_LOADGEN_CORES=1 MCP_RE_LOADGEN_CONCURRENCY=128 \\
     MCP_RE_LOADGEN_REQUESTS=8000 MCP_RE_LOADGEN_MODE=cold \\
     MCP_RE_LOADGEN_HW_CLASS=... MCP_RE_LOADGEN_OUT=$PWD/fresh.json \\
-    cargo test -p mcp-re-proxy --release --features async_serve,redis_replay \\
-        --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture
+    bazel run -c opt //mcp-re-proxy:tls_load_harness_bench -- \\
+        tls_load_harness_bench --exact --nocapture
 
     # 2. gate it
     python3 scripts/adr051_slo_gate.py --report $PWD/fresh.json

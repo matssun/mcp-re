@@ -7,8 +7,9 @@
 //! support; this assertion against live infrastructure is.
 //!
 //! It is `#[ignore]` by default (it needs network + a configured KMS key) and is
-//! run explicitly in the live-infra lane with `cargo test --features
-//! aws_kms_keysource -- --ignored`. When run, it FAILS LOUDLY if its required
+//! run explicitly in the live-infra lane with
+//! `bazel test //mcp-re-proxy:integration_live_test --test_arg=--ignored
+//! --test_arg=aws_kms_live_test::`. When run, it FAILS LOUDLY if its required
 //! configuration is absent — it never silently "passes" without verifying.
 //!
 //! Required environment:

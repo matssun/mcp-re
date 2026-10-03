@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+# The recorded SDK fixtures. `//mcp-re-proxy:integration_async_test` regenerates the two
+# delegated-reply recordings and compares them with these files, so they are addressable
+# runfiles of that target rather than a source path the test sandbox cannot see.
+exports_files([
+    "malformed_elicitation.json",
+    "unrecognized_result_type.json",
+])

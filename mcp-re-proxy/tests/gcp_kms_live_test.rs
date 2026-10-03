@@ -6,7 +6,8 @@
 //! `getPublicKey`. Compiling is NOT support; this assertion is.
 //!
 //! `#[ignore]` by default (needs network + a configured Ed25519 key version); run in
-//! the live-infra lane with `cargo test --features gcp_kms_keysource -- --ignored`.
+//! the live-infra lane with
+//! `bazel test //mcp-re-proxy:gcp_kms_live_test --test_arg=--ignored` (the target is `manual`).
 //! FAILS LOUDLY if its required configuration is absent — never a silent pass.
 //!
 //! Required environment:

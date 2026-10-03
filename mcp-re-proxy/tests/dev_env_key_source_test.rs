@@ -1,6 +1,6 @@
 //! MCPS-076 (audit gap G-3) — dev-only `EnvKeySource` + secret-hygiene proofs.
 //!
-//! This target is built ONLY with the non-default `dev_env_key_source` cargo
+//! This target is built ONLY with the non-default `dev_env_key_source` crate
 //! feature (it is `manual`-tagged in BUILD.bazel; a default `bazel test //...`
 //! skips it). It proves the dev-only behaviors that cannot even compile in a
 //! production build:

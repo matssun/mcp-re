@@ -1090,7 +1090,9 @@ jobs:
       # universe as every other target, and packaged by rules_python's py_wheel.
       - name: Build the SDK wheel (bazel build //sdk/python:wheel)
         run: |
-          bazel build //sdk/python:wheel
+          # The transport e2e (tests/test_transport_e2e.py) stands up the project's own proof
+          # proxy and skips when it is absent, so it is built here to be measured.
+          bazel build //sdk/python:wheel //mcp-re-proxy:http_profile_proxy
           echo "WHEEL=$PWD/$(bazel cquery --output=files //sdk/python:wheel 2>/dev/null | head -1)" >> "$GITHUB_ENV"
 
       - name: Regenerated parity oracle must match the committed one

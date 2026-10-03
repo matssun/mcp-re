@@ -12,8 +12,7 @@
 //!
 //! No HERMETIC configuration reaches the posture phase: it sits after the replay tier is
 //! established, and every tier validation accepts needs a live Redis or etcd. So a test
-//! that starts the proxy measures nothing in `cargo test --workspace` or
-//! `bazel test //...`. The installation step is three lines of straight-line code in one
+//! that starts the proxy measures nothing in `bazel test //...`. The installation step is three lines of straight-line code in one
 //! function, and what a reader checks by eye is exactly what is pinned here.
 //!
 //! # The property this exists to defend

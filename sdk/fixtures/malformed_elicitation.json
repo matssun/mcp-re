@@ -1,5 +1,5 @@
 {
-  "_comment": "A delegated-signed reply that declares itself non-terminal and withholds its requestState. Genuine evidence with a malformed body: both SDK bindings must REFUSE it, never report it as a terminal result. Regenerate with MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy --test mrt_continuation_serving_test write_malformed_elicitation_sdk_fixture",
+  "_comment": "A delegated-signed reply that declares itself non-terminal and withholds its requestState. Genuine evidence with a malformed body: both SDK bindings must REFUSE it, never report it as a terminal result. Writer: write_malformed_elicitation_sdk_fixture (mrt_continuation_serving_test) with MCP_RE_WRITE_SDK_FIXTURE=1",
   "accepted_epochs": [
     "epoch-1"
   ],

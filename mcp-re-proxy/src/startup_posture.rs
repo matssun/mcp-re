@@ -47,7 +47,7 @@
 //! specific reason: no HERMETIC configuration reaches the posture phase, because it sits
 //! after the replay tier is established and every tier validation accepts needs a live
 //! Redis or etcd. So `assert_complete` — the stronger check — never runs in
-//! `cargo test --workspace` or `bazel test //...`, and without the gate a seam added
+//! `bazel test //...`, and without the gate a seam added
 //! without a declaration would ship green.
 //!
 //! The runtime check and the static gate answer different questions. The gate proves the

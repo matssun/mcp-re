@@ -1209,9 +1209,9 @@ async fn a_saturated_plane_refused_before_the_threshold_is_retry_safe() {
 /// custody the proxy uses — it stands for a non-conformant or hostile server, which
 /// is the only place such a reply can now originate.
 ///
-/// Regenerate with:
-///   MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy \
-///     --test mrt_continuation_serving_test write_malformed_elicitation_sdk_fixture
+/// Regenerate: `MCP_RE_WRITE_SDK_FIXTURE=1 bazel run //mcp-re-proxy:integration_async_test --
+/// mrt_continuation_serving_test::write_malformed_elicitation_sdk_fixture --exact`. Runfiles are symlinks to the
+/// source, so the recording under `sdk/fixtures` is rewritten in place.
 #[test]
 fn write_malformed_elicitation_sdk_fixture() {
     write_sdk_fixture(
@@ -1220,8 +1220,8 @@ fn write_malformed_elicitation_sdk_fixture() {
         "A delegated-signed reply that declares itself non-terminal and withholds \
          its requestState. Genuine evidence with a malformed body: both SDK \
          bindings must REFUSE it, never report it as a terminal result. \
-         Regenerate with MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy \
-         --test mrt_continuation_serving_test write_malformed_elicitation_sdk_fixture",
+         Writer: write_malformed_elicitation_sdk_fixture \
+         (mrt_continuation_serving_test) with MCP_RE_WRITE_SDK_FIXTURE=1",
         "malformed_elicitation.json",
     );
 }
@@ -1234,9 +1234,9 @@ fn write_malformed_elicitation_sdk_fixture() {
 /// stands for a non-conformant or hostile server — the only place one can now come
 /// from. The evidence is genuine; only the result type is unreadable.
 ///
-/// Regenerate with:
-///   MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy \
-///     --test mrt_continuation_serving_test write_unrecognized_result_type_sdk_fixture
+/// Regenerate: `MCP_RE_WRITE_SDK_FIXTURE=1 bazel run //mcp-re-proxy:integration_async_test --
+/// mrt_continuation_serving_test::write_unrecognized_result_type_sdk_fixture --exact`. Runfiles are symlinks to the
+/// source, so the recording under `sdk/fixtures` is rewritten in place.
 #[test]
 fn write_unrecognized_result_type_sdk_fixture() {
     write_sdk_fixture(
@@ -1245,8 +1245,8 @@ fn write_unrecognized_result_type_sdk_fixture() {
         "A delegated-signed reply carrying a resultType outside the set MCP \
          2026-07-28 defines. Genuine evidence this reader cannot classify: both SDK \
          bindings must REFUSE it, never report it as a terminal result. \
-         Regenerate with MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy \
-         --test mrt_continuation_serving_test write_unrecognized_result_type_sdk_fixture",
+         Writer: write_unrecognized_result_type_sdk_fixture \
+         (mrt_continuation_serving_test) with MCP_RE_WRITE_SDK_FIXTURE=1",
         "unrecognized_result_type.json",
     );
 }
@@ -1335,11 +1335,13 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
         },
     });
 
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace root")
-        .join("sdk/fixtures")
-        .join(file_name);
+    // The recorded fixture, a runfile of this target. `bazel run` places runfiles as symlinks
+    // to the source files, so a regeneration writes through to `sdk/fixtures`.
+    let path = mcp_re_test_paths::resolve_runfile(match file_name {
+        "malformed_elicitation.json" => "MCP_RE_SDK_FIXTURE_MALFORMED_ELICITATION",
+        "unrecognized_result_type.json" => "MCP_RE_SDK_FIXTURE_UNRECOGNIZED_RESULT_TYPE",
+        other => panic!("{other} is not a fixture this target carries"),
+    });
     let rendered = format!(
         "{}\n",
         serde_json::to_string_pretty(&fixture).expect("fixture serializes")
@@ -1350,18 +1352,7 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
         return;
     }
 
-    // `sdk/` is not Bazel-addressable — there is no BUILD file under it, so the SDKs
-    // are outside `bazel test //...` entirely and the fixture is not in this target's
-    // runfiles. Under a Bazel sandbox the source tree genuinely is not there, which is
-    // the ONE case where having nothing to compare against is not a failure. The
-    // condition is the sandbox itself, not "the file was missing": in the Cargo lane a
-    // missing fixture still panics below.
-    let sandboxed = std::env::var("TEST_SRCDIR").is_ok() || std::env::var("RUNFILES_DIR").is_ok();
-    if sandboxed && !path.exists() {
-        return;
-    }
-
-    // Otherwise this is a GATE: the committed fixture must still be the one this
+    // This is a GATE: the committed fixture must still be the one this
     // code produces, so a change to the signing path cannot silently leave both SDK
     // suites asserting against a stale recording.
     let committed = std::fs::read_to_string(&path).unwrap_or_else(|_| {

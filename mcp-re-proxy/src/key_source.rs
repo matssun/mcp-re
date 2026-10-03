@@ -191,7 +191,7 @@ fn key_from_pem(pem: &[u8]) -> Result<PrivateKeyDer<'static>, KeyError> {
 /// PEM text).
 ///
 /// MCPS-076 (audit gap G-3): DEV / CI ONLY, and gated behind the NON-DEFAULT
-/// `dev_env_key_source` cargo feature — this type does NOT exist in a production
+/// `dev_env_key_source` crate feature — this type does NOT exist in a production
 /// build. Environment variables are visible to the whole process tree, can leak
 /// via crash dumps, `ps e`, `/proc/<pid>/environ`, and container/orchestrator
 /// inspection, and are easy to log accidentally. Production deployments must use

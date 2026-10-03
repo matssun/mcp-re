@@ -79,7 +79,7 @@ enum ReplayKind {
 }
 
 impl ReplayState {
-    /// The cargo feature materialization needs to establish this state (layer B).
+    /// The crate feature materialization needs to establish this state (layer B).
     ///
     /// Stated here so the requirement is read off the classified state rather than
     /// re-derived from fields at each materialization site.

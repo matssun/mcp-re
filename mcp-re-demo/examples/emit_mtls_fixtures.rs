@@ -7,7 +7,7 @@
 //! (signer seed [1;32], server seed [2;32], audience `did:example:server-1`,
 //! server name `proxy.internal`), so the consumer hardcodes those.
 //!
-//!   cargo run -p mcp-re-demo --example emit_mtls_fixtures -- <out-dir>
+//!   bazel run //mcp-re-demo:emit_mtls_fixtures -- <out-dir>
 
 use std::fs;
 use std::path::Path;

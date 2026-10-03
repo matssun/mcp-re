@@ -159,12 +159,24 @@ def _string_list(node: ast.AST) -> list[str] | None:
             else ast.unparse(elt) for elt in node.elts]
 
 
+#: A Cargo command at the start of a line of a Python file — a docstring or comment telling a
+#: maintainer to run it. Mid-sentence mentions and quoted fixtures do not start a line.
+_PY_CARGO_COMMAND_LINE = re.compile(
+    r"^\s*(?:#\s*|\$\s*)?(?:[A-Z_]+=\S+\s+)*cargo\s+(?:test|run|build|check|clippy|fmt|bench|doc|tree|"
+    r"metadata|install|publish|verus)\b"
+)
+
+
 def python_hits(text: str) -> list[tuple[int, str, str]]:
     try:
         tree = ast.parse(text)
     except SyntaxError:
         return shell_hits(text)
-    out: list[tuple[int, str, str]] = []
+    out: list[tuple[int, str, str]] = [
+        (n, "cargo command line in a docstring or comment", l.strip())
+        for n, l in enumerate(text.splitlines(), 1)
+        if _PY_CARGO_COMMAND_LINE.match(l)
+    ]
     # A shell script held in a name and handed to a shell by that name — `["bash", "-c",
     # SCRIPT]` — is read as the script it names. Only names bound to one string constant.
     scripts = {
@@ -200,10 +212,20 @@ def python_hits(text: str) -> list[tuple[int, str, str]]:
     return out
 
 
+#: A Cargo subcommand written as a command line. In a Rust file this is read in COMMENTS too: a
+#: doc comment's `cargo test -p x` is the command a maintainer is told to run.
+_RUST_CARGO_COMMAND = re.compile(
+    r"\bcargo\s+(?:test|run|build|check|clippy|fmt|bench|doc|tree|metadata|install|publish|verus)\b"
+)
+
+
 def rust_hits(text: str) -> list[tuple[int, str, str]]:
     rule = re.compile(r'Command::new\(\s*(?:"(?:\S*/)?cargo"|env!\(\s*"CARGO"\s*\)|&?(?:std::)?env::var\(\s*"CARGO"\s*\))')
-    return [(n, "Command::new(cargo)", l.strip()) for n, l in enumerate(text.splitlines(), 1)
-            if rule.search(l) and not l.lstrip().startswith("//")]
+    out = [(n, "Command::new(cargo)", l.strip()) for n, l in enumerate(text.splitlines(), 1)
+           if rule.search(l) and not l.lstrip().startswith("//")]
+    out += [(n, "cargo command in a comment or string", l.strip())
+            for n, l in enumerate(text.splitlines(), 1) if _RUST_CARGO_COMMAND.search(l)]
+    return out
 
 
 def js_hits(text: str) -> list[tuple[int, str, str]]:
@@ -337,6 +359,11 @@ def selftest() -> int:
         ("sdk/python/pyproject.toml", '[build-system]\nbuild-backend = "maturin"\n', True),
         ("tools/x.py", 'subprocess.run(["cargo", "test"])\n', True),
         ("tools/x.py", 'argv = [charon, "cargo", "--preset=aeneas"]\n', True),
+        ("mcp-re-x/tests/t.rs", '//! cargo test -p mcp-re-x --test t\n', True),
+        ("tools/x.py", '"""\nBy hand:\n    cargo test -p x --test y\n"""\n', True),
+        ("tools/x.py", '"""\nthe crate name in a cargo test command is not run\n"""\n', False),
+        ("mcp-re-x/tests/t.rs", '//! the `test-fixtures` cargo feature, off by default\n', False),
+        ("mcp-re-x/tests/t.rs", 'let v = env!("CARGO_MANIFEST_DIR");\n', False),
         ("tools/x.py", 'os.system("cargo build --release")\n', True),
         ("tools/x.py", 'S = """\nset -e\n"$CHARON_EXE" cargo --preset=aeneas\n"""\nrun(["docker", "run", img, "bash", "-c", S])\n', True),
         ("tools/x.py", 'S = "cargo test --workspace"\nsubprocess.run(S, shell=True)\n', True),

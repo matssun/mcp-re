@@ -30,7 +30,7 @@
 // QUALIFIED on this crate: under `--features verify` the standard-library
 // specification stubs in `verus_std_specs.rs` expand to `unsafe fn` declarations, so the
 // crate is not unsafe-free under the prover. That feature cannot reach a shipped build —
-// the crate raises a `compile_error!` if cargo enables it, and only
+// the crate raises a `compile_error!` if a build enables it, and only
 // `tools/verification/verify-verus` under the pinned prover may turn it on — so the
 // property this states is: no `unsafe` in any build of this crate that can ship.
 //
@@ -41,7 +41,7 @@
 #[cfg(all(feature = "verify", not(verus_keep_ghost)))]
 compile_error!(
     "feature `verify` carries Verus specifications and builds only under the pinned \
-     prover. Run `tools/verification/verify-verus`; do not enable it from cargo, and \
+     prover. Run `tools/verification/verify-verus`; do not enable it from a build, and \
      exclude it from any --all-features lane."
 );
 

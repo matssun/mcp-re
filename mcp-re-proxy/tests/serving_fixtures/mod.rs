@@ -13,7 +13,7 @@
 //! here would drag `time` and the whole rustls client surface into every consumer.
 //!
 //! Not a test target of its own: a directory under `tests/` with no `main.rs` is not
-//! auto-discovered by Cargo, so this compiles only into the binaries that declare it.
+//! a test target, so this compiles only into the binaries that declare it.
 
 #![allow(dead_code)] // each test binary uses a subset
 

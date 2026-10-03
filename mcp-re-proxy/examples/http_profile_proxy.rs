@@ -30,7 +30,7 @@
 //!   HPP_BIND=127.0.0.1:8601 \
 //!   HPP_INNER_URL=http://127.0.0.1:8620/mcp/ \
 //!   HPP_TARGET=http://127.0.0.1:8601/mcp \
-//!   cargo run -p mcp-re-proxy --example http_profile_proxy
+//!   bazel run //mcp-re-proxy:http_profile_proxy
 
 use std::convert::Infallible;
 use std::sync::Arc;

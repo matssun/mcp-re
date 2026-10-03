@@ -1260,10 +1260,14 @@ nt_rust_test(
     # the executable itself rather than the library behind it.
     data = [
         ":mcp_re_auditor_cli",
+        "//sdk/fixtures:malformed_elicitation.json",
+        "//sdk/fixtures:unrecognized_result_type.json",
     ],
     edition = "2021",
     env = {
         "MCP_RE_AUDITOR_CLI": "$(rlocationpath :mcp_re_auditor_cli)",
+        "MCP_RE_SDK_FIXTURE_MALFORMED_ELICITATION": "$(rlocationpath //sdk/fixtures:malformed_elicitation.json)",
+        "MCP_RE_SDK_FIXTURE_UNRECOGNIZED_RESULT_TYPE": "$(rlocationpath //sdk/fixtures:unrecognized_result_type.json)",
     },
     deps = [
         # The hermetic capsule-anchor service in `transparency_e2e_test` reads and writes
@@ -1316,10 +1320,14 @@ nt_rust_test(
     # the executable itself rather than the library behind it.
     data = [
         ":mcp_re_auditor_cli",
+        "//sdk/fixtures:malformed_elicitation.json",
+        "//sdk/fixtures:unrecognized_result_type.json",
     ],
     edition = "2021",
     env = {
         "MCP_RE_AUDITOR_CLI": "$(rlocationpath :mcp_re_auditor_cli)",
+        "MCP_RE_SDK_FIXTURE_MALFORMED_ELICITATION": "$(rlocationpath //sdk/fixtures:malformed_elicitation.json)",
+        "MCP_RE_SDK_FIXTURE_UNRECOGNIZED_RESULT_TYPE": "$(rlocationpath //sdk/fixtures:unrecognized_result_type.json)",
     },
     deps = [
         # The hermetic capsule-anchor service in `transparency_e2e_test` reads and writes

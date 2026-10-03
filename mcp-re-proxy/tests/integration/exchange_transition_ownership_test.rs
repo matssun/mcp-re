@@ -139,7 +139,7 @@ fn production_half(source: &str) -> String {
 /// The scope is the DIRECTORY the anchor file sits in, walked, rather than a list of region
 /// files: a list would have to learn about the next region, and the failure mode of a stale
 /// list is a clean pass over unmeasured code. Under Bazel the directory is the runfiles
-/// copy, which the target's `glob` populates; under cargo it is the source tree.
+/// copy, which the target's `glob` populates; otherwise it is the source tree.
 fn serving_source() -> String {
     let anchor = mcp_re_test_paths::resolve_runfile("MCP_RE_HTTP_PROFILE_SERVE_SRC");
     let root = anchor
