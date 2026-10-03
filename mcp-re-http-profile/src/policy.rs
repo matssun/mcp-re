@@ -202,13 +202,12 @@ impl VerifierPolicy {
         self.max_clock_skew
     }
 
-    /// Narrow (or widen) the accepted signature-validity window. A non-positive value
-    /// is refused: it would reject every message and reads as a misconfiguration
-    /// rather than a policy.
+    /// Narrow the accepted signature-validity window. The default is also the ceiling:
+    /// a value outside `1..=DEFAULT_MAX_SIGNATURE_VALIDITY` fails closed, never widens.
     pub fn with_max_signature_validity(mut self, secs: i64) -> Result<Self, HttpProfileError> {
-        if secs <= 0 {
+        if !(1..=Self::DEFAULT_MAX_SIGNATURE_VALIDITY).contains(&secs) {
             return Err(HttpProfileError::MalformedEvidence(
-                "max signature validity must be positive",
+                "max signature validity out of bounds",
             ));
         }
         self.max_signature_validity = secs;
@@ -260,14 +259,26 @@ mod tests {
         let narrowed = p.clone().with_max_signature_validity(60).expect("narrow");
         assert_eq!(narrowed.max_signature_validity(), 60);
 
-        for bad in [0, -1, -3600] {
+        for bad in [
+            0,
+            -1,
+            -3600,
+            VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY + 1,
+            i64::MAX,
+        ] {
             assert!(
                 VerifierPolicy::default()
                     .with_max_signature_validity(bad)
                     .is_err(),
-                "a non-positive ceiling rejects every message and must be refused"
+                "an out-of-band ceiling is refused: non-positive rejects every message, above the default widens"
             );
         }
+        assert!(
+            VerifierPolicy::default()
+                .with_max_signature_validity(VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY)
+                .is_ok(),
+            "the ceiling itself is admissible"
+        );
     }
     use super::*;
 
@@ -283,7 +294,22 @@ mod tests {
             None,
             "the profile token is lowercase"
         );
-        assert_eq!(p.max_clock_skew(), VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW);
+        assert!(
+            (0..=VerifierPolicy::MAX_CLOCK_SKEW_BOUND).contains(&p.max_clock_skew()),
+            "the default skew must sit inside the band new() enforces"
+        );
+    }
+
+    #[test]
+    fn default_policy_is_one_new_would_build() {
+        let built =
+            VerifierPolicy::new(&DEFAULT_ALGORITHMS, VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW)
+                .expect("the defaults are inside new()'s band");
+        let d = VerifierPolicy::default();
+        assert_eq!(d.algorithms, built.algorithms);
+        assert_eq!(d.max_clock_skew(), built.max_clock_skew());
+        assert_eq!(d.max_signature_validity(), built.max_signature_validity());
+        assert!(d.mcp_transport().is_none());
     }
 
     /// THE algorithm-confusion guard. A registered algorithm with no verifier in
