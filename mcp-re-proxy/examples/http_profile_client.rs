@@ -164,9 +164,7 @@ fn main() {
     let resp2 = post(&agent, &post_b, &request);
     // A DELEGATED rejection receipt is verified through the SAME delegated path as an
     // answer — it is signed by the delegated key and carries the same credential, so the
-    // refusal is as verifiable as an acceptance. `verify_signed_rejection` is the
-    // direct-root verifier: it has no credential chain, so it cannot resolve the
-    // delegated kid and would fail `actor_binding_failed` on a genuine receipt.
+    // refusal is as verifiable as an acceptance.
     //
     // Verifying only proves the receipt is authentic and bound to THIS request; whether
     // it is an acceptance is then read from the trusted body.

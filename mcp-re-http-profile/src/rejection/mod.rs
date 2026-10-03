@@ -16,9 +16,11 @@
 //!   before a request could be parsed is signed response-only;
 //! - HTTP status is a signed routing hint only; the wire code is authoritative.
 //!
-//! Under `require_mcp_re` a client MUST treat an unsigned or unverifiable
-//! rejection as untrusted — [`verify_signed_rejection`] returns `Err`, which the
-//! caller maps to its client-local `mcp-re.rejection_unsigned` posture.
+//! Under `require_mcp_re` a client MUST treat an unsigned or unverifiable rejection as
+//! untrusted. A client verifies a rejection through
+//! `Verifier::verify_delegated_bound_response` (request context exists) or
+//! `Verifier::verify_delegated_unbound_response` (it does not); a failure maps to its
+//! client-local `mcp-re.rejection_unsigned` posture.
 
 use serde_json::json;
 
@@ -31,6 +33,11 @@ pub mod retry_contract;
 #[cfg(any(test, feature = "pre_052_fixtures"))]
 pub mod pre_052_direct_root;
 
+/// The cryptographic-floor verifier for those direct-root rejections, a negative-test
+/// fixture on the same gate.
+#[cfg(any(test, feature = "pre_052_fixtures"))]
+pub mod pre_052_direct_root_verifier;
+
 pub use retry_contract::retry_semantics;
 pub use retry_contract::ExecutionDisposition;
 use serde_json::Value;
@@ -38,7 +45,6 @@ use serde_json::Value;
 use mcp_re_core::SigningKey;
 
 use crate::block::ActorIdentity;
-use crate::block::ResolverOutcome;
 use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
@@ -86,14 +92,6 @@ impl RejectionReason {
     }
 }
 
-/// The trusted result of verifying a signed rejection: the authoritative wire
-/// code and the (advisory) HTTP status.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SignedRejection {
-    pub wire_code: String,
-    pub status: u16,
-}
-
 /// Build the JSON-RPC error body bytes for a rejection. `id` echoes the
 /// rejected request's id when known (else JSON `null`).
 fn rejection_body(id: Value, reason: &RejectionReason) -> Vec<u8> {
@@ -123,12 +121,17 @@ fn rejection_body(id: Value, reason: &RejectionReason) -> Vec<u8> {
 }
 
 /// Best-effort extraction of the JSON-RPC `id` from a request body (echoed into
-/// the rejection). A body that does not parse yields `null` — the rejection is
-/// still valid, just uncorrelated.
+/// the rejection). The body is UNVERIFIED, so only a JSON-RPC-legal id (string or
+/// number) is echoed; a body that does not parse, or carries any other id, yields
+/// `null` — the rejection is still valid, just uncorrelated.
 fn request_id(request: &HttpRequest) -> Value {
     serde_json::from_slice::<Value>(&request.body)
         .ok()
-        .and_then(|v| v.get("id").cloned())
+        .and_then(|v| {
+            v.get("id")
+                .filter(|id| id.is_string() || id.is_number())
+                .cloned()
+        })
         .unwrap_or(Value::Null)
 }
 
@@ -222,51 +225,9 @@ pub fn build_delegated_rejection_preflight(
     Ok(response)
 }
 
-/// Verify a signed rejection and return its authoritative wire code. When
-/// `request` is `Some`, the `;req` binding to that request is checked (a spliced
-/// rejection fails). Fails closed on any signature/digest/binding problem — a
-/// client under `require_mcp_re` treats that failure as an untrusted rejection.
-pub fn verify_signed_rejection<R: Into<ResolverOutcome>>(
-    response: &HttpResponse,
-    request: Option<&HttpRequest>,
-    verifier: &crate::verifier::Verifier<'_, R>,
-    now: i64,
-) -> Result<SignedRejection, HttpProfileError> {
-    // A rejection is a server-signed response: resolve for the RESPONSE slot. Which floor
-    // applies is decided by whether a trustworthy request context EXISTS, and the two
-    // produce different types.
-    match request {
-        Some(req) => {
-            verifier.verify_bound_response_floor(response, req, now)?;
-        }
-        None => {
-            verifier.verify_unbound_response_floor(response, now)?;
-        }
-    }
-    // Only AFTER the signature verifies do we read the body for the wire code.
-    let wire_code = extract_wire_code(&response.body)?;
-    Ok(SignedRejection {
-        wire_code,
-        status: response.status,
-    })
-}
-
-/// Pull `error.data.mcp_re_error.wire_code` from a verified rejection body. The
-/// body is already signature-protected when this runs.
-fn extract_wire_code(body: &[u8]) -> Result<String, HttpProfileError> {
-    let v: Value = serde_json::from_slice(body)
-        .map_err(|_| HttpProfileError::MalformedEvidence("rejection body json"))?;
-    v.get("error")
-        .and_then(|e| e.get("data"))
-        .and_then(|d| d.get("mcp_re_error"))
-        .and_then(|m| m.get("wire_code"))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or(HttpProfileError::MalformedEvidence("rejection wire_code"))
-}
-
 #[cfg(test)]
 mod tests {
+    use super::pre_052_direct_root_verifier::verify_pre_052_direct_root_rejection_for_negative_test as verify_rejection;
     use crate::block::SignerSlot;
     use crate::policy::VerifierPolicy;
     use crate::verifier::Verifier;
@@ -366,19 +327,34 @@ mod tests {
 
     #[test]
     fn unsigned_rejection_is_untrusted() {
-        // A bare JSON-RPC error with no signature must not verify — the client
-        // treats this as rejection_unsigned under require_mcp_re.
+        // A bare JSON-RPC error with no signature must not verify.
         let unsigned = HttpResponse {
             status: 403,
             headers: vec![("Content-Type".into(), "application/json".into())],
-            body: rejection_body(json!(7), &reason()),
+            body: rejection_body(serde_json::json!(7), &reason()),
         };
-        assert!(verify_signed_rejection(
+        assert!(verify_rejection(
             &unsigned,
             Some(&request()),
             &Verifier::new(&VerifierPolicy::default(), &resolver()),
             NOW
         )
         .is_err());
+    }
+
+    /// The id echoed into a signed response comes from an unverified body: only a string
+    /// or a number survives, anything else is `null`.
+    #[test]
+    fn a_non_scalar_request_id_is_echoed_as_null() {
+        let with_id = |id: &str| HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers: Vec::new(),
+            body: format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"x"}}"#).into_bytes(),
+        };
+        assert_eq!(request_id(&with_id(r#"{"a":1}"#)), Value::Null);
+        assert_eq!(request_id(&with_id("[1,2]")), Value::Null);
+        assert_eq!(request_id(&with_id(r#""abc""#)), json!("abc"));
+        assert_eq!(request_id(&with_id("7")), json!(7));
     }
 }

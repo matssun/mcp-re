@@ -616,7 +616,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/rejection/mod.rs"
-baseline_prod_loc = 267
+baseline_prod_loc = 227
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

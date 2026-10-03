@@ -29,10 +29,10 @@ use mcp_re_http_profile::bodyless::pre_052_fixtures::verify_pre_052_root_signed_
 use mcp_re_http_profile::reconstruct_chain;
 use mcp_re_http_profile::rejection::pre_052_direct_root::build_pre_052_direct_root_rejection_for_negative_test;
 use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_base_for_negative_test;
+use mcp_re_http_profile::rejection::pre_052_direct_root_verifier::verify_pre_052_direct_root_rejection_for_negative_test;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::verify_artifact_binding;
-use mcp_re_http_profile::verify_signed_rejection;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -1284,7 +1284,7 @@ fn build_fixtures() -> Vec<Fixture> {
         EXPIRES,
     )
     .expect("bound rejection builds");
-    verify_signed_rejection(
+    verify_pre_052_direct_root_rejection_for_negative_test(
         &bound,
         Some(&req),
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -2378,7 +2378,7 @@ fn frozen_http_profile_corpus_verifies() {
                 // A rejection carries request context only when bound.
                 let request = fixture.request.as_ref().map(from_wire_request);
                 let response = from_wire_response(fixture.response.as_ref().expect("response"));
-                match verify_signed_rejection(
+                match verify_pre_052_direct_root_rejection_for_negative_test(
                     &response,
                     request.as_ref(),
                     &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -2387,7 +2387,7 @@ fn frozen_http_profile_corpus_verifies() {
                     // On success the observed verdict IS the trusted wire code
                     // (not just "verify_ok"): the frozen fixture pins the exact
                     // machine signal a client would act on.
-                    Ok(verdict) => verdict.wire_code,
+                    Ok(wire_code) => wire_code,
                     Err(e) => e.wire_code().to_owned(),
                 }
             }

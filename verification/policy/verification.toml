@@ -396,6 +396,7 @@ paths = [
   "mcp-re-http-profile/src/verified_response/facts.rs",
   "mcp-re-http-profile/src/verified_response/bound.rs",
   "mcp-re-http-profile/src/rejection/mod.rs",
+  "mcp-re-http-profile/src/rejection/pre_052_direct_root_verifier.rs",
   "mcp-re-http-profile/src/rejection/retry_contract.rs",
   "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
 ]
@@ -411,6 +412,8 @@ tested_symbols = [
   "//mcp-re-http-profile:proof_path_test#response_splice_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#rejection::pre_052_direct_root::tests::tampered_message_does_not_change_the_trusted_wire_code",
   "//mcp-re-http-profile:mcp_re_http_profile_test#rejection::pre_052_direct_root::tests::spliced_rejection_onto_a_different_request_fails",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#rejection::tests::a_non_scalar_request_id_is_echoed_as_null",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#rejection::pre_052_direct_root_verifier::tests::a_body_without_a_wire_code_is_malformed",
   "//mcp-re-http-profile:delegation_e2e_test#body_tamper_is_caught_by_content_digest",
   "//mcp-re-http-profile:delegation_e2e_test#a_delegated_bound_response_with_a_content_encoding_is_refused",
   "//mcp-re-http-profile:delegation_e2e_test#a_delegated_bound_response_that_is_not_json_is_refused",
