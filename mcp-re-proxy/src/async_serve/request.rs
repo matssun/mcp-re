@@ -34,7 +34,6 @@ use super::inbound::RequestView;
 use super::overloaded_response;
 use super::served_to_hyper;
 use super::AsyncRequestHandler;
-use super::InFlightGuard;
 use super::ServedHttpRequest;
 use super::ServedHttpResponse;
 
@@ -73,12 +72,6 @@ pub(super) async fn handle_request<H: AsyncRequestHandler>(
             None => None,
         }
     };
-
-    // MCPRE-115: count this request as in flight for the duration of its processing
-    // (body read + handler + response). Constructed AFTER admission so a shed 503 is
-    // not counted; dropped on every return path below, so graceful drain sees the
-    // count fall to zero exactly when the last request finishes.
-    let _in_flight_guard = InFlightGuard::new(&admission.in_flight_requests);
 
     let RequestView {
         headers,

@@ -27,6 +27,7 @@ use crate::tls::ServerOptions;
 
 use super::core_admission::CoreAdmission;
 use super::http_limits::http_builder;
+use super::open_connection::OpenConnection;
 use super::request::handle_request;
 use super::AsyncRequestHandler;
 
@@ -38,6 +39,7 @@ pub(super) async fn serve_connection<H: AsyncRequestHandler>(
     options: Arc<ServerOptions>,
     handler: Arc<H>,
     admission: CoreAdmission,
+    mut open: OpenConnection,
 ) -> std::io::Result<()> {
     let tls = establish_tls(tcp, acceptor, &options, &admission).await?;
     // THE ESTABLISHMENT BOUNDARY (ADR-MCPRE-063 Slice 4). `acceptor.accept` has
@@ -69,41 +71,49 @@ pub(super) async fn serve_connection<H: AsyncRequestHandler>(
     // Serve every request on this connection (keep-alive / H2 multiplexed). A
     // connection-level error just ends this task; other connections are unaffected.
     //
+    // TWO things end a connection gracefully, and both are the same move: in-flight requests
+    // finish and their responses are written, and no new request is accepted.
+    //
     // MAX CONNECTION AGE: the peer's certificate was validated — chain, CRL, validity
     // window — at the handshake and is never re-consulted on an established connection. At
-    // the age bound the connection is GRACEFULLY shut down: in-flight requests finish and
-    // no new ones are accepted, so a peer that never reconnects is not served indefinitely
-    // on one admission decision.
+    // the age bound the connection is shut down, so a peer that never reconnects is not
+    // served indefinitely on one admission decision.
     //
     // This bound alone does not force re-verification. A TLS 1.3 peer that resumes presents
     // a PSK and sends no CertificateVerify, so the reconnection re-runs no chain or CRL
     // check. Resumption tickets are bound to the trust-anchor epoch, so an anchor change
     // invalidates them; a CRL reload does not. Per-request revocation is what holds against
     // a revoked-but-resuming peer.
+    //
+    // THE DRAIN: on the core's shutdown the connection is shut down the same way, so a
+    // kept-alive connection stops admitting requests and one with a reply being written
+    // finishes it. The core's drain waits on this task, so it ends after the reply does.
     let conn = builder.serve_connection(io, service);
     tokio::pin!(conn);
-    match max_connection_age {
-        None => {
-            let _ = conn.await;
+    let age = async {
+        match max_connection_age {
+            Some(age) => tokio::time::sleep(age).await,
+            None => std::future::pending().await,
         }
-        Some(age) => {
-            let deadline = tokio::time::sleep(age);
-            tokio::pin!(deadline);
-            let mut draining = false;
-            loop {
-                tokio::select! {
-                    result = conn.as_mut() => {
-                        let _ = result;
-                        break;
-                    }
-                    // `draining` disarms this arm after it fires once: the elapsed
-                    // sleep is immediately ready forever, so re-selecting it would
-                    // spin instead of letting the graceful close complete.
-                    _ = &mut deadline, if !draining => {
-                        draining = true;
-                        conn.as_mut().graceful_shutdown();
-                    }
-                }
+    };
+    tokio::pin!(age);
+    // Disarms both arms once the graceful close has been asked for: an elapsed sleep and a
+    // sent signal are ready forever, so re-selecting them would spin instead of letting the
+    // close complete.
+    let mut closing = false;
+    loop {
+        tokio::select! {
+            result = conn.as_mut() => {
+                let _ = result;
+                break;
+            }
+            _ = &mut age, if !closing => {
+                closing = true;
+                conn.as_mut().graceful_shutdown();
+            }
+            () = open.draining(), if !closing => {
+                closing = true;
+                conn.as_mut().graceful_shutdown();
             }
         }
     }

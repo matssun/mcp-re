@@ -3648,10 +3648,10 @@ expect_red = [
 id = "M119-the-drain-waits-for-work-in-flight"
 unit = "proxy.serving_drain"
 theorem = "THM-0104"
-conjunct = "the drain waits while any request is in flight, so it returns on the count reaching zero rather than immediately"
+conjunct = "the drain waits while any connection is open, so it returns on the count reaching zero rather than immediately"
 path = "mcp-re-proxy/src/async_serve/core_admission.rs"
 anchor = """
-        while self.in_flight_requests.load(Ordering::Acquire) > 0 {
+        while self.connections.load(Ordering::Acquire) > 0 {
 """
 weakening = """
         while false {
@@ -3665,10 +3665,10 @@ expect_red = [
 id = "M120-the-in-flight-guard-is-the-count"
 unit = "proxy.serving_drain"
 theorem = "THM-0104"
-conjunct = "a request is counted in flight from before its body is read — the guard's construction is the only increment"
-path = "mcp-re-proxy/src/async_serve/mod.rs"
+conjunct = "a connection is counted open from accept, before its handshake — the guard's construction is the only increment"
+path = "mcp-re-proxy/src/async_serve/open_connection.rs"
 anchor = """
-        counter.fetch_add(1, Ordering::AcqRel);
+        admission.connections.fetch_add(1, Ordering::AcqRel);
 """
 weakening = """
 """

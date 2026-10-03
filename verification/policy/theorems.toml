@@ -5817,24 +5817,29 @@ title = "Shutdown stops admission and bounds the wait on admitted work; what the
 statement = """
 For one core of the async serving path, from the moment a shutdown is signalled:
 
-ADMISSION STOPS. The accept loop exits before the drain begins, so no request admitted after
-the signal exists.
+ADMISSION STOPS. The accept loop exits before the drain begins, so no connection is accepted
+after the signal, and the drain signal puts every connection that exists into graceful
+shutdown: it finishes the requests it has, writes their responses, and admits no further
+request on it, keep-alive or multiplexed alike.
 
-ADMITTED WORK IS COUNTED UNTIL ITS TASK ENDS. A request is IN FLIGHT from an RAII guard taken
-after admission and before its body is read, until its task ends. The guard's construction is
-the only increment and its `Drop` the only decrement, so a request cannot be served without
-being counted, nor counted after it has finished. The guard spans the WHOLE of the request's
-processing — body read, handler, response — so the count is a count of work not yet finished,
-never a count of work not yet started.
+ADMITTED WORK IS COUNTED UNTIL ITS CONNECTION ENDS. A connection is OPEN from an RAII guard
+taken at accept, before its TLS handshake, until its connection task ends. The guard's
+construction is the only increment and its `Drop` the only decrement, so a connection cannot
+be served without being counted, nor counted after it has finished. The task lives until the
+HTTP layer has finished the connection, which is after the last response it started has been
+written and flushed, so the count is a count of connections not yet finished — never of
+requests not yet started, and never of requests whose handler has merely returned. A reply
+still being written holds the count above zero.
 
-THE DRAIN WAITS ON THAT COUNT, BOUNDED. It polls while the count is non-zero and returns when
-the count reaches zero OR the grace deadline passes, whichever comes first. A grace that
-cannot be turned into an instant makes the drain decline to start rather than park process
-exit behind a deadline it cannot enforce.
+THE DRAIN WAITS ON THAT COUNT, BOUNDED. It signals the drain, then polls while the count is
+non-zero and returns when the count reaches zero OR the grace deadline passes, whichever comes
+first. A grace that cannot be turned into an instant makes the drain decline to start rather
+than park process exit behind a deadline it cannot enforce.
 
 WHAT THE GRACE LEAVES BEHIND MAY BE CANCELLED. When the drain returns, the core's runtime is
 dropped and a task still suspended at an await point is cancelled there. That await point may
-be anywhere the request's processing suspends, INCLUDING INSIDE THE HANDLER.
+be anywhere a connection's processing suspends, INCLUDING INSIDE THE HANDLER and INSIDE THE
+WRITE OF A REPLY: a reply the grace cut off is the grace's doing and nothing before it.
 
 CANCELLATION IS TERMINAL. A task cancelled by the runtime drop is never polled again: it does
 not enter the handler afterwards, and it does not resume inside it. Once `serve` returns, no
@@ -5847,7 +5852,8 @@ facts, and must not be sold a third.
 
 The two: nothing new is admitted after the signal, and no admitted request executes, or
 resumes executing, after `serve` returns, so the planes are dismantled behind work that has
-provably stopped rather than work assumed to have stopped.
+provably stopped rather than work assumed to have stopped. Within the grace, a reply a
+connection had started is delivered rather than cut off by the runtime drop.
 
 The third, which this mechanism does NOT provide: that a request cancelled at grace expiry
 had not already executed. The in-flight count does not distinguish a request stalled in its
@@ -5866,8 +5872,8 @@ WHAT IS NOT CLAIMED, in terms, because an earlier statement of this theorem clai
 and was corrected by owner ruling on 2026-09-06: that a request which reached the handler runs
 to completion and is answered; that every admitted request ends answered or never executed;
 that retry of an abandoned request is safe because the handler was never entered. The
-`InFlightGuard` spans body read, handler and response alike, and the drain exits on the grace
-as readily as on the count, so runtime teardown after grace expiry can cancel a task suspended
+connection guard spans handshake, body read, handler and response writing alike, and the drain
+exits on the grace as readily as on the count, so runtime teardown after grace expiry can cancel a task suspended
 INSIDE `handler(..).await`. The battery's
 `a_request_abandoned_by_the_grace_never_reaches_the_handler` exercises a request stalled in its
 BODY READ; it establishes that cancellation is terminal for a task that had not yet reached the

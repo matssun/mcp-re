@@ -6269,10 +6269,12 @@ tested_symbols = [
 [[unit]]
 id = "proxy.serving_drain"
 class = "V0"
-description = "What a shutdown does to requests already in the async serving path: acceptance stops, an RAII guard taken before the body read counts a request as in flight until its task ends, and the drain waits on that count until it reaches zero or the grace expires. Work the grace leaves behind may be cancelled wherever it is suspended, the handler included, and a cancelled task is never polled again. Claims nothing about how LONG teardown takes, and nothing about whether cancelled work crossed the exchange execution threshold."
+description = "What a shutdown does to connections already in the async serving path: acceptance stops, every connection is shut down gracefully on the drain signal (finishing the requests it has, writing their responses, admitting no more), an RAII guard taken at accept counts a connection as open until its task ends, and the drain waits on that count until it reaches zero or the grace expires — so a reply being written is delivered rather than cut off. Work the grace leaves behind may be cancelled wherever it is suspended, the handler and a reply's write included, and a cancelled task is never polled again. Claims nothing about how LONG teardown takes, and nothing about whether cancelled work crossed the exchange execution threshold."
 paths = [
   "mcp-re-proxy/src/async_serve/core_admission.rs",
+  "mcp-re-proxy/src/async_serve/connection.rs",
   "mcp-re-proxy/src/async_serve/mod.rs",
+  "mcp-re-proxy/src/async_serve/open_connection.rs",
   "mcp-re-proxy/src/async_serve/request.rs",
 ]
 exported_contracts = []
@@ -6281,7 +6283,9 @@ direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/serving/bounded_drain",
   # Two conjuncts a green battery can hold while neither is load-bearing: the drain's wait
-  # and the guard that makes the count move. M119-M120 ask.
+  # and the guard that makes the count move. M119-M120 ask. The count is of CONNECTIONS, taken
+  # at accept: a request-scoped count reached zero when the handler returned, before the reply
+  # was written, and the runtime drop then cut the reply off.
   "mutation://proxy/serving/bounded_drain",
 ]
 # The counted-drain controls, the terminal-cancellation control, and the vacuity control that
@@ -6295,11 +6299,18 @@ evidence = [
 tested_symbols = [
   "//mcp-re-proxy:async_drain_test#in_flight_request_completes_during_drain_zero_abandoned",
   "//mcp-re-proxy:async_drain_test#saturated_drain_completes_all_in_flight_zero_abandoned",
+  # The reply a connection had started is delivered, not cut off: the client reads nothing
+  # while the handler returns and the shutdown fires, so the server is blocked in the write
+  # when the drain begins. Red on the request-scoped count, green on the connection-scoped one.
+  "//mcp-re-proxy:async_drain_test#a_response_still_being_written_is_delivered_before_the_drain_ends",
   "//mcp-re-proxy:async_drain_test#a_request_abandoned_by_the_grace_never_reaches_the_handler",
   "//mcp-re-proxy:async_drain_test#the_handler_entry_counter_moves_for_a_request_that_is_not_abandoned",
   "//mcp-re-proxy:async_drain_test#idle_drain_returns_promptly",
   "//mcp-re-proxy:async_drain_test#stuck_request_cannot_delay_exit_past_grace",
   "//mcp-re-proxy:proxy_ext_unit_test#async_serve::request::tests::the_handler_is_handed_the_charged_allocation_not_a_copy",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_serve::open_connection::tests::a_connection_is_counted_from_accept_until_it_ends",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_serve::open_connection::tests::the_drain_signal_reaches_a_connection_accepted_before_or_after_it",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_serve::open_connection::tests::the_drain_waits_for_an_open_connection_then_returns",
 ]
 
 

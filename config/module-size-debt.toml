@@ -271,7 +271,7 @@ status = "unreviewed"
 # changed would launder 898 registered lines as progress.
 [[debt]]
 path = "mcp-re-proxy/src/async_serve/mod.rs"
-baseline_prod_loc = 365
+baseline_prod_loc = 346
 baseline_sha = "255465e"
 status = "unreviewed"
 

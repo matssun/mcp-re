@@ -35,7 +35,6 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -62,6 +61,10 @@ mod core_admission;
 /// One accepted connection: handshake admission and the establishment boundary.
 mod connection;
 
+/// One accepted connection as the drain sees it: the count it is part of and the signal it
+/// closes on.
+mod open_connection;
+
 /// The operator's limits, as bounds on the wire.
 mod http_limits;
 
@@ -74,6 +77,7 @@ mod inbound;
 use body_budget::BUFFERED_BODY_BUDGET_MULTIPLE;
 use connection::serve_connection;
 use core_admission::CoreAdmission;
+use open_connection::OpenConnection;
 
 /// The boxed, `Send` future a handler returns: signed response bytes out. The
 /// handler is genuinely ASYNC — the request path AWAITS it — so a real `Proxy`
@@ -151,34 +155,14 @@ impl<F> AsyncRequestHandler for F where
 /// the blocking loop's `SHUTDOWN_POLL_INTERVAL`).
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// How often the graceful-drain loop re-checks the in-flight-request count while
+/// How often the graceful-drain loop re-checks the open-connection count while
 /// waiting for shutdown to complete (MCPRE-115). Small enough that a clean drain
-/// returns promptly after the last request finishes, large enough to not busy-spin.
+/// returns promptly after the last connection finishes, large enough to not busy-spin.
 const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// hyper's own floor for `http1::Builder::max_buf_size`; a smaller value panics.
 /// `--max-header-bytes` is clamped up to it rather than passed through.
 const MIN_HYPER_BUF_BYTES: usize = 8192;
-
-/// RAII counter of requests currently being served on a core (MCPRE-115). Constructed
-/// once a request is admitted and about to be processed; the increment/decrement pair
-/// is exactly balanced by `Drop`, so the count reflects live in-flight requests on
-/// every return path (503 admission rejections are constructed BEFORE this guard and
-/// so are never counted — there is nothing to drain for a request that was shed).
-struct InFlightGuard(Arc<AtomicUsize>);
-
-impl InFlightGuard {
-    fn new(counter: &Arc<AtomicUsize>) -> Self {
-        counter.fetch_add(1, Ordering::AcqRel);
-        InFlightGuard(Arc::clone(counter))
-    }
-}
-
-impl Drop for InFlightGuard {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
 
 /// Run the async accept loop until `shutdown` flips. Each accepted connection is
 /// TLS-terminated (`tokio-rustls`) and served over `hyper` (keep-alive + H2). One
@@ -235,16 +219,21 @@ pub async fn serve<H: AsyncRequestHandler>(
         let acceptor = TlsAcceptor::from(config.load());
         let options = Arc::clone(&options);
         let handler = Arc::clone(&handler);
+        // Counted at accept, before the handshake: a peer still handshaking when the drain
+        // begins is waited for, not forgotten.
+        let open = OpenConnection::accepted(&admission);
         let admission = admission.clone();
         tokio::spawn(async move {
             let _permit = permit; // released when the connection task ends
-            let _ = serve_connection(tcp, acceptor, options, handler, admission).await;
+            let _ = serve_connection(tcp, acceptor, options, handler, admission, open).await;
         });
     }
 
-    // The accept loop has stopped, so no NEW request will be admitted. When `serve`
-    // returns, the caller drops the runtime, aborting any (idle) connection tasks — none
-    // of which hold an in-flight request once the count reaches zero.
+    // The accept loop has stopped, so no NEW connection is counted. The drain tells every
+    // connection to shut down gracefully — finish the requests it has, write their responses,
+    // admit no more — and waits for them. When `serve` returns the caller drops the runtime,
+    // which aborts only what the grace left behind: no connection is cut while a reply it
+    // started is still being written, and no kept-alive connection goes on admitting requests.
     admission.drain(options.limits.drain_grace).await;
 }
 
