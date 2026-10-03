@@ -7766,13 +7766,16 @@ evidence = [
 # ASM-0048, that a `DEL` reply of 1 means this call removed a key that existed, which is
 # where the one-shot verdict measured below comes from.
 tested_symbols = [
-  # The key is derived from the actor the VERIFIER resolved, never from anything the
-  # request asserts. Without it a second verified actor who knows the public digests
-  # completes the victim's approval round trip.
+  # Two deployments sharing one store do not share a continuation namespace, because the
+  # audience is in the key.
   "lib#continuation_store::key::tests::the_key_is_scoped_to_the_audience",
+  # No tuple can be spelled as another by moving a field boundary (probes M141, M142).
   "lib#continuation_store::key::tests::no_boundary_between_the_keys_fields_can_be_moved",
   # The key separates both inputs, so the scope above is not vacuous.
   "lib#continuation_store::key::tests::key_is_stable_and_specific_to_both_inputs",
+  # The domain tag is part of the digested bytes; deleting `hasher.update(CONTINUATION_KEY_DOMAIN)`
+  # turns it red.
+  "lib#continuation_store::key::tests::the_domain_separator_is_part_of_the_digested_bytes",
   # REACHABILITY, not merely key derivation. The three above establish what the key is
   # made of; this one establishes that the store enforces it — one actor's entry is not
   # returned to another. A key correctly derived and then looked up loosely would satisfy
@@ -8048,7 +8051,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.operator_facing_redaction"
 class = "V0"
-description = "What of a deployment REQUEST may reach an operator's eyes, in the PROXY: the PKCS#11 User PIN, which unlocks a token holding the response-signing key and so sits in the same custody class as the key, and the inner-backend URL LIST. Each is owned by a type whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the secret is already gone — never a call site that remembered to redact. What ONE operator-configured locator becomes is NOT this unit's: that owner is `mcp-re-operator-display`, a different crate and a different project, and `mcp-re-operator-display.locator_projection` claims it. This unit CONSUMES that owner — `RedactedLocator` is re-exported here and the backend list is a projection over it — so what remains local is that the list renders through the shared owner rather than through a second redaction of its own."
+description = "What of a deployment REQUEST may reach an operator's eyes, in the PROXY: the inner-backend URL LIST is owned by `RedactedBackendUrls`, whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the credential is already gone — never a call site that remembered to redact; and a `SecretString`'s only rendering carries neither its value nor its length. The PKCS#11 User PIN is NOT a request field (the request carries its path); that the PIN travels as a `SecretString` is decided by its reader `capability_materialization::key_source::pin`, outside this unit's `paths` (NP-185), so this unit claims the wrapper's rendering, not the PIN's custody. What ONE operator-configured locator becomes is NOT this unit's: that owner is `mcp-re-operator-display`, a different crate and a different project, and `mcp-re-operator-display.locator_projection` claims it. This unit CONSUMES that owner — `RedactedLocator` is re-exported here and the backend list is a projection over it — so what remains local is that the list renders through the shared owner rather than through a second redaction of its own."
 paths = [
   "mcp-re-proxy/src/deployment_request/secret_string.rs",
   "mcp-re-proxy/src/deployment_request/inner_backend_display.rs",
@@ -11180,6 +11183,7 @@ tested_symbols = [
   "lib#error::core_projection::tests::an_outage_does_not_project_onto_an_actor_binding_failure",
   "lib#error::core_projection::tests::failure_classes_map_to_their_precise_codes",
   "lib#error::core_projection::tests::the_derived_token_is_the_projected_verdicts_own",
+  "lib#error::core_projection::tests::the_dispatch_taxonomy_projects_through_the_same_decision",
   "lib#error::core_projection::tests::the_projection_preserves_the_ratified_group_count",
   "lib#error::tests::a_context_carrying_failure_names_what_was_missing",
   "lib#error::tests::an_outage_is_not_an_untrusted_key",
