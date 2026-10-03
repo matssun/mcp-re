@@ -18,7 +18,8 @@
 //! Both are stated because both exist; only the first is on a serving path. The live
 //! proposition is therefore the strong one — *every transport identity a served request
 //! binds against was extracted from a verified client certificate* — and it holds by
-//! construction rather than by convention, because the second producer cannot be reached.
+//! construction rather than by convention, because the second producer is unreachable at
+//! runtime (Mode C is refused at Layer-A validation), not because visibility hides it.
 //!
 //! It is deliberately NOT written down as a theorem here. The proposition is an open gap in
 //! `docs/architecture/components/transport-binding.md`, and closing it in prose ahead of
@@ -80,6 +81,11 @@ impl TransportIdentity {
     /// validation — so it does not weaken what the served path can claim. It is named
     /// rather than hidden: a producer that exists and is not stated is how a seal becomes
     /// a story about the producers somebody remembered.
+    ///
+    /// `pub(super)` admits all of `transport` and its descendants (`transport/mod.rs`, the
+    /// live half, and `ingress/{mod,v2,v2_wire}.rs`). The only production caller is
+    /// `ingress::v2`'s verifier; the producer set is held by review over that subtree,
+    /// not by the compiler.
     pub(super) fn attested_by_verified_ingress(
         value: impl Into<String>,
         source: IdentitySource,
@@ -132,8 +138,8 @@ mod tests {
     fn the_projections_are_the_only_way_to_read_one() {
         // What the seal buys, stated as a control: there is no public field and no public
         // constructor, so a value of this type exists only where a verification put it
-        // there. `attested_by_verified_ingress` is `pub(super)` and reachable only from the
-        // deferred ingress verifier next door.
+        // there. `attested_by_verified_ingress` is `pub(super)`: privacy admits the whole
+        // `transport` subtree, and the sole production caller is `ingress::v2`.
         let identity = TransportIdentity::attested_by_verified_ingress(
             "spiffe://example.org/a",
             IdentitySource::UriSan,
