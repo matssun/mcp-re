@@ -70,6 +70,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0053 | external-boundary | The shared object named by `--pkcs11-module` is a trustworthy Cryptoki implementation. | proxy.pkcs11_adapter | THM-0116 |
 | ASM-0054 | external-boundary | The PKCS#11 module is thread-safe, as requested by `CKF_OS_LOCKING_OK` at `C_Initialize`. | proxy.pkcs11_adapter | THM-0116 |
 | ASM-0055 | external-boundary | A token label is unique across the slots present when the proxy starts. | proxy.pkcs11_adapter | THM-0116 |
-| ASM-0056 | external-boundary | `std::time::Instant` readings taken in one process never decrease. | proxy.admission_currency_gate | _no theorem_ |
+| ASM-0056 | external-boundary | `std::time::Instant` readings taken in one process never decrease. | proxy.admission_currency_gate | THM-0132 |
 
 19 assumption(s) are reached by more than one theorem.

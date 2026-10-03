@@ -169,6 +169,7 @@ any of them is closed.
 | THM-0129 | Authoritative admission state is authenticated and bounded-current | http_profile.admission_state_provenance | unit://http_profile.admission_state_provenance, unit://proxy.admission_record_addressing, unit://proxy.admission_state_source | live |
 | THM-0130 | One logical audit record renders to exactly one physical record, recoverably | proxy.audit_text_rendering | unit://proxy.audit_text_rendering | live |
 | THM-0131 | The client-revocation posture states what this replica is enforcing now | proxy.client_revocation_currency | unit://proxy.client_crl_next_update_gate, unit://proxy.client_revocation_currency, unit://proxy.retired_plane_cadence_retraction | live |
+| THM-0132 | A replica serves on last-known admission state for at most P after the authority last answered | proxy.admission_currency_gate | unit://proxy.admission_currency_gate | live |
 
 ## Claims in full
 
@@ -1603,3 +1604,15 @@ any of them is closed.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0054
+
+### THM-0132 — A replica serves on last-known admission state for at most P after the authority last answered
+
+**Statement.** A degraded candidate (THM-0005) becomes a serve only while this replica's own monotonic window over its successful authority reads is unexhausted: the elapsed time since the authority last ANSWERED, measured on one `std::time::Instant` clock, is at most P — exactly `--admission-degraded-bound-secs`, with no skew allowance added. A replica that has never reached the authority has no window; a deployment that did not opt in to degraded mode has none either; a non-positive bound is no window rather than a long one. Nothing a caller presents moves the window: it is advanced only by an answer from the authority, and a definitive negative counts as an answer.
+
+**Security consequence.** An operator told that degraded serving is bounded by P is told something true of the deployment. During a store outage the revocation channel is the store, so the assertion issuer never learns of a revocation and keeps minting assertions with a current `iat`; a bound on the presented assertion's freshness would be satisfied by a caller that simply keeps fetching new ones, and the replica would serve for the whole outage. Bounding elapsed time since the last successful read is the one measure nothing the caller does can move.
+
+**Scope — what this does NOT establish.** The bound is REPLICA-WIDE (ruling 12, item 5): one window per replica, not one per workload. A per-workload timer would let a workload first seen during an outage start a fresh window, so the declared P bounds the replica's outage and not each workload's. A revocation made during the window is therefore served past until the window closes, by design; P is the declared bound on that exposure. P is a bound on RUNNING time, not on wall time: ASM-0056 states that `Instant` readings never decrease and do not advance across host suspend, so a suspended host counts less time than the wall-clock outage. The wall clock stays where a peer's clock matters, in the assertion freshness and record-currentness comparisons that THM-0005 states. It says nothing about whether an individual degraded candidate is well formed (THM-0005), the authenticity of the assertion presented (ASM-0012), or how quickly the authority is reached again once it recovers.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0005
