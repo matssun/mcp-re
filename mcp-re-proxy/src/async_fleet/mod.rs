@@ -60,9 +60,12 @@ use crate::async_serve::AsyncRequestHandler;
 use crate::tls::ServerOptions;
 
 mod core_runtime;
+mod reuseport;
 mod shard_depth;
+
 pub use core_runtime::CorePool;
 pub use core_runtime::HandshakeBound;
+use reuseport::reuseport_listener;
 pub use shard_depth::DelegatedTlsDepthRefusal;
 pub use shard_depth::ShardDepth;
 
@@ -182,9 +185,10 @@ impl Fleet {
 /// one `Proxy` (or handler) per core over the shared coherent stores rather than
 /// contending on a single shared handler.
 ///
-/// Fails closed at startup: if any listener cannot be bound (port in use without
-/// `SO_REUSEPORT`, permission, address family unsupported) the whole fleet fails to
-/// start and no worker is spawned.
+/// Fails closed at startup: any listener that cannot be bound (port in use without
+/// `SO_REUSEPORT`, permission, address family unsupported), runtime that cannot be built
+/// or worker that cannot be spawned fails the whole call with no core having served and
+/// every started worker joined.
 pub fn serve_fleet<H, F>(
     cfg: FleetConfig,
     config: Arc<crate::config_snapshot::ServerConfigSnapshot>,
@@ -225,8 +229,7 @@ where
         listeners.push(reuseport_listener(bound, cfg.listen_backlog)?);
     }
 
-    let mut workers = Vec::with_capacity(cores);
-    for (core_index, listener) in listeners.into_iter().enumerate() {
+    let workers = release_when_all_started(listeners, |core_index, listener, parked| {
         // Class R, and settled HERE because this is the thread that can still report a
         // failure. Neither is an invariant of this program — `build` allocates threads and
         // an event loop, `set_nonblocking` is an `fcntl` — and a core the OS declines must
@@ -240,6 +243,9 @@ where
         let worker = std::thread::Builder::new()
             .name(format!("mcp-re-serve-{core_index}"))
             .spawn(move || {
+                if parked.recv().is_err() {
+                    return;
+                }
                 // Best-effort CPU pinning (Linux); a no-op elsewhere. Pinning is a
                 // tail-latency optimization, never a correctness property, so a
                 // failure to pin is ignored (logged nowhere hot).
@@ -267,14 +273,53 @@ where
                     .await;
                 });
             })?;
-        workers.push(worker);
-    }
+        Ok(worker)
+    })?;
 
     Ok(Fleet {
         addr: bound,
         shutdown,
         workers,
     })
+}
+
+/// Start one worker per item, each parked until every worker has started.
+///
+/// `start` receives the index, the item and the receiver the worker must wait on before
+/// serving. If any `start` fails, every parked worker's sender is dropped (its `recv`
+/// errs and it returns without serving), every started handle is joined, and the error is
+/// returned: no worker serves and none outlives the call. Only once all have started is
+/// each released.
+fn release_when_all_started<T>(
+    items: impl IntoIterator<Item = T>,
+    mut start: impl FnMut(usize, T, std::sync::mpsc::Receiver<()>) -> std::io::Result<JoinHandle<()>>,
+) -> std::io::Result<Vec<JoinHandle<()>>> {
+    let mut started = Vec::new();
+    for (index, item) in items.into_iter().enumerate() {
+        let (release, parked) = std::sync::mpsc::sync_channel::<()>(1);
+        match start(index, item, parked) {
+            Ok(handle) => started.push((handle, release)),
+            Err(error) => {
+                let handles: Vec<JoinHandle<()>> = started
+                    .into_iter()
+                    .map(|(handle, release)| {
+                        drop(release);
+                        handle
+                    })
+                    .collect();
+                for handle in handles {
+                    let _ = handle.join();
+                }
+                return Err(error);
+            }
+        }
+    }
+    let mut handles = Vec::with_capacity(started.len());
+    for (handle, release) in started {
+        let _ = release.send(());
+        handles.push(handle);
+    }
+    Ok(handles)
 }
 
 /// MCPRE-114: derive the per-core in-flight ceiling from an optional fleet-global
@@ -392,142 +437,6 @@ pub fn resolve_topology(
         ShardDepth::derived(DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1))
     };
     (shards, workers)
-}
-
-/// Create a `SO_REUSEPORT` (+ `SO_REUSEADDR`) TCP listener bound to `addr` and put it
-/// in listening state. `SO_REUSEPORT` must be set BEFORE `bind`, which `std::net`
-/// does not expose — hence the raw socket construction. On Linux the kernel then
-/// load-balances accepted connections across every listener in the port's
-/// `SO_REUSEPORT` group (one per core).
-#[cfg(unix)]
-fn reuseport_listener(addr: SocketAddr, backlog: i32) -> std::io::Result<std::net::TcpListener> {
-    use std::os::fd::FromRawFd;
-    use std::os::fd::OwnedFd;
-
-    let family = match addr {
-        SocketAddr::V4(_) => libc::AF_INET,
-        SocketAddr::V6(_) => libc::AF_INET6,
-    };
-
-    // SAFETY: `socket(2)` with a valid family/type returns a new fd or -1. We wrap a
-    // successful fd in an `OwnedFd` IMMEDIATELY so every early return below closes it
-    // (RAII), and hand ownership to `TcpListener` only on the success path.
-    let owned = unsafe {
-        let fd = libc::socket(family, libc::SOCK_STREAM, 0);
-        if fd < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        OwnedFd::from_raw_fd(fd)
-    };
-    let fd = {
-        use std::os::fd::AsRawFd;
-        owned.as_raw_fd()
-    };
-
-    set_sockopt(fd, libc::SO_REUSEADDR)?;
-    set_sockopt(fd, libc::SO_REUSEPORT)?;
-
-    // Build the bind sockaddr for the address family and bind + listen. On any error
-    // `owned` drops and closes the fd.
-    bind_and_listen(fd, addr, backlog)?;
-
-    Ok(std::net::TcpListener::from(owned))
-}
-
-/// Non-Unix platforms have no `SO_REUSEPORT`; the per-core fleet is a Unix
-/// (Linux-production) data plane. Fail closed rather than silently binding a single
-/// non-shared listener.
-#[cfg(not(unix))]
-fn reuseport_listener(_addr: SocketAddr, _backlog: i32) -> std::io::Result<std::net::TcpListener> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "SO_REUSEPORT per-core fleet is only supported on Unix",
-    ))
-}
-
-/// Set a boolean `SOL_SOCKET` option to 1 on `fd`, failing closed on error.
-#[cfg(unix)]
-fn set_sockopt(fd: std::os::fd::RawFd, option: libc::c_int) -> std::io::Result<()> {
-    let one: libc::c_int = 1;
-    // SAFETY: `fd` is a valid open socket; `&one` points to a `c_int` of the declared
-    // length. `setsockopt` reads that many bytes and does not retain the pointer.
-    let rc = unsafe {
-        libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            option,
-            &one as *const libc::c_int as *const libc::c_void,
-            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-        )
-    };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-/// `bind(2)` + `listen(2)` `fd` to `addr`, constructing the family-appropriate
-/// sockaddr. Ports and IPv4 addresses go on the wire in network byte order.
-#[cfg(unix)]
-fn bind_and_listen(fd: std::os::fd::RawFd, addr: SocketAddr, backlog: i32) -> std::io::Result<()> {
-    let rc = match addr {
-        SocketAddr::V4(v4) => {
-            let sockaddr = libc::sockaddr_in {
-                #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
-                sin_len: std::mem::size_of::<libc::sockaddr_in>() as u8,
-                sin_family: libc::AF_INET as libc::sa_family_t,
-                sin_port: v4.port().to_be(),
-                // `octets()` is already network-order bytes; `from_ne_bytes` keeps
-                // that in-memory byte layout, which is what `s_addr` (network order)
-                // expects.
-                sin_addr: libc::in_addr {
-                    s_addr: u32::from_ne_bytes(v4.ip().octets()),
-                },
-                sin_zero: [0; 8],
-            };
-            // SAFETY: `fd` is a valid socket; the sockaddr pointer + length describe a
-            // fully-initialized `sockaddr_in`. `bind` copies it and does not retain
-            // the pointer.
-            unsafe {
-                libc::bind(
-                    fd,
-                    &sockaddr as *const libc::sockaddr_in as *const libc::sockaddr,
-                    std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-                )
-            }
-        }
-        SocketAddr::V6(v6) => {
-            let sockaddr = libc::sockaddr_in6 {
-                #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
-                sin6_len: std::mem::size_of::<libc::sockaddr_in6>() as u8,
-                sin6_family: libc::AF_INET6 as libc::sa_family_t,
-                sin6_port: v6.port().to_be(),
-                sin6_flowinfo: v6.flowinfo(),
-                sin6_addr: libc::in6_addr {
-                    s6_addr: v6.ip().octets(),
-                },
-                sin6_scope_id: v6.scope_id(),
-            };
-            // SAFETY: as above for the IPv6 sockaddr.
-            unsafe {
-                libc::bind(
-                    fd,
-                    &sockaddr as *const libc::sockaddr_in6 as *const libc::sockaddr,
-                    std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
-                )
-            }
-        }
-    };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-
-    // SAFETY: `fd` is a valid bound socket.
-    let rc = unsafe { libc::listen(fd, backlog) };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
 }
 
 /// Pin the calling thread to `core_index % online_cpus` (Linux `sched_setaffinity`).
@@ -760,5 +669,56 @@ mod topology_tests {
         let (shards, depth) = resolve_topology(0, 0);
         assert_eq!((shards, depth.get()), auto_for(available));
         assert!(!depth.is_operator_stated());
+    }
+}
+
+#[cfg(test)]
+mod start_gate_tests {
+    use super::release_when_all_started;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::sync::Arc;
+
+    #[test]
+    fn a_core_that_fails_to_start_leaves_every_started_core_unserved_and_joined() {
+        let served = Arc::new(AtomicBool::new(false));
+        let exited = Arc::new(AtomicUsize::new(0));
+        let result = release_when_all_started([0, 1, 2], |index, _item, parked| {
+            if index == 2 {
+                return Err(std::io::Error::other("declined"));
+            }
+            let served = Arc::clone(&served);
+            let exited = Arc::clone(&exited);
+            Ok(std::thread::spawn(move || {
+                if parked.recv().is_err() {
+                    exited.fetch_add(1, SeqCst);
+                    return;
+                }
+                served.store(true, SeqCst);
+            }))
+        });
+        let error = result.expect_err("the third core declines to start");
+        assert!(error.to_string().contains("declined"));
+        assert!(!served.load(SeqCst));
+        assert_eq!(exited.load(SeqCst), 2);
+    }
+
+    #[test]
+    fn every_core_is_released_once_all_have_started() {
+        let served = Arc::new(AtomicUsize::new(0));
+        let handles = release_when_all_started([0, 1, 2], |_index, _item, parked| {
+            let served = Arc::clone(&served);
+            Ok(std::thread::spawn(move || {
+                if parked.recv().is_ok() {
+                    served.fetch_add(1, SeqCst);
+                }
+            }))
+        })
+        .expect("every core starts");
+        for handle in handles {
+            handle.join().expect("the worker exits cleanly");
+        }
+        assert_eq!(served.load(SeqCst), 3);
     }
 }

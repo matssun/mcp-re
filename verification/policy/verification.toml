@@ -11575,6 +11575,8 @@ paths = [
   # that must consult the decision before it binds anything. A closure without this file
   # would attest a refusal while the line that has to come first could move.
   "mcp-re-proxy/src/async_fleet/mod.rs",
+  # CLOSURE, NOT CLAIM: the refusal must precede the first bind, and this file performs it.
+  "mcp-re-proxy/src/async_fleet/reuseport.rs",
 ]
 exported_contracts = []
 # TWO classes. The refusal is one `return Err` reached by a two-term condition, and the
