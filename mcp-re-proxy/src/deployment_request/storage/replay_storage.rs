@@ -25,6 +25,11 @@ pub struct ReplayStorageRequest {
     /// Where admitted nonces live. `None` is a missing locator, refused beside the tier
     /// that required one.
     pub store: Option<ReplayStoreRequest>,
+    /// The declared bound, in seconds, on how far two replicas' clocks may disagree.
+    /// `None` is the operator having said nothing, which the replay owner resolves to its
+    /// own default AFTER provenance: a default filled in here would erase the difference
+    /// between a deployment that chose a value and one that did not.
+    pub replica_clock_divergence_secs: Option<i64>,
 }
 
 /// Which store admits nonces.
@@ -93,6 +98,7 @@ mod tests {
         let request = ReplayStorageRequest {
             durability: Some(ReplayDurabilityTier::Linearizable),
             store: Some(ReplayStoreRequest::redis("redis://h:6379")),
+            replica_clock_divergence_secs: None,
         };
         assert!(matches!(request.store, Some(ReplayStoreRequest::Redis(_))));
         assert_eq!(request.durability, Some(ReplayDurabilityTier::Linearizable));

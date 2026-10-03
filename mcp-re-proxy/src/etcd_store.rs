@@ -706,6 +706,50 @@ mod tests {
         assert_eq!(grant["TTL"], json!(600));
     }
 
+    fn granted_ttl(transport: &ScriptedTransport) -> Value {
+        transport
+            .calls
+            .lock()
+            .expect("calls lock")
+            .iter()
+            .find(|(p, _)| p == "v3/lease/grant")
+            .map(|(_, b)| b["TTL"].clone())
+            .expect("a lease grant must have been recorded")
+    }
+
+    /// The lease is granted the declared bound longer than the verifier's horizon, and a
+    /// replica whose clock runs ahead by that bound still retains to the TRUE horizon.
+    #[test]
+    fn a_lease_outlives_the_horizon_by_the_declared_divergence() {
+        let bound = |secs| {
+            crate::config_state::ReplicaClockDivergence::new(secs)
+                .expect("inside the declared ceiling")
+        };
+        let transport = Arc::new(ScriptedTransport::new(json!({ "succeeded": true }), false));
+        let store = EtcdAtomicReplayStore::with_transport(
+            Box::new(Arc::clone(&transport)),
+            bound(7).retention_clock(|| 1_779_998_100),
+        );
+        store
+            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0)
+            .expect("fresh decision must not error");
+        assert_eq!(granted_ttl(&transport), json!(607));
+
+        let ahead = 4;
+        let fast = Arc::new(ScriptedTransport::new(json!({ "succeeded": true }), false));
+        let store = EtcdAtomicReplayStore::with_transport(
+            Box::new(Arc::clone(&fast)),
+            bound(ahead).retention_clock(move || 1_779_998_100 + ahead),
+        );
+        store
+            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0)
+            .expect("fresh decision must not error");
+        assert!(
+            granted_ttl(&fast).as_i64().expect("integer") >= 600,
+            "the lease lapses before the horizon, 600s after true now"
+        );
+    }
+
     /// A gateway that answers a redirect is not followed: its target is never
     /// reached and the 3xx body is never read as an etcd decision.
     #[test]

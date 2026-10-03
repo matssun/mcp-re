@@ -66,6 +66,13 @@ replay:
   # defensible where the hop is confined by other means (a fenced validation
   # namespace, a service mesh terminating TLS transparently).
   allowPlaintextRedis: false
+  # How far two replicas' host clocks may disagree, in seconds (0..=300). Every replay
+  # record is kept this much longer than the verifier's window, because Redis expires a
+  # record on the clock of the replica that wrote it and a replica running ahead of a
+  # correct one would otherwise let a nonce lapse before the request it stands for stops
+  # being accepted. Unset leaves the proxy's own default (5s). The bound is a premise about
+  # the fleet's clock discipline: set it no lower than that discipline delivers.
+  clockDivergenceSecs: null
 
 # MRTR continuation correlation (ADR-MCPS-047). The shared store that lets a
 # multi-round-trip answer leg be honoured by a DIFFERENT replica than the one that

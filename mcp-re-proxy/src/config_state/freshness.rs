@@ -34,6 +34,7 @@
 //! while breaking the equality, which is why the test pins `>=` and records that equality
 //! is the current policy rather than the claim.
 
+use super::replica_clock::ReplicaClockDivergence;
 use crate::deployment_request::DeploymentRequest;
 
 /// The accepted temporal uncertainty, and what each mechanism derives from it.
@@ -43,6 +44,10 @@ use crate::deployment_request::DeploymentRequest;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FreshnessWindow {
     max_clock_skew_secs: i64,
+    /// How far two replicas' clocks may disagree. A second dimension of temporal
+    /// uncertainty beside the skew, and it widens only the STORE's retention: the verifier's
+    /// window above does not move.
+    replica_clock_divergence: ReplicaClockDivergence,
 }
 
 impl FreshnessWindow {
@@ -58,7 +63,22 @@ impl FreshnessWindow {
             .contains(&max_clock_skew_secs)
             .then_some(Self {
                 max_clock_skew_secs,
+                replica_clock_divergence: ReplicaClockDivergence::deployment_default(),
             })
+    }
+
+    /// The same window under a declared inter-replica clock divergence bound.
+    pub fn with_replica_clock_divergence(self, bound: ReplicaClockDivergence) -> Self {
+        Self {
+            replica_clock_divergence: bound,
+            ..self
+        }
+    }
+
+    /// The bound a shared replay store pads every record's retention by, because it expires
+    /// the record on the writing replica's own clock.
+    pub fn replica_clock_divergence(&self) -> ReplicaClockDivergence {
+        self.replica_clock_divergence
     }
 
     /// The skew the RFC 9421 verifier applies to `created` and `expires` (§5.1).
@@ -103,7 +123,13 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<FreshnessWin
             )],
         );
     };
-    (Some(window), Vec::new())
+    match ReplicaClockDivergence::resolve(config.replay.replica_clock_divergence_secs) {
+        Ok(bound) => (
+            Some(window.with_replica_clock_divergence(bound)),
+            Vec::new(),
+        ),
+        Err(refusal) => (None, vec![refusal]),
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +194,30 @@ mod tests {
                 .verifier_skew_secs(),
             30
         );
+    }
+
+    /// A declared divergence travels with the window, and an undeclared one resolves to the
+    /// deployment default rather than to zero.
+    #[test]
+    fn the_declared_replica_clock_divergence_is_part_of_the_resolved_window() {
+        let mut config = crate::config_state::test_support::legal_config();
+        let undeclared = classify_and_validate(&config).0.expect("legal");
+        assert_eq!(
+            undeclared.replica_clock_divergence(),
+            ReplicaClockDivergence::deployment_default()
+        );
+        config.replay.replica_clock_divergence_secs = Some(11);
+        let declared = classify_and_validate(&config).0.expect("legal");
+        assert_eq!(declared.replica_clock_divergence().secs(), 11);
+        assert_eq!(
+            declared.verifier_skew_secs(),
+            undeclared.verifier_skew_secs(),
+            "the divergence widens store retention and never the verifier's window"
+        );
+        config.replay.replica_clock_divergence_secs = Some(-1);
+        let (state, violations) = classify_and_validate(&config);
+        assert!(state.is_none());
+        assert!(violations[0].contains("--replay-clock-divergence-secs"));
     }
 
     /// Outside §5.1 there is no window, so none is constructed.

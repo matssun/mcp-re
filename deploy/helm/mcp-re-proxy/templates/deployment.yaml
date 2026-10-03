@@ -145,6 +145,10 @@ spec:
             - {{ .Values.replay.redisUrl | quote }}
             - "--replay-durability-tier"
             - {{ .Values.replay.durabilityTier | quote }}
+            {{- if not (kindIs "invalid" .Values.replay.clockDivergenceSecs) }}
+            - "--replay-clock-divergence-secs"
+            - "{{ .Values.replay.clockDivergenceSecs }}"
+            {{- end }}
             - "--revocation-tier"
             - {{ .Values.revocation.tier | quote }}
             {{- if .Values.revocation.trustReloadSeconds }}

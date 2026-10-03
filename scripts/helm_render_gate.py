@@ -787,6 +787,27 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
         [("--key-source", "aws-kms")],
         ["--aws-kms-use-web-identity", "--signing-key-seed"],
     ),
+    # Ruling 12 item 21. Unset must leave the proxy's own default in force rather than render
+    # a zero that would read as a declared "the replicas share one clock"; zero is a real
+    # declaration and must still render.
+    (
+        "an unset replay clock divergence renders no flag",
+        merged(),
+        [("--replay-durability-tier", "redis-wait-quorum:2:2000")],
+        ["--replay-clock-divergence-secs"],
+    ),
+    (
+        "a declared replay clock divergence renders, including zero",
+        merged({"replay": {"clockDivergenceSecs": 12}}),
+        [("--replay-clock-divergence-secs", "12")],
+        [],
+    ),
+    (
+        "a declared zero replay clock divergence is rendered, not dropped as empty",
+        merged({"replay": {"clockDivergenceSecs": 0}}),
+        [("--replay-clock-divergence-secs", "0")],
+        [],
+    ),
     # ADR-MCPRE-053 §7. "The guards refuse a bad config" is only half the property:
     # the chart previously rendered NO admission flag under any values at all, so
     # every chart-deployed fleet ran AdmissionKind::Off. The flag has to appear.

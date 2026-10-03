@@ -491,6 +491,46 @@ mod tests {
         assert_eq!(recorded, vec![vec!["SET", "k", "1", "NX", "PX", "600000"]]);
     }
 
+    fn divergence(secs: i64) -> crate::config_state::ReplicaClockDivergence {
+        crate::config_state::ReplicaClockDivergence::new(secs).expect("inside the declared ceiling")
+    }
+
+    /// The record is kept exactly the declared bound longer than the verifier's horizon.
+    #[tokio::test]
+    async fn a_record_is_kept_the_declared_divergence_longer_than_the_horizon() {
+        let (url, seen) = serve(set_script("+OK\r\n")).await;
+        let store = RedisAsyncAtomicReplayStore::connect_with(
+            &url,
+            divergence(7).retention_clock(|| 1_000),
+        )
+        .await
+        .expect("connect");
+        assert_eq!(insert_at(&store, 1_600).await, Ok(ReplayDecision::Fresh));
+        let recorded = seen.lock().expect("commands").clone();
+        assert_eq!(recorded, vec![vec!["SET", "k", "1", "NX", "PX", "607000"]]);
+    }
+
+    /// The gap the padding closes, from the correct replica's side: a replica whose clock
+    /// runs `ahead` seconds fast must not write a key that lapses before the verifier stops
+    /// accepting the request in TRUE time.
+    #[tokio::test]
+    async fn a_replica_whose_clock_runs_ahead_still_retains_to_the_true_horizon() {
+        let ahead = 4;
+        let (url, seen) = serve(set_script("+OK\r\n")).await;
+        let clock = divergence(ahead).retention_clock(move || 1_000 + ahead);
+        let store = RedisAsyncAtomicReplayStore::connect_with(&url, clock)
+            .await
+            .expect("connect");
+        assert_eq!(insert_at(&store, 1_600).await, Ok(ReplayDecision::Fresh));
+        let px: i64 = seen.lock().expect("commands")[0][5]
+            .parse()
+            .expect("PX is an integer");
+        assert!(
+            px >= (1_600 - 1_000) * 1_000,
+            "PX {px} ms lapses before the horizon, 600s after true now"
+        );
+    }
+
     #[tokio::test]
     async fn an_existing_key_is_a_replay() {
         let (url, _seen) = serve(set_script("$-1\r\n")).await;

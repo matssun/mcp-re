@@ -2253,3 +2253,50 @@ review_requirement = "Owner review; any change to the continuation key's digest 
 premise_class = "assumed"
 affected_contracts = []
 tool_specific_mechanism = "none:trusted-primitive"
+
+[[assumption]]
+id = "ASM-0061"
+description = "The actual divergence between any two replicas' host clocks is at most the bound the deployment declares with `--replay-clock-divergence-secs`."
+justification = """
+A shared replay store expires a record on the clock of the replica that wrote it: the Redis
+`PX` and the etcd lease TTL are both `retain_until - now`, with `now` read from that replica's
+host. A replica whose clock runs `d` seconds ahead of a correct one writes a record that lapses
+`d` seconds before the correct replica stops accepting the request it stands for, and in those
+`d` seconds the nonce is `Fresh` again on every replica.
+
+The mechanism no longer leaves that gap to the environment. The deployment declares a bound, and
+every store keeps every record that much longer than the verifier's horizon (`ReplicaClockDivergence`,
+applied in all four replay stores), so the arithmetic is safe for EVERY clock that satisfies the
+bound, not for the clocks that happen to agree. What this premise registers is the remainder: that
+the declared bound is true, which nothing in this repository can establish. It is the operator's
+clock discipline (NTP or equivalent) across the fleet, and a host whose clock is stepped, suspended
+or unsynchronised past the bound reopens exactly the window the padding sized.
+
+It is a premise about the BOUND, not about the verifier's skew: ASM-0025 and ASM-0026 state what the
+policy tolerates in a peer's `created` and `expires`, ASM-0057 states what the per-request reading
+is, and this states how far the replicas that share a store may differ from one another. The default
+the deployment is held to when it declares nothing is 5 seconds and the ceiling is the verifier's own
+skew ceiling.
+
+It stops being acceptable if a replica joins the fleet whose clock is not disciplined to the same
+reference, or if the declared bound is lowered below what the fleet's clock discipline actually
+delivers.
+"""
+scope = [
+  "unit://proxy.redis_replay_adapter",
+  "unit://proxy.etcd_replay_adapter",
+  "boundary://boundary.clock",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 21 (e2cd431a)"
+review_requirement = "Owner review; any change to how the declared bound is applied to retention, to its default or ceiling, and any fleet whose replicas do not share one clock reference."
+premise_class = "external-boundary"
+boundary_owner = """
+The DEPLOYMENT OPERATOR's clock discipline across the replicas that share one replay store: no two
+replicas' host clocks differ by more than the bound declared with `--replay-clock-divergence-secs`.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-proxy/src/config_state/replica_clock.rs#ReplicaClockDivergence",
+]
+tool_specific_mechanism = "none:trusted-seam"

@@ -11076,3 +11076,52 @@ connection and trusting the rest accepts a pool whose later connections reached 
 target or a replacement that evicts, and every single-server control stays green: the first
 connection still answers `noeviction`.
 """
+
+[[probe]]
+id = "M434-proxy-the-retention-clock-is-not-held-back"
+unit = "proxy.freshness_window_state"
+conjunct = "every shared store keeps every record the declared replica clock divergence bound longer than the verifier's horizon, because the clock it derives its expiry from is held back by that bound"
+path = "mcp-re-proxy/src/config_state/replica_clock.rs"
+anchor = """
+        Box::new(move || clock().saturating_sub(secs))
+"""
+weakening = """
+        Box::new(move || clock().saturating_sub(secs * 0))
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::replica_clock::tests::the_retention_clock_reads_exactly_the_declared_bound_earlier",
+]
+note = """
+THE HELD-BACK READING IS THE ONLY TERM THAT MAKES THE EXPIRY SAFE FOR A FAST CLOCK. Without it
+the record lapses at `retain_until` on the WRITING replica's clock, earlier than the verifier's
+horizon in true time by however far that clock runs ahead, and every window and staleness control
+passes because each is stated against the one clock the store reads. The four stores consume the
+clock through the value they already take, so a weakening here reaches all of them: the four
+store batteries (`proxy.redis_replay_adapter`, `proxy.etcd_replay_adapter`) each hold a control
+that reads the TTL a held-back clock produces, and those go red too, but they are other units'
+controls and this unit's own is the one declared here.
+"""
+
+[[probe]]
+id = "M435-proxy-the-redis-backend-is-connected-on-the-bare-clock"
+unit = "proxy.replay_materialization"
+conjunct = "each shared backend is connected on the clock held back by the declared replica clock divergence, so the padding reaches the store that serves"
+path = "mcp-re-proxy/src/replay_plane/backends.rs"
+anchor = """
+                    freshness
+                        .replica_clock_divergence()
+                        .retention_clock(crate::redis_store::system_clock()),
+"""
+weakening = """
+                    crate::redis_store::system_clock(),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#replay_plane::backends::tests::both_shared_backends_are_connected_on_the_held_back_clock",
+]
+note = """
+THE PADDING IS A PROPERTY OF THE CLOCK, SO IT EXISTS ONLY WHERE THE CLOCK IS CHOSEN. The store, its
+TTL arithmetic and every one of its own controls are unchanged by this weakening and stay green:
+each is stated against whatever clock it was handed. Only the composition says which clock that is,
+and a backend left on the bare system clock is a deployment that declared a divergence bound and
+is not held to it.
+"""

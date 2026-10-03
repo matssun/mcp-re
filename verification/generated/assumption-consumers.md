@@ -75,5 +75,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0058 | external-boundary | Write access to the replay keyspace of the shared replay tier is confined to the fleet's own replicas: the instance is dedicated to the deployment, or an access-control list denies every other principal `DEL`, `UNLINK` and `FLUSH*` on it. | proxy.etcd_replay_adapter, proxy.redis_replay_adapter, proxy.replay_admission_gate | THM-0092, THM-0106, THM-0107 |
 | ASM-0059 | external-boundary | Every server reachable at `--replay-redis-url`, failover targets and replacements included, runs `maxmemory-policy noeviction` for as long as it serves the replay tier. | proxy.redis_replay_adapter | THM-0106 |
 | ASM-0060 | assumed | For any two distinct (audience, resolved actor, `requestState`) triples this deployment handles, the continuation key derivation produces distinct SHA-256 digest values. | proxy.continuation_correlation_store | THM-0087 |
+| ASM-0061 | external-boundary | The actual divergence between any two replicas' host clocks is at most the bound the deployment declares with `--replay-clock-divergence-secs`. | proxy.etcd_replay_adapter, proxy.redis_replay_adapter | THM-0106, THM-0107 |
 
-21 assumption(s) are reached by more than one theorem.
+22 assumption(s) are reached by more than one theorem.

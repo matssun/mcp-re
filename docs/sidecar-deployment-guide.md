@@ -169,6 +169,7 @@ not start — absence is a refusal, not a fall back to something weaker.
 | `--replay-durability-tier linearizable` | A CP / linearizable store. Requires `--cpstore-etcd-endpoint`. |
 | `--replay-redis-url <url>` | Where admitted nonces live, for a Redis tier. Refused beside a linearizable tier. |
 | `--cpstore-etcd-endpoint <url>` | The CP store's endpoint. Refused without a linearizable tier. |
+| `--replay-clock-divergence-secs <n>` | How far two replicas' clocks may disagree, 0..=300 seconds (default 5). Every replay record is kept this much longer than the verifier's window, because the store expires a record on the writing replica's clock. |
 
 The two weaker tiers (`redis-async`, `single-store-fail-closed`) parse but are refused as
 deployment states: they carry a replay window the strict production posture does not

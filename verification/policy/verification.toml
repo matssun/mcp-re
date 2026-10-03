@@ -7227,6 +7227,9 @@ tested_symbols = [
   # What those refusals amount to together: a build carrying neither backend has no
   # reachable replay state, so it is not a serving binary.
   "//mcp-re-proxy:proxy_unit_test#replay_plane::materialized::tests::a_build_with_no_replay_backend_can_reach_no_replay_state",
+  # The declared replica clock divergence reaches the stores only through the clock each
+  # backend is connected on (ASM-0061); a backend on the bare system clock is unpadded.
+  "//mcp-re-proxy:proxy_unit_test#replay_plane::backends::tests::both_shared_backends_are_connected_on_the_held_back_clock",
 ]
 
 # ADR-MCPRE-059 §28 / issue #744, D1b'. The materialization leaf the continuation family was
@@ -8865,6 +8868,9 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_noeviction_redis_is_accepted",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_record_is_kept_the_declared_divergence_longer_than_the_horizon",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_replica_whose_clock_runs_ahead_still_retains_to_the_true_horizon",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::a_record_is_kept_the_declared_divergence_longer_than_the_horizon",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::every_pooled_connection_is_asked_for_its_eviction_policy",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_store_refuses_to_connect_to_an_evicting_redis",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::every_evicting_policy_is_refused_and_so_is_an_unreadable_one",
@@ -8924,6 +8930,8 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::a_fresh_window_is_bounded_by_the_per_operation_deadline",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::a_lease_outlives_the_horizon_by_the_declared_divergence",
+  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::a_lease_outlives_the_horizon_by_the_declared_divergence",
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::an_already_stale_request_is_rejected_without_touching_etcd",
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::an_expired_lease_is_never_reused",
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::nonces_retained_to_the_same_instant_share_one_lease",
@@ -10388,7 +10396,12 @@ tested_symbols = [
 id = "proxy.freshness_window_state"
 class = "V0"
 description = "THE ACCEPTED TEMPORAL UNCERTAINTY AS ONE OWNED FACT: a skew outside the §5.1 bound resolves no window, an overflowing expiry saturates rather than wrapping, retention never ends before the verifier stops accepting, the two projections are derived from the same skew, and the public constructor validates too — so possessing a window means the skew was bounded whichever crate built it. Says nothing about how either consumer applies the window it reads."
-paths = ["mcp-re-proxy/src/config_state/freshness.rs"]
+# `replica_clock.rs` is the second dimension of the same fact: how far two replicas' clocks
+# may disagree, resolved with the skew and carried by the same window to the stores.
+paths = [
+  "mcp-re-proxy/src/config_state/freshness.rs",
+  "mcp-re-proxy/src/config_state/replica_clock.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -10397,6 +10410,12 @@ evidence = [
   "mutation://proxy/freshness_window_state/bounded_skew",
 ]
 tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::freshness::tests::the_declared_replica_clock_divergence_is_part_of_the_resolved_window",
+  "//mcp-re-proxy:proxy_unit_test#config_state::replica_clock::tests::the_bound_is_zero_to_the_ceiling_and_nothing_else",
+  "//mcp-re-proxy:proxy_unit_test#config_state::replica_clock::tests::the_retention_clock_reads_exactly_the_declared_bound_earlier",
+  "//mcp-re-proxy:proxy_unit_test#config_state::replica_clock::tests::an_extreme_reading_saturates_instead_of_wrapping",
+  "//mcp-re-proxy:proxy_unit_test#config_state::replica_clock::tests::saying_nothing_resolves_to_the_default_and_a_bad_declaration_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::replica_clock::tests::the_default_is_inside_the_ceiling",
   "//mcp-re-proxy:proxy_unit_test#config_state::freshness::tests::a_skew_outside_the_bound_resolves_no_window",
   "//mcp-re-proxy:proxy_unit_test#config_state::freshness::tests::an_overflowing_expiry_saturates_rather_than_wrapping",
   "//mcp-re-proxy:proxy_unit_test#config_state::freshness::tests::retention_never_ends_before_the_verifier_stops_accepting",

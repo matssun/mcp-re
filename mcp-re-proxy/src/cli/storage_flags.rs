@@ -25,6 +25,7 @@ pub(super) struct StorageFlags {
     replay_redis_url: Option<String>,
     cpstore_etcd_endpoint: Option<String>,
     durability: Option<ReplayDurabilityTier>,
+    replica_clock_divergence_secs: Option<i64>,
     continuation_url: Option<String>,
     trust_epoch_url: Option<String>,
     trust_epoch_key: Option<String>,
@@ -45,6 +46,7 @@ impl StorageFlags {
             "--replay-redis-url"
                 | "--cpstore-etcd-endpoint"
                 | "--replay-durability-tier"
+                | "--replay-clock-divergence-secs"
                 | "--continuation-control-redis-url"
                 | "--trust-epoch-redis-url"
                 | "--trust-epoch-key"
@@ -60,6 +62,9 @@ impl StorageFlags {
             "--cpstore-etcd-endpoint" => self.cpstore_etcd_endpoint = held(),
             "--replay-durability-tier" => {
                 self.durability = Some(ReplayDurabilityTier::parse(value)?)
+            }
+            "--replay-clock-divergence-secs" => {
+                self.replica_clock_divergence_secs = Some(divergence_secs(value)?)
             }
             "--continuation-control-redis-url" => self.continuation_url = held(),
             "--trust-epoch-redis-url" => self.trust_epoch_url = held(),
@@ -77,6 +82,7 @@ impl StorageFlags {
                 self.durability,
                 self.replay_redis_url,
                 self.cpstore_etcd_endpoint,
+                self.replica_clock_divergence_secs,
             )?,
             continuation: ContinuationStoreRequest {
                 shared: shared(self.continuation_url),
@@ -84,6 +90,13 @@ impl StorageFlags {
             trust_epoch: trust_epoch(self.trust_epoch_url, self.trust_epoch_key)?,
         })
     }
+}
+
+/// `--replay-clock-divergence-secs`, as the integer the replay owner bounds.
+fn divergence_secs(value: &str) -> Result<i64, String> {
+    value
+        .parse()
+        .map_err(|_| format!("--replay-clock-divergence-secs must be an integer, got {value:?}"))
 }
 
 /// The replay store and the durability claimed for it.
@@ -95,6 +108,7 @@ fn replay(
     durability: Option<ReplayDurabilityTier>,
     redis_url: Option<String>,
     etcd_endpoint: Option<String>,
+    replica_clock_divergence_secs: Option<i64>,
 ) -> Result<ReplayStorageRequest, String> {
     let store = match (redis_url, etcd_endpoint) {
         (Some(_), Some(_)) => {
@@ -112,7 +126,11 @@ fn replay(
         (None, Some(endpoint)) => Some(ReplayStoreRequest::etcd(endpoint)),
         (None, None) => None,
     };
-    Ok(ReplayStorageRequest { durability, store })
+    Ok(ReplayStorageRequest {
+        durability,
+        store,
+        replica_clock_divergence_secs,
+    })
 }
 
 /// The trust-epoch source, with the key as a coordinate INSIDE it.
@@ -155,6 +173,7 @@ mod tests {
             Some(ReplayDurabilityTier::Linearizable),
             Some("redis://h:6379".to_string()),
             Some("http://h:2379".to_string()),
+            None,
         )
         .expect_err("one deployment, one replay store");
         assert!(err.contains("both name the replay store"), "{err}");
@@ -165,11 +184,22 @@ mod tests {
     /// violation rather than the parser cutting the parse short.
     #[test]
     fn either_replay_store_alone_and_neither_are_coherent() {
-        let redis = replay(None, Some("redis://h:6379".to_string()), None).expect("one store");
+        let redis =
+            replay(None, Some("redis://h:6379".to_string()), None, None).expect("one store");
         assert!(matches!(redis.store, Some(ReplayStoreRequest::Redis(_))));
-        let etcd = replay(None, None, Some("http://h:2379".to_string())).expect("one store");
+        let etcd = replay(None, None, Some("http://h:2379".to_string()), None).expect("one store");
         assert!(matches!(etcd.store, Some(ReplayStoreRequest::Etcd(_))));
-        assert_eq!(replay(None, None, None).expect("none").store, None);
+        assert_eq!(replay(None, None, None, None).expect("none").store, None);
+    }
+
+    /// The declared divergence travels in the request as stated, and saying nothing stays
+    /// nothing: the default is the replay owner's to apply after provenance.
+    #[test]
+    fn a_declared_replica_clock_divergence_keeps_its_provenance() {
+        let said = replay(None, None, None, Some(9)).expect("coherent");
+        assert_eq!(said.replica_clock_divergence_secs, Some(9));
+        let silent = replay(None, None, None, None).expect("coherent");
+        assert_eq!(silent.replica_clock_divergence_secs, None);
     }
 
     /// A coordinate with no store is refused; with one, it travels inside it.

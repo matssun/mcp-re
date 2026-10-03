@@ -898,6 +898,44 @@ mod tests {
         );
     }
 
+    /// The record is kept exactly the declared bound longer than the verifier's horizon, and
+    /// a replica whose clock runs ahead by that bound still retains to the TRUE horizon.
+    #[test]
+    fn a_record_is_kept_the_declared_divergence_longer_than_the_horizon() {
+        let _guard = super::tests_support::connect_count_lock();
+        let retain_until: i64 = 1_779_998_730;
+        let ahead = 4;
+        let bound = crate::config_state::ReplicaClockDivergence::new(ahead)
+            .expect("inside the declared ceiling");
+        let (url, seen) = scripted(noeviction_script("SET", "+OK\r\n"));
+        let clock = bound.retention_clock(move || retain_until - 600 + ahead);
+        let timeout = Duration::from_secs(5);
+        let store = RedisAtomicReplayStore::connect_with(
+            &url,
+            timeout,
+            Some(timeout),
+            Some(timeout),
+            clock,
+        )
+        .unwrap_or_else(|e| panic!("connect must succeed: {e:?}"));
+
+        assert!(matches!(
+            store.insert_if_absent("k", retain_until, 0),
+            Ok(ReplayDecision::Fresh)
+        ));
+
+        let px: i64 = recorded(&seen)[0][5].parse().expect("PX is an integer");
+        assert_eq!(
+            px,
+            600 * 1000,
+            "the fast clock held back by its own bound is true now"
+        );
+        assert!(
+            px >= 600 * 1000,
+            "PX {px} ms lapses before the horizon, 600s after true now"
+        );
+    }
+
     /// `compute_ttl_ms` itself still floors a non-positive raw window to a minimal
     /// positive TTL (never 0, never negative) — exercised here by calling the pure
     /// function directly. In production it is only ever REACHED for a

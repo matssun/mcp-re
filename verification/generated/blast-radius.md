@@ -488,3 +488,4 @@ attestations this view cannot see.
 | ASM-0058 | description, justification, scope or mechanism | proxy.etcd_replay_adapter, proxy.redis_replay_adapter, proxy.replay_admission_gate | assumption review |
 | ASM-0059 | description, justification, scope or mechanism | proxy.redis_replay_adapter | assumption review |
 | ASM-0060 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |
+| ASM-0061 | description, justification, scope or mechanism | proxy.etcd_replay_adapter, proxy.redis_replay_adapter | assumption review |

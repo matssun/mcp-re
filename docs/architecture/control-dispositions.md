@@ -1365,7 +1365,7 @@ says it was configured to check.
 
 ## NP-031 — a replay tier is named exactly once and carries what it cannot run without
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (11), `mcp-re-proxy/src/cli/storage_flags` (3).
+**Controls:** `mcp-re-proxy/src/cli.rs` (11), `mcp-re-proxy/src/cli/storage_flags` (4).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1380,7 +1380,7 @@ deployment the shipped Helm chart's own guard refuses (NP-007).
 
 ## NP-032 — the trust-refresh posture holds its cadence to its window
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (14), `mcp-re-proxy/src/cli/currency_flags` (4),
+**Controls:** `mcp-re-proxy/src/cli.rs` (16), `mcp-re-proxy/src/cli/currency_flags` (4),
 `mcp-re-proxy/src/cli/delegated_signing_flags` (2).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.

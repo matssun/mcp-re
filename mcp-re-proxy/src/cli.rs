@@ -830,6 +830,50 @@ mod tests {
         }
     }
 
+    /// The replica clock divergence is declared at the command line and reaches the
+    /// resolved window; saying nothing leaves the request's field empty so the replay owner
+    /// can tell a chosen value from a default.
+    #[test]
+    fn a_declared_replay_clock_divergence_reaches_the_resolved_window() {
+        let silent = parse_args(&minimal_durable()).expect("parses");
+        assert_eq!(silent.replay.replica_clock_divergence_secs, None);
+        for declared in [0, 5, mcp_re_proxy_divergence_ceiling()] {
+            let mut a = minimal_durable();
+            a.push("--replay-clock-divergence-secs".into());
+            a.push(declared.to_string());
+            let config =
+                parse_args(&a).unwrap_or_else(|e| panic!("divergence {declared} must parse: {e}"));
+            assert_eq!(config.replay.replica_clock_divergence_secs, Some(declared));
+        }
+    }
+
+    fn mcp_re_proxy_divergence_ceiling() -> i64 {
+        crate::config_state::replica_clock::MAX_REPLICA_CLOCK_DIVERGENCE_SECS
+    }
+
+    /// A divergence outside the ceiling is refused at the command line, because a negative
+    /// one would shorten retention and so reopen the window it exists to close.
+    #[test]
+    fn an_out_of_bounds_replay_clock_divergence_is_refused_at_parse() {
+        for declared in [-1, -30, mcp_re_proxy_divergence_ceiling() + 1, 3600] {
+            let mut a = minimal_durable();
+            a.push("--replay-clock-divergence-secs".into());
+            a.push(declared.to_string());
+            let err = parse_args(&a)
+                .err()
+                .unwrap_or_else(|| panic!("divergence {declared} must be refused"));
+            assert!(
+                err.contains("--replay-clock-divergence-secs must be"),
+                "got: {err}"
+            );
+        }
+        let mut a = minimal_durable();
+        a.push("--replay-clock-divergence-secs".into());
+        a.push("soon".into());
+        let err = parse_args(&a).expect_err("not an integer");
+        assert!(err.contains("must be an integer"), "got: {err}");
+    }
+
     /// An empty `--target-uri` would make the audience/target conjunction compare
     /// `"" == ""` on every request. Refused at parse rather than served.
     #[test]

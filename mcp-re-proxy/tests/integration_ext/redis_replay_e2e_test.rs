@@ -237,14 +237,17 @@ fn live_pttl_is_bounded_window_not_absolute_epoch() {
 
     // Expected window in ms is (expires_at + skew - now) * 1000. Allow a generous
     // band for the seconds the op itself took.
-    let expected_ms = (window_secs + SKEW) * 1000;
+    let expected_ms = (window_secs
+        + SKEW
+        + mcp_re_proxy::config_state::replica_clock::DEFAULT_REPLICA_CLOCK_DIVERGENCE_SECS)
+        * 1000;
     assert!(
         pttl_ms > 0,
         "key must carry a positive TTL, got PTTL={pttl_ms} (key missing or no expiry)"
     );
     assert!(
         (pttl_ms - expected_ms).abs() < 60_000,
-        "PTTL ({pttl_ms} ms) must be ≈ the (expires_at + skew - now) window \
+        "PTTL ({pttl_ms} ms) must be ≈ the (expires_at + skew + replica clock divergence - now) window \
          ({expected_ms} ms), within 60s"
     );
     // The decisive anti-regression bound: the now=0 bug would set PTTL on the

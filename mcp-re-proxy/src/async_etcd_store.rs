@@ -626,6 +626,38 @@ mod tests {
         );
     }
 
+    fn divergence(secs: i64) -> crate::config_state::ReplicaClockDivergence {
+        crate::config_state::ReplicaClockDivergence::new(secs).expect("inside the declared ceiling")
+    }
+
+    /// The lease is granted the declared bound longer than the verifier's horizon, and a
+    /// replica whose clock runs ahead by that bound still retains to the TRUE horizon.
+    #[tokio::test]
+    async fn a_lease_outlives_the_horizon_by_the_declared_divergence() {
+        let (base, _grants, _txns, ttls) = counting_gateway().await;
+        let store =
+            EtcdAsyncAtomicReplayStore::connect_with(&base, divergence(7).retention_clock(|| NOW));
+        store
+            .atomic_insert_if_absent(ReplayInsert::new("k|a|n1", TEST_ACTOR, NOW + 300, 0))
+            .await
+            .expect("records");
+        assert_eq!(*ttls.lock().expect("ttls"), vec![307]);
+
+        let ahead = 4;
+        let (base, _grants, _txns, ttls) = counting_gateway().await;
+        let fast = EtcdAsyncAtomicReplayStore::connect_with(
+            &base,
+            divergence(ahead).retention_clock(move || NOW + ahead),
+        );
+        fast.atomic_insert_if_absent(ReplayInsert::new("k|a|n2", TEST_ACTOR, NOW + 300, 0))
+            .await
+            .expect("records");
+        assert!(
+            ttls.lock().expect("ttls")[0] >= 300,
+            "the lease lapses before the horizon, 300s after true now"
+        );
+    }
+
     /// The pool holds leases only while they are live: one whose instant has passed has
     /// been revoked by etcd, and attaching a key to it would leave the key unretained.
     #[tokio::test]

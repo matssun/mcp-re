@@ -13703,3 +13703,29 @@ control = "tests/integration_live/main.rs#local_seed_backend::tests::the_offline
 decision = "new-proposition"
 proposition = "NP-149"
 recorded = "2026-10-03"
+
+[[disposition]]
+id = "CD-20171"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::storage_flags::tests::a_declared_replica_clock_divergence_keeps_its_provenance"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-10-03"
+
+[[disposition]]
+id = "CD-20172"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::tests::a_declared_replay_clock_divergence_reaches_the_resolved_window"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-10-03"
+
+
+[[disposition]]
+id = "CD-20173"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::tests::an_out_of_bounds_replay_clock_divergence_is_refused_at_parse"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-10-03"
+

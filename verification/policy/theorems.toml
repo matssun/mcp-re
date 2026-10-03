@@ -6004,10 +6004,13 @@ is a server string rather than a token this code chose. **A policy it could not 
 refused too**: an empty reply, an error, a renamed `CONFIG` — an unverifiable policy is not
 evidence of a safe one.
 
-THE WINDOW IS A WINDOW. The `PX` TTL is `retain_until - now` read from the store's OWN clock,
-never an absolute epoch, and it clamps to a minimal value rather than going negative when the
-instant has already passed. An already-stale `retain_until` is refused BEFORE Redis is
-touched.
+THE WINDOW IS A WINDOW. The `PX` TTL is the retention horizon plus the declared replica clock divergence
+bound, minus `now` read from the store's OWN clock, never an absolute epoch, and it clamps to a
+minimal value rather than going negative when the instant has already passed. The padding is what
+makes the window safe for a replica whose clock runs ahead of a correct one: the record is kept to
+the verifier's horizon in true time for every clock within the declared bound, and that the actual
+divergence is within the bound is ASM-0061. An already-stale `retain_until` is refused BEFORE Redis
+is touched, judged on the unpadded horizon.
 
 THE DECLARED TIER IS ENFORCED, NOT AUDITED. Where `REDIS_WAIT_QUORUM` is selected, a fresh
 insert is followed by `WAIT`, and an acknowledgement shortfall FAILS CLOSED — it does not
@@ -6080,9 +6083,11 @@ PUTting the key under a lease iff it does not yet exist. Etcd linearizes the tra
 two racing inserts cannot both observe the key absent: `succeeded` is `Fresh`, and
 not-`succeeded` is `Replay`.
 
-THE LEASE IS BOUNDED, AND IS A WINDOW. The lease TTL is `retain_until - now` on the store's
-OWN clock, clamped to a minimal value rather than going negative, so a recorded nonce
-self-expires at the freshness window even if the proxy dies. An already-stale `retain_until`
+THE LEASE IS BOUNDED, AND IS A WINDOW. The lease TTL is the retention horizon plus the declared
+replica clock divergence bound, minus `now` on the store's OWN clock, clamped to a minimal value
+rather than going negative, so a replica whose clock runs ahead of a correct one still keeps the
+record to the verifier's horizon in true time (the bound being true is ASM-0061). A recorded nonce
+self-expires at that padded horizon even if the proxy dies. An already-stale `retain_until`
 is refused with NO etcd call at all. Nonces retained to the same instant share one lease, so
 the outstanding-lease count grows with the freshness window rather than with request volume,
 and an expired lease is never reused.
