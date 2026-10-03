@@ -13857,3 +13857,27 @@ control = "src/lib.rs#cli::runtime_flags::connection_limits::tests::a_header_cei
 decision = "new-proposition"
 proposition = "NP-229"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20189"
+project = "mcp-re-proxy"
+control = "src/lib.rs#http_inner::tests::the_failure_count_saturates_instead_of_wrapping_back_through_zero"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20190"
+project = "mcp-re-proxy"
+control = "src/lib.rs#http_inner::tests::an_unrepresentable_ejection_duration_saturates_instead_of_wrapping_to_no_cooldown"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20191"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::sf_dictionary::tests::a_label_member_without_a_value_is_refused_not_skipped"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-10-04"
