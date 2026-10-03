@@ -94,6 +94,18 @@ mod tests {
             resolved_server_actor: actor("resp-2"),
             response_signature_base_digest: RequestEvidence::from_response_signature_base(b"r"),
         };
+        let CryptographicFloorVerifiedUnboundResponse {
+            resolved_server_actor: _,
+            response_signature_base_digest: _,
+        } = &unbound;
+        let UnboundResponseSignatureFacts {
+            accepted_signer:
+                AcceptedResponseSigner {
+                    identity: _,
+                    verification_key: _,
+                },
+            response_signature_base_digest: _,
+        } = unbound.signature_facts();
         assert_eq!(unbound.resolved_server_actor.slot, SignerSlot::Response);
         assert_eq!(
             unbound.signature_facts().accepted_signer.identity.keyid,
@@ -102,8 +114,9 @@ mod tests {
     }
 
     /// A delegated receipt carries the shared facts and the ROOT issuer kid, and no
-    /// `ResolvedActor`: the seam answered for the root, never for the signing key, and the
-    /// two are different values.
+    /// `ResolvedActor`: the seam answered for the root, never for the signing key. The
+    /// exhaustive destructuring is the control: a field added to the product or its facts
+    /// stops this target compiling.
     #[test]
     fn a_delegated_receipt_carries_no_trust_seam_resolution_to_misread() {
         let delegated = VerifiedDelegatedUnboundResponse {
@@ -121,9 +134,17 @@ mod tests {
             "delegated-1"
         );
         assert_eq!(delegated.delegation_issuer_kid, "root-1");
-        assert_ne!(
-            delegated.delegation_issuer_kid,
-            delegated.signature_facts.accepted_signer.identity.keyid
-        );
+        let VerifiedDelegatedUnboundResponse {
+            signature_facts:
+                UnboundResponseSignatureFacts {
+                    accepted_signer:
+                        AcceptedResponseSigner {
+                            identity: _,
+                            verification_key: _,
+                        },
+                    response_signature_base_digest: _,
+                },
+            delegation_issuer_kid: _,
+        } = &delegated;
     }
 }
