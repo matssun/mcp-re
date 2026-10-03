@@ -4050,7 +4050,9 @@ paths = [
   # cite one; the check refuses it until the file is spelled out, which is the message it
   # prints. The glob still owns the subtree — this entry owns the CITATION.
   "mcp-re-proxy/src/http_profile_serve/retention/mod.rs",
+  "mcp-re-proxy/src/http_profile_serve/retention/nothing_retained.rs",
   "mcp-re-proxy/src/http_profile_serve/retention/outcome.rs",
+  "mcp-re-proxy/src/http_profile_serve/retention/refusal.rs",
   "mcp-re-proxy/src/async_serve/request.rs",
   "mcp-re-proxy/src/async_serve/mod.rs",
 ]
@@ -4075,8 +4077,14 @@ gate_controls = ["scripts/refusal_provenance_gate.py"]
 # over a moved subtree is the battery that must also demonstrate it still detects each
 # regression.
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::retention::tests::each_pre_dispatch_fault_earns_its_own_answer",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::retention::tests::no_pre_dispatch_fault_claims_the_backend_ran",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::retention::refusal::tests::each_pre_dispatch_fault_earns_its_own_answer",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::retention::refusal::tests::no_pre_dispatch_fault_claims_the_backend_ran",
+  # ADR-054 retention-token-seal. `NotConfigured` in both lifecycle enums carries the retention
+  # owner's witness, so "nothing was owed" is a statement only the owner can make. The owner
+  # mints it from the ABSENCE of a store, which no type can establish, so it is measured: a
+  # deployment with a store is handed a reservation and never the arm that skips the obligation.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::retention::tests::only_a_deployment_without_a_store_states_that_it_retains_nothing",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::retention::nothing_retained::tests::the_witness_is_a_value_the_owner_hands_out",
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::the_serving_subtree_answers_only_through_its_one_wrapper",
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::every_error_arm_of_handle_returns_what_its_stage_produced",
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::the_answers_outside_the_exchange_are_exactly_the_transport_frames",

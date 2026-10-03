@@ -4201,15 +4201,15 @@ conjunct = "a pre-dispatch retention fault earns the answer its own kind deserve
 # accept no further write until it restarts, so the retry can never succeed. The battery's one
 # pre-existing control is the negative (a deployment retaining nothing owes nothing) and cannot
 # see it.
-path = "mcp-re-proxy/src/http_profile_serve/retention/mod.rs"
+path = "mcp-re-proxy/src/http_profile_serve/retention/refusal.rs"
 anchor = """
-            RetentionError::StoreRetired(_) => (Fault::Retired, unavailable(500)),
+        RetentionError::StoreRetired(_) => (Fault::Retired, unavailable(500)),
 """
 weakening = """
-            RetentionError::StoreRetired(_) => (Fault::Backpressure, unavailable(503)),
+        RetentionError::StoreRetired(_) => (Fault::Backpressure, unavailable(503)),
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::retention::tests::each_pre_dispatch_fault_earns_its_own_answer",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::retention::refusal::tests::each_pre_dispatch_fault_earns_its_own_answer",
 ]
 
 [[probe]]
@@ -10643,7 +10643,7 @@ conjunct = "A publication taken before the exchange may dispatch"
 #
 # What this probe measures that nothing else did: the refusal's CAUSE is already defended
 # where it is decided, by `no_pre_dispatch_fault_claims_the_backend_ran` in
-# `http_profile_serve::retention` — an in-crate control over `pre_dispatch_refusal` alone, which
+# `http_profile_serve::retention::refusal` — an in-crate control over `pre_dispatch` alone, which
 # this weakening does not touch and which stays green while the backend runs. Only a control
 # that COUNTS inner dispatches goes red, and there is exactly one.
 path = "mcp-re-proxy/src/http_profile_serve/retention/mod.rs"
@@ -10653,7 +10653,7 @@ anchor = """
                 store: Arc::clone(store),
                 reservation,
             }),
-            Err(e) => Err(Self::pre_dispatch_refusal(&e, "accept the exchange")),
+            Err(e) => Err(refusal::pre_dispatch(&e, "accept the exchange")),
         }
 """
 weakening = """
@@ -10662,7 +10662,9 @@ weakening = """
                 store: Arc::clone(store),
                 reservation,
             }),
-            Err(_) => Ok(PreDispatchRetention::NotConfigured),
+            Err(_) => Ok(PreDispatchRetention::NotConfigured(
+                NothingRetained::minted_by_retention(),
+            )),
         }
 """
 expect_red = [

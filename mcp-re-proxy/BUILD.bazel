@@ -424,7 +424,9 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/resolvers.rs",
     "src/http_profile_serve/request_admission.rs",
     "src/http_profile_serve/retention/mod.rs",
+    "src/http_profile_serve/retention/nothing_retained.rs",
     "src/http_profile_serve/retention/outcome.rs",
+    "src/http_profile_serve/retention/refusal.rs",
     "src/http_profile_serve/retention/fault_report.rs",
     "src/http_profile_serve/signing_window.rs",
     # ADR-MCPRE-061: the request pipeline, region by region — what the exchange has spent

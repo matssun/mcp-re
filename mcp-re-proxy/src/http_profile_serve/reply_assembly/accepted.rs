@@ -271,8 +271,10 @@ mod tests {
     #[test]
     fn nothing_is_owed_where_retention_is_not_configured() {
         assert!(matches!(
-            RetentionDisposition::NotConfigured,
-            RetentionDisposition::NotConfigured
+            RetentionDisposition::NotConfigured(
+                crate::http_profile_serve::retention::NothingRetained::for_a_test()
+            ),
+            RetentionDisposition::NotConfigured(_)
         ));
     }
 }

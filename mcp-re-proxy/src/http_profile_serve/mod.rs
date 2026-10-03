@@ -62,7 +62,10 @@ mod inner_plane;
 
 /// Durable responsibility for a served exchange: taken before the side effects run, and
 /// discharged with what was actually served.
-mod retention;
+// Crate-visible for one item: `request_stages` names `retention::NothingRetained`, the
+// owner's witness that a deployment retains nothing, in its two `NotConfigured` arms. The
+// owner's representation stays private to this module tree.
+pub(crate) mod retention;
 
 /// What makes an inbound message a request this deployment reads at all: whose it is,
 /// whether it is addressed here, and whether it is legal MCP.

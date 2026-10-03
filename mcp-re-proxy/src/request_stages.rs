@@ -59,8 +59,8 @@ use crate::transparency::ReservedBeforeDispatch;
 /// indistinguishable from one whose backend may have acted — on disk, in the exchange
 /// machine, and in what the client was told.
 pub(crate) enum PreDispatchRetention {
-    /// This deployment retains nothing, so there is no obligation to accept.
-    NotConfigured,
+    /// This deployment retains nothing; the witness is the retention owner's statement of it.
+    NotConfigured(crate::http_profile_serve::retention::NothingRetained),
     /// The obligation is durably accepted, and nothing has run. Dropping this rescinds it.
     ///
     /// The STORE travels with the reservation, so holding a `Reserved` IS holding the store
@@ -93,8 +93,8 @@ pub(crate) enum PreDispatchRetention {
 /// is discharged after dispatch by an exhaustive match rather than by asking whether an
 /// earlier step was performed.
 pub(crate) enum RetentionDisposition {
-    /// This deployment retains nothing, so there is no obligation to discharge.
-    NotConfigured,
+    /// This deployment retains nothing; the owner's witness keeps a configured one out of here.
+    NotConfigured(crate::http_profile_serve::retention::NothingRetained),
     /// The execution threshold is durably recorded, and this exchange must complete the
     /// record before it is served. Carries the store that recorded it, for the same reason
     /// [`PreDispatchRetention::Reserved`] does.
@@ -218,9 +218,11 @@ mod tests {
     /// choose.
     #[test]
     fn the_retention_obligation_has_exactly_two_cases() {
-        let disposition = RetentionDisposition::NotConfigured;
+        let disposition = RetentionDisposition::NotConfigured(
+            crate::http_profile_serve::retention::NothingRetained::for_a_test(),
+        );
         let owed = match disposition {
-            RetentionDisposition::NotConfigured => false,
+            RetentionDisposition::NotConfigured(_) => false,
             RetentionDisposition::Committed { .. } => true,
         };
         assert!(
@@ -257,7 +259,9 @@ mod tests {
         let ready = ReadyForDispatch::new(
             prepared,
             SigningWindow::over(key, 1_699_999_000, 60).expect("a live credential opens a window"),
-            RetentionDisposition::NotConfigured,
+            RetentionDisposition::NotConfigured(
+                crate::http_profile_serve::retention::NothingRetained::for_a_test(),
+            ),
         );
 
         let exchange = ready.dispatch().await;
@@ -270,6 +274,6 @@ mod tests {
         // The window crosses the boundary intact — the reply is signed under the
         // credential the exchange snapshotted before the backend ran.
         assert_eq!(window.expires(), 1_699_999_060);
-        assert!(matches!(retention, RetentionDisposition::NotConfigured));
+        assert!(matches!(retention, RetentionDisposition::NotConfigured(_)));
     }
 }
