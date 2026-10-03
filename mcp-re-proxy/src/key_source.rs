@@ -4,8 +4,7 @@
 //! signing responses), the **TLS server certificate chain + private key** (to
 //! terminate TLS), and the **client-CA trust anchors** (to verify mTLS client
 //! certificates). `FileKeySource` loads them from disk; `EnvKeySource` from
-//! environment variables. An HSM-backed source is a documented FUTURE
-//! implementation of this trait — there is deliberately no stub here.
+//! environment variables. The PKCS#11 and KMS adapters keep their keys in a device.
 //!
 //! The Ed25519 signing key is a 32-byte seed encoded Base64URL-no-pad (consistent
 //! with the rest of MCP-RE); `mcp-re-core` exposes only seed-based construction. The
@@ -95,17 +94,12 @@ impl ResponseSigner for SigningKey {
 /// / [`response_public_key`](ResponseSigner::response_public_key)) — there is no
 /// `signing_key()` export on the trait, so a non-exporting HSM/KMS backend can
 /// implement `KeySource` with NO stub methods. The TLS server key
-/// ([`tls_server_key`](KeySource::tls_server_key)) is STILL an export accessor:
-/// that is intentional and deliberately confined to a later change — issue #3838
-/// targets the RESPONSE-signing key only. Delegated TLS signing — fronting a
-/// non-exporting device behind a custom `rustls::sign::SigningKey` so the TLS
-/// private key also never leaves the device — is part of the HSM/KMS-adapter
-/// follow-up; the existing TLS path is unchanged here.
+/// ([`tls_server_key`](KeySource::tls_server_key)) serves the exported-key TLS path;
+/// a device-held TLS key is served through [`tls_delegated_signer`](KeySource::tls_delegated_signer).
 pub trait KeySource: ResponseSigner + Send + Sync {
     /// The TLS server certificate chain (leaf first).
     fn tls_server_cert_chain(&self) -> Result<Vec<CertificateDer<'static>>, KeyError>;
-    /// The TLS server private key. (Export accessor — see the trait note on the
-    /// #3838 boundary and the delegated-TLS-signing follow-up.)
+    /// The TLS server private key. (Export accessor — see the trait note.)
     fn tls_server_key(&self) -> Result<PrivateKeyDer<'static>, KeyError>;
     /// The client-CA trust anchors used to verify mTLS client certificates.
     fn client_ca_roots(&self) -> Result<Vec<CertificateDer<'static>>, KeyError>;
@@ -232,7 +226,10 @@ impl EnvKeySource {
     /// here. (`EnvKeySource` is `dev_env_key_source`-gated — dev/CI only — and a
     /// production deployment uses a file/PKCS#11 source.)
     fn read(&self, var: &str) -> Result<Zeroizing<String>, KeyError> {
-        let value = std::env::var(var).map_err(|_| KeyError::NotFound(format!("env var {var}")))?;
+        let value = std::env::var(var).map_err(|e| match e {
+            std::env::VarError::NotPresent => KeyError::NotFound(format!("env var {var}")),
+            std::env::VarError::NotUnicode(_) => KeyError::Malformed(format!("env var {var}")),
+        })?;
         Ok(Zeroizing::new(value))
     }
 
@@ -240,7 +237,7 @@ impl EnvKeySource {
     /// helper — see [`FileKeySource::signing_key`] for why key export is not on the
     /// [`KeySource`]/[`ResponseSigner`] contract. The env source owns the var, so it
     /// CAN load the key; its [`ResponseSigner`] impl routes through here.
-    pub fn signing_key(&self) -> Result<SigningKey, KeyError> {
+    fn signing_key(&self) -> Result<SigningKey, KeyError> {
         signing_key_from_seed_b64url(&self.read(&self.signing_key_seed_var)?)
     }
 }
@@ -402,5 +399,23 @@ mod tests {
     #[test]
     fn the_default_is_no_delegated_tls_signer() {
         assert!(NonExportingSource::new().tls_delegated_signer().is_none());
+    }
+
+    /// The seed must be exactly 32 bytes; any other length is refused as malformed.
+    #[test]
+    fn a_seed_that_is_not_32_bytes_is_malformed() {
+        for len in [31usize, 33] {
+            let seed = mcp_re_core::b64url_encode(&vec![7u8; len]);
+            assert!(matches!(
+                signing_key_from_seed_b64url(&seed),
+                Err(KeyError::Malformed(_))
+            ));
+        }
+        let ok = signing_key_from_seed_b64url(&mcp_re_core::b64url_encode(&[7u8; 32]))
+            .expect("a 32-byte seed");
+        assert_eq!(
+            ok.public_key().to_b64url(),
+            SigningKey::from_seed_bytes(&[7u8; 32]).public_key().to_b64url()
+        );
     }
 }

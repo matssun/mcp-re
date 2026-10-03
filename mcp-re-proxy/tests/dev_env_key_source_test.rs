@@ -20,6 +20,7 @@ use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
 use mcp_re_proxy::key_source::EnvKeySource;
 use mcp_re_proxy::key_source::KeyError;
+use mcp_re_proxy::key_source::ResponseSigner;
 
 const SEED: [u8; 32] = [7u8; 32];
 
@@ -47,9 +48,9 @@ fn env_source_signs_without_mutating_process_env() {
         client_ca_var: "MCPS076_UNUSED_CA".to_string(),
     };
 
-    let key = source.signing_key().expect("loads the seed");
-    // The loaded key actually signs (its public key matches the seed's).
-    assert_eq!(key.public_key().to_b64url(), expected_pubkey());
+    let key = source.response_public_key().expect("loads the seed");
+    // The loaded key's public key matches the seed's.
+    assert_eq!(key.to_b64url(), expected_pubkey());
 
     // The read does NOT mutate the process environment: the var is still present
     // (no unsound global `remove_var`).
@@ -73,13 +74,34 @@ fn env_key_error_does_not_leak_seed() {
         tls_key_var: "x".to_string(),
         client_ca_var: "x".to_string(),
     };
-    let err = source.signing_key().expect_err("malformed seed must error");
+    let err = source.response_public_key().expect_err("malformed seed must error");
     assert!(matches!(err, KeyError::Malformed(_)));
     let rendered = format!("{err} | {err:?}");
     assert!(
         !rendered.contains(secret),
         "KeyError must not contain the secret seed value; got: {rendered}"
     );
+    std::env::remove_var(seed_v);
+}
+
+/// A set-but-non-UTF-8 seed var is present and malformed, not absent.
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_seed_var_is_malformed_not_absent() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let seed_v = "MCPS076_NON_UTF8_SEED";
+    std::env::set_var(seed_v, OsStr::from_bytes(b"\xff\xfe"));
+    let source = EnvKeySource {
+        signing_key_seed_var: seed_v.to_string(),
+        tls_cert_var: "x".to_string(),
+        tls_key_var: "x".to_string(),
+        client_ca_var: "x".to_string(),
+    };
+    let err = source
+        .response_public_key()
+        .expect_err("non-UTF-8 seed must error");
+    assert!(matches!(err, KeyError::Malformed(_)));
     std::env::remove_var(seed_v);
 }
 

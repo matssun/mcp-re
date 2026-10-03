@@ -96,8 +96,8 @@ impl FileKeySource {
     /// The loaded Ed25519 signing key. An INHERENT helper, NOT part of the
     /// [`KeySource`]/[`ResponseSigner`] contract — issue #3838 removed key export from the
     /// trait so a non-exporting HSM/KMS backend can satisfy it. This source signs through
-    /// it internally; tests that need the key call it on the concrete type.
-    pub fn signing_key(&self) -> Result<&SigningKey, KeyError> {
+    /// it internally.
+    fn signing_key(&self) -> Result<&SigningKey, KeyError> {
         self.signing_key.as_ref().ok_or_else(|| {
             KeyError::NotFound("this file source holds TLS material only".to_string())
         })

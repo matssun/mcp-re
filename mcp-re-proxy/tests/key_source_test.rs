@@ -14,6 +14,7 @@ use mcp_re_proxy::key_source::EnvKeySource;
 use mcp_re_proxy::key_source::FileKeySource;
 use mcp_re_proxy::key_source::KeyError;
 use mcp_re_proxy::key_source::KeySource;
+use mcp_re_proxy::key_source::ResponseSigner;
 
 use rcgen::CertificateParams;
 use rcgen::Issuer;
@@ -78,7 +79,7 @@ fn file_source_loads_all_material() {
     .unwrap();
 
     assert_eq!(
-        source.signing_key().unwrap().public_key().to_b64url(),
+        source.response_public_key().unwrap().to_b64url(),
         expected_pubkey()
     );
     assert!(!source.tls_server_cert_chain().unwrap().is_empty());
@@ -130,7 +131,7 @@ fn env_source_loads_all_material() {
     };
 
     assert_eq!(
-        source.signing_key().unwrap().public_key().to_b64url(),
+        source.response_public_key().unwrap().to_b64url(),
         expected_pubkey()
     );
     assert!(!source.tls_server_cert_chain().unwrap().is_empty());
@@ -148,7 +149,7 @@ fn env_source_missing_var_is_not_found() {
         client_ca_var: "x".to_string(),
     };
     assert!(matches!(
-        source.signing_key().unwrap_err(),
+        source.response_public_key().unwrap_err(),
         KeyError::NotFound(_)
     ));
 }
