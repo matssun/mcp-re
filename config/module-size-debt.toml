@@ -328,7 +328,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "sdk/typescript/src/lib.rs"
-baseline_prod_loc = 731
+baseline_prod_loc = 721
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

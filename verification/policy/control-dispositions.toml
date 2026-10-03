@@ -13615,6 +13615,15 @@ consequence = "high"
 root_relationship = "Beside NP-043: the artifact's persistence, which no unit states."
 record = "docs/architecture/control-dispositions.md#np-227"
 
+[[proposition]]
+id = "NP-228"
+title = "A binding refuses a time or skew input that is not a whole in-range number of seconds, and never saturates it"
+carrier = "sdk/typescript/src/lib.rs: whole_seconds at the napi boundary"
+likely_owner = ""
+consequence = "high"
+root_relationship = "Beside NP-012: what the shipped TypeScript addon does with a JS number it cannot represent; stated by no theorem."
+record = "docs/architecture/control-dispositions.md#np-228"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -13749,4 +13758,12 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#transparency::auditor::run::tests::a_write_that_fails_before_registration_is_an_output_refusal"
 decision = "new-proposition"
 proposition = "NP-227"
+recorded = "2026-10-03"
+
+[[disposition]]
+id = "CD-20138"
+project = "sdk/typescript"
+control = "vitest#test/smoke.test.ts > mcp-re-sdk smoke (built package) > refuses a non-finite or fractional time input instead of saturating it"
+decision = "new-proposition"
+proposition = "NP-228"
 recorded = "2026-10-03"

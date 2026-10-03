@@ -112,14 +112,28 @@ export declare function signRequestWithSigner(signCallback: (arg: Buffer) => Buf
  * `mcp-re-request-evidence`, the digest of the request's own signature base, which
  * includes its nonce. An acknowledgement captured for one transmission therefore does
  * not verify for a byte-identical retransmission.
+ *
+ * Same trust inputs as `verifyResponse`: the root issuer anchor, the audience scope,
+ * the accepted trust epochs, and the client's static denylist.
  */
 export declare function verifyAccepted202(status: number, respHeaders: Array<HttpHeader>, respBody: Buffer, reqMethod: string, reqTargetUri: string, reqHeaders: Array<HttpHeader>, reqBody: Buffer, issuerKeyId: string, issuerPubkeyB64Url: string, issuerRole: string, issuerTrustDomain: string, issuerSubject: string, verifierAudiences: Array<string>, expectedAudienceHash: string, acceptedEpochs: Array<string>, maxClockSkew: number, revokedIdentifiers: Array<string>, now: number): AcceptedResultJs
 
-/** Verify a delegated-required RFC 9421 response bound to the request the client sent. */
+/**
+ * Verify a delegated-required RFC 9421 response bound to the request the client sent.
+ * Delegated-required is the ONLY response mode: the credential must chain to the root
+ * issuer and be scoped to `expectedAudienceHash` at one of `acceptedEpochs`. An
+ * unsigned, direct-root-signed, revoked, stale-epoch or wrongly-bound response fails
+ * closed by throwing. `revokedIdentifiers` is the client's static denylist; an empty
+ * list is the explicit TTL-only posture.
+ */
 export declare function verifyResponse(status: number, respHeaders: Array<HttpHeader>, respBody: Buffer, reqMethod: string, reqTargetUri: string, reqHeaders: Array<HttpHeader>, reqBody: Buffer, issuerKeyId: string, issuerPubkeyB64Url: string, issuerRole: string, issuerTrustDomain: string, issuerSubject: string, verifierAudiences: Array<string>, expectedAudienceHash: string, acceptedEpochs: Array<string>, maxClockSkew: number, revokedIdentifiers: Array<string>, now: number): VerifyResultJs
 
 /** The outcome of verifying a delegated-required RFC 9421 response. */
 export interface VerifyResultJs {
+  /**
+   * The evidence VERIFIED; this does NOT mean the request succeeded. A caller
+   * decides acceptance on `outcome === "success"`.
+   */
   ok: boolean
   serverKeyid: string
   /**

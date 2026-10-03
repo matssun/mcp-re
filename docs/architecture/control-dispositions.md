@@ -4349,3 +4349,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** Beside NP-043: the artifact's persistence, which no unit states.
 **Recorded:** 2026-10-03, round-12 remediation of finding 9df9f206fdc2b8e0.
+
+## NP-228 — a binding refuses a time or skew input that is not a whole in-range number of seconds, and never saturates it
+
+**Controls:** `sdk/typescript/test/smoke.test.ts` (1).
+**Carrier:** `sdk/typescript/src/lib.rs`: `whole_seconds` at the napi boundary.
+**Statement.** *Every JS time or clock-skew input (`created`, `expires`, `now`, `maxClockSkew`) crosses the napi boundary only if it is finite, whole and within the exactly representable integer range of an f64; `Infinity`, `NaN`, a fractional value or an out-of-range value is refused with an error rather than converted by a saturating cast.*
+**If false.** `Infinity` becomes `i64::MAX`, an unbounded clock skew, and `NaN` becomes 0, so a stale or future-dated response verifies as fresh.
+**Likely owner:** none; NP-012 states that the shipped artifact implements the profile, not what it does with an unrepresentable input.
+**Severity:** `high`.
+**Root relationship.** Beside NP-012: the TypeScript binding's input boundary, which no theorem states.
+**Recorded:** 2026-10-03, round-12 remediation of findings 57ac9594c01178bd, 79d16e40e00198e7, 9503efa53570820a.
