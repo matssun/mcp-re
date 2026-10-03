@@ -58,10 +58,11 @@ const ED25519_SIGNATURE_LEN: usize = 64;
 /// The sustained ceiling, in handshake signatures per second, on how fast unauthenticated
 /// peers can drive the delegated TLS signer.
 ///
-/// Sized against what legitimate traffic needs: session resumption is refused by design,
-/// so every connection costs one signature, and `ServerLimits::max_connection_age`
-/// (300s) with `max_concurrent_connections` (256 per core) puts the steady-state
-/// re-handshake rate near one signature per core per second. 100/s leaves a large
+/// Sized against what legitimate traffic needs: a connection costs a signature only on a
+/// full handshake (a session-store miss: first contact, eviction, an auth-epoch advance,
+/// a restart), and the all-miss case under `max_connection_age` (300s) with
+/// `max_concurrent_connections` (256 per core) is a re-handshake rate near one signature
+/// per core per second. A restart or epoch advance is the miss spike the burst absorbs. 100/s leaves a large
 /// multiple of that for connection churn and rolling deploys while staying well inside a
 /// KMS account's cryptographic-operation quota.
 pub const DEFAULT_TLS_SIGN_RATE_PER_SEC: u32 = 100;
@@ -78,8 +79,8 @@ pub const DEFAULT_TLS_SIGN_BURST: u32 = 200;
 /// In TLS 1.3 the server signs the handshake transcript BEFORE it has seen the client
 /// certificate, so `Signer::sign` is reachable by anything that can complete a
 /// ClientHello — no credential, no client cert. On the delegated custody paths that
-/// signature is a blocking KMS `Sign` round trip or a PKCS#11 `C_Sign`, and session
-/// resumption is refused by design, so each connection costs exactly one. Without a
+/// signature is a blocking KMS `Sign` round trip or a PKCS#11 `C_Sign`, and each full
+/// (non-resumed) handshake costs exactly one. Without a
 /// bound, cheap inbound TCP converts 1:1 into paid, quota-limited signing calls against
 /// the SAME account and key material the cold-path delegated-key issuer uses — so a
 /// handshake flood throttles credential issuance and the fleet fails closed at its
@@ -96,11 +97,12 @@ pub struct TlsHandshakeSignBudget {
     /// `(tokens available, last refill instant)`. A short uncontended lock per
     /// handshake, which is orders of magnitude cheaper than the signature it guards.
     state: Mutex<(f64, Instant)>,
-    /// How many signatures this budget has refused, for the operator-facing posture.
+    /// How many signatures this budget has refused; the operator surface is the stderr line
+    /// emitted at power-of-two totals.
     refused: AtomicU64,
     /// How many times a poisoned lock has been recovered here.
     ///
-    /// Separate from [`Self::refused`] because they are different operator facts and only
+    /// Reported on stderr once per panic. Separate from [`Self::refused`] because they are different operator facts and only
     /// one of them is about this budget: `refused` means the deployment's own rate limit
     /// did its job, which is ordinary and expected under load; this means a thread panicked
     /// while holding the bucket, which is a bug and is reported nowhere else. Recovery makes
@@ -159,7 +161,8 @@ impl TlsHandshakeSignBudget {
     /// throttle one layer out, recovers for the same reason and states it the same way.
     fn try_acquire(&self) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| {
-            self.poison_observed.fetch_add(1, Ordering::Relaxed);
+            let total = self.poison_observed.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+            eprintln!("mcp-re-proxy: delegated TLS handshake-signature budget lock was poisoned by a panicking thread and recovered; this is a bug ({total} so far)");
             // Clear the flag so the counter measures PANICS and not calls. Left sticky, a
             // single panic makes every later handshake increment it, and the number an
             // operator reads would track traffic rather than faults.
@@ -175,7 +178,10 @@ impl TlsHandshakeSignBudget {
             true
         } else {
             drop(state);
-            self.refused.fetch_add(1, Ordering::Relaxed);
+            let total = self.refused.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+            if total.is_power_of_two() {
+                eprintln!("mcp-re-proxy: delegated TLS handshake-signature budget exhausted ({}/s, burst {}); {total} handshake(s) refused so far", self.rate_per_sec(), self.burst());
+            }
             false
         }
     }

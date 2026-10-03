@@ -4,8 +4,8 @@
 //! # The failure this exists to stop
 //!
 //! A TLS server using a KMS-custodied key signs one `CertificateVerify` per handshake —
-//! one remote `Sign` — BEFORE it has seen a client certificate, and with session
-//! resumption refused every connection is a full handshake. So the handshake path is the
+//! one remote `Sign` — BEFORE it has seen a client certificate, and with every
+//! full (non-resumed) handshake costing one Sign. So the handshake path is the
 //! one an unauthenticated peer can drive, and it shares an account or project quota with
 //! the delegated-credential issuance that keeps the replica able to sign responses at all.
 //!

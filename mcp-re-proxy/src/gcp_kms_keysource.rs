@@ -872,8 +872,8 @@ fn parse_sign_response(body: &[u8]) -> Result<Vec<u8>, KeyError> {
 /// The handshake path and the root-issuance path share one project quota, and only the
 /// handshake path can be driven by an unauthenticated peer: TLS 1.3 emits the server
 /// `CertificateVerify` — one `asymmetricSign` — before it has seen a client
-/// certificate, and with session resumption refused every connection is a full
-/// handshake. Left alone, a connection flood spends the project's quota, and the
+/// certificate, and every full (non-resumed) handshake costs one
+/// Sign. Left alone, a connection flood spends the project's quota, and the
 /// cold-path rotor's sign for the next delegated credential fails with it; the replica
 /// then fails closed on `delegated_signing_unavailable` when the current credential's
 /// TTL runs out. A handshake flood becomes a signing outage.
