@@ -253,25 +253,14 @@ where
 
                 // `CorePool` decided which runtime this core got and how much blocking
                 // handshake work it may admit onto it; both are stated there, once.
-                runtime.block_on(async move {
-                    // Class A. `from_std` needs a non-blocking socket — established
-                    // before this thread was spawned — and a runtime context, which is
-                    // this `block_on`. What remains is registration with the reactor this
-                    // runtime owns, so a failure is a defect in the lines above rather
-                    // than anything an environment, peer or configuration can produce.
-                    #[allow(clippy::expect_used)]
-                    let listener = tokio::net::TcpListener::from_std(listener)
-                        .expect("the listener registers with the runtime running it");
-                    serve(
-                        listener,
-                        config,
-                        options,
-                        handler,
-                        shutdown,
-                        handshake_bound,
-                    )
-                    .await;
-                });
+                runtime.block_on(serve_core(
+                    listener,
+                    config,
+                    options,
+                    handler,
+                    shutdown,
+                    handshake_bound,
+                ));
             })?;
         Ok(worker)
     })?;
@@ -281,6 +270,48 @@ where
         shutdown,
         workers,
     })
+}
+
+/// Register one core's listener with the runtime running it and serve on it.
+async fn serve_core<H: AsyncRequestHandler>(
+    listener: std::net::TcpListener,
+    config: Arc<crate::config_snapshot::ServerConfigSnapshot>,
+    options: Arc<ServerOptions>,
+    handler: Arc<H>,
+    shutdown: Arc<AtomicBool>,
+    handshake_bound: HandshakeBound,
+) {
+    // Class A. `from_std` needs a non-blocking socket — established before the worker
+    // thread was spawned — and a runtime context, which is the `block_on` that polls
+    // this future. What remains is registration with the reactor this runtime owns, so a
+    // failure is a defect in the lines above rather than anything an environment, peer or
+    // configuration can produce.
+    #[allow(clippy::expect_used)]
+    let listener = tokio::net::TcpListener::from_std(listener)
+        .expect("the listener registers with the runtime running it");
+    serve(
+        listener,
+        config,
+        options,
+        handler,
+        shutdown,
+        handshake_bound,
+    )
+    .await;
+}
+
+/// Drop every parked worker's sender, so each returns without serving, and join them.
+fn stand_down(started: Vec<(JoinHandle<()>, std::sync::mpsc::SyncSender<()>)>) {
+    let handles: Vec<JoinHandle<()>> = started
+        .into_iter()
+        .map(|(handle, release)| {
+            drop(release);
+            handle
+        })
+        .collect();
+    for handle in handles {
+        let _ = handle.join();
+    }
 }
 
 /// Start one worker per item, each parked until every worker has started.
@@ -300,16 +331,7 @@ fn release_when_all_started<T>(
         match start(index, item, parked) {
             Ok(handle) => started.push((handle, release)),
             Err(error) => {
-                let handles: Vec<JoinHandle<()>> = started
-                    .into_iter()
-                    .map(|(handle, release)| {
-                        drop(release);
-                        handle
-                    })
-                    .collect();
-                for handle in handles {
-                    let _ = handle.join();
-                }
+                stand_down(started);
                 return Err(error);
             }
         }

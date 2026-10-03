@@ -10056,15 +10056,10 @@ unit = "proxy.per_request_revocation_serving"
 theorem = "THM-0032"
 conjunct = "a revocation published after a handshake reaches a peer that already holds a connection — the per-request refusal is what the reply is made of, not a value computed and discarded"
 path = "mcp-re-proxy/src/async_serve/request.rs"
-anchor = """    let served = match channel_peer
-        .as_ref()
-        .err()
-        .cloned()
-        .or_else(|| routing_header_rejection(&headers, &body_bytes))
-    {
+anchor = """    let admitted = channel_peer
+        .and_then(|peer| routing_header_rejection(&headers, &body_bytes).map_or(Ok(peer), Err));
 """
-weakening = """    let served = match routing_header_rejection(&headers, &body_bytes)
-    {
+weakening = """    let admitted = routing_header_rejection(&headers, &body_bytes).map_or(channel_peer.or(Ok(None)), Err);
 """
 expect_red = [
   "tests/integration_async#per_request_revocation_test::a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection",
@@ -10075,7 +10070,7 @@ note = """
 THE WEAKENING KEEPS THE CHECK AND DROPS ITS ANSWER, which is the failure this battery is
 about. `served_channel_peer` still runs on every request, still snapshots the revocation
 index, still concludes that the peer is revoked — and the reply is assembled from the
-routing-header verdict alone, so the peer holding the connection is served exactly as it was
+routing-header verdict alone (a refused channel peer is replaced by an absent one), so the peer holding the connection is served exactly as it was
 before the CRL reload. A weakening that deleted the call instead would be caught by the
 handshake battery next door; this one is invisible to everything except a control that drives
 a SECOND request over the SAME connection.
