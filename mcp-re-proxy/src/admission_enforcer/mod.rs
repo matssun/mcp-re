@@ -116,9 +116,9 @@ impl AdmissionEnforcer {
         };
 
         // The degraded window is a DURATION, so it is read from the monotonic clock and
-        // never from `now` — see `degraded_window`. One reading for the whole decision, so
-        // the instant a read is recorded at and the instant the window is judged against
-        // cannot differ by the time the lookup took.
+        // never from `now` — see `degraded_window`. A read is recorded at the instant the
+        // lookup was issued, never later than the answer, so it can only shorten the
+        // window.
         let elapsed_at = std::time::Instant::now();
         // The authoritative lookup. An outage yields `None` — the ONLY input that
         // reaches the §5.2 degraded fork — while a store that ANSWERED is a definitive
@@ -174,18 +174,15 @@ impl AdmissionEnforcer {
         //
         // What bounds the outage is elapsed time since this replica last reached the
         // authority, which is replica HISTORY and which only this owner holds. Its window
-        // is monotonic and judged against the SAME `elapsed_at` the lookup was timed at, so
-        // the instant the read is recorded at and the instant the window is judged against
-        // cannot differ by the time the lookup took.
+        // is monotonic and judged by its owner at the decision instant, so the lookup's
+        // duration always falls on the refusing side.
         //
         // The arm is REPORTED, not discarded. `.map(|_| ())` here was R11-106: a serve on a
         // stale snapshot inside P became indistinguishable in audit from a live-confirmed
         // one, and the facet is what the record now carries instead.
         match verdict {
             AdmissionVerdict::Live(_) => Ok(AdmissionFacet::LiveConfirmed),
-            AdmissionVerdict::DegradedCandidate(_)
-                if self.window.exhausted(&self.policy, elapsed_at) =>
-            {
+            AdmissionVerdict::DegradedCandidate(_) if self.window.exhausted(&self.policy) => {
                 Err(HttpProfileError::AdmissionStateUnavailable)
             }
             AdmissionVerdict::DegradedCandidate(_) => Ok(AdmissionFacet::Degraded),
@@ -221,9 +218,7 @@ mod tests {
             Arc::new(|_kid: &str| None),
         );
         assert!(
-            enforcer
-                .window
-                .exhausted(&enforcer.policy, std::time::Instant::now()),
+            enforcer.window.exhausted(&enforcer.policy),
             "a gate must not treat its own construction as a confirmation"
         );
     }

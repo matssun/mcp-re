@@ -97,9 +97,6 @@ paths = [
   "mcp-re-proxy/src/async_replay/retained_set.rs",
   "mcp-re-proxy/src/aws_sts.rs",
   "mcp-re-proxy/src/clock.rs",
-  # MCPRE-176: the clock read belongs to the in-memory tier's own expiry, and moved with
-  # it. Named precisely, per the note above: the authority, not the module tree.
-  "mcp-re-proxy/src/continuation_store/in_memory.rs",
   "mcp-re-proxy/src/etcd_store.rs",
   "mcp-re-proxy/src/gcp_kms_keysource.rs",
   "mcp-re-proxy/src/ocsp.rs",

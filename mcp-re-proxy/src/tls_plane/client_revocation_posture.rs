@@ -189,7 +189,7 @@ mod revocation_posture_tests {
     }
 
     fn no_crls() -> ClientCrlEvidence {
-        ClientCrlEvidence::default()
+        ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal")
     }
 
     /// Without a CRL the posture must say `per_request_crl_check=not_configured`.

@@ -232,7 +232,7 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
         // trips below. The three spans together split the replay call into "before the
         // wire", "the SET", and "the WAIT".
         let _t_prep = crate::stage_timers::Timed::start(crate::stage_timers::Stage::ReplayPrep);
-        let expires_at_unix = insert.expires_at_unix;
+        let expires_at_unix = insert.retain_until;
         let key = insert.key.to_string();
         let mut conn = self.checkout();
         let wait_quorum = self.wait_quorum;

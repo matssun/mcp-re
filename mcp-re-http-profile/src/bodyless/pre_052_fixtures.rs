@@ -134,8 +134,7 @@ pub fn verify_pre_052_root_signed_202_for_negative_test<R: Into<ResolverOutcome>
     }
     let (_c, _e, _n, key_id, algorithm) =
         check_params(&parsed.params, verifier.policy(), now, false)?;
-    let seam = verifier.resolve_actor();
-    let actor = resolve_actor_for_slot(seam, &key_id, SignerSlot::Response)?;
+    let actor = verifier.resolve_for_slot(&key_id, SignerSlot::Response)?;
 
     let base = signature_base(
         &parsed.components,

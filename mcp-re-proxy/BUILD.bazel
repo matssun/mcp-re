@@ -558,6 +558,7 @@ _PROXY_LIB_SRCS = [
     # plane.
     "src/async_fleet/mod.rs",
     "src/async_fleet/core_runtime.rs",
+    "src/async_fleet/reuseport.rs",
     "src/async_fleet/shard_depth.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier (async store
     # contract + L1-never-Fresh wrapper) — the only replay path.

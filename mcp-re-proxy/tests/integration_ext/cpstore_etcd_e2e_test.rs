@@ -60,7 +60,10 @@ fn require_live_infra() -> bool {
 /// Build a `SharedReplayCache` over a fresh etcd connection to `url`. Each call is
 /// an independent "node" (its own agent) sharing the one etcd cluster.
 fn node(url: &str) -> SharedReplayCache {
-    SharedReplayCache::new(Box::new(EtcdAtomicReplayStore::connect(url)), SKEW)
+    SharedReplayCache::new(
+        Box::new(EtcdAtomicReplayStore::connect(url).expect("an http etcd endpoint is admitted")),
+        SKEW,
+    )
 }
 
 /// The composite key `SharedReplayCache` derives, recomputed here so the TTL probe

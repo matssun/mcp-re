@@ -25,10 +25,15 @@
 //! # Why possession is the proof
 //!
 //! [`MaterializedSigningRoles`] holds the key source privately and
-//! [`MaterializedSigningRoles::establish`] is its only producer. A serving path cannot hold
-//! a key source that did not come through this comparison, so the separation is not a check
-//! a construction site remembered to make — deleting the call does not leave a serving path
-//! that skips it, it leaves one that does not compile.
+//! [`MaterializedSigningRoles::establish`] is its only producer, so possession of one
+//! proves the comparison ran. A key source obtained through `build_key_source` cannot skip
+//! it: deleting the `establish` call there leaves a function that does not compile.
+//!
+//! The seal covers that route only. `FileKeySource::from_checked`,
+//! `FileKeySource::tls_only` and `Pkcs11KeySource::open` are public and yield a key source
+//! without this comparison; that the composition root obtains its source only through
+//! `build_key_source` is a separate fact this type does not establish, measured by
+//! `signing_credential_provenance_test`.
 //!
 //! # What it does NOT claim
 //!

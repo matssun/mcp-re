@@ -133,7 +133,10 @@ mod tests {
     use super::*;
 
     fn currency(scheduled: bool) -> ClientRevocationCurrency {
-        ClientRevocationCurrency::new(ClientCrlEvidence::default(), scheduled)
+        ClientRevocationCurrency::new(
+            ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
+            scheduled,
+        )
     }
 
     /// A deployment that never claimed a cadence is not one that stopped keeping it.
@@ -156,7 +159,7 @@ mod tests {
         let c = currency(true);
         c.mark_degraded();
         assert_eq!(c.maintenance(), CrlMaintenance::Degraded);
-        c.republish(ClientCrlEvidence::default());
+        c.republish(ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"));
         assert_eq!(c.maintenance(), CrlMaintenance::Maintained);
     }
 
@@ -167,7 +170,7 @@ mod tests {
         let c = currency(true);
         c.mark_stopped();
         assert_eq!(c.maintenance(), CrlMaintenance::Stopped);
-        c.republish(ClientCrlEvidence::default());
+        c.republish(ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"));
         assert_eq!(
             c.maintenance(),
             CrlMaintenance::Stopped,

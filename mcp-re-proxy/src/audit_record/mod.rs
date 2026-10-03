@@ -175,6 +175,103 @@ mod tests {
     use mcp_re_policy::PolicyError;
 
     #[test]
+    fn a_whole_record_renders_its_own_six_fields_in_order_with_the_minted_decision_spellings() {
+        let accepted = AuditRecord {
+            subject: AuditSubject::request_accepted(
+                AuthorizationFacet::NotConfigured,
+                AdmissionFacet::NotConfigured,
+            ),
+            actor_id: Some("did:example:agent-1".to_owned()),
+            status: 200,
+            at_unix: 1,
+        };
+        let signed = AuditRecord {
+            subject: AuditSubject::response_signed(),
+            actor_id: None,
+            status: 200,
+            at_unix: 1_758_000_000,
+        };
+        let rejected = AuditRecord {
+            subject: AuditSubject::request_rejected(
+                Some(&mcp_re_core::McpReError::DigestMismatch),
+                AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
+                AdmissionFacet::NotReached,
+            ),
+            actor_id: None,
+            status: 401,
+            at_unix: 1,
+        };
+        assert_eq!(
+            render_record(&accepted.audit_fields()),
+            "event=mcp-re.request.accepted decision=Accepted reason=- actor=did:example:agent-1 status=200 at=1 authz=not-configured admission=not-configured"
+        );
+        assert_eq!(
+            render_record(&signed.audit_fields()),
+            "event=mcp-re.response.signed decision=Signed reason=- actor=- status=200 at=1758000000"
+        );
+        assert_eq!(
+            render_record(&rejected.audit_fields()),
+            "event=mcp-re.request.rejected decision=Rejected reason=mcp-re.digest_mismatch actor=- status=401 at=1 authz=refused-before-policy admission=not-reached"
+        );
+    }
+
+    #[test]
+    fn no_two_authorities_name_the_same_field_on_one_record() {
+        let digest = mcp_re_core::McpReError::DigestMismatch;
+        let admissions = [
+            AdmissionFacet::NotReached,
+            AdmissionFacet::NotConfigured,
+            AdmissionFacet::LiveConfirmed,
+            AdmissionFacet::Degraded,
+            AdmissionFacet::Refused,
+        ];
+        let authorizations = [
+            AuthorizationFacet::NotConfigured,
+            AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
+            AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(
+                PolicyError::AuthorizationScopeDenied,
+            )),
+        ];
+        let mut subjects = vec![
+            AuditSubject::response_signed(),
+            AuditSubject::response_rejected(Some(&digest)),
+            AuditSubject::response_rejected(None),
+        ];
+        for admission in admissions {
+            for authorization in &authorizations {
+                subjects.push(AuditSubject::request_accepted(
+                    authorization.clone(),
+                    admission,
+                ));
+                subjects.push(AuditSubject::request_rejected(
+                    Some(&digest),
+                    authorization.clone(),
+                    admission,
+                ));
+                subjects.push(AuditSubject::request_rejected(
+                    None,
+                    authorization.clone(),
+                    admission,
+                ));
+            }
+        }
+        assert!(!subjects.is_empty());
+        for subject in subjects {
+            let record = AuditRecord {
+                subject,
+                actor_id: None,
+                status: 200,
+                at_unix: 1,
+            };
+            let mut names: Vec<&str> = record.audit_fields().iter().map(|f| f.name).collect();
+            let total = names.len();
+            names.sort_unstable();
+            names.dedup();
+            assert_eq!(names.len(), total, "duplicate field name in {names:?}");
+        }
+    }
+
+    #[test]
     fn the_two_coordinates_stay_separate_on_one_record() {
         // Co-location is not conflation. Core's token is in `reason`; the policy's is in the
         // authorization field; neither appears in the other.

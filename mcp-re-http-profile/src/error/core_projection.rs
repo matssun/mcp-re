@@ -219,112 +219,77 @@ mod tests {
     /// can say, and it must be a deliberate one with this number moved on purpose.
     #[test]
     fn the_projection_preserves_the_ratified_group_count() {
-        let verdicts: std::collections::BTreeSet<&'static str> = every_variant()
-            .iter()
-            .map(|e| McpReError::from(e).wire_code())
-            .collect();
+        let mut verdicts: Vec<McpReError> = Vec::new();
+        for e in every_variant() {
+            let verdict = McpReError::from(&e);
+            if !verdicts.contains(&verdict) {
+                verdicts.push(verdict);
+            }
+        }
         assert_eq!(verdicts.len(), 26, "distinct Core verdicts: {verdicts:?}");
     }
 
     fn every_variant() -> Vec<HttpProfileError> {
-        // The match is on a value only so the compiler proves the arms exhaustive; the
-        // returned vector is what the caller compares against.
-        fn _exhaustive(e: &HttpProfileError) {
-            match e {
-                HttpProfileError::MissingEvidence(_)
-                | HttpProfileError::MalformedEvidence(_)
-                | HttpProfileError::DuplicateHeader(_)
-                | HttpProfileError::ContentEncodingPresent
-                | HttpProfileError::NonJsonMediaType
-                | HttpProfileError::ContentDigestMismatch
-                | HttpProfileError::MissingCoveredComponent(_)
-                | HttpProfileError::UnknownProfileTag
-                | HttpProfileError::UnsupportedAlgorithm
-                | HttpProfileError::InvalidSignature
-                | HttpProfileError::StaleWindow
-                | HttpProfileError::UnresolvedKeyId
-                | HttpProfileError::ActorSlotMismatch
-                | HttpProfileError::ArtifactBindingFailed
-                | HttpProfileError::AudienceMismatch
-                | HttpProfileError::ResponseBindingMismatch
-                | HttpProfileError::ResponseSignatureInvalid
-                | HttpProfileError::ContinuationBindingFailed
-                | HttpProfileError::McpMethodDivergence
-                | HttpProfileError::McpTransportHeaderMissing(_)
-                | HttpProfileError::McpProtocolVersionUnsupported
-                | HttpProfileError::McpTransportDivergence(_)
-                | HttpProfileError::AdmissionAssertionInvalid
-                | HttpProfileError::AdmissionIssuerUntrusted
-                | HttpProfileError::AdmissionAssertionExpired
-                | HttpProfileError::AdmissionBindingMismatch
-                | HttpProfileError::AdmissionNotCurrent
-                | HttpProfileError::AdmissionStateUnavailable
-                | HttpProfileError::ReceiptInvalid
-                | HttpProfileError::ReceiptInclusionInvalid
-                | HttpProfileError::ReceiptPositionUnbound
-                | HttpProfileError::ReceiptPositionMismatch
-                | HttpProfileError::ReceiptIssuerUntrusted
-                | HttpProfileError::UnrecognizedResultType
-                | HttpProfileError::UpstreamResponseInvalid(_)
-                | HttpProfileError::TrustResolverUnavailable
-                | HttpProfileError::DelegationCredentialMissing
-                | HttpProfileError::DelegationCredentialInvalid
-                | HttpProfileError::DelegationCredentialExpired
-                | HttpProfileError::DelegationIssuerUntrusted
-                | HttpProfileError::DelegationProfileMismatch
-                | HttpProfileError::DelegationAudienceMismatch
-                | HttpProfileError::DelegationKeyUseInvalid
-                | HttpProfileError::DelegationTrustEpochStale
-                | HttpProfileError::DelegationKeyMismatch
-                | HttpProfileError::DelegationRevoked => {}
-            }
+        // The counted vector and the exhaustive match are generated from one list, so a
+        // variant absent from the list is a compile error rather than a silent omission.
+        macro_rules! variants {
+            ($($ctor:expr => $pat:pat),+ $(,)?) => {{
+                fn _exhaustive(e: &HttpProfileError) {
+                    match e {
+                        $($pat)|+ => {}
+                    }
+                }
+                vec![$($ctor),+]
+            }};
         }
-        vec![
-            HttpProfileError::MissingEvidence("x"),
-            HttpProfileError::MalformedEvidence("x"),
-            HttpProfileError::DuplicateHeader("x"),
-            HttpProfileError::ContentEncodingPresent,
-            HttpProfileError::NonJsonMediaType,
-            HttpProfileError::ContentDigestMismatch,
-            HttpProfileError::MissingCoveredComponent("x"),
-            HttpProfileError::UnknownProfileTag,
-            HttpProfileError::UnsupportedAlgorithm,
-            HttpProfileError::InvalidSignature,
-            HttpProfileError::StaleWindow,
-            HttpProfileError::UnresolvedKeyId,
-            HttpProfileError::ActorSlotMismatch,
-            HttpProfileError::ArtifactBindingFailed,
-            HttpProfileError::AudienceMismatch,
-            HttpProfileError::ResponseBindingMismatch,
-            HttpProfileError::ResponseSignatureInvalid,
-            HttpProfileError::ContinuationBindingFailed,
-            HttpProfileError::McpMethodDivergence,
-            HttpProfileError::McpTransportHeaderMissing("x"),
-            HttpProfileError::McpProtocolVersionUnsupported,
-            HttpProfileError::McpTransportDivergence("x"),
-            HttpProfileError::AdmissionAssertionInvalid,
-            HttpProfileError::AdmissionIssuerUntrusted,
-            HttpProfileError::AdmissionAssertionExpired,
-            HttpProfileError::AdmissionBindingMismatch,
-            HttpProfileError::AdmissionNotCurrent,
-            HttpProfileError::AdmissionStateUnavailable,
-            HttpProfileError::ReceiptInvalid,
-            HttpProfileError::ReceiptInclusionInvalid,
-            HttpProfileError::ReceiptIssuerUntrusted,
-            HttpProfileError::UnrecognizedResultType,
-            HttpProfileError::UpstreamResponseInvalid("clause"),
-            HttpProfileError::TrustResolverUnavailable,
-            HttpProfileError::DelegationCredentialMissing,
-            HttpProfileError::DelegationCredentialInvalid,
-            HttpProfileError::DelegationCredentialExpired,
-            HttpProfileError::DelegationIssuerUntrusted,
-            HttpProfileError::DelegationProfileMismatch,
-            HttpProfileError::DelegationAudienceMismatch,
-            HttpProfileError::DelegationKeyUseInvalid,
-            HttpProfileError::DelegationTrustEpochStale,
-            HttpProfileError::DelegationKeyMismatch,
-            HttpProfileError::DelegationRevoked,
-        ]
+        variants! {
+            HttpProfileError::MissingEvidence("x") => HttpProfileError::MissingEvidence(_),
+            HttpProfileError::MalformedEvidence("x") => HttpProfileError::MalformedEvidence(_),
+            HttpProfileError::DuplicateHeader("x") => HttpProfileError::DuplicateHeader(_),
+            HttpProfileError::ContentEncodingPresent => HttpProfileError::ContentEncodingPresent,
+            HttpProfileError::NonJsonMediaType => HttpProfileError::NonJsonMediaType,
+            HttpProfileError::ContentDigestMismatch => HttpProfileError::ContentDigestMismatch,
+            HttpProfileError::MissingCoveredComponent("x") => HttpProfileError::MissingCoveredComponent(_),
+            HttpProfileError::UnknownProfileTag => HttpProfileError::UnknownProfileTag,
+            HttpProfileError::UnsupportedAlgorithm => HttpProfileError::UnsupportedAlgorithm,
+            HttpProfileError::InvalidSignature => HttpProfileError::InvalidSignature,
+            HttpProfileError::StaleWindow => HttpProfileError::StaleWindow,
+            HttpProfileError::UnresolvedKeyId => HttpProfileError::UnresolvedKeyId,
+            HttpProfileError::ActorSlotMismatch => HttpProfileError::ActorSlotMismatch,
+            HttpProfileError::ArtifactBindingFailed => HttpProfileError::ArtifactBindingFailed,
+            HttpProfileError::AudienceMismatch => HttpProfileError::AudienceMismatch,
+            HttpProfileError::ResponseBindingMismatch => HttpProfileError::ResponseBindingMismatch,
+            HttpProfileError::ResponseSignatureInvalid => HttpProfileError::ResponseSignatureInvalid,
+            HttpProfileError::ContinuationBindingFailed => HttpProfileError::ContinuationBindingFailed,
+            HttpProfileError::McpMethodDivergence => HttpProfileError::McpMethodDivergence,
+            HttpProfileError::McpTransportHeaderMissing("x") => HttpProfileError::McpTransportHeaderMissing(_),
+            HttpProfileError::McpProtocolVersionUnsupported => HttpProfileError::McpProtocolVersionUnsupported,
+            HttpProfileError::McpTransportDivergence("x") => HttpProfileError::McpTransportDivergence(_),
+            HttpProfileError::AdmissionAssertionInvalid => HttpProfileError::AdmissionAssertionInvalid,
+            HttpProfileError::AdmissionIssuerUntrusted => HttpProfileError::AdmissionIssuerUntrusted,
+            HttpProfileError::AdmissionAssertionExpired => HttpProfileError::AdmissionAssertionExpired,
+            HttpProfileError::AdmissionBindingMismatch => HttpProfileError::AdmissionBindingMismatch,
+            HttpProfileError::AdmissionNotCurrent => HttpProfileError::AdmissionNotCurrent,
+            HttpProfileError::AdmissionStateUnavailable => HttpProfileError::AdmissionStateUnavailable,
+            HttpProfileError::ReceiptInvalid => HttpProfileError::ReceiptInvalid,
+            HttpProfileError::ReceiptInclusionInvalid => HttpProfileError::ReceiptInclusionInvalid,
+            HttpProfileError::ReceiptPositionUnbound => HttpProfileError::ReceiptPositionUnbound,
+            HttpProfileError::ReceiptPositionMismatch => HttpProfileError::ReceiptPositionMismatch,
+            HttpProfileError::ReceiptIssuerUntrusted => HttpProfileError::ReceiptIssuerUntrusted,
+            HttpProfileError::UnrecognizedResultType => HttpProfileError::UnrecognizedResultType,
+            HttpProfileError::UpstreamResponseInvalid("clause") => HttpProfileError::UpstreamResponseInvalid(_),
+            HttpProfileError::TrustResolverUnavailable => HttpProfileError::TrustResolverUnavailable,
+            HttpProfileError::DelegationCredentialMissing => HttpProfileError::DelegationCredentialMissing,
+            HttpProfileError::DelegationCredentialInvalid => HttpProfileError::DelegationCredentialInvalid,
+            HttpProfileError::DelegationCredentialExpired => HttpProfileError::DelegationCredentialExpired,
+            HttpProfileError::DelegationIssuerUntrusted => HttpProfileError::DelegationIssuerUntrusted,
+            HttpProfileError::DelegationProfileMismatch => HttpProfileError::DelegationProfileMismatch,
+            HttpProfileError::DelegationAudienceMismatch => HttpProfileError::DelegationAudienceMismatch,
+            HttpProfileError::DelegationKeyUseInvalid => HttpProfileError::DelegationKeyUseInvalid,
+            HttpProfileError::DelegationTrustEpochStale => HttpProfileError::DelegationTrustEpochStale,
+            HttpProfileError::DelegationKeyMismatch => HttpProfileError::DelegationKeyMismatch,
+            HttpProfileError::DelegationRevoked => HttpProfileError::DelegationRevoked,
+        }
     }
 
     /// MCPRE-92: each HTTP-profile failure class maps to its intended precise
@@ -360,6 +325,34 @@ mod tests {
             HttpProfileError::ContentDigestMismatch.wire_code(),
             HttpProfileError::InvalidSignature.wire_code()
         );
+    }
+
+    /// Both taxonomies project through the one decision: the dispatch-only failures have
+    /// their own arms and the carrier failures delegate unchanged.
+    #[test]
+    fn the_dispatch_taxonomy_projects_through_the_same_decision() {
+        assert_eq!(
+            McpReError::from(&DispatchError::ReplayDetected),
+            McpReError::ReplayDetected
+        );
+        assert_eq!(
+            McpReError::from(&DispatchError::ReplayCacheUnavailable),
+            McpReError::ReplayCacheUnavailable
+        );
+        assert_eq!(
+            McpReError::from(&DispatchError::NonSharedReplayTier),
+            McpReError::ReplayCacheUnavailable
+        );
+        assert_ne!(
+            McpReError::from(&DispatchError::ReplayDetected),
+            McpReError::from(&DispatchError::ReplayCacheUnavailable)
+        );
+        for e in every_variant() {
+            assert_eq!(
+                McpReError::from(&DispatchError::Profile(e.clone())),
+                McpReError::from(&e)
+            );
+        }
     }
 
     /// Omission and tampering stay distinguishable: MCPRE-92 split them precisely so a

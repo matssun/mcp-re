@@ -267,7 +267,7 @@ mod tests {
         let workers = WorkerSet::new(Arc::clone(&deployment));
         let halt = workers.halt();
         let currency = Arc::new(ClientRevocationCurrency::new(
-            ClientCrlEvidence::default(),
+            ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
             true,
         ));
         assert_eq!(
@@ -286,7 +286,7 @@ mod tests {
     fn a_successful_reload_republishes_the_evidence_it_installed() {
         let path = crl_file("ok");
         let currency = Arc::new(ClientRevocationCurrency::new(
-            ClientCrlEvidence::default(),
+            ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
             true,
         ));
         currency.mark_degraded();
@@ -313,7 +313,7 @@ mod tests {
     fn a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped() {
         let path = crl_file("bad-rebuild");
         let currency = Arc::new(ClientRevocationCurrency::new(
-            ClientCrlEvidence::default(),
+            ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal"),
             true,
         ));
         let revocation = Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()));

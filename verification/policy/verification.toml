@@ -354,6 +354,7 @@ tested_symbols = [
   "//mcp-re-http-profile:full_profile_test#a_pdp_decision_binding_with_no_carried_decision_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#pdp_decision::binding::tests::a_different_document_does_not",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::request::tests::audience_mismatch_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::tests::a_params_meta_version_contradicting_an_agreeing_top_level_meta_is_rejected",
 ]
 
 # Stated once for three operations, because it IS one proposition: the three differ in what
@@ -816,6 +817,10 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::a_stale_trust_epoch_is_its_own_refusal",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::each_scope_failure_names_what_it_is",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::revocation_is_consulted_with_every_identifier_the_credential_carries",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::a_definitive_not_trusted_root_stays_issuer_untrusted",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::a_response_slot_root_with_a_matching_credential_verifies",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::a_wrong_slot_root_actor_is_refused_not_accepted",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::an_outage_resolving_the_root_is_reported_as_unavailable",
 ]
 
 [[unit]]
@@ -943,6 +948,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_halted_reload_loop_retracts_the_cadence_it_advertised",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_successful_reload_republishes_the_evidence_it_installed",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_crl_that_never_falls_out_of_force_produces_no_evidence",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_near_expiry_crl_is_installable_and_names_its_deadline",
 ]
 
 # ---------------------------------------------------------------------------------------
@@ -1178,6 +1185,7 @@ tested_symbols = [
   "//mcp-re-http-profile:proof_path_test#stale_window_fails_closed",
   "//mcp-re-http-profile:proof_path_test#degenerate_window_fails_closed_regardless_of_skew",
   "//mcp-re-http-profile:proof_path_test#the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#policy::tests::default_policy_is_one_new_would_build",
 ]
 proved_symbols = ["mcp_re_http_profile::verify::floor::params::check_params"]
 features = ["verify"]
@@ -6264,6 +6272,7 @@ tested_symbols = [
   "//mcp-re-proxy:async_drain_test#the_handler_entry_counter_moves_for_a_request_that_is_not_abandoned",
   "//mcp-re-proxy:async_drain_test#idle_drain_returns_promptly",
   "//mcp-re-proxy:async_drain_test#stuck_request_cannot_delay_exit_past_grace",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_serve::request::tests::the_handler_is_handed_the_charged_allocation_not_a_copy",
 ]
 
 
@@ -6635,6 +6644,9 @@ tested_symbols = [
   # LANE: `//mcp-re-proxy:integration_async_test`, as for the four rows above.
   "//mcp-re-proxy:integration_async_test#delegated_client_server_e2e_test::an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorization",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_core_verification_failure_still_records_its_frozen_core_reason",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::tests::a_whole_record_renders_its_own_six_fields_in_order_with_the_minted_decision_spellings",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::tests::no_two_authorities_name_the_same_field_on_one_record",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::authority_verdicts::tests::an_unrecorded_admission_projects_not_reached_and_a_recorded_one_itself",
 ]
 
 # THM-0071's HALF of the old unit — *recorded as the audit-vocabulary authority the refusal
@@ -7487,6 +7499,8 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#admission_currency_serving_test::a_record_minted_by_a_store_writer_is_refused_and_never_degraded",
   "//mcp-re-proxy:integration_async_test#admission_currency_serving_test::a_superseded_generation_is_refused_before_the_backend_runs",
   "//mcp-re-proxy:integration_async_test#admission_currency_serving_test::a_revoked_workload_is_refused_though_its_assertion_is_still_valid",
+  "//mcp-re-proxy:proxy_unit_test#admission_enforcer::degraded_window::tests::the_window_is_judged_at_the_instant_of_the_call",
+  "//mcp-re-proxy:integration_async_ext_test#admission_currency_serving_test::an_admission_refusal_is_recorded_as_the_gates_refusal",
 ]
 
 [[unit]]
@@ -7775,6 +7789,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::key::tests::no_boundary_between_the_keys_fields_can_be_moved",
   # The key separates both inputs, so the scope above is not vacuous.
   "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::key::tests::key_is_stable_and_specific_to_both_inputs",
+  # The domain tag is part of the digested bytes; deleting `hasher.update(CONTINUATION_KEY_DOMAIN)`
+  # turns it red.
+  "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::key::tests::the_domain_separator_is_part_of_the_digested_bytes",
   # REACHABILITY, not merely key derivation. The three above establish what the key is
   # made of; this one establishes that the store enforces it — one actor's entry is not
   # returned to another. A key correctly derived and then looked up loosely would satisfy
@@ -7804,6 +7821,8 @@ tested_symbols = [
   # `Unavailable` fails the answer leg CLOSED, whereas a poisoned map reading as an ABSENT
   # entry would complete an answer leg against bytes nobody retained.
   "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::in_memory::tests::a_poisoned_correlation_map_is_unavailable_on_every_operation",
+  "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::in_memory::tests::an_unrepresentable_ttl_is_refused_not_stored",
+  "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::in_memory::tests::consuming_an_expired_entry_removes_it_but_reports_not_live",
 ]
 # Every selector names `proxy_ext_unit_test`, where `redis_replay` compiles the shared arm,
 # rather than a default-feature target: the claim is about the store, and half the store
@@ -8050,7 +8069,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.operator_facing_redaction"
 class = "V0"
-description = "What of a deployment REQUEST may reach an operator's eyes, in the PROXY: the PKCS#11 User PIN, which unlocks a token holding the response-signing key and so sits in the same custody class as the key, and the inner-backend URL LIST. Each is owned by a type whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the secret is already gone — never a call site that remembered to redact. What ONE operator-configured locator becomes is NOT this unit's: that owner is `mcp-re-operator-display`, a different crate and a different project, and `mcp-re-operator-display.locator_projection` claims it. This unit CONSUMES that owner — `RedactedLocator` is re-exported here and the backend list is a projection over it — so what remains local is that the list renders through the shared owner rather than through a second redaction of its own."
+description = "What of a deployment REQUEST may reach an operator's eyes, in the PROXY: the inner-backend URL LIST is owned by `RedactedBackendUrls`, whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the credential is already gone — never a call site that remembered to redact; and a `SecretString`'s only rendering carries neither its value nor its length. The PKCS#11 User PIN is NOT a request field (the request carries its path); that the PIN travels as a `SecretString` is decided by its reader `capability_materialization::key_source::pin`, outside this unit's `paths` (NP-185), so this unit claims the wrapper's rendering, not the PIN's custody. What ONE operator-configured locator becomes is NOT this unit's: that owner is `mcp-re-operator-display`, a different crate and a different project, and `mcp-re-operator-display.locator_projection` claims it. This unit CONSUMES that owner — `RedactedLocator` is re-exported here and the backend list is a projection over it — so what remains local is that the list renders through the shared owner rather than through a second redaction of its own."
 paths = [
   "mcp-re-proxy/src/deployment_request/secret_string.rs",
   "mcp-re-proxy/src/deployment_request/inner_backend_display.rs",
@@ -8077,6 +8096,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#deployment_request::inner_backend_display::tests::a_shape_the_projection_cannot_decompose_is_named_not_echoed",
   "//mcp-re-proxy:proxy_unit_test#deployment_request::inner_backend_display::tests::every_backend_in_the_list_is_projected",
   "//mcp-re-proxy:proxy_unit_test#deployment_request::inner_backend_display::tests::an_empty_backend_list_renders_as_an_empty_list",
+  "//mcp-re-proxy:proxy_unit_test#deployment_request::secret_string::tests::the_representation_is_the_zeroizing_wrapper",
 ]
 
 [[unit]]
@@ -8163,6 +8183,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::the_unknown_outcome_is_its_own_case",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_failed_line_write_latches_the_failure",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_flush_is_acknowledged_behind_the_lines_ahead_of_it",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::a_full_queue_the_writer_drains_inside_the_bound_is_drained",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::a_queue_that_stays_full_returns_bounded_and_unknown",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::an_unknown_drain_states_the_drop_count_the_writer_never_reported",
 ]
 
 # ---------------------------------------------------------------------------------------
@@ -8880,7 +8903,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::cross_instance_insert_via_a_is_replay_via_b",
   "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::fresh_does_not_revoke_the_lease",
   "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::fresh_then_replay_single_instance",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::injected_clock_makes_ttl_the_window_not_the_now_zero_epoch",
+  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::the_lease_grant_on_the_wire_carries_the_retention_window",
   "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::lease_grant_body_carries_bounded_ttl",
   "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::lease_revoke_body_carries_string_lease_id",
   "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::nonpositive_ttl_rejected_pre_store_no_etcd_calls",
@@ -8894,6 +8917,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::txn_body_is_put_if_absent_under_lease",
   "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::txn_not_succeeded_is_replay",
   "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::txn_succeeded_is_fresh",
+  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::a_non_http_endpoint_is_refused_without_echoing_it",
+  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::a_redirecting_gateway_is_refused_and_its_target_never_reached",
 ]
 
 
@@ -11170,6 +11195,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#error::core_projection::tests::an_outage_does_not_project_onto_an_actor_binding_failure",
   "//mcp-re-http-profile:mcp_re_http_profile_test#error::core_projection::tests::failure_classes_map_to_their_precise_codes",
   "//mcp-re-http-profile:mcp_re_http_profile_test#error::core_projection::tests::the_derived_token_is_the_projected_verdicts_own",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#error::core_projection::tests::the_dispatch_taxonomy_projects_through_the_same_decision",
   "//mcp-re-http-profile:mcp_re_http_profile_test#error::core_projection::tests::the_projection_preserves_the_ratified_group_count",
   "//mcp-re-http-profile:mcp_re_http_profile_test#error::tests::a_context_carrying_failure_names_what_was_missing",
   "//mcp-re-http-profile:mcp_re_http_profile_test#error::tests::an_outage_is_not_an_untrusted_key",
@@ -11528,6 +11554,8 @@ evidence = [
 # would put a control that cannot fail inside a battery.
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#async_fleet::topology_tests::explicit_topology_is_never_overridden",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::start_gate_tests::a_core_that_fails_to_start_leaves_every_started_core_unserved_and_joined",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::start_gate_tests::every_core_is_released_once_all_have_started",
 ]
 
 # ---------------------------------------------------------------------------
@@ -11565,6 +11593,8 @@ paths = [
   # that must consult the decision before it binds anything. A closure without this file
   # would attest a refusal while the line that has to come first could move.
   "mcp-re-proxy/src/async_fleet/mod.rs",
+  # CLOSURE, NOT CLAIM: the refusal must precede the first bind, and this file performs it.
+  "mcp-re-proxy/src/async_fleet/reuseport.rs",
 ]
 exported_contracts = []
 # TWO classes. The refusal is one `return Err` reached by a two-term condition, and the

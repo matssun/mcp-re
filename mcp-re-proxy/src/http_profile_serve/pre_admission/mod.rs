@@ -84,7 +84,7 @@ impl HttpProfileProxy {
                 // about this call. The admission coordinate reads `NotReached`, which is its
                 // own answer and not a stand-in for one of the gate's four.
                 None,
-                None,
+                AdmissionFacet::NotReached,
             )),
         }
     }
@@ -117,7 +117,10 @@ impl HttpProfileProxy {
             .map_err(|refusal| self.refuse(ex, refusal, progress))?;
         let (decided_over, admission) = match self.admission_stage(ex, bound.as_ref()).await {
             Ok((established, facet)) => (progress.establish(established), facet),
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => {
+                ex.verdicts.admission = Some(AdmissionFacet::Refused);
+                return Err(self.refuse(ex, refusal, progress));
+            }
         };
         // The gate's verdict, recorded where it is obtained — the same rule the
         // authorization line below follows, and for the same reason.

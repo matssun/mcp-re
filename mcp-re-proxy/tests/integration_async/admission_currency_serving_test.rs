@@ -552,6 +552,37 @@ fn a_superseded_generation_is_refused_before_the_backend_runs() {
     );
 }
 
+/// A gate refusal is recorded as the gate's refusal, never as a gate that was not consulted.
+#[test]
+fn an_admission_refusal_is_recorded_as_the_gates_refusal() {
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 6);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = replica(
+        source,
+        strict_policy(),
+        AdmissionEnforcement::Required,
+        Arc::clone(&calls),
+    )
+    .with_audit_sink(sink.clone());
+    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
+    let req = signed_call(Some((&claims, &authority_key())), "n-refused-facet");
+
+    let served = block_on(proxy.handle(served_of(&req), NOW));
+    assert_eq!(served.status, 403);
+    let admissions: Vec<_> = sink
+        .records()
+        .iter()
+        .filter(|r| r.event().event_type == "mcp-re.request.rejected")
+        .filter_map(|r| r.subject.admission())
+        .collect();
+    assert_eq!(
+        admissions,
+        vec![mcp_re_proxy::admission_enforcer::AdmissionFacet::Refused],
+    );
+}
+
 #[test]
 fn a_revoked_workload_is_refused_though_its_assertion_is_still_valid() {
     let source = Arc::new(admission_store());

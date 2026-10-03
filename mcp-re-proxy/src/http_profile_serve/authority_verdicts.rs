@@ -29,6 +29,13 @@ pub(super) struct AuthorityVerdicts {
     pub(super) admission: Option<AdmissionFacet>,
 }
 
+impl AuthorityVerdicts {
+    /// The admission coordinate as the record states it: an unrecorded slot is `NotReached`.
+    pub(super) fn admission_facet(&self) -> AdmissionFacet {
+        self.admission.unwrap_or(AdmissionFacet::NotReached)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,5 +57,13 @@ mod tests {
         );
         v.authorization = Some(AuthorizationFacet::NotConfigured);
         assert_eq!(v.admission, Some(AdmissionFacet::LiveConfirmed));
+    }
+
+    #[test]
+    fn an_unrecorded_admission_projects_not_reached_and_a_recorded_one_itself() {
+        let mut v = AuthorityVerdicts::default();
+        assert_eq!(v.admission_facet(), AdmissionFacet::NotReached);
+        v.admission = Some(AdmissionFacet::Refused);
+        assert_eq!(v.admission_facet(), AdmissionFacet::Refused);
     }
 }

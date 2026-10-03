@@ -156,7 +156,7 @@ impl ResponseSigning {
             execution,
             ex.key.clone(),
             ex.verdicts.authorization.as_ref(),
-            ex.verdicts.admission,
+            ex.verdicts.admission_facet(),
         )
     }
 }

@@ -425,8 +425,9 @@ fn bodyless_request_round_trips() {
             .any(|(k, _)| k.eq_ignore_ascii_case("content-type")),
         "no content-type on a bodyless request"
     );
-    let (actor, verified) = verify_bodyless_request(&req, &resolver(), &policy(), NOW)
-        .expect("a bodyless request verifies");
+    let (actor, verified) =
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW)
+            .expect("a bodyless request verifies");
     assert_eq!(actor.identity.keyid, CLIENT_KEY_ID);
     assert_eq!(verified, evidence, "the handle is the signer's");
 }
@@ -449,7 +450,7 @@ fn bodyless_get_request_round_trips() {
         "n-get",
     )
     .expect("signs");
-    verify_bodyless_request(&req, &resolver(), &policy(), NOW).expect("verifies");
+    verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).expect("verifies");
 }
 
 #[test]
@@ -472,7 +473,7 @@ fn content_type_on_a_bodyless_request_is_rejected() {
     req.headers
         .push(("Content-Type".into(), "application/json".into()));
     assert_eq!(
-        verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
         HttpProfileError::MalformedEvidence("content-type on a bodyless message"),
     );
 }
@@ -529,7 +530,7 @@ fn a_bodyless_request_covers_a_present_authorization_header() {
         "the signer must cover a present authorization header: {}",
         signature_input_of(&req)
     );
-    verify_bodyless_request(&req, &resolver(), &policy(), NOW)
+    verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW)
         .expect("a bodyless request with a covered credential verifies");
 }
 
@@ -559,7 +560,7 @@ fn swapping_a_covered_bearer_token_on_a_bodyless_request_is_caught() {
         }
     }
     assert!(
-        verify_bodyless_request(&req, &resolver(), &policy(), NOW).is_err(),
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).is_err(),
         "a swapped bearer token must invalidate the signature"
     );
 }
@@ -588,7 +589,7 @@ fn an_uncovered_authorization_header_on_a_bodyless_request_is_rejected() {
     req.headers
         .push(("Authorization".into(), "Bearer token-INJECTED".into()));
     assert_eq!(
-        verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
         HttpProfileError::MissingCoveredComponent("authorization"),
         "a present-but-uncovered credential must fail closed, not ride along"
     );
@@ -621,7 +622,7 @@ fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected()
         .expect("signs");
         req.headers.push((header.into(), "injected".into()));
         assert_eq!(
-            verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
+            verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
             HttpProfileError::MissingCoveredComponent(expected),
             "an uncovered {header} must fail closed on the bodyless path"
         );
@@ -667,7 +668,7 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
             "{name} must be covered: {input}"
         );
     }
-    verify_bodyless_request(&req, &resolver(), &policy(), NOW).expect("verifies");
+    verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).expect("verifies");
 }
 
 /// A deployment's MCP transport contract must not be silently exempt on one request
@@ -711,7 +712,7 @@ fn a_configured_transport_contract_is_refused_rather_than_ignored() {
         mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]),
     );
     assert_eq!(
-        verify_bodyless_request(&req, &resolver(), &strict, NOW).unwrap_err(),
+        verify_bodyless_request(&req, &Verifier::new(&strict, &resolver()), NOW).unwrap_err(),
         HttpProfileError::McpProtocolVersionUnsupported,
         "the deployment's supported-version set must gate this shape too",
     );
@@ -733,11 +734,11 @@ fn a_configured_transport_contract_is_refused_rather_than_ignored() {
         "n-transport-ok",
     )
     .expect("signs");
-    verify_bodyless_request(&ok_req, &resolver(), &strict, NOW)
+    verify_bodyless_request(&ok_req, &Verifier::new(&strict, &resolver()), NOW)
         .expect("a supported version must verify under the same contract");
 
     // Without a transport contract there is nothing to enforce, and the message
     // verifies exactly as before.
-    verify_bodyless_request(&req, &resolver(), &policy(), NOW)
+    verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW)
         .expect("no transport contract configured, so nothing is bypassed");
 }

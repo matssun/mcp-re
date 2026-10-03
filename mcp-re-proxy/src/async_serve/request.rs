@@ -106,22 +106,19 @@ pub(super) async fn handle_request<H: AsyncRequestHandler>(
     // per-request currency decision), then routing-header hygiene, then the handler. The
     // clock is read PER REQUEST: the credential is accepted once at handshake, so that is
     // the only point at which one past its `notAfter` is caught on an open connection.
-    let served = match channel_peer
-        .as_ref()
-        .err()
-        .cloned()
-        .or_else(|| routing_header_rejection(&headers, &body_bytes))
-    {
+    let admitted = channel_peer
+        .and_then(|peer| routing_header_rejection(&headers, &body_bytes).map_or(Ok(peer), Err));
+    let served = match admitted {
         // A pre-handler transport rejection carries a JSON error body, no RFC 9421
         // evidence; frame it as a 403 JSON reply.
-        Some(error) => ServedHttpResponse::json(403, error),
-        None => {
+        Err(error) => ServedHttpResponse::json(403, error),
+        Ok(peer) => {
             let served_req = ServedHttpRequest {
                 method,
                 target_uri: options.target_uri.clone(),
                 headers: header_pairs,
-                body: body_bytes.to_vec(),
-                peer: channel_peer.unwrap_or(None),
+                body: handler_body(body_bytes),
+                peer,
                 assertion: assertion.map(str::to_string),
             };
             let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Handler);
@@ -130,4 +127,30 @@ pub(super) async fn handle_request<H: AsyncRequestHandler>(
     };
 
     Ok(served_to_hyper(served))
+}
+
+/// The body the handler receives is the allocation `_body_charge` covers: a uniquely owned
+/// Vec-backed `Bytes` is reclaimed without a copy, so resident body bytes equal charged
+/// bytes while the handler runs.
+fn handler_body(charged: Bytes) -> Vec<u8> {
+    Vec::from(charged)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_handler_is_handed_the_charged_allocation_not_a_copy() {
+        let mut exact = Vec::new();
+        exact.extend_from_slice(b"exact-body");
+        let mut spare = Vec::with_capacity(64);
+        spare.extend_from_slice(b"short");
+        for (vec, expected) in [(exact, &b"exact-body"[..]), (spare, &b"short"[..])] {
+            let ptr = vec.as_ptr();
+            let handed = handler_body(Bytes::from(vec));
+            assert_eq!(handed.as_ptr(), ptr);
+            assert_eq!(handed, expected);
+        }
+    }
 }

@@ -496,6 +496,20 @@ mod tests {
         )
         .expect("permit")
         .audit_facet();
+        let record = crate::audit_record::AuditRecord {
+            subject: crate::audit_record::AuditSubject::request_accepted(
+                facet.clone(),
+                crate::admission_enforcer::AdmissionFacet::LiveConfirmed,
+            ),
+            actor_id: None,
+            status: 200,
+            at_unix: 1,
+        };
+        let mut names: Vec<&str> = record.audit_fields().iter().map(|f| f.name).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "duplicate field name in {names:?}");
         let line = crate::audit_record::text::render_record(&facet.audit_fields());
         assert!(
             line.contains("authz_decision_id=decision-1"),

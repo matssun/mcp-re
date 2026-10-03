@@ -63,7 +63,6 @@ use crate::verify::floor::params::check_params;
 use crate::verify::floor::signature::signature_value_b64url;
 use crate::verify::floor::signature::verify_under;
 use crate::verify::floor::signature_input::parse_signature_input_for;
-use crate::verify::floor::trust_slot::resolve_actor_for_slot;
 
 /// What a verified bodyless acknowledgement establishes.
 mod acknowledged;
@@ -98,7 +97,6 @@ use crate::message::required_header;
 use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
-use crate::policy::VerifierPolicy;
 use crate::sigbase::signature_base;
 use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
@@ -354,10 +352,10 @@ pub fn sign_bodyless_request(
 /// with no body — which does not exist yet.
 pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
-    policy: &VerifierPolicy,
+    verifier: &crate::verifier::Verifier<'_, R>,
     now: i64,
 ) -> Result<(ResolvedActor, RequestEvidence), HttpProfileError> {
+    let policy = verifier.policy();
     reject_content_encoding(&request.headers)?;
     require_bodyless(&request.headers, &request.body)?;
 
@@ -382,7 +380,7 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     // routing claim entirely outside its signature.
     require_conditional_coverage(&request.headers, &parsed.components)?;
     let (_c, _e, _n, key_id, algorithm) = check_params(&parsed.params, policy, now, true)?;
-    let actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request)?;
+    let actor = verifier.resolve_for_slot(&key_id, SignerSlot::Request)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,
