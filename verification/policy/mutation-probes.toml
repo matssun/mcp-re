@@ -4572,14 +4572,14 @@ conjunct = "a drain that could not be queued or acknowledged reports OutcomeUnkn
 # formatter over an already-decided outcome.
 path = "mcp-re-proxy/src/audit_sink/drain.rs"
 anchor = """
-    if queue.try_send(AuditMessage::Flush(ack)).is_err() {
+    let Some(acked) = enqueue_flush(queue, started, timeout) else {
         return AuditDrain::OutcomeUnknown;
-    }
+    };
 """
 weakening = """
-    if queue.try_send(AuditMessage::Flush(ack)).is_err() {
+    let Some(acked) = enqueue_flush(queue, started, timeout) else {
         return AuditDrain::Drained;
-    }
+    };
 """
 expect_red = [
   "lib#audit_sink::drain::tests::a_queue_that_cannot_accept_the_flush_is_unknown_not_drained",

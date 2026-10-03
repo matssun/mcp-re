@@ -119,7 +119,10 @@ mod tests {
             hasher.update(5u64.to_be_bytes());
             hasher.update(b"actor");
             hasher.update(b"state");
-            format!("mcp-re:cont:{}", mcp_re_core::b64url_encode(&hasher.finalize()))
+            format!(
+                "mcp-re:cont:{}",
+                mcp_re_core::b64url_encode(&hasher.finalize())
+            )
         };
         let key = continuation_key("aud", "actor", b"state");
         assert_eq!(key, encode(b"mcp-re/continuation-key/v1"));

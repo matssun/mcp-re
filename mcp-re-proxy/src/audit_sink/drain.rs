@@ -130,10 +130,8 @@ fn enqueue_flush(
         match queue.try_send(message) {
             Ok(()) => return Some(acked),
             Err(TrySendError::Disconnected(_)) => return None,
+            Err(TrySendError::Full(_)) if started.elapsed() >= timeout => return None,
             Err(TrySendError::Full(returned)) => {
-                if started.elapsed() >= timeout {
-                    return None;
-                }
                 message = returned;
                 std::thread::sleep(Duration::from_millis(1));
             }
@@ -207,7 +205,8 @@ mod tests {
     /// line, or reporting only the success and leaving the timeout silent.
     #[test]
     fn a_timed_out_audit_drain_never_reads_as_a_completed_one() {
-        let drained = drain_line(AuditDrain::Drained, true, 0).expect("stderr audit states its drain");
+        let drained =
+            drain_line(AuditDrain::Drained, true, 0).expect("stderr audit states its drain");
         let timed_out = drain_line(AuditDrain::OutcomeUnknown, true, 0)
             .expect("a timeout is stated, not swallowed");
 
