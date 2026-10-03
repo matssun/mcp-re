@@ -223,11 +223,11 @@ profile lands.
 
 ## Deployment profiles
 
-`mcp-re-proxy` is one binary. The cargo features you compile it with determine
+`mcp-re-proxy` is one binary. The crate features you compile it with determine
 which controls are available — do not conflate the lean default with the
 production high-assurance profile.
 
-### Lean default (no cargo features) — **not a serving binary**
+### Lean default (no crate features) — **not a serving binary**
 
 - Minimal runtime closure (ADR-MCPS-018): no Redis, no PKCS#11, no online-OCSP
   dependency is linked in.
@@ -244,7 +244,7 @@ production high-assurance profile.
 Build with:
 
 ```sh
-cargo build --release -p mcp-re-proxy
+bazel build -c opt //mcp-re-proxy:mcp_re_proxy_cli
 ```
 
 ### High-assurance profile (`--features pkcs11_keysource,redis_replay,online_ocsp`)
@@ -257,12 +257,14 @@ Enables the three high-assurance backends:
 - **online certificate revocation** via OCSP (`online_ocsp`), alongside the
   offline CRL path available in both flavors.
 
-Build with:
+Build with (the high-assurance backends, and the cloud KMS key sources beside PKCS#11):
 
 ```sh
-cargo build --release -p mcp-re-proxy \
-    --features pkcs11_keysource,redis_replay,online_ocsp
+bazel build -c opt //mcp-re-proxy:mcp_re_proxy_ext_bin
 ```
+
+The deploy images carry `//mcp-re-proxy:mcp_re_proxy_deploy_bin`
+(`scripts/stage_image_binaries.sh`).
 
 **Every MCP-RE deployment uses the high-assurance profile** with a replay durability
 tier and its store, so all proxy nodes share replay state. This is not only a
@@ -286,7 +288,7 @@ The current implementation does not claim:
 Horizontal-scale replay protection, HSM/KMS-backed key custody, full CRL/OCSP
 certificate revocation, OS-level sandboxing of wrapped servers, and signed
 tool-manifest enforcement are gated on the
-`pkcs11_keysource,redis_replay,online_ocsp` cargo features (see Deployment
+`pkcs11_keysource,redis_replay,online_ocsp` crate features (see Deployment
 profiles); they are **not** linked into the lean default build and must not be
 implied for it.
 
@@ -308,9 +310,9 @@ unless MCP-RE is accepted through the official MCP extension process.
 
 ## Build and test
 
-The workspace builds with either Cargo or Bazel. Cargo is the public-facing
-default; Bazel is the hermetic build path the maintainer uses internally and
-both `Cargo.toml` and `BUILD.bazel` files are committed for every crate.
+Bazel builds and tests everything. Each crate's `BUILD.bazel` is its build; the
+`Cargo.toml` manifests describe the crates and their dependencies, which
+`scripts/crate_spec_parity_gate.py` holds equal to `MODULE.bazel`.
 
 **Everything at once, in cost order — run this before opening a PR and before any
 cloud run:**
@@ -319,40 +321,29 @@ cloud run:**
 scripts/local_gate.sh
 ```
 
-Structural gates → both cargo suites → `bazel test //...` → the ADR-MCPRE-051 §7 SLO
-lane, stopping at the first failure. Neither command below is the whole battery on its
-own: `cargo test --workspace` does not compile the non-default feature backends, and
-`bazel test //...` excludes the `manual`-tagged infra lane. See
+Structural gates → the lint lane and `bazel test //...` → the ADR-MCPRE-051 §7 SLO lane,
+stopping at the first failure. `bazel test //...` alone is not the whole battery: it
+excludes the `manual`-tagged infra lane. See
 [`docs/dev/local-gate-order.md`](docs/dev/local-gate-order.md).
 
-### Cargo (recommended for OSS contributors)
+### Bazel
 
 ```sh
-# Compile the whole workspace (libs + bins).
-cargo build --workspace --bins
-
-# Run the full test suite. The first step is required because Cargo does not
-# auto-build cross-crate binaries for integration tests; the bins must exist on
-# disk before the multi-process tests spawn them. With the bins in place, the
-# suite is fully green.
-cargo test --workspace
+bazel test //...                   # every non-manual test target
+bazel build --config=lint //...    # clippy under the workspace lint policy
+bazel build --config=rustfmt //... # rustfmt, check-only
 ```
 
-The SDK suites live outside the cargo workspace and run separately:
-`sdk/python` (`pytest`, needs `maturin develop`) and `sdk/typescript`
-(`npm test` — builds the native binding then runs `vitest`).
+A test target builds the binaries it spawns (its `data`), so an integration test needs
+nothing built beforehand. The SDK suites run against their Bazel-built native modules:
+`sdk/python` (`bazel build //sdk/python:wheel`, installed into a venv, then `pytest`) and
+`sdk/typescript` (`npm test` — Bazel builds the native addon, then `vitest`).
 
 `#[ignore]`-gated tests (developer-only fixture writers and the live Cloud-KMS
 lanes) are deliberate, not skipped production tests. The ADR-MCPRE-051 §7 load
 harness is **not** among them — it is kept out of the default battery by its
 `redis_replay` feature gate, so running it with `-- --ignored` selects nothing.
 Drive it through `scripts/local_slo_lane.sh`.
-
-### Bazel
-
-```sh
-bazel test //...
-```
 
 ## Repository layout
 
@@ -364,7 +355,7 @@ SECURITY.md                Vulnerability-reporting process.
 THIRD_PARTY.md             Third-party-component policy.
 LICENSE                    Apache-2.0.
 NOTICE.md                  Required Apache-2.0 attributions.
-Cargo.toml                 Workspace manifest.
+Cargo.toml                 Crate manifests' workspace (their description; Bazel builds).
 MODULE.bazel               Bazel module definition.
 
 mcp-re-core/                 Pure verification crate (no networking/async/fs).
@@ -377,7 +368,7 @@ mcp-re-client-proxy/         Client-side MCP-RE proxy library — transport-agno
 mcp-re-client/               Client-side ambassador BINARY — the deployable that loads the signed trust-anchor manifest against a durable rollback floor and refreshes it in place.
 mcp-re-conformance/          Black-box conformance harness (object + HTTP; MCP-RE is HTTP-profile only).
 mcp-re-demo/                 Demo certificate material: the `DemoFixtures` mTLS fixture generator.
-mcp-re-test-paths/           Test-only: resolve binaries + fixtures under Bazel OR Cargo.
+mcp-re-test-paths/           Test-only: resolve binaries + fixtures under Bazel runfiles.
 
 sdk/python/                Python SDK — maturin/PyO3 binding to mcp-re-client-core (ADR-MCPS-044).
 sdk/typescript/            TypeScript SDK — napi-rs binding to mcp-re-client-core (byte-identical evidence).

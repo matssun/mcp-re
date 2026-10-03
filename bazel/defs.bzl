@@ -1,18 +1,13 @@
 """
-Vendored VERBATIM from infrastructure/bazel_defs/rust/defs.bzl to keep the
-mcp-re module self-contained / publishable (ADR-MCPS-010/012).
-
-@nt_bazel_defs//rust:defs.bzl — shared Rust macros.
-
-Thin wrappers over rules_rust with house defaults for the monorepo,
-usable from any Bazel module that declares `nt_bazel_defs` as a direct
-bazel_dep (the root monorepo and the nested nautilus_trader module).
+The workspace's Rust macros: thin wrappers over rules_rust with its house
+defaults, kept in this module so it is self-contained (ADR-MCPS-010/012).
 
 Goals:
 - Policy centralization (edition, lint_config, stamp, test harness)
 - Standardized runfiles-based test fixture handling
-- Feature parity with cargo-nextest (serial_tests for process isolation)
-- Bazel-native: no Cargo path emulation, no directory-magic fixtures
+- Process isolation per test where needed (serial_tests: one single-threaded
+  rust_test per listed test)
+- Fixtures declared as labels and resolved through runfiles; no source-tree paths
 
 Deliberately does NOT include nt_rust_service_image — that macro depends
 on //platforms:linux_arm64 / //platforms:linux_x86_64 which live in the
@@ -47,8 +42,8 @@ def _default_rust_common_kwargs(
     if "version" not in out:
         out["version"] = WORKSPACE_VERSION
 
-    if lint_config != None and "lint_config" not in out:
-        out["lint_config"] = lint_config
+    if "lint_config" not in out:
+        out["lint_config"] = lint_config if lint_config != None else Label("//bazel:workspace_lints")
 
     if tags:
         out["tags"] = list(tags)
@@ -188,8 +183,6 @@ def nt_rust_test(
         serial_tests = [],
         skip_tests = [],
         extra_args = [],
-        auto_cargo_toml = True,
-        bazel_build_cfg = True,
         use_libtest_harness = True,
         **kwargs):
     """Thin wrapper over rust_test.
@@ -206,12 +199,6 @@ def nt_rust_test(
 
     skip_tests: test paths to omit from the main target via --skip=.
 
-    auto_cargo_toml: when True (default), Cargo.toml is added to
-        compile_data so rstest's proc-macro-crate can locate the manifest.
-
-    bazel_build_cfg: when True (default), `--cfg=bazel_build` is added to
-        rustc_flags so upstream sources can gate tests with
-        `#[cfg_attr(bazel_build, ignore)]`.
     """
     fixture_data, fixture_env = _fixture_env_and_data(
         fixture_files = fixture_files,
@@ -229,12 +216,7 @@ def nt_rust_test(
             test_data.append(label)
 
     test_compile_data = list(compile_data)
-    if auto_cargo_toml and "Cargo.toml" not in test_compile_data:
-        test_compile_data = ["Cargo.toml"] + test_compile_data
-
     test_rustc_flags = list(rustc_flags)
-    if bazel_build_cfg and "--cfg=bazel_build" not in test_rustc_flags:
-        test_rustc_flags = ["--cfg=bazel_build"] + test_rustc_flags
 
     skip_args = (
         ["--skip=" + t for t in skip_tests] +

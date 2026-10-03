@@ -28,8 +28,8 @@ so publishing would add a distribution mechanism nothing asks for. Ruling:
 verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
 
 BUT A DIGEST IS IDENTITY, NOT PRESERVATION. The local image store is disposable, and this
-image cannot be rebuilt — apt and opam resolve versions nothing pins, and the opam
-libraries are linked into the Aeneas binary, so a rebuild is a different instrument. An
+image cannot be rebuilt — apt, the rustup installer and the mathlib cache resolve inputs
+nothing pins, so a rebuild is a different instrument. An
 identity over bytes a prune can delete leaves a claim that is still identifiable and no
 longer reproducible. So `identity` also PERSISTS the artifact outside Docker's state,
 under its own digest, and `load` is what every consumer runs: it checks the preserved bytes
@@ -159,27 +159,47 @@ def _smoke(image: str, toolchains: dict) -> None:
     if got_rev != mathlib:
         raise SystemExit(f"FAIL: image mathlib is {got_rev}, the lock records {mathlib}")
 
-    # `--help`/`-help`, not `--version`: the pinned Charon is a subcommand CLI and rejects
-    # `--version`. The proposition is that both binaries EXECUTE.
+    # `--help`/`-help`, not `--version`: Charon is a subcommand CLI and rejects `--version`.
+    # The proposition is that both binaries EXECUTE.
     print("smoke: Charon and Aeneas execute")
     _run(["docker", "run", "--rm", image, "bash", "-c",
           '"$CHARON_EXE" --help >/dev/null && "$AENEAS_EXE" -help >/dev/null'])
 
+    # What RUNS is the pinned release, not merely a binary at the pinned path: each installed
+    # binary's digest against the lock, and Charon's own statement of its commit.
+    print("smoke: the installed binaries are the pinned release binaries")
+    _run(["docker", "run", "--rm", image, "bash", "-c", _pinned_binaries(toolchains)])
+
     # End to end in miniature. Each check above proves one component answers; only this
     # proves they compose. `--preset=aeneas` is mandatory — without it Aeneas refuses the
-    # LLBC outright — and at this pin it is an option of the `cargo` SUBCOMMAND.
-    print("smoke: a tiny crate extracts and Aeneas emits Lean")
+    # LLBC outright — and `--sysroot=default` reads the nightly's own standard library.
+    print("smoke: a one-file crate extracts and Aeneas emits Lean")
     _run(["docker", "run", "--rm", image, "bash", "-c", TINY_CRATE], capture=False)
-    print("smoke: PASS — six check(s)")
+    print("smoke: PASS — seven check(s)")
 
 
-#: Rust -> LLBC -> Lean, on a crate small enough that the whole thing is one step.
+def _pinned_binaries(toolchains: dict) -> str:
+    """A shell check that each installed binary is the lock's, and Charon states its commit."""
+    digests = {
+        "$CHARON_EXE": toolchains["charon"]["charon_sha256"],
+        '"$(dirname "$CHARON_EXE")/charon-driver"': toolchains["charon"]["charon_driver_sha256"],
+        "$AENEAS_EXE": toolchains["aeneas"]["aeneas_sha256"],
+    }
+    lines = ["set -euo pipefail"]
+    for path, digest in digests.items():
+        hexdigest = str(digest).removeprefix("sha256:")
+        lines.append(f'echo "{hexdigest}  {path}" | sha256sum -c -')
+    lines.append(f'grep -qaF "{toolchains["charon"]["commit"]}" "$CHARON_EXE"')
+    return "\n".join(lines)
+
+
+#: Rust -> LLBC -> Lean, on a crate of one file, handed to Charon as a rustc invocation.
 TINY_CRATE = """
 set -euo pipefail
-mkdir -p /tmp/smoke/src && cd /tmp/smoke
-printf '[package]\nname = "smoke"\nversion = "0.0.0"\nedition = "2021"\n[lib]\npath = "src/lib.rs"\n' > Cargo.toml
-printf 'pub fn double(x: u32) -> u32 { x.wrapping_add(x) }\n' > src/lib.rs
-"$CHARON_EXE" cargo --preset=aeneas --dest-file /tmp/smoke/smoke.llbc 2>&1 \
+mkdir -p /tmp/smoke && cd /tmp/smoke
+printf 'pub fn double(x: u32) -> u32 { x.wrapping_add(x) }\n' > lib.rs
+"$CHARON_EXE" rustc --preset=aeneas --sysroot=default --dest-file /tmp/smoke/smoke.llbc \
+    -- lib.rs --crate-name smoke --crate-type=lib --edition=2021 2>&1 \
   || { rc=$?; echo "charon exited $rc — the output above is the whole diagnostic"; exit "$rc"; }
 "$AENEAS_EXE" -backend lean -dest /tmp/smoke/out /tmp/smoke/smoke.llbc
 echo "emitted: $(ls /tmp/smoke/out)"

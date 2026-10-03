@@ -7,7 +7,7 @@
 # operator's login PATH — it comes from the runner service's own `.env`. So the
 # same box that verifies by hand can fail the lane, and the failure surfaces
 # deep inside a step as `ModuleNotFoundError: tomllib` or
-# `verus: rustup not found`. Both name a symptom in a tool nobody was thinking
+# `bazel: command not found`. Both name a symptom in a tool nobody was thinking
 # about; neither names the runner environment that actually decided it.
 #
 # This runs first and states the requirement it is checking, so a rebuilt or
@@ -39,32 +39,18 @@ else
   fi
 fi
 
-# --- Verus resolves its toolchain through rustup ------------------------------
-# The Verus release archive ships its own Z3 but NOT a compiler: it shells out to
-# rustup to find the pinned channel. rustup lives in ~/.cargo/bin, which a
-# service PATH assembled from /usr/bin and Homebrew alone does not contain.
-rustup_path="$(command -v rustup || true)"
-if [[ -z "$rustup_path" ]]; then
-  fail "no rustup on the lane PATH — Verus cannot resolve the pinned channel."
+# --- every Rust lane runs through Bazel --------------------------------------
+# The test, mutation, structural, measured and Verus lanes build and run with Bazel, on the
+# Rust toolchain MODULE.bazel pins — the prover included, which runs on that toolchain's
+# own compiler driver. So what this box needs is a Bazel that starts, asked rather than
+# looked for on PATH: a launcher that cannot fetch or start the pinned release fails here,
+# naming itself, instead of inside a lane step.
+if ! command -v bazel >/dev/null 2>&1; then
+  fail "no bazel on the lane PATH — every Rust lane runs through it."
+elif version="$(bazel --version 2>&1)"; then
+  echo "bazel at $(command -v bazel): ${version}"
 else
-  echo "rustup at ${rustup_path}"
-fi
-
-# --- rustup must actually resolve the pinned channel ---------------------------
-# Checked by resolving it, not by inspecting PATH. A directory-prefix heuristic
-# would call this box healthy: its `cargo` is Homebrew's `rust` formula rather
-# than a rustup shim, and it sits in the same directory as rustup. What Verus
-# needs is not a well-arranged PATH but a rustup that hands back the pinned
-# compiler, so ask for that.
-if [[ -n "$rustup_path" ]]; then
-  channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml | head -n 1)"
-  if [[ -z "$channel" ]]; then
-    fail "no channel found in rust-toolchain.toml."
-  elif resolved="$(rustup run "$channel" rustc --version 2>&1)"; then
-    echo "rustup resolves ${channel}: ${resolved}"
-  else
-    fail "rustup cannot resolve the pinned channel ${channel}: ${resolved}"
-  fi
+  fail "bazel on the lane PATH does not start: ${version}"
 fi
 
 # --- the ecosystems the REGISTRY actually uses ---------------------------------
@@ -100,7 +86,7 @@ echo "registry ecosystems: ${ecosystems:-<none>}"
 
 for eco in $ecosystems; do
   case "$eco" in
-    cargo) ;;  # covered by the rustup checks above
+    rust) ;;  # covered by the bazel check above
     python)
       if command -v uv >/dev/null 2>&1; then
         echo "uv at $(command -v uv) (a python unit's battery runs through it)"
@@ -164,12 +150,11 @@ if [[ $failed -ne 0 ]]; then
 The lane PATH is set by the runner service, not by the login shell. Fix it in
 the runner's own `.env` (next to `svc.sh`), then restart the service:
 
-  PATH=/Users/mats/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+  PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
   ./svc.sh stop && ./svc.sh start
 
-~/.cargo/bin FIRST is not cosmetic: Homebrew's cargo would otherwise shadow the
-rustup shim. See docs/dev/verification-runner.md.
+See docs/dev/verification-runner.md.
 REMEDY
   exit 1
 fi

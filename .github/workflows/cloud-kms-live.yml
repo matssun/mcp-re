@@ -136,53 +136,58 @@ jobs:
       - name: Why this is nightly-real-only
         run: |
           echo "::notice title=aws-kms nightly-real-only::Running against a REAL AWS KMS endpoint because no faithful LocalStack/emulator supports ECC_NIST_EDWARDS25519 + ED25519_SHA_512/RAW."
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
+      # The Bazel targets these lanes run carry the PKCS#11 feature, whose `cryptoki-sys`
+      # FFI bindings are generated with bindgen, which needs libclang at runtime. The runner
+      # image ships Clang; point bindgen at it.
+      - name: libclang for bindgen
+        run: |
+          set -euo pipefail
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              echo "LIBCLANG_PATH=$dir" >> "$GITHUB_ENV"; exit 0
+            fi
+          done
+          echo "no libclang on the runner image" >&2; exit 1
       - name: Run AWS KMS live verification (#[ignore] test, real endpoint)
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features aws_kms_keysource
-          --test integration_live
-          -- --ignored aws_kms_live_test::aws_kms_signature_verifies_under_mcp_re_core
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_live_test
+          --test_arg=--ignored --test_arg=aws_kms_live_test::aws_kms_signature_verifies_under_mcp_re_core
       - name: Run AWS KMS delegated-REQUIRED serving + authority flip (#[ignore], real endpoint)
         # ADR-MCPRE-052: the KMS root ISSUES a short-TTL credential and an in-memory
         # delegated key signs the response. This is the lane the cross-cloud
         # delegated-root claim rests on; `aws_kms_live_test` above proves only that a
         # real KMS signature verifies, which does NOT reach the delegated authority.
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features aws_kms_keysource
-          --test integration_live
-          -- --ignored aws_kms_delegated_required_live_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_live_test
+          --test_arg=--ignored --test_arg=aws_kms_delegated_required_live_test::
       - name: Run AWS KMS delegated-signing custody (#[ignore], real endpoint)
         # ADR-MCPRE-052 §4: the load-bearing property is ZERO KMS operations on the
         # per-request signing path — N responses within one delegated key's life cost
         # exactly one KMS call. The delegated-required lane above proves the chain
         # verifies; this one proves the root is off the hot path.
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features aws_kms_keysource
-          --test integration_live
-          -- --ignored aws_kms_delegated_signing_live_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_live_test
+          --test_arg=--ignored --test_arg=aws_kms_delegated_signing_live_test::
       - name: Run AWS KMS HTTP-profile signing (#[ignore], real endpoint)
         # ADR-MCPRE-050: a real KMS signature over an RFC 9421 base that the
         # UNMODIFIED verify_request/verify_response accept, with tamper and
         # wrong-key negatives.
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features aws_kms_keysource
-          --test integration_live
-          -- --ignored aws_kms_http_profile_live_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_live_test
+          --test_arg=--ignored --test_arg=aws_kms_http_profile_live_test::
       - name: Run AWS KMS delegated TLS (#[ignore], real endpoint)
         # The TLS private key stays in KMS: a fully-validating mTLS handshake
         # completes only because a real KMS Sign produced the CertificateVerify.
         # Needs its own key, so it is conditional rather than silently degraded.
         if: ${{ env.MCP_RE_AWS_KMS_TLS_KEY_ID != '' }}
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features aws_kms_keysource
-          --test integration_live
-          -- --ignored aws_kms_delegated_tls_live_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_live_test
+          --test_arg=--ignored --test_arg=aws_kms_delegated_tls_live_test::
       - name: Note when delegated TLS was not exercised
         if: ${{ env.MCP_RE_AWS_KMS_TLS_KEY_ID == '' }}
         run: |
@@ -207,44 +212,50 @@ jobs:
       - name: Why this is nightly-real-only
         run: |
           echo "::notice title=gcp-kms nightly-real-only::Running against a REAL Cloud KMS endpoint because no faithful emulator supports EC_SIGN_ED25519 asymmetricSign."
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
+      # The Bazel targets these lanes run carry the PKCS#11 feature, whose `cryptoki-sys`
+      # FFI bindings are generated with bindgen, which needs libclang at runtime. The runner
+      # image ships Clang; point bindgen at it.
+      - name: libclang for bindgen
+        run: |
+          set -euo pipefail
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              echo "LIBCLANG_PATH=$dir" >> "$GITHUB_ENV"; exit 0
+            fi
+          done
+          echo "no libclang on the runner image" >&2; exit 1
       - name: Run GCP Cloud KMS live verification (#[ignore] test, real endpoint)
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features gcp_kms_keysource
-          --test gcp_kms_live_test
-          -- --ignored gcp_kms_signature_verifies_under_mcp_re_core
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:gcp_kms_live_test
+          --test_arg=--ignored --test_arg=gcp_kms_signature_verifies_under_mcp_re_core
       - name: Run GCP Cloud KMS delegated-REQUIRED serving + authority flip (#[ignore], real endpoint)
         # ADR-MCPRE-052: the KMS root ISSUES a short-TTL credential and an in-memory
         # delegated key signs the response, plus the authority-flip and revocation
         # boundaries. The counterpart of the AWS step above; both clouds must prove
         # the same chain for the cross-cloud delegated-root claim.
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features gcp_kms_keysource
-          --test integration_live
-          -- --ignored gcp_kms_delegated_required_live_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_live_test
+          --test_arg=--ignored --test_arg=gcp_kms_delegated_required_live_test::
       - name: Run GCP Cloud KMS HTTP-profile (RFC 9421) verification (#[ignore], real endpoint)
         # Cloud KMS signs an RFC 9421 request + response through the HTTP profile's
         # external-signer seam (ADR-MCPRE-050 / MCPRE-106) that the unmodified
         # verify_request / verify_response accept. Same secrets. (The hermetic
-        # offline lanes of this same test already run in the blocking cargo job.)
+        # offline lanes of this same test already run in every `bazel test //...`.)
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features gcp_kms_keysource
-          --test integration_live
-          -- --ignored gcp_kms_http_profile_live_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_live_test
+          --test_arg=--ignored --test_arg=gcp_kms_http_profile_live_test::
       - name: Run GCP Cloud KMS delegated-signing custody (#[ignore], real endpoint)
         # ADR-MCPRE-052 §4, the counterpart of the AWS delegated-signing step above:
         # ZERO KMS operations on the per-request signing path. The GCP job had the
         # delegated-REQUIRED and HTTP-profile steps and not this one, so the property
         # was claimed for both clouds and measured on one.
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features gcp_kms_keysource
-          --test integration_live
-          -- --ignored gcp_kms_delegated_signing_live_test::gcp_kms_delegated_signing_live
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_live_test
+          --test_arg=--ignored --test_arg=gcp_kms_delegated_signing_live_test::gcp_kms_delegated_signing_live
       - name: Run GCP Cloud KMS delegated TLS (#[ignore], real endpoint)
         # The TLS private key stays in Cloud KMS: a fully-validating mTLS handshake
         # completes only because a real Cloud KMS asymmetricSign produced the
@@ -252,10 +263,9 @@ jobs:
         # rather than silently degraded — the AWS job's precedent.
         if: ${{ env.MCP_RE_GCP_KEY_VERSION_TLS != '' }}
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
-          --features gcp_kms_keysource
-          --test integration_live
-          -- --ignored gcp_kms_delegated_tls_live_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_live_test
+          --test_arg=--ignored --test_arg=gcp_kms_delegated_tls_live_test::
       - name: Note when GCP delegated TLS was not exercised
         if: ${{ env.MCP_RE_GCP_KEY_VERSION_TLS == '' }}
         run: |

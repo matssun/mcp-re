@@ -22,14 +22,14 @@ before any verification toolchain exists — which is exactly the state they are
 | `verify --gate` | authoritative mode: a failing lane fails the build | works |
 | `verify --manifests` | validate the policy files and stop | works |
 | `verify-tests` | runs each unit's declared test battery, by target — and once per pinned runtime where its ecosystem has one | works |
-| `verify-structural` | ADR-MCPRE-068 `structural://`: injects a hostile construction into a scratch copy and requires the compiler to REFUSE it with a declared error code | works; 5 registered probes, no unit declares the scheme before Phase 0D |
+| `verify-structural` | ADR-MCPRE-068 `structural://`: injects a hostile construction into a scratch copy and requires the compiler to REFUSE it with a declared error code; a probe declaring a `relaxation` must also COMPILE once the owner's boundary is opened, so the refusal is attributable to that boundary | works; the registry is `verification/policy/structural-probes.toml` |
 | `verify-measured` | ADR-MCPRE-068 `measured://`: executes a measurement protocol and requires its apparatus to demonstrate it can still MOVE | works; registry empty until Phase 0D, liveness in `test_measured_lane.py` |
 | `check-assumptions` | the proof escape-hatch gate | works |
 | `fingerprint` | deterministic `ReviewFingerprint` per unit | works, partial components |
 | `evidence-graph` | declared units and typed edges | works; freshness is Phase 4 |
-| `verify-verus` | full `cargo verus verify` for the declared scope | works; Verus is pinned and resolved |
+| `verify-verus` | whole-crate Verus verification for the declared scope: each crate's `verus_verify` target, the pinned prover as a Bazel action | works; Verus is pinned and resolved |
 | `verify-lean` | lake build and theorem check | reports NOT_REQUIRED — pinned, but no V2/V3 unit is declared |
-| `regenerate-lean` | Charon → LLBC → Aeneas → Lean extraction | refuses — pipeline pinned, regeneration not implemented |
+| `regenerate-lean` | Charon → LLBC → Aeneas → Lean extraction: each unit crate's `charon_llbc` target under the pinned Bazel launcher, inside the extraction container | works; runs only in the pinned extraction container |
 | `check-generated` | drift gate for BOTH generated artifacts: the Lean model and the assurance views | works for the views; Lean reports "nothing to drift" |
 | `generate-views` | renders `verification/generated/` from the four catalogues | works |
 | `review-frontier` | minimum review obligation | Phase 4; falls back to everything-dirty |

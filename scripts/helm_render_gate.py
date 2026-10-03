@@ -45,6 +45,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 CHART = REPO / "deploy" / "helm" / "mcp-re-proxy"
 DOCKERFILE = REPO / "deploy" / "docker" / "Dockerfile"
+#: Stages the binaries the image copies in, each named by its Bazel label.
+STAGE_SCRIPT = REPO / "scripts" / "stage_image_binaries.sh"
+TARGET_TABLE = REPO / "verification" / "generated" / "rust-targets.json"
 
 #: `keySource` value -> the cargo feature the binary needs to serve it. A mode the
 #: chart accepts but the default image was not built with does not degrade: the CLI
@@ -59,11 +62,21 @@ KEY_SOURCE_FEATURES: dict[str, str] = {
 
 
 def default_image_features() -> set[str]:
-    """The feature set `ARG FEATURES=` bakes into the image the chart points at."""
-    for line in DOCKERFILE.read_text(encoding="utf-8").splitlines():
-        if line.startswith("ARG FEATURES="):
-            return {f.strip() for f in line.split("=", 1)[1].split(",") if f.strip()}
-    return set()
+    """The crate features of the proxy binary the image the chart points at carries.
+
+    The image copies a Bazel-built `mcp-re-proxy`; `stage_image_binaries.sh` names the
+    label it is built from, and the build graph's target table states that target's
+    features. Empty when either cannot be read, which the caller refuses.
+    """
+    label = ""
+    for line in STAGE_SCRIPT.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip().strip('"')
+        if stripped.startswith("mcp-re-proxy //"):
+            label = stripped.split()[1]
+    if not label:
+        return set()
+    row = json.loads(TARGET_TABLE.read_text(encoding="utf-8"))["targets"].get(label)
+    return set(row["features"]) if row else set()
 
 
 def check_image_declares_non_root() -> list[str]:
@@ -200,7 +213,10 @@ def check_image_serves_every_key_source() -> list[str]:
     problems: list[str] = []
     features = default_image_features()
     if not features:
-        return [f"{DOCKERFILE.name}: no `ARG FEATURES=` line; cannot tell what the image serves"]
+        return [
+            f"{STAGE_SCRIPT.name} names no proxy target the build graph holds; cannot tell "
+            "what the image serves"
+        ]
     values = (CHART / "values.yaml").read_text(encoding="utf-8")
     offered = [mode for mode in KEY_SOURCE_FEATURES if mode in values]
     if not offered:

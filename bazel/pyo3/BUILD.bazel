@@ -1,0 +1,27 @@
+load("@rules_rust_pyo3//:defs.bzl", "pyo3_toolchain", "rust_pyo3_toolchain")
+
+package(default_visibility = ["//visibility:public"])
+
+# The PyO3 the Python SDK's native module links: the crates_mcp_re version, so the
+# binding compiles against one crate universe with the rest of the workspace.
+rust_pyo3_toolchain(
+    name = "rust_pyo3",
+    pyo3 = "@crates_mcp_re//:pyo3",
+    pyo3_introspection = "@crates_mcp_re//:pyo3-introspection",
+)
+
+toolchain(
+    name = "rust_pyo3_toolchain",
+    toolchain = ":rust_pyo3",
+    toolchain_type = "@rules_rust_pyo3//:rust_toolchain_type",
+)
+
+# The interpreter configuration PyO3's build scripts read, from the registered
+# rules_python toolchain.
+pyo3_toolchain(name = "pyo3")
+
+toolchain(
+    name = "pyo3_toolchain",
+    toolchain = ":pyo3",
+    toolchain_type = "@rules_rust_pyo3//:toolchain_type",
+)

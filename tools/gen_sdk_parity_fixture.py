@@ -14,9 +14,9 @@ Ed25519 is deterministic and every input below is fixed, so freezing bytes is ho
 
 Run from the repo root, against an INSTALLED wheel:
 
-    python -m venv /tmp/pv && /tmp/pv/bin/pip install maturin
-    (cd sdk/python && maturin build --release --out /tmp/pv/dist)
-    /tmp/pv/bin/pip install /tmp/pv/dist/*.whl
+    bazel build //sdk/python:wheel
+    python -m venv /tmp/pv
+    /tmp/pv/bin/pip install "$(bazel cquery --output=files //sdk/python:wheel 2>/dev/null)"
     /tmp/pv/bin/python tools/gen_sdk_parity_fixture.py
 """
 import base64

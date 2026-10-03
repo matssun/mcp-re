@@ -59,7 +59,8 @@ echo "Running the delegated-required serving + authority-flip lanes against live
 
 # Both #[ignore] live entry points: the production serving path on the KMS root,
 # and the authority flip. FAIL LOUDLY if MCP_RE_GCP_* is unset (never a silent pass).
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_delegated_required_live_test -- --ignored --nocapture
+scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results \
+  //mcp-re-proxy:integration_live_test \
+  --test_arg=--ignored --test_arg=--nocapture --test_arg=gcp_kms_delegated_required_live_test::
 
 echo "OK — delegated-required + authority flip verified on live Cloud KMS."

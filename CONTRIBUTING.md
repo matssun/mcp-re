@@ -54,13 +54,12 @@ scripts/local_gate.sh
 ```
 
 One command, ordered by cost, stops at the first failure: structural gates (image
-tags, port registry, tracked secrets, Helm fail-closed guards) → both cargo suites →
+tags, port registry, tracked secrets, Helm fail-closed guards) → the lint lane and
 `bazel test //...` → the ADR-MCPRE-051 §7 SLO lane. Add `--with-kind` to also run the
 fleet proofs on a local kind cluster before any cloud run.
 
 `bazel test //...` alone is **not** the full battery: it excludes the `manual`-tagged
-infra lane, and `cargo test --workspace` does not compile the non-default feature
-backends. The gate script runs each lane that CI runs.
+infra lane. The gate script runs each lane that CI runs.
 
 Read [`docs/dev/local-gate-order.md`](docs/dev/local-gate-order.md) for what each
 stage catches and the two ways the SLO lane can silently measure nothing. Use the

@@ -15,7 +15,7 @@
 //!
 //! Run (target from config/ports.toml via the launcher, never a literal):
 //!   HPP_TARGET=http://127.0.0.1:8601/mcp \
-//!   cargo run -p mcp-re-proxy --example http_profile_client
+//!   bazel run //mcp-re-proxy:http_profile_client
 
 use std::io::Read;
 

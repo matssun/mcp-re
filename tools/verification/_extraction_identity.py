@@ -2,7 +2,7 @@
 """WHICH extraction container the pinned digest IS — computed, not remembered.
 
 The image's identity is a function of the toolchain it contains: the Charon and Aeneas
-commits, their compilers, the Lean toolchain, the mathlib revision, the Dockerfile that
+release artifacts and commits, Charon's rustc, the Lean toolchain, the mathlib revision, the Dockerfile that
 assembles them, and the platform. `tools/verification/extraction-image` derives a tag from
 exactly those and the lock records the digest a build of them produced.
 
@@ -72,7 +72,8 @@ def content_tag(toolchains: dict, definition: str | None = None) -> str:
         f"charon={charon.get('commit', '')}",
         f"charon_rustc={charon.get('rust_toolchain', '')}",
         f"aeneas={aeneas.get('commit', '')}",
-        f"ocaml={aeneas.get('ocaml_compiler', '')}",
+        f"charon_artifact={charon.get('linux_arm64_sha256', '')}",
+        f"aeneas_artifact={aeneas.get('linux_arm64_sha256', '')}",
         f"lean={lean.get('toolchain', '')}",
         f"mathlib={backend.get('mathlib_revision', '')}",
         f"dockerfile={definition_digest() if definition is None else definition}",
@@ -94,8 +95,8 @@ def identity_problems(toolchains: dict) -> list[str]:
     problems: list[str] = []
 
     # An identity with no ARTIFACT is not an identity. The declared inputs do not determine
-    # the image — this definition still resolves apt and opam versions at build time, and
-    # those build the Aeneas binary — so the bytes that were actually produced have to be
+    # the image — this definition still resolves apt packages, the rustup installer and the
+    # mathlib cache at build time — so the bytes that were actually produced have to be
     # recorded rather than derived. WHERE they are kept is not this module's business:
     # `artifact_digest` is a content digest over the image, and a local image store and a
     # registry give the same immutability. See

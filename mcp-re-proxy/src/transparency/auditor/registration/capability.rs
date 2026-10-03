@@ -11,9 +11,13 @@
 //! against a successor to the protocol the leaf speaks, and that is the test a term has to
 //! pass to appear at this altitude.
 
+#[cfg(feature = "scitt_registration")]
 use mcp_re_http_profile::scitt::CoseVerificationKey;
+#[cfg(feature = "scitt_registration")]
 use mcp_re_http_profile::scitt::Receipt;
+#[cfg(feature = "scitt_registration")]
 use mcp_re_http_profile::scitt::ScittServiceTrustPin;
+#[cfg(feature = "scitt_registration")]
 use mcp_re_http_profile::scitt::SignedStatement;
 
 /// What a mechanism produces: the bytes a service answered with, and nothing about
@@ -22,11 +26,13 @@ use mcp_re_http_profile::scitt::SignedStatement;
 /// Deliberately not a `Receipt`. Parsing is already a claim — that these bytes are an RFC
 /// 9942 receipt — and a mechanism that returned one would have made the first half of a
 /// judgement the verifying layer exists to make.
+#[cfg(feature = "scitt_registration")]
 #[derive(Debug, Clone)]
 pub struct RegistrationResponse {
     receipt_bytes: Vec<u8>,
 }
 
+#[cfg(feature = "scitt_registration")]
 impl RegistrationResponse {
     /// The bytes a service answered a registration with.
     pub fn of(receipt_bytes: Vec<u8>) -> Self {
@@ -100,6 +106,7 @@ impl std::error::Error for RegistrationError {}
 /// The whole seam, and it is one method wide. A mechanism owns a protocol's states,
 /// media types and status codes; what it owes the layer above is bytes and a refusal in
 /// this module's vocabulary.
+#[cfg(feature = "scitt_registration")]
 pub trait TransparencyRegistration {
     /// WHICH contract this mechanism speaks, as a durable record rather than a log line.
     ///
@@ -149,6 +156,7 @@ impl RegisteredStatement {
 /// with, and nothing here fetches or refreshes either. A verifier that reached for a key
 /// while checking a receipt would be verifying against whatever the network offered at
 /// that moment, which is the property the pin exists to remove.
+#[cfg(feature = "scitt_registration")]
 pub fn register_and_verify(
     mechanism: &dyn TransparencyRegistration,
     statement: &SignedStatement,
@@ -177,7 +185,7 @@ pub fn register_and_verify(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "scitt_registration"))]
 mod tests {
     use super::*;
     use crate::transparency::auditor::registration::fixtures::*;

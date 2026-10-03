@@ -14,3 +14,49 @@ platform(
         "@platforms//cpu:x86_64",
     ],
 )
+
+# The image platform for arm64 hosts: the local kind fleet on Apple Silicon runs arm64
+# nodes, so the images it loads carry arm64 binaries (scripts/stage_image_binaries.sh).
+platform(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+# Lets a darwin host BUILD a Linux test binary for an image (the SLO bench) without
+# pretending it can run one: Bazel otherwise requires an execution platform matching the
+# test's target platform. Registered for darwin hosts only (`build:macos` in .bazelrc);
+# a Linux host builds its tests natively and never needs it.
+toolchain(
+    name = "linux_test_on_any_exec",
+    target_compatible_with = ["@platforms//os:linux"],
+    toolchain = "@bazel_tools//tools/test:empty_toolchain",
+    toolchain_type = "@bazel_tools//tools/test:default_test_toolchain_type",
+)
+
+# The host/target pairs a platform-tagged artifact (the Python SDK wheel) names.
+config_setting(
+    name = "is_macos_arm64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+config_setting(
+    name = "is_linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "is_linux_arm64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+)

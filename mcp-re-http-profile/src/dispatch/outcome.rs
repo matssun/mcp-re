@@ -50,7 +50,9 @@ use crate::replay::HttpReplayKey;
 /// [`Self::into_admitted_outcome`] is where that caller states it happened.
 ///
 /// The representation is private, so the proved `continuation_verified` cannot be supplied
-/// by anyone who did not prepare a dispatch:
+/// by anyone who did not prepare a dispatch. The literal names every field, so the only
+/// refusal is their privacy (E0451); structural probe S33 compiles it and requires that code,
+/// and requires it to compile once the fields are public:
 ///
 /// ```compile_fail
 /// use mcp_re_http_profile::dispatch::PreparedDispatch;
@@ -58,6 +60,7 @@ use crate::replay::HttpReplayKey;
 ///     PreparedDispatch {
 ///         replay_key,
 ///         continuation_verified: true,
+///         posture: todo!(),
 ///     }
 /// }
 /// ```
@@ -128,7 +131,7 @@ impl PreparedDispatch {
 /// under.
 ///
 /// Every inhabitant came from a [`PreparedDispatch`], which came from a posture decision.
-/// A struct literal is not an inhabitant:
+/// A struct literal is not an inhabitant (E0451; structural probe S34):
 ///
 /// ```compile_fail
 /// use mcp_re_http_profile::DispatchOutcome;
@@ -136,6 +139,7 @@ impl PreparedDispatch {
 ///     DispatchOutcome {
 ///         replay_key,
 ///         continuation_verified: true,
+///         posture: todo!(),
 ///     }
 /// }
 /// ```

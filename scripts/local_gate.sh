@@ -11,15 +11,9 @@
 #   scripts/local_gate.sh --with-kind    # also stage 5: the eight fleet proofs on kind
 #   scripts/local_gate.sh --from 3       # resume at a stage (after fixing a failure)
 #
-# Env: SKIP_BAZEL=1 to skip the Bazel parity stage; SLO_REPS=N for stage 4 reps.
+# Env: SLO_REPS=N for stage 4 reps.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-
-# Before ANY stage: make `cargo`/`rustc` the toolchain pinned in rust-toolchain.toml
-# (the one CI and Bazel use), or refuse to run. A gate that builds with a different
-# compiler than CI proves nothing about CI, and the substitution is silent — a
-# non-rustup `cargo` earlier on PATH just ignores rust-toolchain.toml.
-. scripts/use_pinned_toolchain.sh || exit 1
 
 FROM=1
 LAST=4
@@ -72,22 +66,16 @@ run() { # run <label> <command...>
 # shell afterwards, so a later harmless non-zero would abort the run with no message.
 # Chain with && instead — the function's exit status is what `run` checks.
 
-# The four cargo universes. `--workspace` sees only the first, so every lint and
-# format check has to name the other three explicitly or they go unchecked.
-MANIFESTS=(sdk/python/Cargo.toml sdk/typescript/Cargo.toml mcp-re-proxy/tests/mock-pkcs11/Cargo.toml)
-
-# Formatting needs no build, so it belongs in the no-build stage.
+# Formatting needs no compile, so it belongs in the no-build stage: rustfmt's check over
+# every first-party Rust target (`--config=rustfmt` in .bazelrc).
 fmt_check() {
-  cargo fmt --all -- --check || return 1
-  for m in "${MANIFESTS[@]}"; do
-    cargo fmt --all --manifest-path "$m" -- --check || return 1
-  done
+  bazel build --config=rustfmt //... || return 1
 }
 
 # ONE FRESH EVIDENCE DIRECTORY PER GATE RUN, exported before any lane executes.
 #
-# The repository's required evidence comes from two environments — Verus and the cargo
-# matrix here, Charon/Aeneas/Lean inside the pinned artifact — so no process states the
+# The repository's required evidence comes from two environments — Verus and the Bazel
+# lanes here, Charon/Aeneas/Lean inside the pinned artifact — so no process states the
 # verdict by executing every lane. It is composed from records, and composition is only
 # sound over records THIS run wrote: a directory left by an earlier run could carry one
 # forward and make a red tree read green.
@@ -150,8 +138,16 @@ stage_static() {
     `# facts in two files, and engines was ABSENT — an unstated claim nothing can bound.` \
     && python3 scripts/node_runtime_gate.py --selftest \
     && python3 scripts/node_runtime_gate.py \
-    && python3 scripts/cargo_test_target_gate.py --selftest \
-    && python3 scripts/cargo_test_target_gate.py \
+    && python3 scripts/test_target_gate.py --selftest \
+    && python3 scripts/test_target_gate.py \
+    && python3 scripts/test_inventory_gate.py --selftest \
+    && python3 scripts/test_inventory_gate.py \
+    && python3 scripts/no_cargo_execution_gate.py --selftest \
+    && python3 scripts/no_cargo_execution_gate.py \
+    && python3 scripts/crate_spec_parity_gate.py --selftest \
+    && python3 scripts/crate_spec_parity_gate.py \
+    && python3 scripts/extraction_image_gate.py --selftest \
+    && python3 scripts/extraction_image_gate.py \
     && python3 scripts/lifecycle_purity_gate.py --selftest \
     && python3 scripts/lifecycle_purity_gate.py \
     && python3 scripts/registry_approval_gate.py --selftest \
@@ -359,15 +355,13 @@ stage_static() {
 }
 
 # --- stage 2: the code suites --------------------------------------------------
-# The default workspace battery does NOT compile the non-default feature backends,
-# so the feature-gated lane is a SEPARATE, required run — the same split CI makes.
-FEATURES=dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource,async_serve,cpstore_etcd
+# Every library flavor is its own Bazel target with its own features, so `//...` builds and
+# tests the feature-gated backends in the same run as the default ones — there is no second
+# feature lane to remember. `manual` targets (the live-infra and SLO lanes) are excluded, as
+# they are in CI.
 stage_suites() {
   clippy_check \
-    && cargo build --workspace --all-targets \
-    && cargo test --workspace \
-    && cargo build --workspace --all-targets --features "$FEATURES" \
-    && cargo test -p mcp-re-proxy --features "$FEATURES" \
+    && bazel test //... --test_output=errors \
     && stage_demo \
     && stage_sat_liveness \
     && stage_sdk \
@@ -385,8 +379,8 @@ stage_suites() {
 # bind-mounted, so one directory is reachable from both environments.
 #
 # A HOST WITHOUT THE ARTIFACT FAILS HERE, and that is correct rather than harsh. This gate
-# already requires a provisioned box — Verus under /opt/verification, a rustup that resolves
-# the pinned channel, `uv` and `npx` for the SDK batteries — and the extraction artifact is
+# already requires a provisioned box — Verus under /opt/verification, `uv` and `npx` for the
+# SDK batteries — and the extraction artifact is
 # one more thing the machine must have to state the verdict. It is never rebuilt to get
 # past this: a rebuild of that definition resolves apt and opam afresh, and the opam
 # libraries are linked into the Aeneas binary, so it would be a different instrument.
@@ -423,17 +417,17 @@ stage_sat_liveness() {
   bash scripts/saturation_liveness.sh
 }
 
-# The two downloader artefacts. `cargo test --workspace` cannot reach them: both SDKs
-# are their OWN Cargo workspaces linking mcp-re-client-core by path, and their suites
-# exercise the bindings from Python and Node, not from Rust. So a change to the core's
-# emission contract compiles, passes every cargo and Bazel lane, and fails only in CI —
+# The two downloader artefacts. No Rust test reaches them: their suites exercise the
+# bindings from Python and Node, over the native modules Bazel builds from
+# mcp-re-client-core. So a change to the core's emission contract compiles, passes every
+# Rust lane, and fails only in CI —
 # which is how a nonce-length floor in build_signed_request_with reached a PR with both
 # downloader jobs red and four green stages above them.
 stage_sdk() {
   sdk_typescript && sdk_python
 }
 
-# Mirrors the "downloader — TypeScript napi package" job: the published build, the
+# Mirrors the "downloader — TypeScript napi package (Bazel)" job: the published build, the
 # generated-loader drift check, and the coverage-gated suite.
 sdk_typescript() {
   if ! command -v npm >/dev/null 2>&1; then
@@ -442,7 +436,7 @@ sdk_typescript() {
   fi
   # `npm ci` when the installed tree does not match the LOCK, not merely when it is
   # absent. `[[ -d node_modules ]] || npm ci` measures whatever the box happens to hold:
-  # a tree installed from a different lock is reused, `napi build` then regenerates with
+  # a tree installed from a different lock is reused, the loader is then rendered by
   # the wrong CLI, and the loader drift check reports a diff that is not in the tree —
   # or, worse, reports in-sync because a stale generator agreed with a stale artifact.
   # That happened here the day `@napi-rs/cli` moved 3.9.0 -> 3.9.1. CI runs a clean
@@ -461,27 +455,27 @@ sdk_typescript() {
   git diff --exit-code -- sdk/typescript/native/binding.js sdk/typescript/native/binding.d.ts
 }
 
-# Mirrors the "downloader — Python maturin wheel" job: build the wheel, reinstall it,
-# run the coverage-gated suite, then regenerate the cross-language parity oracle from
-# the freshly built core. The regeneration is the part that matters — a binding that
+# Mirrors the "downloader — Python SDK wheel (Bazel)" job: build the wheel, install it,
+# run the suite, then regenerate the cross-language parity oracle from the freshly built
+# core. The regeneration is the part that matters — a binding that
 # drifts from the core shows up as a diff in a committed fixture, not as a test that
 # forgot to assert.
 sdk_python() {
-  local venv=sdk/python/.venv
-  if [[ ! -x "$venv/bin/python" ]]; then
-    python3 -m venv "$venv" || return 1
-    "$venv/bin/pip" install --quiet -e "sdk/python[dev]" || return 1
-  fi
-  ( cd sdk/python \
-      && ./.venv/bin/maturin build --release --out dist \
-      && ./.venv/bin/pip install --quiet --force-reinstall dist/*.whl \
-      && ./.venv/bin/python -m pytest -q ) || return 1
+  local wheel venv oracle
+  bazel build //sdk/python:wheel >/dev/null || return 1
+  wheel="$(bazel cquery --output=files //sdk/python:wheel 2>/dev/null | head -1)"
+  venv="$(mktemp -d)/venv"
+  python3 -m venv "$venv" \
+    && "$venv/bin/pip" install --quiet "${wheel}[mcp]" "pytest>=8" "pytest-cov>=5" \
+    && "$venv/bin/python" -m pytest sdk/python/tests -q \
+      --cov --cov-config=sdk/python/pyproject.toml --cov-report=term-missing \
+    || return 1
 
   # A throwaway interpreter, exactly as CI does it: the oracle must come from the
   # INSTALLED wheel alone, never from anything else already on a developer's venv.
-  local oracle; oracle="$(mktemp -d)/oracle"
+  oracle="$(mktemp -d)/oracle"
   python3 -m venv "$oracle" \
-    && "$oracle/bin/pip" install --quiet sdk/python/dist/*.whl \
+    && "$oracle/bin/pip" install --quiet "$wheel" \
     && "$oracle/bin/python" tools/gen_sdk_parity_fixture.py \
     && git diff --exit-code -- sdk/fixtures/parity_vectors.json
 }
@@ -495,19 +489,14 @@ stage_demo() {
 
 # The tree carries zero warnings; `-D warnings` keeps it that way. Runs before the
 # suites so lint drift surfaces in one build rather than after the full test battery.
-# The feature lane is required, not thorough: the default features do not compile
-# etcd_store.rs / redis_store.rs at all, so the default lane cannot see them.
+# `--config=lint` lints every flavor of every target, so a module behind a feature is
+# linted in the flavor that compiles it.
 clippy_check() {
-  cargo clippy --workspace --all-targets -- -D warnings \
-    && cargo clippy --workspace --all-targets --features "$FEATURES" -- -D warnings \
-    || return 1
-  for m in "${MANIFESTS[@]}"; do
-    cargo clippy --manifest-path "$m" --all-targets -- -D warnings || return 1
-  done
-  # ADR-MCPRE-061 §6. The five adopted lints are allow-by-default and are NOT in
-  # `[workspace.lints.clippy]`, because every line above runs `--all-targets -- -D warnings`
-  # and would turn thousands of exempt test-code sites into errors on one commit. The
-  # ratchet switches them on itself over production targets and holds the per-crate count.
+  bazel build --config=lint //... || return 1
+  # ADR-MCPRE-061 §6. The adopted lints are allow-by-default and are NOT in
+  # `//bazel:workspace_lints`, because the lint lane above runs with warnings as errors and
+  # would turn thousands of exempt test-code sites into errors on one commit. The ratchet
+  # switches them on itself over production flavors and holds the per-crate count.
   #
   # The probes run FIRST and are the reason this is enforcement rather than configuration:
   # `.clippy.toml` alone is inert, and an 80-line function once produced no warning at all
@@ -518,16 +507,16 @@ clippy_check() {
     && python3 scripts/clippy_ratchet_gate.py \
     `# Same reason the ratchet's probes run here: a lints TABLE is configuration, and` \
     `# configuration that enforces nothing is the failure this repository has already` \
-    `# hit twice. This compiles a deliberate violation inside a real member.` \
+    `# hit twice. This compiles a deliberate violation inside a real target.` \
     && python3 scripts/workspace_lints_gate.py --probe \
     || return 1
 }
 
-# --- stage 3: Bazel parity ------------------------------------------------------
+# --- stage 3: BUILD drift -------------------------------------------------------
+# The workspace tests already ran in stage 2; this is the gate that a source file's
+# `use` and tests have the BUILD targets and edges they need.
 stage_bazel() {
-  if [[ "${SKIP_BAZEL:-0}" == 1 ]]; then echo "SKIP_BAZEL=1 — skipped."; return 0; fi
-  command -v bazel >/dev/null 2>&1 || { echo "bazel not installed — skipped (CI enforces)."; return 0; }
-  python3 scripts/bazel_gazelle_gate.py && bazel test //... --test_output=errors
+  python3 scripts/bazel_gazelle_gate.py && tools/verification/rust-targets --check
 }
 
 # --- shared: the heavy-lane disk preflight ---------------------------------------
@@ -641,7 +630,8 @@ stage_kind() {
   # has not, so this stage is self-contained. Every value is overridable.
   if [[ -z "${MCP_RE_FIXTURES_DIR:-}" ]]; then
     MCP_RE_FIXTURES_DIR="$(mktemp -d)" || return 1
-    cargo run -q -p mcp-re-demo --example emit_mtls_fixtures -- "$MCP_RE_FIXTURES_DIR" || return 1
+    bazel run --noshow_progress --ui_event_filters=-info //mcp-re-demo:emit_mtls_fixtures \
+      -- "$MCP_RE_FIXTURES_DIR" || return 1
     export MCP_RE_FIXTURES_DIR
   fi
   local fx="$MCP_RE_FIXTURES_DIR"
@@ -690,8 +680,8 @@ stage_kind() {
 }
 
 run "static gates (tags, ports, secrets, chart, vocabulary)" stage_static
-run "cargo suites + SDK downloaders (workspace, features, py/ts)" stage_suites
-run "bazel parity (//...)"                                   stage_bazel
+run "Rust suites (bazel lint + test //...) + SDK downloaders" stage_suites
+run "BUILD drift (gazelle)"                                  stage_bazel
 run "local SLO lane (ADR-051 §7 anchor + gate)"              stage_slo
 run "kind fleet proofs (identical harness to GKE)"           stage_kind
 

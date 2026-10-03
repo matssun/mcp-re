@@ -682,9 +682,9 @@ def selftest() -> int:
 
     # The fallback authority answers the SAME four conditions. A ruleset check that is
     # queued must not read as READY just because the manifest asked for nothing.
-    fallback = {c: [c] for c in ("cargo build + test (1.97.1)",)}
-    queued = {"cargo build + test (1.97.1)": {
-        "name": "cargo build + test (1.97.1)", "head_sha": sha,
+    fallback = {c: [c] for c in ("Bazel build + test (Rust 1.97.1)",)}
+    queued = {"Bazel build + test (Rust 1.97.1)": {
+        "name": "Bazel build + test (Rust 1.97.1)", "head_sha": sha,
         "status": "queued", "conclusion": None}}
     if decide(fallback, queued, sha)[0] != NOT_READY:
         print("  FAIL a queued ruleset check read as ready under the fallback authority")
@@ -695,9 +695,9 @@ def selftest() -> int:
 
     # A build-input change must widen to every unit, not to the units that declare it.
     manifest = load_verification()
-    every = affected_units(manifest["unit"], manifest.get("edge", []), {"Cargo.lock"})
+    every = affected_units(manifest["unit"], manifest.get("edge", []), {"bazel/crates.lock"})
     if len(every) != len(manifest["unit"]):
-        print(f"  FAIL a Cargo.lock change widened to {len(every)} of {len(manifest['unit'])} units")
+        print(f"  FAIL a crates.lock change widened to {len(every)} of {len(manifest['unit'])} units")
         bad += 1
 
     # The registry the required set is derived from must come from the COMMIT, not the

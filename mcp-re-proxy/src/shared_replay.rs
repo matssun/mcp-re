@@ -32,7 +32,7 @@
 //!     `SharedReplayCache` over one cloned `Arc`).
 //!   * `RedisAtomicReplayStore`
 //!     (in the `redis_store` module, compiled ONLY under the non-default
-//!     `redis_replay` cargo feature — written as inline code, NOT an intra-doc
+//!     `redis_replay` crate feature — written as inline code, NOT an intra-doc
 //!     link, since that module is absent from the default-feature doc build and
 //!     a link would be an unresolved `broken_intra_doc_links`) — a REAL
 //!     server-side-atomic

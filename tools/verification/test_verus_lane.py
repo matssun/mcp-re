@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _load_tool import load_tool  # noqa: E402
-from _manifest import load_toolchains, unpinned_identities  # noqa: E402
+from _manifest import load_toolchains, load_verification, unpinned_identities  # noqa: E402
 from _verus_results import evaluate_unit, parse_reports  # noqa: E402
 
 LANE = load_tool("verify-verus")
@@ -63,8 +63,8 @@ def test_a_real_pass_is_a_pass():
     assert ok, detail
 
 
-def test_cargo_chatter_around_the_report_is_harmless():
-    """Cargo shares the stream. Anything that is not a JSON document is skipped."""
+def test_chatter_around_the_report_is_harmless():
+    """Anything around the report that is not a JSON document is skipped."""
     noisy = f"   Compiling mcp-re-core v0.16.0\n{report([CORE], verified=5)}\n    Finished\n"
     ok, _ = evaluate_unit(parse_reports(noisy), "mcp-re-core", [CORE], PIN)
     assert ok
@@ -94,7 +94,7 @@ def test_errors_are_never_a_pass():
 def test_another_crates_success_does_not_satisfy_this_unit():
     """THE cross-crate control.
 
-    `cargo verus verify -p B` verifies B's dependencies too. When the lane read the first
+    A run over B carries B's dependencies' specifications too. When the lane read the first
     result it found, unit B passed on crate A's proofs — both pilot units reported an
     identical `5 verified`, which was mcp-re-core's, and the freshness unit had never been
     measured at all.
@@ -179,7 +179,7 @@ def test_success_false_is_never_a_pass():
 
 
 def test_hyphenated_package_names_match_underscored_symbols():
-    """Cargo says `mcp-re-core`; the prover says `mcp_re_core`. A lane that missed this
+    """A package is `mcp-re-core`; the prover says `mcp_re_core`. A lane that missed this
     would report "no report for this crate" for every unit that actually passed."""
     ok, _ = evaluate_unit(parse_reports(report([CORE], verified=5)), "mcp-re-core", [], PIN)
     assert ok
@@ -245,7 +245,10 @@ def test_the_lock_identifies_the_prover_binaries_and_the_solver_by_digest():
     with nothing. A solver answering `unsat` to everything discharges every proof in the
     repository."""
     pinned = LANE._pinned_files(load_toolchains())
-    assert {"libvstd.rlib", "z3", "verus", "rust_verify", "cargo-verus"} <= set(pinned)
+    assert {"libvstd.rlib", "z3", "verus", "rust_verify"} <= set(pinned)
+    # The lane runs `verus` and `rust_verify` as a Bazel action; Cargo's front end is no
+    # part of the trusted prover, so it is not pinned as one.
+    assert "cargo-verus" not in pinned
     for name, digest in pinned.items():
         assert digest.startswith("sha256:"), f"{name} is identified by {digest!r}"
 
@@ -284,22 +287,29 @@ def test_the_installed_prover_matches_every_digest_the_lock_records():
 
 
 def test_the_lane_names_its_solver_instead_of_inheriting_it():
-    """R9-C070. The lane built its environment as `{**os.environ, …}`, so an exported
-    `VERUS_Z3_PATH` reached the prover and the pinned lock stayed silent about it. Unsetting
-    it would not be the repair either: the prover would then resolve the solver beside
-    itself, which is resolution BY LAYOUT — the same unstated identity one directory down.
-    """
-    import os
+    """R9-C070. The lane once built its environment as `{**os.environ, …}`, so an exported
+    `VERUS_Z3_PATH` reached the prover and the pinned lock stayed silent about it. The prover
+    runs as a Bazel action now, and the rule states its environment: the solver is the
+    install's own `z3`, an input of the action, and no shell environment is inherited — so
+    the file the lane digested is the file the prover executes, and a caller's export cannot
+    replace it. The edit that turns this red is a `use_default_shell_env` on the action, or
+    a solver path taken from anywhere but the install."""
+    rule = (Path(__file__).resolve().parents[2] / "bazel" / "verus" / "defs.bzl").read_text()
+    assert '"VERUS_Z3_PATH": by_name["z3"].path' in rule, "the solver is not the install's own"
+    assert "use_default_shell_env" not in rule, "the action inherits the caller's environment"
+    assert '"VERUS_USE_RUSTUP": "0"' in rule, "the compiler would be whatever rustup resolves"
 
-    toolchains = load_toolchains()
-    root = Path(toolchains["verus"]["install_root"])
-    hostile = "/tmp/a-solver-that-answers-unsat"
-    os.environ["VERUS_Z3_PATH"] = hostile
-    try:
-        env = LANE._lane_env(toolchains, root)
-    finally:
-        del os.environ["VERUS_Z3_PATH"]
-    assert env["VERUS_Z3_PATH"] == str(root / "z3") != hostile
+
+def test_every_formal_unit_resolves_to_a_target_that_turns_on_its_features():
+    """A unit whose crate has no `verus_verify` target — or one that verifies the crate
+    with the unit's specification features off — has no run that could carry its claim."""
+    doc = load_verification()
+    formal = [u for u in doc["unit"] if u["class"] in ("V1", "V3")]
+    assert formal, "no V1/V3 unit; this control has nothing to measure"
+    for unit in formal:
+        label, row = LANE.unit_target(unit)
+        assert label is not None, unit["id"]
+        assert set(unit.get("features", [])) <= set(row["features"]), (unit["id"], row)
 
 
 if __name__ == "__main__":

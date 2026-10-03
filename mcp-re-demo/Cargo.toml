@@ -34,5 +34,3 @@ mcp-re-test-paths = { path = "../mcp-re-test-paths" }
 name = "mcp_re_demo"
 path = "src/lib.rs"
 
-[lints]
-workspace = true

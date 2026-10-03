@@ -22,24 +22,14 @@ exports_files([
     "src/http_profile_dispatch/core_projection.rs",
 ])
 
-# ADR-MCPS-048 / MCPS-69 — these HITL live-cloud KMS tests are intentionally
-# cargo-only (no Bazel target): each is `#![cfg(feature = "…kms…")]` + `#[ignore]`
-# and runs ONLY in the manual live-infra lane (`cargo test --features … --
-# --ignored` against real AWS/GCP KMS):
-#   tests/integration_live/ — eleven suites in one cargo binary
-#     (aws_kms_delegated_required, aws_kms_delegated_signing, aws_kms_delegated_tls,
-#     aws_kms_http_profile, aws_kms_live, aws_kms_root_rotation,
-#     gcp_kms_delegated_required, gcp_kms_delegated_signing, gcp_kms_delegated_tls,
-#     gcp_kms_http_profile, gcp_kms_root_rotation)
-#   tests/gcp_kms_live_test.rs — its own binary: it mutates process environment
-# Each carries `#[ignore]` LIVE tests; the http-profile and delegated-signing files
-# ALSO carry non-ignored `*_offline_local_seed` twins, which the cargo
-# feature-gated-backends CI job runs on every push (they need no cloud).
-# NOTE: gazelle_rust's `generate_from_cargo` mode enumerates test targets from
-# Cargo metadata, so `# gazelle:exclude <file>` does NOT suppress them — gazelle
-# will always PROPOSE a target for each in `-mode diff`. This is a documented
-# advisory-diff false-positive; MCPS-70's staleness gate must allowlist them (and
-# not auto-adopt gazelle write output wholesale). Do NOT add Bazel targets here.
+# The HITL live-cloud KMS tests: each is `#![cfg(feature = "…kms…")]` + `#[ignore]` and
+# needs real AWS/GCP KMS, so it runs only in .github/workflows/cloud-kms-live.yml as
+# `bazel test --test_arg=--ignored` against the targets below:
+#   :integration_live_test — tests/integration_live/, eleven suites in one binary; the
+#     http-profile and delegated-signing files ALSO carry non-ignored
+#     `*_offline_local_seed` twins, which run in every `bazel test //...`
+#   :gcp_kms_live_test — tests/gcp_kms_live_test.rs, its own binary because it mutates the
+#     process environment; `manual`, since every case in it is live.
 
 # Single source of truth for the mcp_re_proxy library sources. The default
 # `:mcp_re_proxy` library and the feature-flavored `:mcp_re_proxy_fault` /
@@ -595,7 +585,7 @@ _PROXY_LIB_SRCS = [
     "src/inner_plane_bound.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async Redis authoritative replay backend
     # (SET NX PX over the tokio async client). #[cfg(feature = "redis_replay")] —
-    # cfg'd out of the default build; the ext flavor + the cargo redis lane link it,
+    # cfg'd out of the default build; the ext and deploy flavors link it,
     # and main.rs selects it for `--replay-cache shared` (non-linearizable tier).
     "src/async_redis_store.rs",
     "src/async_redis_store/retention_promise.rs",
@@ -657,8 +647,8 @@ _PROXY_LIB_DEPS = [
     # base64url-no-pad and stays that way. Here in LIB rather than EXT because the
     # MECHANISM compiles unconditionally: only the socket-opening transport is behind
     # `scitt_registration`, so a build without it still typechecks and tests the leaf.
-    # `base64` is already a non-optional cargo dependency of this crate, so the cargo
-    # closure is unchanged by it.
+    # `base64` is a non-optional dependency in this crate's Cargo.toml, so the two
+    # agree.
     "@crates_mcp_re//:base64",
     "//mcp-re-policy:mcp_re_policy",
     # MCPRE-104 (#308): the pure HTTP-profile dispatcher the proxy replay-tier
@@ -735,6 +725,7 @@ _PROXY_LIB_DEPS_PRE052 = [
 # exercise the REFUSAL of direct-root response signing can construct one.
 nt_rust_library(
     name = "mcp_re_proxy_pre052",
+    testonly = True,
     srcs = _PROXY_LIB_SRCS,
     crate_name = "mcp_re_proxy",
     edition = "2021",
@@ -743,6 +734,7 @@ nt_rust_library(
 
 nt_rust_library(
     name = "mcp_re_proxy_async_pre052",
+    testonly = True,
     srcs = _PROXY_LIB_SRCS,
     crate_features = ["async_serve"],
     crate_name = "mcp_re_proxy",
@@ -767,6 +759,40 @@ _PROXY_EXT_FEATURES = [
     "gcp_kms_keysource",
 ]
 
+# The SHIPPED proxy: the features the deployed image carries — registration, the shared
+# Redis replay tier and both cloud KMS signers — and nothing it does not. PKCS#11, etcd and
+# online OCSP are not deployed, so their crates are not linked. Built for Linux and copied
+# into deploy/docker/Dockerfile by scripts/stage_image_binaries.sh.
+_PROXY_DEPLOY_FEATURES = [
+    "scitt_registration",
+    "redis_replay",
+    "aws_kms_keysource",
+    "gcp_kms_keysource",
+]
+
+_PROXY_DEPLOY_DEPS = _PROXY_LIB_DEPS + [
+    c
+    for c in _PROXY_EXT_CRATES
+    if c != "@crates_mcp_re//:cryptoki-sys"
+]
+
+nt_rust_library(
+    name = "mcp_re_proxy_deploy",
+    srcs = _PROXY_LIB_SRCS,
+    crate_features = _PROXY_DEPLOY_FEATURES,
+    crate_name = "mcp_re_proxy",
+    edition = "2021",
+    deps = _PROXY_DEPLOY_DEPS,
+)
+
+nt_rust_binary(
+    name = "mcp_re_proxy_deploy_bin",
+    srcs = ["src/main.rs"],
+    crate_features = _PROXY_DEPLOY_FEATURES,
+    edition = "2021",
+    deps = [":mcp_re_proxy_deploy"] + _PROXY_DEPLOY_DEPS,  # keep
+)
+
 # MCPS-029 (folds in MCPS-018 #3807): the production sidecar CLI. Terminates TLS,
 # verifies object signatures + (optional) authz + transport binding, forwards to
 # an inner MCP server subprocess, signs responses. Blocking; no async runtime.
@@ -777,14 +803,12 @@ nt_rust_binary(
     deps = [
         ":mcp_re_proxy",
         # #220 (ADR-MCPS-048): main.rs uses mcp_re_core directly (e.g.
-        # `mcp_re_core::ReplayDurabilityClass`), so it must link mcp-re-core — the Cargo
-        # build resolved this transitively/by-manifest but the Bazel binary target
-        # never listed it, which is the head of the #220 fail-to-build cascade.
+        # `mcp_re_core::ReplayDurabilityClass`), so it must link mcp-re-core itself: a
+        # crate the binary names has to be a direct dep, not a transitive one.
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-policy:mcp_re_policy",
         # MCPS-88 (ADR-MCPS-049 W3): main.rs installs a SIGTERM/SIGINT handler via
-        # libc::sigaction for graceful drain, so the binary must link libc (the
-        # Cargo build resolves it by manifest; the Bazel binary target must list it).
+        # libc::sigaction for graceful drain, so the binary must link libc directly.
         "@crates_mcp_re//:libc",
         # MCPRE-116 (ADR-MCPRE-051 §6): main.rs names rustls_pki_types cert/key types
         # in the CRL hot-reload task signature.
@@ -838,8 +862,6 @@ nt_rust_binary(
 nt_rust_test(
     name = "proxy_auditor_unit_test",
     crate = ":mcp_re_proxy_auditor",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     # A test compiles its `crate`'s sources with ITS OWN features, not the library's.
     # Without this line the binary is the default flavor again, 1475 tests with the
     # three `ureq_exchange` ones absent.
@@ -895,8 +917,6 @@ nt_rust_library(
 nt_rust_test(
     name = "fault_injection_test",
     srcs = ["tests/fault_injection_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["fault_accept_any_client"],
     edition = "2021",
     deps = [
@@ -913,8 +933,6 @@ nt_rust_test(
 nt_rust_test(
     name = "proxy_unit_test",
     crate = ":mcp_re_proxy",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
@@ -931,8 +949,6 @@ nt_rust_test(
 nt_rust_test(
     name = "key_source_test",
     srcs = ["tests/key_source_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_proxy",
@@ -947,8 +963,6 @@ nt_rust_test(
 nt_rust_test(
     name = "key_source_dev_env_test",
     srcs = ["tests/key_source_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["dev_env_key_source"],
     edition = "2021",
     deps = [
@@ -980,8 +994,6 @@ nt_rust_library(
 nt_rust_test(
     name = "async_drain_test",
     srcs = ["tests/async_drain_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["async_serve"],
     edition = "2021",
     # Each drain case stands up its own multi-thread runtime and holds several
@@ -1010,11 +1022,10 @@ nt_rust_test(
 # different library variant and are grouped separately.
 
 # `app_startup_characterization_test`
-# DEFAULT lane. Every test that drove `app::run` used to live in tls_load_harness_bench,
-# which is `redis_replay`-gated (so `cargo test --workspace` skips it) and tagged
-# `manual` (so `bazel test //...` skips it) — the composition root was exercised by
-# neither. Hermetic: no Redis, no Docker, no listener; every case is refused before the
-# serve loop, and the transcript is read from the REAL binary's stderr so the harness
+# DEFAULT lane: the tests that drive `app::run`. They are not in `:tls_load_harness_bench`,
+# which is tagged `manual` (so `bazel test //...` skips it) and would leave the
+# composition root unexercised. Hermetic: no Redis, no Docker, no listener; every case
+# is refused before the serve loop, and the transcript is read from the REAL binary's stderr so the harness
 # observes the system from outside while its internals are restructured.
 # `config_legality_characterization_test`
 # ADR-MCPRE-056 Phase 0: characterization of `app::run`'s STARTUP behaviour, in the
@@ -1029,15 +1040,15 @@ nt_rust_test(
 # data plane actually runs — the resolver was previously built, its guarantee printed,
 # and then discarded, so the serving path used a frozen boot-time snapshot.
 # No `async_serve`: unlike its siblings this file carries no `#![cfg(feature = ...)]`,
-# so cargo builds it under DEFAULT features and Bazel must match — the resolver seam it
-# drives is in the default build.
+# and the resolver seam it drives is in the default build, so it runs under DEFAULT
+# features.
 # The command line the sidecar guide teaches, fed to the REAL `parse_args` +
 # `ValidatedConfig::try_from`. `scripts/proxy_flag_doc_gate.py` catches a flag that no
 # longer exists, cheaply and across every document; it cannot see a flag whose VALUE is
 # refused or a REQUIRED flag that is absent, and checking those syntactically would mean
 # restating `unsafe_config_violations` in a second language. Running the parser is the
-# rule itself. The guide is delivered as data (runfiles), with the mcp-re-test-paths
-# cargo fallback — the same scheme as the conformance drift guards.
+# rule itself. The guide is delivered as data and resolved from runfiles by
+# mcp-re-test-paths — the same scheme as the conformance drift guards.
 # `http_profile_dispatch_test`
 # MCPRE-104 (#308): the proxy replay-tier adapter around the HTTP-profile
 # dispatcher, driven end-to-end (sub-minimum tier refused, wait-quorum/linearizable
@@ -1075,9 +1086,7 @@ nt_rust_test(
         "tests/serving_fixtures/mod.rs",
         "tests/startup_transcript/mod.rs",
     ],
-    auto_cargo_toml = False,
     crate_root = "tests/integration/main.rs",
-    bazel_build_cfg = False,
     data = [
         "//docs:sidecar-deployment-guide.md",
         ":mcp_re_proxy_cli",
@@ -1118,8 +1127,7 @@ nt_rust_test(
 # The same suite under the ext features: `tls_test`'s delegated-TLS cases for AWS and
 # Google KMS exist only with `aws_kms_keysource` / `gcp_kms_keysource`. They run against
 # a local seed, not a cloud. The suite spawns the proxy binary and expects diagnostics
-# matching its own features, so it spawns the ext binary, as cargo's all-features lane
-# does.
+# matching its own features, so it spawns the ext binary, built with the same features.
 nt_rust_test(
     name = "integration_kms_test",
     srcs = glob(["tests/integration/*.rs"]) + [
@@ -1127,10 +1135,8 @@ nt_rust_test(
         "tests/serving_fixtures/mod.rs",
         "tests/startup_transcript/mod.rs",
     ],
-    auto_cargo_toml = False,
     crate_root = "tests/integration/main.rs",
     crate_features = _PROXY_EXT_FEATURES,
-    bazel_build_cfg = False,
     data = [
         "//docs:sidecar-deployment-guide.md",
         ":mcp_re_proxy_ext_bin",
@@ -1180,8 +1186,8 @@ nt_rust_test(
 # and a revoked status are refused BEFORE the backend runs; a healthy authority with no
 # record is a definitive negative rather than an outage; degraded mode serves only
 # within P; and a revocation on a shared source is honoured by a replica that never saw
-# the workload. The Redis-backed propagation MEASUREMENT is a separate cargo-only lane
-# (it needs a live store, so it is not hermetic).
+# the workload. The Redis-backed propagation MEASUREMENT is the separate
+# `:admission_propagation_measure_test` (it needs a live store, so it is not hermetic).
 # `delegated_client_server_e2e_test`
 # MCPRE-122 client↔server e2e: the REAL client-side ClientProxy round-trips through an
 # in-process transport to the REAL server-side HttpProfileProxy in delegated-required
@@ -1191,7 +1197,8 @@ nt_rust_test(
 # ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — drives the real
 # build_delegated_signing(Config, root) from a parser-produced delegated-required
 # config, through new_delegated serving, proving success/replay/expiry-fail-closed/
-# rotation with an in-memory root (the KMS-root swap is the cargo-only live lane).
+# rotation with an in-memory root (the KMS-root swap is proven by the `#[ignore]`d live
+# cases in `:integration_live_test`).
 # `delegated_serving_test`
 # ADR-MCPRE-052 delegated-signing serving cutover (MCPRE-122): drives the
 # HttpProfileProxy delegated path end-to-end (success + bound/preflight rejection +
@@ -1247,19 +1254,21 @@ nt_rust_test(
         # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
         "tests/common/mod.rs",
     ],
-    auto_cargo_toml = False,
     crate_root = "tests/integration_async/main.rs",
-    bazel_build_cfg = False,
     crate_features = ["async_serve"],
     # The transparency suite runs the SHIPPED auditor as a child process. A composition
     # root proved only in-process is a composition root nobody can run, so the lane needs
     # the executable itself rather than the library behind it.
     data = [
         ":mcp_re_auditor_cli",
+        "//sdk/fixtures:malformed_elicitation.json",
+        "//sdk/fixtures:unrecognized_result_type.json",
     ],
     edition = "2021",
     env = {
         "MCP_RE_AUDITOR_CLI": "$(rlocationpath :mcp_re_auditor_cli)",
+        "MCP_RE_SDK_FIXTURE_MALFORMED_ELICITATION": "$(rlocationpath //sdk/fixtures:malformed_elicitation.json)",
+        "MCP_RE_SDK_FIXTURE_UNRECOGNIZED_RESULT_TYPE": "$(rlocationpath //sdk/fixtures:unrecognized_result_type.json)",
     },
     deps = [
         # The hermetic capsule-anchor service in `transparency_e2e_test` reads and writes
@@ -1272,7 +1281,7 @@ nt_rust_test(
         # ADR-MCPRE-065 Slice 1: the frozen `mcp-re.authorization_*` denial taxonomy the
         # authorization controls refuse in.
         "//mcp-re-policy:mcp_re_policy",
-        # Resolves the auditor binary under Bazel runfiles OR a plain cargo build.
+        # Resolves the auditor binary under Bazel runfiles.
         "//mcp-re-test-paths:mcp_re_test_paths",
         "//mcp-re-transport:mcp_re_transport_pre052",  # keep
         ":mcp_re_proxy_async_pre052",  # keep
@@ -1290,7 +1299,7 @@ nt_rust_test(
     ],
 )
 
-# The same suite under every ext feature, as cargo's all-features lane builds it:
+# The same suite under `async_serve` and every ext feature:
 # `replay_race_harness_test`'s Redis and etcd lanes exist only with `async_serve` AND a
 # shared store. Without live infra they skip themselves, so here they are compiled and
 # the in-memory lanes run.
@@ -1300,9 +1309,7 @@ nt_rust_test(
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
     ],
-    auto_cargo_toml = False,
     crate_root = "tests/integration_async/main.rs",
-    bazel_build_cfg = False,
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     env_inherit = [
         "MCP_RE_TEST_REDIS_URL",
@@ -1314,10 +1321,14 @@ nt_rust_test(
     # the executable itself rather than the library behind it.
     data = [
         ":mcp_re_auditor_cli",
+        "//sdk/fixtures:malformed_elicitation.json",
+        "//sdk/fixtures:unrecognized_result_type.json",
     ],
     edition = "2021",
     env = {
         "MCP_RE_AUDITOR_CLI": "$(rlocationpath :mcp_re_auditor_cli)",
+        "MCP_RE_SDK_FIXTURE_MALFORMED_ELICITATION": "$(rlocationpath //sdk/fixtures:malformed_elicitation.json)",
+        "MCP_RE_SDK_FIXTURE_UNRECOGNIZED_RESULT_TYPE": "$(rlocationpath //sdk/fixtures:unrecognized_result_type.json)",
     },
     deps = [
         # The hermetic capsule-anchor service in `transparency_e2e_test` reads and writes
@@ -1330,7 +1341,7 @@ nt_rust_test(
         # ADR-MCPRE-065 Slice 1: the frozen `mcp-re.authorization_*` denial taxonomy the
         # authorization controls refuse in.
         "//mcp-re-policy:mcp_re_policy",
-        # Resolves the auditor binary under Bazel runfiles OR a plain cargo build.
+        # Resolves the auditor binary under Bazel runfiles.
         "//mcp-re-test-paths:mcp_re_test_paths",
         "//mcp-re-transport:mcp_re_transport_pre052",  # keep
         ":mcp_re_proxy_ext_pre052",  # keep
@@ -1351,23 +1362,22 @@ nt_rust_test(
 # ADR-MCPRE-051 §7 load/SLO harness. `manual`: it stands up a primary+2-replica
 # Redis fleet via Docker (or an external MCP_RE_LOADGEN_REDIS_URL), which the Bazel
 # test sandbox cannot provide — so it is excluded from `bazel test //...` and driven
-# by cargo / the GKE runbook. Built against the redis_replay ext flavor.
+# by scripts/local_slo_lane.sh (`bazel run -c opt`) and the GKE bench image.
 # `:tls_load_harness_bench_builds` below compiles it on every `bazel test //...`.
-# It spawns the ext binary: the harness runs a shared Redis replay tier, which only a
-# redis_replay build accepts.
+# It links the deploy flavor and spawns the deploy binary — the artifact the image ships —
+# so what it measures is what is deployed; the shared Redis replay tier it runs needs the
+# `redis_replay` build that flavor carries.
 nt_rust_test(
     name = "tls_load_harness_bench",
     srcs = ["tests/tls_load_harness_bench.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
+    crate_features = _PROXY_DEPLOY_FEATURES,
     tags = ["manual"],
     data = [
-        ":mcp_re_proxy_ext_bin",
+        ":mcp_re_proxy_deploy_bin",
     ],
     edition = "2021",
     env = {
-        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_ext_bin)",
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_deploy_bin)",
     },
     env_inherit = [
         "MCP_RE_LOADGEN_CONCURRENCY",
@@ -1380,7 +1390,7 @@ nt_rust_test(
     ],
     deps = [
         "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
-        ":mcp_re_proxy_ext",
+        ":mcp_re_proxy_deploy",
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-host:mcp_re_host",
@@ -1427,8 +1437,6 @@ nt_rust_library(
 nt_rust_test(
     name = "dev_env_key_source_test",
     srcs = ["tests/dev_env_key_source_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["dev_env_key_source"],
     edition = "2021",
     deps = [
@@ -1455,13 +1463,13 @@ nt_rust_library(
     deps = _PROXY_EXT_DEPS,
 )
 
-# Every ext feature over the pre-052 fixture chain: what cargo's all-features test
-# lane compiles. Cargo's proxy dev-dependency turns on `pre_052_fixtures` for every
-# proxy test build, and `async_serve` gates nothing in the library (only test files
-# carry `#![cfg(feature = "async_serve")]`), so this is that library for the batteries
-# that need both the ext features and the fixtures.
+# Every ext feature over the pre-052 fixture chain (`_PROXY_LIB_DEPS_PRE052`): the
+# library for the batteries that need both the ext features and the fixtures.
+# `async_serve` gates nothing in the library (only test files carry
+# `#![cfg(feature = "async_serve")]`), so the `async_serve` ext suites link it too.
 nt_rust_library(
     name = "mcp_re_proxy_ext_pre052",
+    testonly = True,
     srcs = _PROXY_LIB_SRCS,
     crate_features = _PROXY_EXT_FEATURES,
     crate_name = "mcp_re_proxy",
@@ -1486,8 +1494,6 @@ nt_rust_library(
 nt_rust_test(
     name = "proxy_ext_unit_test",
     crate = ":mcp_re_proxy_ext",  # keep
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = _PROXY_EXT_FEATURES,
     edition = "2021",
     deps = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + [
@@ -1495,6 +1501,31 @@ nt_rust_test(
         # #4063 (MCPS-088): the in-tree Ed25519 signer used to mint a genuinely
         # signed OCSP response fixture for the admit/forge acceptance tests.
         "@crates_mcp_re//:ed25519-dalek",
+    ],
+)
+
+# The AWS KMS signer ALONE. `remote_signer_call` is compiled under
+# `any(aws_kms_keysource, gcp_kms_keysource)` and two of its members exist only under
+# `gcp_kms_keysource`, so an AWS-only build compiles a different type from the one every
+# other target carries — `:proxy_ext_unit_test` always has both features. The AWS arm's
+# units are measured here.
+nt_rust_test(
+    name = "proxy_aws_kms_unit_test",
+    crate = ":mcp_re_proxy",
+    crate_features = ["aws_kms_keysource"],
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-policy:mcp_re_policy",
+        "@crates_mcp_re//:hmac",
+        "@crates_mcp_re//:libc",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:spki",
+        "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:zeroize",
     ],
 )
 
@@ -1507,8 +1538,6 @@ nt_rust_test(
 nt_rust_test(
     name = "aws_irsa_web_identity_test",
     srcs = ["tests/aws_irsa_web_identity_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = _PROXY_EXT_FEATURES,
     edition = "2021",
     deps = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + [":mcp_re_proxy_ext"],
@@ -1550,15 +1579,14 @@ nt_rust_test(
 nt_rust_test(
     name = "integration_ext_test",
     srcs = glob(["tests/integration_ext/*.rs"]),
-    auto_cargo_toml = False,
     crate_root = "tests/integration_ext/main.rs",
-    bazel_build_cfg = False,
     # Each suite is `#![cfg(feature = ...)]`; without these the binary links and runs
     # ZERO tests while reporting PASSED.
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     edition = "2021",
     env_inherit = [
         "MCP_RE_TEST_REDIS_URL",
+        "MCP_RE_TEST_REDIS_REPLICA_URL",
         "MCP_RE_TEST_ETCD_URL",
         "MCP_RE_TEST_OCSP_RESPONDER_URL",
         "MCP_RE_TEST_OCSP_ISSUER_DER",
@@ -1581,18 +1609,41 @@ nt_rust_test(
 )
 
 # The cloud-KMS suites. Every `*_live` case is `#[ignore]`d and needs real AWS or Google
-# credentials; the `*_offline_local_seed` cases are not live and run here.
+# credentials; the `*_offline_local_seed` cases are not live and run here. The live cases
+# run in .github/workflows/cloud-kms-live.yml as `bazel test --test_arg=--ignored`, which is
+# why the target inherits the endpoint, key and credential variables they read.
 nt_rust_test(
     name = "integration_live_test",
     srcs = glob(["tests/integration_live/*.rs"]) + [
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
     ],
-    auto_cargo_toml = False,
     crate_root = "tests/integration_live/main.rs",
-    bazel_build_cfg = False,
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     edition = "2021",
+    env_inherit = [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_ROLE_ARN",
+        "AWS_ROLE_SESSION_NAME",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "MCP_RE_AWS_KMS_ENDPOINT",
+        "MCP_RE_AWS_KMS_KEY_ID",
+        "MCP_RE_AWS_KMS_REGION",
+        "MCP_RE_AWS_KMS_TLS_KEY_ID",
+        "MCP_RE_AWS_ROOT_A_KEY_ID",
+        "MCP_RE_AWS_ROOT_B_KEY_ID",
+        "MCP_RE_AWS_STS_ENDPOINT",
+        "MCP_RE_AWS_USE_WEB_IDENTITY",
+        "MCP_RE_GCP_ACCESS_TOKEN",
+        "MCP_RE_GCP_KEY_VERSION",
+        "MCP_RE_GCP_KEY_VERSION_TLS",
+        "MCP_RE_GCP_KMS_ENDPOINT",
+        "MCP_RE_GCP_USE_METADATA",
+        "MCP_RE_ROOT_A_KEY_VERSION",
+        "MCP_RE_ROOT_B_KEY_VERSION",
+    ],
     deps = [
         ":mcp_re_proxy_ext_pre052",  # keep
         "//mcp-re-client-core:mcp_re_client_core_pre052",  # keep
@@ -1605,13 +1656,33 @@ nt_rust_test(
     ],
 )
 
+# The GCP Cloud KMS signature lane, its own binary because it mutates the process
+# environment. Every case is `#[ignore]`d and live, so the target is `manual`: it runs only
+# in .github/workflows/cloud-kms-live.yml, with `--test_arg=--ignored`.
+nt_rust_test(
+    name = "gcp_kms_live_test",
+    srcs = ["tests/gcp_kms_live_test.rs"],
+    crate_features = ["gcp_kms_keysource"],
+    edition = "2021",
+    env_inherit = [
+        "MCP_RE_GCP_ACCESS_TOKEN",
+        "MCP_RE_GCP_KEY_VERSION",
+        "MCP_RE_GCP_KEY_VERSION_RSA",
+        "MCP_RE_GCP_KMS_ENDPOINT",
+        "MCP_RE_GCP_USE_METADATA",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":mcp_re_proxy_ext",
+        "//mcp-re-core:mcp_re_core",
+    ],
+)
+
 # MCPRE-493: cross-replica admission-revocation propagation, measured over a live Redis.
 # Without MCP_RE_TEST_REDIS_URL it skips itself, so this target keeps it compiling.
 nt_rust_test(
     name = "admission_propagation_measure_test",
     srcs = ["tests/admission_propagation_measure_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     edition = "2021",
     env_inherit = [
@@ -1629,9 +1700,9 @@ nt_rust_test(
 )
 
 
-# The hermetic mock PKCS#11 provider the e2e below dlopens. Under cargo it is its own
-# workspace, built by the test itself; here it is an ordinary shared library. Plain
-# rules_rust rather than the nt_ macros: a C-ABI fixture outside the workspace lint policy.
+# The hermetic mock PKCS#11 provider the e2e below dlopens, built as an ordinary shared
+# library. Plain rules_rust rather than the nt_ macros: a C-ABI fixture outside the
+# workspace lint policy.
 rust_shared_library(
     name = "mock_pkcs11",
     srcs = ["tests/mock-pkcs11/src/lib.rs"],
@@ -1649,8 +1720,6 @@ rust_shared_library(
 nt_rust_test(
     name = "pkcs11_keysource_e2e_test",
     srcs = ["tests/pkcs11_keysource_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = _PROXY_EXT_FEATURES,
     data = [":mock_pkcs11"],
     edition = "2021",
@@ -1678,7 +1747,7 @@ nt_rust_test(
 # The saturation rig is a liveness instrument run in the release-gates job.
 # It stands up a Redis replay fleet and sends a small fixed load to assert
 # that the proxy can still mint valid requests and that the backend receives
-# them. This target replaces the previous cargo build invocation.
+# them.
 # ===========================================================================
 
 nt_rust_binary(
@@ -1742,6 +1811,61 @@ nt_rust_binary(
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
         "@crates_mcp_re//:tokio-rustls",
+    ],
+)
+
+# The HTTP-profile proof front: an RFC 9421 client and proxy pair that drive a real external
+# FastMCP Streamable-HTTP backend over the wire (tools/http_profile_proof.sh,
+# tools/http_profile_multireplica_proof.sh, tools/gen_sdk_transport_fixture.py). Not tests:
+# they need the external backend and a bound port. Built on the deploy flavor, whose
+# redis_replay the multi-replica proof's shared tier needs.
+nt_rust_binary(
+    name = "http_profile_proxy",
+    srcs = [
+        "examples/hpp_common/mod.rs",
+        "examples/http_profile_proxy.rs",
+    ],
+    crate_features = _PROXY_DEPLOY_FEATURES,
+    crate_root = "examples/http_profile_proxy.rs",
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_deploy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
+nt_rust_binary(
+    name = "http_profile_client",
+    srcs = [
+        "examples/hpp_common/mod.rs",
+        "examples/http_profile_client.rs",
+    ],
+    crate_root = "examples/http_profile_client.rs",
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:ureq",
+    ],
+)
+
+# The Redis replay-store microbench (docs/dev/proxy-performance-pathways.md): the SAME store
+# code the proxy serves through, with no proxy in front. Needs a Redis at runtime.
+nt_rust_binary(
+    name = "replay_store_bench",
+    srcs = ["examples/replay_store_bench.rs"],
+    crate_features = _PROXY_DEPLOY_FEATURES,
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_deploy",
+        "@crates_mcp_re//:tokio",
     ],
 )
 

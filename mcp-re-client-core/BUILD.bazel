@@ -47,6 +47,7 @@ nt_rust_library(
 # A battery needing the fixtures takes the whole chain from this flavor.
 nt_rust_library(
     name = "mcp_re_client_core_pre052",
+    testonly = True,
     srcs = glob(["src/**/*.rs"]),
     crate_name = "mcp_re_client_core",
     edition = "2021",
@@ -64,8 +65,6 @@ nt_rust_library(
 nt_rust_test(
     name = "mcp_re_client_core_test",
     crate = ":mcp_re_client_core_pre052",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
@@ -75,8 +74,8 @@ nt_rust_test(
     ],
 )
 
-# The crate's doctests. Cargo runs them in `cargo test --workspace`; the `compile_fail`
-# ones assert that a verified value cannot be built outside its owner.
+# The crate's doctests. The `compile_fail` ones assert that a verified value cannot be
+# built outside its owner.
 rust_doc_test(
     name = "mcp_re_client_core_doc_test",
     crate = ":mcp_re_client_core",

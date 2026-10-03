@@ -12,7 +12,7 @@ Standard CI (`ci.yml`) is already fully deployed on GitHub-hosted runners (`ubun
 ### GitHub-Hosted (Already Deployed)
 
 **`ci.yml` — 6 jobs, all on `ubuntu-latest`**
-- `cargo`: Build + test + 30+ structural gates
+- `cargo`: 30+ structural gates; it builds nothing (the id is what the ruleset requires)
 - `rfc9421-cross-verify`: Third-party RFC 9421 cross-verification
 - `release-gates`: Feature-gated backend tests (Bazel, async_serve, redis, PKCS#11)
 - `bazel`: Semantic-drift gate + test parity

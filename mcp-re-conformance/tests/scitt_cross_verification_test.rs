@@ -56,7 +56,7 @@ struct Case {
     expect: String,
 }
 
-/// The corpus directory: the runfiles copy under Bazel, the source tree under cargo.
+/// The corpus directory: the runfiles copy under Bazel, the source tree otherwise.
 fn corpus_dir() -> PathBuf {
     if let Ok(rel) = std::env::var("MCP_RE_SCITT_EXTERNAL_KAT") {
         for key in ["TEST_SRCDIR", "RUNFILES_DIR"] {

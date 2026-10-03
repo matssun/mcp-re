@@ -77,7 +77,8 @@
 //! export MCP_RE_TEST_OCSP_REVOKED_DER=$PWD/revoked.der
 //!
 //! # 7. Run the feature-gated test:
-//! cargo test -p mcp-re-proxy --features online_ocsp --test ocsp_e2e_test
+//! bazel test //mcp-re-proxy:integration_ext_test --test_output=all \
+//!   --test_arg=ocsp_e2e_test
 //! ```
 #![cfg(feature = "online_ocsp")]
 
@@ -88,7 +89,7 @@ use mcp_re_proxy::RevocationEvidence;
 /// Read the responder URL + the three DER paths; `None` (skip) unless
 /// `MCP_RE_TEST_OCSP_RESPONDER_URL` is set. The DER paths default to files in the
 /// cwd matching the provisioning recipe so a minimal
-/// `MCP_RE_TEST_OCSP_RESPONDER_URL=... cargo test` works against that layout.
+/// `MCP_RE_TEST_OCSP_RESPONDER_URL=... bazel test` works against that layout.
 fn ocsp_env() -> Option<(String, String, String, String)> {
     let Ok(url) = std::env::var("MCP_RE_TEST_OCSP_RESPONDER_URL") else {
         if std::env::var("MCP_RE_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.is_empty()) {

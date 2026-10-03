@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Shared demo material for the HTTP-profile proof pair (`http_profile_proxy`
 //! server + `http_profile_client` driver). NOT a standalone example — it lives in
-//! a subdirectory so cargo does not compile it as its own binary; each example
+//! a subdirectory so it is not built as its own binary; each example
 //! pulls it in with `#[path = "hpp_common/mod.rs"] mod hpp_common;`.
 //!
 //! The identities/keys are DETERMINISTIC demo seeds (same pattern as

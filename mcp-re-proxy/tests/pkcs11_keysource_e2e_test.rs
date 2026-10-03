@@ -12,15 +12,10 @@
 //! exercised; only the token is a controllable fake.
 //!
 //! # How the mock is provisioned
-//! Under Bazel the mock is `//mcp-re-proxy:mock_pkcs11`, a data dependency whose path
-//! arrives in `MCP_RE_MOCK_PKCS11_LIB`; a path that is set but absent panics. Under
-//! cargo, `mock_module()` runs a nested `cargo build` of `tests/mock-pkcs11` (into that
-//! crate's OWN target dir, so it never contends the workspace build lock) and returns
-//! the resulting library path. Objects are seeded per test through two env vars the
-//! mock reads at `C_Initialize` (`MOCK_PKCS11_TOKEN_LABEL`, `MOCK_PKCS11_OBJECTS`) —
-//! see [`MockToken`]. When neither is available the test self-skips (honoring
-//! `MCP_RE_REQUIRE_LIVE_INFRA`: set → a skip becomes a hard failure). A
-//! `cargo`-present build FAILURE, by contrast, panics loudly and is never skipped.
+//! The mock is `//mcp-re-proxy:mock_pkcs11`, a data dependency whose path arrives in
+//! `MCP_RE_MOCK_PKCS11_LIB`; a path that is unset, or set and absent, panics — this test
+//! never skips. Objects are seeded per test through two env vars the mock reads at
+//! `C_Initialize` (`MOCK_PKCS11_TOKEN_LABEL`, `MOCK_PKCS11_OBJECTS`) — see [`MockToken`].
 //!
 //! The keygen-on-token flow (never import a private key) that the delegated-TLS
 //! tests rely on is preserved: the mock GENERATES the key, the test reads its public
@@ -33,8 +28,6 @@ use std::io::Read as _;
 use std::io::Write as _;
 use std::net::TcpListener;
 use std::net::TcpStream;
-use std::path::Path;
-use std::process::Command;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -72,80 +65,29 @@ use rustls_pki_types::ServerName;
 // Hermetic mock PKCS#11 provider: build once, seed per test.
 // ===========================================================================
 
-/// The mock provider `cdylib`, located or built once per test process. `None` means it
-/// is neither provided nor buildable HERE (no `cargo` / source absent), which
-/// self-skips. A `cargo`-present build error panics.
-fn mock_module() -> Option<String> {
-    static MODULE: OnceLock<Option<String>> = OnceLock::new();
-    MODULE.get_or_init(build_mock_module).clone()
+/// The mock provider `cdylib`, which the Bazel target builds (`:mock_pkcs11`) and names
+/// through MCP_RE_MOCK_PKCS11_LIB. Absent, the test is not running as its Bazel target, and
+/// a skip there would be a green that measured nothing — so it panics instead.
+fn mock_module() -> String {
+    static MODULE: OnceLock<String> = OnceLock::new();
+    MODULE.get_or_init(provided_mock_module).clone()
 }
 
-fn build_mock_module() -> Option<String> {
-    if let Ok(provided) = std::env::var("MCP_RE_MOCK_PKCS11_LIB") {
-        let path = std::fs::canonicalize(&provided).unwrap_or_else(|e| {
-            panic!("MCP_RE_MOCK_PKCS11_LIB names {provided}, which does not resolve: {e}")
-        });
-        return Some(path.to_string_lossy().into_owned());
-    }
-    let mock_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/mock-pkcs11");
-    let manifest = mock_dir.join("Cargo.toml");
-    if !manifest.exists() {
-        eprintln!(
-            "SKIP: mock PKCS#11 provider source not present at {} (sandboxed build); \
-             the PKCS#11 client logic is still covered by the unit tests.",
-            manifest.display()
-        );
-        return None;
-    }
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let output = Command::new(&cargo)
-        .arg("build")
-        .arg("--manifest-path")
-        .arg(&manifest)
-        .output();
-    match output {
-        // `cargo` not spawnable (e.g. Bazel sandbox): self-skip cleanly.
-        Err(e) => {
-            eprintln!("SKIP: cannot spawn `{cargo}` to build the mock PKCS#11 provider: {e}");
-            return None;
-        }
-        // `cargo` present but the mock failed to COMPILE: a real regression — fail loud.
-        Ok(o) if !o.status.success() => panic!(
-            "mock PKCS#11 provider failed to build:\n{}",
-            String::from_utf8_lossy(&o.stderr)
-        ),
-        Ok(_) => {}
-    }
-    let lib_name = if cfg!(target_os = "macos") {
-        "libmock_pkcs11.dylib"
-    } else {
-        "libmock_pkcs11.so"
-    };
-    let path = mock_dir.join("target/debug").join(lib_name);
-    path.exists().then(|| path.to_string_lossy().into_owned())
-}
-
-/// The decision for every test: a built mock module path, or `None` to self-skip.
-/// Honors `MCP_RE_REQUIRE_LIVE_INFRA` (set → a skip becomes a hard failure, so CI
-/// cannot silently lose the coverage).
-fn require_mock_or_skip(test: &str) -> Option<String> {
-    match mock_module() {
-        Some(m) => Some(m),
-        None => {
-            if std::env::var("MCP_RE_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.is_empty()) {
-                panic!(
-                    "MCP_RE_REQUIRE_LIVE_INFRA is set but the mock PKCS#11 provider could not be \
-                     built — the PKCS#11 e2e MUST run under CI, not skip"
-                );
-            }
-            eprintln!("SKIP {test}: mock PKCS#11 provider unavailable in this environment.");
-            None
-        }
-    }
+fn provided_mock_module() -> String {
+    let provided = std::env::var("MCP_RE_MOCK_PKCS11_LIB").unwrap_or_else(|_| {
+        panic!(
+            "MCP_RE_MOCK_PKCS11_LIB is not set: run this as //mcp-re-proxy:pkcs11_keysource_e2e_test, \
+             whose `data` builds the mock provider and whose env names it"
+        )
+    });
+    let path = std::fs::canonicalize(&provided).unwrap_or_else(|e| {
+        panic!("MCP_RE_MOCK_PKCS11_LIB names {provided}, which does not resolve: {e}")
+    });
+    path.to_string_lossy().into_owned()
 }
 
 /// Serializes the tests. Each sets the PROCESS-wide `MOCK_PKCS11_*` env that the
-/// mock reads at `C_Initialize`, so they must NOT run concurrently (cargo runs tests
+/// mock reads at `C_Initialize`, so they must NOT run concurrently (libtest runs tests
 /// multi-threaded by default). Holding this lock for the whole test body makes each
 /// "seed token → open → use" sequence atomic w.r.t. the others. A poisoned lock (a
 /// prior test panicked) is recovered — the panic is already the reported failure.
@@ -221,9 +163,7 @@ fn placeholder_tls() -> FileKeySource {
 
 #[test]
 fn pkcs11_sign_verifies_against_token_public_key() {
-    let Some(module) = require_mock_or_skip("pkcs11_sign_verifies_against_token_public_key") else {
-        return;
-    };
+    let module = mock_module();
     let _guard = provisioning_lock();
     let mut token = MockToken::init();
     token.keygen_ed25519("mcp-re-response-signing", "01");
@@ -275,11 +215,7 @@ fn pkcs11_sign_verifies_against_token_public_key() {
 /// well-formed bytes that verify under nobody advertised, and they are never emitted.
 #[test]
 fn pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify() {
-    let Some(module) =
-        require_mock_or_skip("pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify")
-    else {
-        return;
-    };
+    let module = mock_module();
     let _guard = provisioning_lock();
     let mut token = MockToken::init();
     token.keygen("ed25519-misbound", "mcp-re-response-signing", "01");
@@ -308,10 +244,7 @@ fn pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify() {
 /// token object for both is refused at the constructor.
 #[test]
 fn pkcs11_tls_label_equal_to_response_label_is_refused() {
-    let Some(module) = require_mock_or_skip("pkcs11_tls_label_equal_to_response_label_is_refused")
-    else {
-        return;
-    };
+    let module = mock_module();
     let _guard = provisioning_lock();
     let mut token = MockToken::init();
     token.keygen_ed25519("mcp-re-sign", "01");
@@ -502,9 +435,7 @@ fn client_round_trip(
 /// Ed25519 SPKI matching the token object.
 #[test]
 fn pkcs11_tls_delegated_signer_none_then_some() {
-    let Some(module) = require_mock_or_skip("pkcs11_tls_delegated_signer_none_then_some") else {
-        return;
-    };
+    let module = mock_module();
     let _guard = provisioning_lock();
     let mut token = MockToken::init();
     token.keygen_ed25519("mcp-re-sign", "01");
@@ -563,9 +494,7 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
 /// presented leaf certificate's key does NOT match the token's TLS key.
 #[test]
 fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
-    let Some(module) = require_mock_or_skip("pkcs11_tls_cert_signer_mismatch_fails_closed") else {
-        return;
-    };
+    let module = mock_module();
     let _guard = provisioning_lock();
     let mut token = MockToken::init();
     token.keygen_ed25519("mcp-re-sign", "01");
@@ -601,9 +530,7 @@ fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
 /// has no Ed25519 object under that label).
 #[test]
 fn pkcs11_tls_non_ed25519_fails_closed() {
-    let Some(module) = require_mock_or_skip("pkcs11_tls_non_ed25519_fails_closed") else {
-        return;
-    };
+    let module = mock_module();
     let _guard = provisioning_lock();
     let mut token = MockToken::init();
     token.keygen_ed25519("mcp-re-sign", "01");
@@ -629,9 +556,7 @@ fn pkcs11_tls_non_ed25519_fails_closed() {
 /// guess which key is the TLS credential).
 #[test]
 fn pkcs11_tls_multiple_objects_fails_closed() {
-    let Some(module) = require_mock_or_skip("pkcs11_tls_multiple_objects_fails_closed") else {
-        return;
-    };
+    let module = mock_module();
     let _guard = provisioning_lock();
     let mut token = MockToken::init();
     token.keygen_ed25519("mcp-re-sign", "01");
@@ -660,11 +585,7 @@ fn pkcs11_tls_multiple_objects_fails_closed() {
 /// touches it.
 #[test]
 fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
-    let Some(module) =
-        require_mock_or_skip("pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read")
-    else {
-        return;
-    };
+    let module = mock_module();
     let _guard = provisioning_lock();
     let mut token = MockToken::init();
     token.keygen_ed25519("mcp-re-sign", "01");

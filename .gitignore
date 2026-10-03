@@ -55,6 +55,8 @@ __pycache__/
 
 # Coverage artifact from running the SDK suite at the repo root.
 .coverage
+# scripts/coverage.sh: merged profile, region summary, HTML report.
+/.coverage-report/
 
 # Claude Code
 /.claude
@@ -64,3 +66,4 @@ __pycache__/
 
 # The finding ledger's advisory lock (security-remediate `_persist.exclusive`).
 *.jsonl.lock
+deploy/docker/dist/

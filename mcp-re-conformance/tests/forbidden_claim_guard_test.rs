@@ -37,7 +37,7 @@
 //!
 //! Each doc is delivered through Bazel `data` runfiles and read from DISK at
 //! test time (resolved via `$(rlocationpath)` against `TEST_SRCDIR`/
-//! `RUNFILES_DIR`), with the `mcp-re-test-paths` cargo fallback — so the guard
+//! `RUNFILES_DIR`) through `mcp-re-test-paths` — so the guard
 //! re-reads reality and a hardcoded absolute path is never used.
 //!
 //! std only (no new crates).

@@ -71,18 +71,23 @@ def test_the_registry_parses_and_every_probe_names_a_real_unit_and_theorem():
 
     probes = lane.load_probes()
     assert probes, "the registry must not be empty while V0 claims rest on it"
-    theorems = {
-        t["id"]
-        for t in tomllib.load(
-            (lane.REPO_ROOT / "verification/policy/theorems.toml").open("rb")
-        )["theorem"]
-    }
+    rows = tomllib.load(
+        (lane.REPO_ROOT / "verification/policy/theorems.toml").open("rb")
+    )["theorem"]
+    resting: dict[str, set[str]] = {}
+    for row in rows:
+        for unit in [ref.removeprefix("unit://") for ref in row.get("supported_by", [])] + [row.get("owner", "")]:
+            resting.setdefault(unit, set()).add(row["id"])
+    wrong = []
     for probe in probes:
         assert probe["unit"] in UNITS, probe["id"]
         # `theorem` is optional — a unit may have a probe before it has a registered
-        # claim — but a theorem that IS named must resolve.
-        if "theorem" in probe:
-            assert probe["theorem"] in theorems, probe["id"]
+        # claim — but a theorem that IS named must be one that rests on the probe's unit:
+        # the probe defends that theorem's conjunct, and naming another theorem states that
+        # a different proposition is protected.
+        if "theorem" in probe and probe["theorem"] not in resting.get(probe["unit"], set()):
+            wrong.append(f"{probe['id']}: {probe['theorem']} does not rest on {probe['unit']}")
+    assert not wrong, "\n".join(wrong)
 
 
 def test_every_registered_anchor_matches_exactly_one_site_today():
@@ -224,17 +229,17 @@ def test_a_same_named_test_in_another_target_does_not_satisfy_a_probe():
     """Test identity here is target + symbol, and this is exactly where flattening bites:
     two integration targets may each hold `body_tamper_fails_closed`, and a probe about the
     request floor must not be satisfied by the response one going red."""
-    probe = _probe(expect_red=["tests/proof_path_test#body_tamper_fails_closed"])
-    observed = {"tests/other_test#body_tamper_fails_closed": "FAILED"}
+    probe = _probe(expect_red=["//mcp-re-http-profile:proof_path_test#body_tamper_fails_closed"])
+    observed = {"//mcp-re-http-profile:full_profile_test#body_tamper_fails_closed": "FAILED"}
     missing, red = lane.adjudicate(probe, observed)
     assert red == []
-    assert missing == ["tests/proof_path_test#body_tamper_fails_closed"]
+    assert missing == ["//mcp-re-http-profile:proof_path_test#body_tamper_fails_closed"]
 
 
 def test_run_battery_keys_results_by_target_and_symbol():
     import inspect
 
-    assert 'results[f"{target}#{name.strip()}"]' in inspect.getsource(lane.run_battery)
+    assert 'results[f"{target}#{name}"]' in inspect.getsource(lane.run_battery)
 
 
 def test_every_registered_expectation_carries_its_target():
@@ -242,9 +247,9 @@ def test_every_registered_expectation_carries_its_target():
     results, so this is both an identity rule and a liveness one.
 
     WHICH TARGETS ARE RUNNABLE IS THE ECOSYSTEM'S ANSWER, asked here rather than kept as a
-    list. The literal `("lib#", "tests/", "gate#")` this used to carry was a cargo list, so
-    the first `pytest#` expectation registered would have been refused by the lane's own
-    test while the lane ran it correctly -- a rule drifting behind the thing it checks.
+    list. A literal list of target spellings kept here would drift behind the ecosystems —
+    the first expectation in a new form would be refused by the lane's own test while the
+    lane ran it correctly.
     `gate#` is not any ecosystem's target: it is this lane's own control form, resolved by
     `run_gates` rather than by a test runner, so it is named beside them.
     """
@@ -262,12 +267,17 @@ def test_every_registered_expectation_carries_its_target():
 
 
 def test_a_doctest_control_may_not_be_expected_to_go_red():
-    """`doc#` members are compile-fail controls; no runtime weakening moves one, so a probe
-    naming it could never be satisfied honestly."""
+    """A doctest target's members are compile-fail controls; no runtime weakening moves one,
+    so a probe naming it could never be satisfied honestly."""
     _expect_manifest_error(
         lambda: lane.declared_battery(
             UNITS,
-            _probe(expect_red=["doc#verified_response::bound::VerifiedMcpResponse"]),
+            _probe(
+                expect_red=[
+                    "//mcp-re-http-profile:mcp_re_http_profile_doc_test"
+                    "#verified_response::bound::VerifiedMcpResponse"
+                ]
+            ),
             "p",
         ),
         "a doctest control must be refused",
@@ -298,7 +308,7 @@ def test_a_declared_gate_control_resolves_as_a_battery_member():
         unit="proxy.dispatch_commitment",
         expect_red=["gate#scripts/authorization_provenance_gate.py"],
     )
-    _package, _grouped, _features, gates, _eco = lane.declared_battery(UNITS, probe, "p")
+    _package, _grouped, gates, _eco = lane.declared_battery(UNITS, probe, "p")
     assert "scripts/authorization_provenance_gate.py" in gates, gates
 
 
@@ -383,7 +393,7 @@ def test_a_declared_gate_control_must_exist_in_the_tree():
 def test_gate_controls_enter_the_unit_fingerprint():
     """Softening a rule is a reduction in evidence, so it must invalidate the attestation.
 
-    The scripts cannot go in `paths` — a `.py` entry collapses a cargo unit's ecosystem —
+    The scripts cannot go in `paths` — a `.py` entry collapses a Rust unit's ecosystem —
     so the component is what carries them, and a unit that declares none must not gain an
     empty key: that would move all 156 fingerprints to record an absence.
     """
@@ -499,15 +509,15 @@ def _sdk_unit(prefix: str) -> tuple[str, dict]:
 
 def test_a_python_unit_resolves_its_project_and_carries_its_ecosystem():
     """Resolution was never the blocker, and this pins that so the next reader does not
-    re-remove a refusal that does not exist: `test_package_for` is ecosystem-aware and
+    re-remove a refusal that does not exist: `test_project_for` is ecosystem-aware and
     answers `sdk/python` here. What the battery needs from `declared_battery` is the
     ECOSYSTEM, because that is what decides how the selection is run."""
-    from _manifest import test_package_for
+    from _ecosystems import test_project_for
 
     uid, unit = _sdk_unit("sdk_python.")
-    assert test_package_for(unit), "the manifest resolves a project for an SDK unit"
+    assert test_project_for(unit), "the platform resolves a project for an SDK unit"
     probe = _probe(unit=uid, expect_red=[unit["tested_symbols"][0]])
-    package, grouped, _features, _gates, eco = lane.declared_battery(UNITS, probe, "p")
+    package, grouped, _gates, eco = lane.declared_battery(UNITS, probe, "p")
     assert package, "a python unit must resolve a project"
     assert eco is lane.PYTHON
     assert "pytest" in grouped, grouped
@@ -516,14 +526,14 @@ def test_a_python_unit_resolves_its_project_and_carries_its_ecosystem():
 def test_a_typescript_unit_resolves_a_project_too():
     uid, unit = _sdk_unit("sdk_typescript.")
     probe = _probe(unit=uid, expect_red=[unit["tested_symbols"][0]])
-    package, grouped, _features, _gates, eco = lane.declared_battery(UNITS, probe, "p")
+    package, grouped, _gates, eco = lane.declared_battery(UNITS, probe, "p")
     assert package, "a typescript unit must resolve a project"
     assert eco is lane.TYPESCRIPT
     assert "vitest" in grouped, grouped
 
 
 def test_an_undeclared_control_is_still_refused_on_an_sdk_unit():
-    """The declared-battery rule is the lane's, not cargo's. It must not have been lost
+    """The declared-battery rule is the lane's, not any runner's. It must not have been lost
     with the ecosystem dispatch."""
     uid, _unit = _sdk_unit("sdk_python.")
     _expect_manifest_error(
@@ -539,7 +549,7 @@ def test_every_ecosystem_can_say_the_tree_did_not_build():
     state would parse as zero results and then as controls that never ran -- which the
     adjudicator reports as a MEASUREMENT FAILURE, so it is not a false green, but it makes
     every probe over that ecosystem permanently unmeasurable."""
-    for eco in (lane.CARGO, lane.PYTHON, lane.TYPESCRIPT):
+    for eco in (lane.RUST, lane.PYTHON, lane.TYPESCRIPT):
         assert lane._DID_NOT_BUILD.get(eco), f"{eco.name} names no did-not-build marker"
 
 
@@ -549,7 +559,13 @@ def test_a_tree_that_did_not_build_is_not_red_in_any_ecosystem():
     and the redness would measure the compiler instead of the claim. Same rule, same
     reason, as a gate control that the weakening DELETED."""
     for eco, marker in (
-        (lane.CARGO, "error[E0432]: unresolved import"),
+        (lane.RUST, "error[E0432]: unresolved import"),
+        (
+            lane.RUST,
+            "ERROR: /t/mcp-re-core/BUILD.bazel:8:16: Compiling Rust rlib mcp_re_core (31 files) "
+            "failed: (Exit 1): process_wrapper failed",
+        ),
+        (lane.RUST, "ERROR: Build did NOT complete successfully"),
         (lane.PYTHON, "ERROR collecting tests/test_mtls.py"),
         (lane.TYPESCRIPT, "Failed to load url ./transport"),
     ):
@@ -566,28 +582,38 @@ def test_an_unreadable_report_is_not_red():
     assert body.index("except ReportUnreadable") < body.index("return True, results")
 
 
-def test_every_declared_cargo_target_shape_is_runnable():
-    """Four shapes, one declaration of them, and this lane must not hold a second.
+def test_a_failed_test_is_not_a_tree_that_did_not_build():
+    """The other direction of the same rule. A weakened control that compiled, ran and
+    objected is the red this lane exists to see; Bazel reports it as a failed TEST, with
+    none of the build-failure markers, and it must reach the adjudicator as `FAILED`."""
+    failed_test = (
+        "test a::tests::one ... FAILED\n"
+        "//mcp-re-core:mcp_re_core_test                 FAILED in 0.1s\n"
+        "Executed 1 out of 1 test: 1 fails locally.\n"
+    )
+    assert not lane._did_not_build(lane.RUST, failed_test)
 
-    `_ecosystems` declares `lib`, `doc`, `tests/<name>` and `bin/<name>`, and this lane
-    used to build its own Cargo argv from `lib` and `tests/<name>` alone. A `bin/<name>`
-    battery became `--test -re-client`: cargo refuses that with a message which is not a
-    build failure, so the lane reported a MEASUREMENT FAILURE and blamed a probe whose
-    weakening works. The registry can name any of the four, so all four must run.
+
+def test_every_rust_target_kind_runs_through_the_one_seam():
+    """One declaration of how a label runs, and this lane must not hold a second.
+
+    An earlier version of this lane built its own argv and knew fewer target shapes than
+    the test lane did; a battery in an unknown shape was refused by the runner with a
+    message that was not a build failure, so the lane reported a MEASUREMENT FAILURE and
+    blamed a probe whose weakening works. Every kind the registry can name — a unit-test
+    flavor, an integration target, a binary's tests, a doctest target — goes through
+    `_ecosystems.test_argv`.
     """
-    from _ecosystems import CARGO, test_argv
+    from _ecosystems import RUST, test_argv
 
-    shapes = {
-        "lib": ["--lib"],
-        "doc": ["--doc"],
-        "tests/full_profile_test": ["--test", "full_profile_test"],
-        "bin/mcp-re-client": ["--bin", "mcp-re-client"],
-    }
-    for target, expected in shapes.items():
-        argv = test_argv(CARGO, "p", target, ["sym"], [], None)
-        assert expected[0] in argv, (target, argv)
-        for token in expected:
-            assert token in argv, (target, argv)
+    for label in (
+        "//mcp-re-proxy:proxy_unit_test",
+        "//mcp-re-http-profile:full_profile_test",
+        "//mcp-re-client:mcp_re_client_cli_test",
+        "//mcp-re-http-profile:mcp_re_http_profile_doc_test",
+    ):
+        argv = test_argv(RUST, None, label, ["sym"])
+        assert argv[:3] == ["bazel", "test", label], argv
     # And the lane asks the seam rather than answering for itself.
     assert "target_argv(" not in inspect.getsource(lane.run_battery)
 
@@ -652,9 +678,9 @@ def test_the_battery_runs_through_the_same_seam_as_the_test_lane():
     assert "parse_results(eco," in body
 
 
-def test_a_non_cargo_battery_runs_inside_its_own_project():
+def test_an_sdk_battery_runs_inside_its_own_project():
     """pytest and vitest selections are relative to the project that holds their
-    configuration; cargo is driven from the workspace root with `-p`. Running a pytest
+    configuration; Bazel resolves a label from the workspace root. Running a pytest
     selection from the tree root would select nothing and report a green battery."""
     body = inspect.getsource(lane.run_battery)
     assert "cwd = tree / package" in body
@@ -679,24 +705,23 @@ def test_an_absent_matrix_and_a_stale_artefact_are_different_refusals():
     assert "UNPREPARED" in guard
 
 
-def test_a_needed_artefact_is_looked_for_where_each_preparation_leaves_it():
-    """The Python native module has TWO spellings, and the lane refused CI over knowing one.
+def test_a_needed_artefact_is_looked_for_where_the_preparation_leaves_it():
+    """The Python native module is looked for under the name the Bazel wheel gives it.
 
-    `maturin develop` leaves `_core.abi3.so` beside the package in the source tree;
     `prepare_python_matrix.sh` -- the form the verification workflow runs, and the one that
-    pins an environment per supported interpreter -- builds a WHEEL and installs it, so the
-    tree has no `.so` at all. A lane that knew only the first spelling reported a correctly
-    prepared runner as an unbuilt environment and failed every Python probe on it.
+    pins an environment per supported interpreter -- installs the Bazel-built WHEEL, whose
+    extension is `mcp_re_sdk/_core.so`, so the tree has no `.so` at all. A lane that looked
+    for another spelling reported a correctly prepared runner as an unbuilt environment and
+    failed every Python probe on it; that happened on the first change to a Python unit's
+    inputs after the migration, because nothing exercised it before.
 
-    Asked over a CONSTRUCTED workspace rather than this one, because the two layouts are the
-    point and no single environment has both -- and the fast job that runs these self-tests
-    builds no SDK matrix at all, so a control needing either spelling present would fail
-    there for the environment rather than for the rule.
+    Asked over a CONSTRUCTED workspace rather than this one: the fast job that runs these
+    self-tests builds no SDK matrix at all, so a control needing the module present would
+    fail there for the environment rather than for the rule.
     """
-    wanted = "python/mcp_re_sdk/_core.abi3.so"
+    wanted = "python/mcp_re_sdk/_core.so"
     candidates = lane._SCRATCH_NEEDS[lane.PYTHON][wanted]
-    assert candidates[0] == wanted, candidates
-    assert any("site-packages" in spelling for spelling in candidates[1:]), candidates
+    assert all("site-packages" in spelling for spelling in candidates), candidates
 
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
@@ -705,17 +730,9 @@ def test_a_needed_artefact_is_looked_for_where_each_preparation_leaves_it():
         # The installed spelling ALONE resolves -- the shape a prepared runner has.
         installed = root / ".venv-cp314/lib/python3.14/site-packages/mcp_re_sdk"
         installed.mkdir(parents=True)
-        (installed / "_core.abi3.so").write_bytes(b"")
+        (installed / "_core.so").write_bytes(b"")
         from_wheel = lane._first_present(root, wanted, candidates)
         assert [relative for _s, relative in from_wheel] == [wanted], from_wheel
-
-        # And with both present the source tree wins, so a developer's own build is what a
-        # probe measures against their own edits.
-        tree = root / "python/mcp_re_sdk"
-        tree.mkdir(parents=True)
-        (tree / "_core.abi3.so").write_bytes(b"")
-        from_tree = lane._first_present(root, wanted, candidates)
-        assert [source for source, _r in from_tree] == [tree / "_core.abi3.so"], from_tree
 
 
 def test_an_unavailable_probe_is_named_in_the_verdict_line():

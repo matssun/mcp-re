@@ -4,7 +4,7 @@
 The single property under test: **a battery reports a pass only when every test it declared
 actually ran and actually passed, in the target it declared.**
 
-The lane is thin, and that is what makes it dangerous. It shells out to `cargo test` and
+The lane is thin, and that is what makes it dangerous. It shells out to `bazel test` and
 reads libtest's output, and every classic false green in this repository lives in exactly
 that gap: a filter that selects nothing exits 0, an `#[ignore]`d test prints a line that is
 not `ok`, a feature-gated target compiles to zero tests and reports PASSED, and a run piped
@@ -21,19 +21,29 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _ecosystems import CARGO
 from _ecosystems import PYTHON
+from _ecosystems import RUST
 from _ecosystems import TYPESCRIPT
 from _ecosystems import parse_results
 from _ecosystems import test_argv
 from _ecosystems import valid_target
 from _ecosystems import ReportUnreadable
 from _manifest import ManifestError  # noqa: E402
-from _manifest import _validate_test_features  # noqa: E402
+from _manifest import _UNIT_KEYS  # noqa: E402
+from _manifest import _validate_in_crate_selectors  # noqa: E402
+from _manifest import _validate_rust_test_packages  # noqa: E402
 from _load_tool import load_tool  # noqa: E402
+import _rust_targets  # noqa: E402
 
 # The lane is an extensionless script, so it is loaded by path rather than imported.
 lane = load_tool("verify-tests", "verify_tests_lane")
+
+#: Real Bazel test targets from the build graph: two flavors of the proxy library's unit
+#: tests, one integration target, one doctest target.
+UNIT = "//mcp-re-proxy:proxy_unit_test"
+UNIT_EXT = "//mcp-re-proxy:proxy_ext_unit_test"
+INTEGRATION = "//mcp-re-http-profile:proof_path_test"
+DOCTEST = "//mcp-re-http-profile:mcp_re_http_profile_doc_test"
 
 
 class FakeProc:
@@ -49,7 +59,7 @@ def run_with(monkey_output: str, returncode: int = 0):
     original = subprocess.run
     subprocess.run = lambda *a, **k: FakeProc(monkey_output, returncode)  # type: ignore[assignment]
     try:
-        return lane.run_selection(CARGO, "crate", "lib", ["a::tests::one", "a::tests::two"])
+        return lane.run_selection(RUST, None, UNIT, ["a::tests::one", "a::tests::two"])
     finally:
         subprocess.run = original  # type: ignore[assignment]
 
@@ -162,16 +172,19 @@ def test_a_nonzero_exit_is_not_a_pass_even_when_every_line_said_ok():
 
 
 def test_a_symbol_without_a_target_is_malformed_not_defaulted():
-    """Defaulting the target would let a test that moved between the lib and an
-    integration target keep reporting under the one it left."""
-    grouped, malformed = lane.group_by_target(CARGO, ["a::tests::one", "lib#a::tests::two"])
+    """Defaulting the target would let a test that moved between the crate's own tests and
+    an integration target keep reporting under the one it left."""
+    grouped, malformed = lane.group_by_target(RUST, ["a::tests::one", f"{UNIT}#a::tests::two"])
     assert malformed == ["a::tests::one"]
-    assert grouped == {"lib": ["a::tests::two"]}
+    assert grouped == {UNIT: ["a::tests::two"]}
 
 
-def test_an_unknown_target_form_is_malformed():
-    grouped, malformed = lane.group_by_target(CARGO, ["bench#a", "tests/#b", "examples/x#c"])
-    assert sorted(malformed) == ["bench#a", "examples/x#c", "tests/#b"]
+def test_a_target_that_is_not_a_bazel_test_target_is_malformed():
+    """A library, a binary, a label nothing defines, and the old Cargo target words all
+    name no battery, so each is refused rather than dropped."""
+    symbols = ["lib#a", "//mcp-re-proxy:mcp_re_proxy#b", "//mcp-re-proxy:no_such_target#c", "tests/x#d"]
+    grouped, malformed = lane.group_by_target(RUST, symbols)
+    assert sorted(malformed) == sorted(symbols)
     assert grouped == {}
 
 
@@ -189,147 +202,84 @@ def test_a_doctest_item_matches_its_own_doctests_and_nothing_else():
     assert lane.doc_matches(observed, "verified_response::Gone") == []
 
 
-def test_targets_are_selected_by_their_own_cargo_flag():
-    """Which flag selects which target is the ECOSYSTEM's answer now (#745), and the
-    Cargo answer is unchanged: `lib`, `doc` and an open-ended `tests/<name>` family, with a
-    nested or empty name refused rather than guessed at."""
-    assert test_argv(CARGO, "p", "doc", ["a"])[:6] == ["cargo", "test", "-p", "p", "--doc", "--"]
-    assert test_argv(CARGO, "p", "lib", ["a"])[:5] == ["cargo", "test", "-p", "p", "--lib"]
-    assert test_argv(CARGO, "p", "tests/dispatch_test", ["a"])[4:6] == [
-        "--test",
-        "dispatch_test",
-    ]
-    assert not valid_target(CARGO, "tests/a/b")
-    assert not valid_target(CARGO, "")
+def test_a_rust_target_is_run_as_its_bazel_label():
+    """The label is the whole selection: Bazel resolves it from the workspace root, runs it
+    fresh, streams libtest's own lines, and passes each declared name as `--exact`. A
+    doctest target runs whole, because a doctest's reported name embeds its line."""
+    argv = test_argv(RUST, None, UNIT, ["a::b"])
+    assert argv[:3] == ["bazel", "test", UNIT]
+    assert "--nocache_test_results" in argv, "a cached result describes an earlier run"
+    assert "--test_output=streamed" in argv
+    assert argv[-2:] == ["--test_arg=--exact", "--test_arg=a::b"]
+    assert not any(a.startswith("--test_arg") for a in test_argv(RUST, None, DOCTEST, ["x"]))
+    assert not valid_target(RUST, "")
 
 
-def test_a_declared_feature_set_reaches_the_runner():
-    """A control behind `#[cfg(feature = ...)]` does not exist in the default crate, so a
-    unit whose claim is about feature-gated code and whose battery runs without the feature
-    measures only the unconditional part of its own claim. The features are the ecosystem
-    adapter's to apply, and a unit that declares none must produce the command it produced
-    before."""
-    argv = test_argv(CARGO, "p", "lib", ["a"], ["b_feature", "a_feature"])
-    assert argv[:7] == ["cargo", "test", "-p", "p", "--features", "a_feature,b_feature", "--lib"]
-    doc_argv = test_argv(CARGO, "p", "doc", ["a"], ["a_feature"])
-    assert doc_argv[:7] == ["cargo", "test", "-p", "p", "--features", "a_feature", "--doc"]
-    assert test_argv(CARGO, "p", "lib", ["a"], []) == test_argv(CARGO, "p", "lib", ["a"])
-
-
-def test_a_test_feature_set_that_measures_nothing_is_refused():
-    """Three ways the field could state something it does not mean, and each is a refusal
-    rather than a silently dropped value: a feature set for a battery that does not exist,
-    one on an ecosystem whose runner cannot apply it — which would enter the fingerprint
-    while measuring nothing — and one naming the specification feature, which is off in
-    every production build, so a battery under it measures a crate that does not ship."""
-    base = {
-        "id": "u",
-        "class": "V0",
-        "paths": ["mcp-re-proxy/src/outbound_fetch/mod.rs"],
-        "evidence": ["test://x/y"],
-        "tested_symbols": ["lib#outbound_fetch::tests::t"],
-    }
-    for unit, expected in (
-        ({**base, "evidence": [], "tested_symbols": [], "test_features": ["f"]}, "no test://"),
-        (
-            {
-                **base,
-                "paths": ["sdk/python/src/mcp_re_sdk/__init__.py"],
-                "tested_symbols": ["pytest#tests/t.py::t"],
-                "test_features": ["f"],
-            },
-            "Cargo concept",
-        ),
-        ({**base, "features": ["verify"], "test_features": ["verify"]}, "specification feature"),
-    ):
-        try:
-            _validate_test_features("where", unit)
-        except ManifestError as exc:
-            assert expected in str(exc), exc
-        else:
-            raise AssertionError(f"expected a refusal mentioning {expected!r}")
+def test_the_build_configuration_is_the_label_and_not_a_field_beside_it():
+    """A control behind `#[cfg(feature = ...)]` exists only in a target compiled with the
+    feature, so a unit whose claim is about feature-gated code names that flavor's target.
+    Two flavors of one crate share a crate root and differ in features — the build graph
+    states both — and there is no unit field left that could restate, or contradict, which
+    configuration a battery ran under."""
+    plain, ext = _rust_targets.target(UNIT), _rust_targets.target(UNIT_EXT)
+    assert plain["root"] == ext["root"] == "mcp-re-proxy/src/lib.rs"
+    assert "redis_replay" in ext["features"] and "redis_replay" not in plain["features"]
+    assert "test_features" not in _UNIT_KEYS and "test_package" not in _UNIT_KEYS
 
 
 def test_a_battery_spanning_two_targets_is_two_selections():
     """One filter across two targets would let a name that exists in only one of them
     look satisfied by the other."""
     grouped, malformed = lane.group_by_target(
-        CARGO, ["lib#policy::tests::window", "tests/proof_path_test#stale_window_fails_closed"]
+        RUST, [f"{UNIT}#policy::tests::window", f"{INTEGRATION}#stale_window_fails_closed"]
     )
     assert not malformed
-    assert set(grouped) == {"lib", "tests/proof_path_test"}
+    assert set(grouped) == {UNIT, INTEGRATION}
 
 
-def test_a_multi_package_unit_without_test_package_has_no_derivable_crate():
-    """The lane must not GUESS. Before `test_package` existed a unit whose source closure
-    reached a second crate simply refused to run, which is the safe half; the danger is a
-    lane that picks one and reports a pass for a battery it never located."""
-    unit = {
-        "paths": [
-            "mcp-re-http-profile/src/verify.rs",
-            "mcp-re-core/src/crypto.rs",
-        ]
-    }
+def test_a_rust_battery_needs_no_derived_project():
+    """A Rust selector's label names its package, so a unit whose source closure spans two
+    crates has a runnable battery without any field choosing between them."""
+    unit = {"paths": ["mcp-re-http-profile/src/verify.rs", "mcp-re-core/src/crypto.rs"]}
     assert lane.unit_crate(unit) is None
-    unit["test_package"] = "mcp-re-http-profile"
-    assert lane.unit_crate(unit) == "mcp-re-http-profile"
+    assert lane._cwd(RUST, None) == lane.REPO_ROOT
 
 
-def test_test_package_naming_a_crate_outside_the_closure_selects_nothing():
-    """A package the unit does not measure would run a battery outside the fingerprinted
-    source, so the lane refuses rather than running it. The manifest loader rejects this
-    shape first; the lane does not rely on that."""
-    unit = {
-        "paths": ["mcp-re-http-profile/src/verify.rs", "mcp-re-core/src/crypto.rs"],
-        "test_package": "mcp-re-proxy",
-    }
-    assert lane.unit_crate(unit) is None
-
-
-def test_test_package_is_refused_where_the_lane_can_derive_it():
-    """A restatement of a derived fact is a second place for it to be wrong: the loader
-    refuses `test_package` on a single-package unit rather than ignoring it."""
-    from _manifest import ManifestError, _validate_test_package
-
-    single = {
-        "paths": ["mcp-re-http-profile/src/verify.rs"],
-        "test_package": "mcp-re-http-profile",
-        "tested_symbols": ["lib#a::b"],
-    }
-    try:
-        _validate_test_package("unit[0]", single)
-    except ManifestError:
-        pass
-    else:
-        raise AssertionError("a single-package unit must not carry `test_package`")
-
-
-def test_a_multi_package_battery_must_name_its_package():
-    """The loader fails the manifest rather than leaving the lane to fail later: an
-    unrunnable battery is a manifest defect, not a test result."""
-    from _manifest import ManifestError, _validate_test_package
-
+def test_a_battery_outside_the_measured_closure_is_refused():
+    """A target in a package the unit's paths do not name would measure code no component
+    of the fingerprint digests. Inside the closure — either of two packages — is legal."""
     spanning = {
         "paths": ["mcp-re-http-profile/src/verify.rs", "mcp-re-core/src/crypto.rs"],
-        "tested_symbols": ["lib#a::b"],
+        "tested_symbols": [f"{INTEGRATION}#a", "//mcp-re-core:mcp_re_core_test#b"],
     }
+    _validate_rust_test_packages("unit[0]", spanning)
+    spanning["tested_symbols"].append(f"{UNIT}#c")
     try:
-        _validate_test_package("unit[0]", spanning)
-    except ManifestError:
-        pass
+        _validate_rust_test_packages("unit[0]", spanning)
+    except ManifestError as exc:
+        assert "mcp-re-proxy" in str(exc), exc
     else:
-        raise AssertionError("a multi-package battery must name `test_package`")
+        raise AssertionError("a battery outside the measured closure must be refused")
 
-    spanning["test_package"] = "mcp-re-proxy"
+
+def test_an_in_crate_selector_must_name_a_module_the_unit_measures():
+    """A selector on a target built from a crate runs code inside that crate's sources, so
+    its module must be among the unit's paths; the crate root itself counts, since it holds
+    the modules it declares inline."""
+    unit = {
+        "paths": ["mcp-re-proxy/src/outbound_fetch/mod.rs"],
+        "tested_symbols": [f"{UNIT}#outbound_fetch::tests::t"],
+    }
+    _validate_in_crate_selectors("unit[0]", unit)
+    unit["tested_symbols"] = [f"{UNIT}#cli::tests::t"]
     try:
-        _validate_test_package("unit[0]", spanning)
-    except ManifestError:
-        pass
+        _validate_in_crate_selectors("unit[0]", unit)
+    except ManifestError as exc:
+        assert "mcp-re-proxy/src" in str(exc), exc
     else:
-        raise AssertionError("`test_package` outside the closure must be refused")
-
-    spanning["test_package"] = "mcp-re-core"
-    _validate_test_package("unit[0]", spanning)
+        raise AssertionError("a module outside the unit's paths must be refused")
+    unit = {"paths": ["mcp-re-proxy/src/lib.rs"], "tested_symbols": [f"{UNIT}#tests::t"]}
+    _validate_in_crate_selectors("unit[0]", unit)
 
 
 def test_only_units_claiming_test_evidence_are_in_scope():
@@ -360,7 +310,7 @@ def test_a_symbol_with_no_result_line_is_rerun_alone_before_the_lane_concludes()
 
     def fake_run(argv, **_kwargs):
         calls.append(argv)
-        name = argv[-1]
+        name = argv[-1].removeprefix("--test_arg=")
         if name == "a::tests::readable":
             return Result(0, "test a::tests::readable ... ok\n")
         return Result(101, "test a::tests::broken ... FAILED\n")
@@ -369,15 +319,15 @@ def test_a_symbol_with_no_result_line_is_rerun_alone_before_the_lane_concludes()
     lane.subprocess.run = fake_run
     try:
         recovered = lane._rerun_unread(
-            CARGO, "crate", "lib", ["a::tests::readable", "a::tests::broken"], []
+            RUST, None, UNIT, ["a::tests::readable", "a::tests::broken"]
         )
     finally:
         lane.subprocess.run = original
 
     assert recovered == {"a::tests::readable"}, recovered
     assert len(calls) == 2, "each unread symbol is run ALONE, not as a batch"
-    assert calls[0][-1] == "a::tests::readable"
-    assert "--exact" in calls[0], "the re-run selects exactly the one symbol"
+    assert calls[0][-1] == "--test_arg=a::tests::readable"
+    assert "--test_arg=--exact" in calls[0], "the re-run selects exactly the one symbol"
 
 
 # --- the RUNTIME dimension (issue #746) -------------------------------------------
@@ -401,7 +351,7 @@ def test_a_typescript_battery_names_the_runtime_it_runs_on():
 
 def test_the_typescript_command_runs_the_pinned_node_and_not_npx():
     argv = test_argv(
-        TYPESCRIPT, "sdk/typescript", "vitest", ["test/x.test.ts > a"], None, "22.23.2"
+        TYPESCRIPT, "sdk/typescript", "vitest", ["test/x.test.ts > a"], "22.23.2"
     )
     assert argv[0] == ".node-v22/node_modules/node/bin/node", argv
     assert "npx" not in argv, "npx would resolve a node of its own"
@@ -414,7 +364,7 @@ def test_each_ecosystem_names_its_own_runtime():
     evidence record carries this label."""
     assert PYTHON.runtime_label == "cpython"
     assert TYPESCRIPT.runtime_label == "node"
-    assert CARGO.runtime_label is None, "Cargo has no runtime dimension to label"
+    assert RUST.runtime_label is None, "a Rust battery has no runtime dimension to label"
 
 
 def test_a_runtime_is_asked_its_version_in_every_ecosystem_that_has_one():
@@ -427,7 +377,7 @@ def test_a_runtime_is_asked_its_version_in_every_ecosystem_that_has_one():
         relative, argv = RUNTIME_PROBES[eco.name]
         assert argv, f"{eco.name}: a probe with no command asks nothing"
         assert relative("20.20.2") or relative("3.12.13")
-    assert CARGO.name not in RUNTIME_PROBES
+    assert RUST.name not in RUNTIME_PROBES
 
 
 def test_a_python_battery_names_the_interpreter_it_runs_on():
@@ -442,7 +392,7 @@ def test_a_python_battery_names_the_interpreter_it_runs_on():
 
 def test_the_python_command_runs_the_prepared_environment_for_that_runtime():
     argv = test_argv(
-        PYTHON, "sdk/python", "pytest", ["tests/test_x.py::test_y"], None, "3.11.15"
+        PYTHON, "sdk/python", "pytest", ["tests/test_x.py::test_y"], "3.11.15"
     )
     assert argv[0] == ".venv-cp311/bin/python", argv
     assert "uv" not in argv, "the lane must not resolve or sync its own environment"
@@ -508,13 +458,23 @@ def test_a_run_that_collected_nothing_is_not_called_unreadable():
 
 def test_two_runtimes_are_two_environments():
     """A shared environment would make the second measurement the first one again."""
-    first = test_argv(PYTHON, "p", "pytest", ["t::a"], None, "3.10.20")[0]
-    second = test_argv(PYTHON, "p", "pytest", ["t::a"], None, "3.14.7")[0]
+    first = test_argv(PYTHON, "p", "pytest", ["t::a"], "3.10.20")[0]
+    second = test_argv(PYTHON, "p", "pytest", ["t::a"], "3.14.7")[0]
     assert first != second, (first, second)
 
 
 def test_an_ecosystem_with_no_runtime_pin_is_measured_once():
-    runtimes, refusal = lane.pinned_runtimes(CARGO, {"schema_version": 1})
+    runtimes, refusal = lane.pinned_runtimes(RUST, {"schema_version": 1})
+    assert refusal is None, refusal
+    assert runtimes == [None], runtimes
+
+
+def test_the_compiler_pin_is_not_a_runtime_pin():
+    """`[rust]` pins the COMPILER, and it shares its name with the ecosystem. Read as a
+    runtime pin it names no interpreter, and the lane refused every Rust battery as
+    measured on an empty runtime set — the first run after the ecosystem was renamed."""
+    toolchains = {"rust": {"state": "resolved", "channel": "1.97.1"}}
+    runtimes, refusal = lane.pinned_runtimes(RUST, toolchains)
     assert refusal is None, refusal
     assert runtimes == [None], runtimes
 

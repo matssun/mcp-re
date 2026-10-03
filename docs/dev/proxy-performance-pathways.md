@@ -265,8 +265,8 @@ at a CONSTANT 8 threads (release build):
 3.0x across the same thread count. The corrected default keeps ONE SHARD PER CPU and adds
 depth on top: ~5% cost on cold, ~4.3x gain on keepalive. Never trade shards for depth.
 
-**The cloud lane was measuring a DEBUG build.** `cargo test` without `--release`, in both
-the Job and `Dockerfile.bench`. That was 12.3x of a ~240x local-vs-cloud gap that had been
+**The cloud lane was measuring a DEBUG build**, unoptimized in both the Job and
+`Dockerfile.bench`. That was 12.3x of a ~240x local-vs-cloud gap that had been
 read as hardware; the rest is genuine class difference. See the runbook's machine-class
 table — `e2-standard-8` is cost-optimised, and `c4-highcpu-16` reaches the dev box's
 p50 latency at 72% of its throughput.

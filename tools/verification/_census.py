@@ -46,6 +46,7 @@ import tomllib
 
 from _controls import Control, KINDS, POLICY, _registry, all_controls
 from _ecosystems import test_project_for
+import _rust_targets
 
 #: The ADR-069 dispositions a row may carry. `register` and `reattribute` are dispositions
 #: too, but they discharge in `verification.toml` — the symbol joins a battery — and a row
@@ -142,6 +143,23 @@ def _resolve(index: dict[str, Control], selector: str) -> Control | None:
     return None
 
 
+def rust_identity(selector: str) -> tuple[str, str] | None:
+    """A Rust selector's control, as `(project, identity)`, or None for any other selector.
+
+    The selector names a test TARGET; the control is named by the crate root that target
+    compiles (`_controls`). A doctest target's controls are its items, `doc#item`.
+    """
+    label, _, path = selector.partition("#")
+    if not label.startswith("//"):
+        return None
+    row = _rust_targets.target(label)
+    if row is None:
+        return ("(no such target)", selector)
+    if row["kind"] == "rust_doc_test":
+        return row["package"], f"doc#{path}"
+    return row["package"], f"{_rust_targets.root_identity(row['root'], row['package'])}#{path}"
+
+
 def join(controls: list[Control] | None = None) -> tuple[list[Claim], list[tuple[str, str, str]]]:
     """Every claim the registry makes, and every selector that resolves to no control.
 
@@ -159,9 +177,10 @@ def join(controls: list[Control] | None = None) -> tuple[list[Claim], list[tuple
     for unit in units():
         project = test_project_for(unit)
         for selector in unit.get("tested_symbols", []):
-            found = _resolve(index.get(project or "", {}), selector)
+            where, identity = rust_identity(selector) or (project or "", selector)
+            found = _resolve(index.get(where, {}), identity)
             if found is None:
-                stale.append((unit["id"], project or "(no project)", selector))
+                stale.append((unit["id"], where or "(no project)", selector))
             else:
                 claims.append(Claim(unit=unit["id"], control=found, selector=selector))
         claims.extend(_gate_claims(unit, index.get("", {}), stale))
@@ -172,8 +191,8 @@ def join(controls: list[Control] | None = None) -> tuple[list[Claim], list[tuple
 def _gate_claims(unit: dict, index: dict[str, Control], stale: list) -> list[Claim]:
     """A unit's `gate_controls` — the source-text lane built in ADR-MCPRE-068 Phase 1.
 
-    A gate is not selected through `tested_symbols`: it is neither a cargo target nor a
-    pytest node, and a `.py` entry in `paths` collapses a cargo unit's ecosystem to None.
+    A gate is not selected through `tested_symbols`: it is neither a Bazel test target nor a
+    pytest node, and a `.py` entry in `paths` collapses a Rust unit's ecosystem to None.
     It enters the fingerprint as its own component and is named here. That makes it a
     CLAIMED control by exactly the test this census applies everywhere else — some unit's
     declared evidence names it — and a census that only read `tested_symbols` would report
@@ -221,15 +240,18 @@ def _measurement_selected(entry: dict, owner: str) -> list[Claim]:
     reason to be written about a measurement's own apparatus.
 
     Matched by NAME against the controls of the unit's project, because an argv names a
-    libtest filter rather than a `target#path` selector.
+    libtest filter rather than a `target#path` selector: each `--test_arg=<name>` Bazel
+    passes to the test binary.
     """
     wanted: set[str] = set()
     for key in ("protocol", "control"):
         for token in entry.get(key, []):
             text = str(token)
-            if text.startswith("-") or "/" in text or text in ("cargo", "test"):
+            if not text.startswith("--test_arg="):
                 continue
-            wanted.add(text)
+            name = text[len("--test_arg="):]
+            if name and not name.startswith("-"):
+                wanted.add(name)
     if not wanted:
         return []
     out: list[Claim] = []

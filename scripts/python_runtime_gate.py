@@ -225,6 +225,69 @@ def check_images(dockerfiles: dict[str, str], pinned: dict[tuple[int, int], str]
     return None
 
 
+#: The Bazel wheel target. Its metadata restates pyproject.toml's, because py_wheel reads no
+#: pyproject — so the two are one fact written twice, and this is what keeps them one.
+WHEEL_BUILD = REPO_ROOT / "sdk" / "python" / "BUILD.bazel"
+
+
+def _wheel_kwargs(build_text: str) -> dict | None:
+    """The literal keyword arguments of the `py_wheel(...)` call in a BUILD file."""
+    import ast
+
+    match = re.search(r"^py_wheel\((.*?)^\)", build_text, re.M | re.S)
+    if match is None:
+        return None
+    call = ast.parse("py_wheel(" + match.group(1) + ")", mode="eval").body
+    out = {}
+    for keyword in call.keywords:
+        try:
+            out[keyword.arg] = ast.literal_eval(keyword.value)
+        except ValueError:
+            continue  # select() and other non-literals are not metadata
+    return out
+
+
+def check_wheel_metadata(build_text: str, project: dict) -> str | None:
+    """The fourth fact: the wheel Bazel builds carries the metadata pyproject.toml states."""
+    wheel = _wheel_kwargs(build_text)
+    if wheel is None:
+        return "sdk/python/BUILD.bazel has no py_wheel target, so no wheel is built"
+    extras = {k: sorted(v) for k, v in (project.get("optional-dependencies") or {}).items()}
+    pairs = (
+        ("distribution", wheel.get("distribution"), project.get("name")),
+        ("version", wheel.get("version"), project.get("version")),
+        ("python_requires", wheel.get("python_requires"), project.get("requires-python")),
+        ("extra_requires", {k: sorted(v) for k, v in (wheel.get("extra_requires") or {}).items()},
+         extras),
+    )
+    for field, built, declared in pairs:
+        if built != declared:
+            return (
+                f"the wheel's {field} is {built!r} and pyproject.toml declares {declared!r}. "
+                f"py_wheel reads no pyproject, so the two are one fact written twice; the wheel "
+                f"that ships would claim something the declaration does not"
+            )
+    return None
+
+
+WHEEL_SELFTEST_PROJECT = {
+    "name": "mcp-re-sdk", "version": "0.1.0", "requires-python": ">=3.14.5,<3.15",
+    "optional-dependencies": {"mcp": ["mcp>=2.0,<3.0"]},
+}
+_WHEEL_OK = ('py_wheel(\n    distribution = "mcp-re-sdk",\n    version = "0.1.0",\n'
+             '    python_requires = ">=3.14.5,<3.15",\n'
+             '    extra_requires = {"mcp": ["mcp>=2.0,<3.0"]},\n'
+             '    platform = select({"//x": "y"}),\n)\n')
+WHEEL_SELFTEST_CASES = (
+    ("a wheel that restates pyproject", _WHEEL_OK, False),
+    ("a wheel with another version", _WHEEL_OK.replace('"0.1.0"', '"0.2.0"'), True),
+    ("a wheel with a wider supported range", _WHEEL_OK.replace(",<3.15", ""), True),
+    ("a wheel with an extra pyproject lacks",
+     _WHEEL_OK.replace('{"mcp": ["mcp>=2.0,<3.0"]}', '{"mcp": ["mcp>=2.0,<3.0"], "x": ["y"]}'), True),
+    ("no wheel target at all", "filegroup(name = 'x')\n", True),
+)
+
+
 #: Every way the two facts can diverge, each paired with the positive case it must not
 #: reject. A gate that refuses everything measures as little as one that refuses nothing.
 SELFTEST_CASES = (
@@ -346,10 +409,18 @@ def selftest() -> int:
             failures += 1
         else:
             print(f"  ok   {name}: {'refused' if refused else 'accepted'}")
+    for name, text, must_refuse in WHEEL_SELFTEST_CASES:
+        refused = check_wheel_metadata(text, WHEEL_SELFTEST_PROJECT) is not None
+        if refused != must_refuse:
+            verb = "was accepted" if must_refuse else "was refused"
+            print(f"  SELFTEST FAIL: {name} {verb}", file=sys.stderr)
+            failures += 1
+        else:
+            print(f"  ok   {name}: {'refused' if refused else 'accepted'}")
     if failures:
         print(f"python-runtime gate: SELFTEST FAIL — {failures} case(s)", file=sys.stderr)
         return 1
-    total = len(SELFTEST_CASES) + len(IMAGE_SELFTEST_CASES)
+    total = len(SELFTEST_CASES) + len(IMAGE_SELFTEST_CASES) + len(WHEEL_SELFTEST_CASES)
     print(f"python-runtime gate: SELFTEST OK — {total} case(s)")
     return 0
 
@@ -382,10 +453,14 @@ def main(argv: list[str]) -> int:
     image_refusal = check_images(dockerfiles, pinned)
     if image_refusal is not None:
         return fail(image_refusal)
+    wheel_refusal = check_wheel_metadata(WHEEL_BUILD.read_text(encoding="utf-8"), project)
+    if wheel_refusal is not None:
+        return fail(wheel_refusal)
 
     print(
         f"python-runtime gate: OK — {summary}; {len(dockerfiles)} deploy Dockerfile(s) "
-        f"examined, every stage installing the MCP-RE wheel on a pinned interpreter"
+        f"examined, every stage installing the MCP-RE wheel on a pinned interpreter; the "
+        f"Bazel wheel's metadata equals pyproject.toml's"
     )
     return 0
 

@@ -279,9 +279,9 @@ whole; it is not a place to park work.
 ### Testing Requirements
 
 1. Every file must include a `#[cfg(test)] mod tests` block at the bottom containing unit tests for the types defined in that specific file.
-2. Run `cargo clippy -- -D warnings` after every edit. Do not mark a task complete if Clippy
-   emits warnings or functions exceed complexity thresholds. Note the scope: `-D warnings`
-   does **not** cover the five ADR-MCPRE-061 §6 lints (`unwrap_used`, `expect_used`,
+2. Run the lint lane — `bazel build --config=lint` over the targets you touched — after
+   every edit. Do not mark a task complete if Clippy emits warnings or functions exceed
+   complexity thresholds. Note the scope: the lane's `-D warnings` does **not** cover the five ADR-MCPRE-061 §6 lints (`unwrap_used`, `expect_used`,
    `indexing_slicing`, `too_many_lines`, `excessive_nesting`) — they are allow-by-default
    and are switched on by `scripts/clippy_ratchet_gate.py` over production targets only. Run
    that gate before claiming a unit is clean.
@@ -312,15 +312,16 @@ carrier; Native JCS is dead; stdio is out of scope).
 scripts/local_gate.sh          # add --with-kind before any cloud run
 ```
 
-One command, cost-ordered, stops at the first failure: structural gates → both cargo
-suites → `bazel test //...` → the ADR-MCPRE-051 §7 SLO lane → (opt-in) the fleet proofs
+One command, cost-ordered, stops at the first failure: structural gates → the lint lane
+and `bazel test //...` → the ADR-MCPRE-051 §7 SLO lane → (opt-in) the fleet proofs
 on kind. It is the precondition for every PR, every `gcloud builds submit`, every GKE
 cluster, and every baseline declaration. Details and rationale:
 [`docs/dev/local-gate-order.md`](docs/dev/local-gate-order.md).
 
-Neither half is the whole battery on its own — `cargo test --workspace` does not
-compile the non-default feature backends, and `bazel test //...` excludes the
-`manual`-tagged infra lane.
+`bazel test //...` alone is not the whole battery — it excludes the `manual`-tagged infra
+lane. MCP-RE has no Cargo execution: Bazel is the Rust build and test authority, and
+`scripts/no_cargo_execution_gate.py` fails the build on a workflow, script, tool, lane or
+maintained command that invokes Cargo.
 
 ## Do not report a green that measured nothing
 
@@ -335,7 +336,7 @@ propagated into four documented places before anyone noticed. Use
 bad form comes back.
 
 **The second instance was configuration that enforced nothing.** `/.clippy.toml` carried
-`too-many-lines-threshold = 60`, `cargo clippy -- -D warnings` ran in CI and in the local
+`too-many-lines-threshold = 60`, clippy ran with `-D warnings` in CI and in the local
 gate, and the project described the 60-line function rule as mechanically enforced. It was
 not: `clippy::too_many_lines` is allow-by-default, so the threshold parameterised a lint
 nobody had switched on, and an 80-line function produced no warning at all. A threshold is
@@ -374,11 +375,11 @@ The general rule that instance is one case of:
 > property.
 
 Second known instance: `mcp-re-proxy/tests/async_drain_test.rs` is
-`#![cfg(feature = "async_serve")]`. A plain `cargo test --workspace` compiles it to
-**zero** tests and reports green, so cargo says nothing whatsoever about bounded drain
-or teardown ordering. Only `bazel test //...` runs it — the target sets
+`#![cfg(feature = "async_serve")]`. Compiled by a target without that feature it holds
+**zero** tests and reports green, saying nothing whatsoever about bounded drain or
+teardown ordering. Only `//mcp-re-proxy:async_drain_test` runs it — the target sets
 `crate_features = ["async_serve"]` and `RUST_TEST_THREADS=1`. Before citing a drain or
-lifecycle result, confirm it came from the Bazel lane.
+lifecycle result, confirm it came from that target.
 
 ## Measure on a quiet box
 

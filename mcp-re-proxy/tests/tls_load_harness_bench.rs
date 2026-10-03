@@ -30,7 +30,7 @@
 //! integration lane:
 //!
 //! ```text
-//! cargo test -p mcp-re-proxy --features redis_replay --test tls_load_harness_bench
+//! bazel test //mcp-re-proxy:tls_load_harness_bench
 //! ```
 //!
 //! Two entry points:
@@ -458,7 +458,7 @@ struct RedisFleet {
 
 impl RedisFleet {
     fn start() -> RedisFleet {
-        // Unique per FLEET, not per process: cargo runs the tests in this binary
+        // Unique per FLEET, not per process: libtest runs the tests in this binary
         // concurrently (same PID), so a process-id-only name would collide between
         // `load_harness_smoke` and `tls_load_harness_bench`. A per-instance sequence
         // makes every fleet's network + container names distinct.
@@ -482,7 +482,7 @@ impl RedisFleet {
         // though it worked, which is worse than no cleanup at all.
         //
         // Reconciling a previous run is now the SUPERVISOR's job (tools/slo/run_supervisor.py),
-        // which runs outside cargo and can therefore still act when this process has been
+        // which runs outside the test binary and can therefore still act when this process has been
         // killed. What happens here is the half only this process can do: stamp every
         // resource with the run that owns it, so something outside can find them later.
         //
@@ -1752,8 +1752,8 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
 /// baseline/SLO numbers (MCPRE-110):
 ///
 /// ```text
-/// cargo test -p mcp-re-proxy --release --features async_serve,redis_replay \
-///   --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture
+/// bazel test //mcp-re-proxy:tls_load_harness_bench -c opt --test_output=all \
+///   --test_arg=tls_load_harness_bench --test_arg=--exact --test_arg=--nocapture
 ///   # env: MCP_RE_LOADGEN_CONCURRENCY / _REQUESTS / _CORES / _HW_CLASS / _OUT
 ///   # NOTE: this fn is NOT #[ignore] (see below) — do NOT pass `--ignored`, which
 ///   # would select only ignored tests and run nothing. It needs `redis_replay`
@@ -1819,7 +1819,7 @@ fn tls_load_harness_bench() {
 //
 // It answers the one question no unit or handler-level control can: does a DEPLOYMENT
 // enforce what the mechanism decides. Note the lane — this file is
-// `#![cfg(feature = "redis_replay")]`, so `cargo test --workspace` compiles it to zero
+// `#![cfg(feature = "redis_replay")]`, so a default-feature target compiles it to zero
 // tests and only the feature lane runs it.
 
 /// The authorization authority's signing key for the acceptance deployment.

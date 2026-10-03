@@ -28,12 +28,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from _ecosystems import CARGO, unit_ecosystem, unit_projects
+from _ecosystems import RUST, unit_ecosystem, unit_projects
 from _manifest import REPO_ROOT
 
 LEAN_DIR = REPO_ROOT / "verification" / "lean"
@@ -43,7 +44,7 @@ STAMP = REPO_ROOT / ".verification" / "lean" / "regeneration-stamp.json"
 #: The lock entries whose identity the extraction result depends on. A model produced by a
 #: different Charon, a different Aeneas, or inside a different image is a different model,
 #: so the stamp records all of them and a change to any one invalidates it.
-IDENTITY_PINS = ("charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container")
+IDENTITY_PINS = ("charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container", "bazelisk")
 
 
 #: The Aeneas Lean library, and the tell for whether this is the extraction environment at
@@ -88,7 +89,7 @@ def lakefile_roots(srcDir: str | None = None) -> list[str]:
 
 
 def unit_crate(unit: dict) -> str | None:
-    """The single Cargo package this unit's paths live in, or None.
+    """The single Bazel package this unit's paths live in, or None.
 
     Delegated to `_ecosystems.unit_projects`, which already owns "which project does this
     unit live in" for the fingerprint, the test lane and the manifest schema. A fourth
@@ -97,9 +98,9 @@ def unit_crate(unit: dict) -> str | None:
 
     The ecosystem is checked as well as the count: Charon extracts RUST, so a V2 unit whose
     paths resolve to a Python or TypeScript project has no crate to start from — and
-    returning that project's name would have `charon cargo` run somewhere it cannot.
+    returning that project's name would have Charon run somewhere it cannot.
     """
-    if unit_ecosystem(unit) is not CARGO:
+    if unit_ecosystem(unit) is not RUST:
         return None
     projects = unit_projects(unit)
     return projects[0] if len(projects) == 1 else None
@@ -166,6 +167,25 @@ def extraction_environment() -> bool:
     return AENEAS_LEAN.is_dir()
 
 
+def build_nightly_drift(toolchains: dict, module: Path = REPO_ROOT / "MODULE.bazel") -> str | None:
+    """Whether the nightly Bazel builds the extracted crates on is the one Charon pins.
+
+    Two places hold the date: `[charon].rust_toolchain`, the toolchain Charon's driver is
+    compiled against, and the `nightly/<date>` version `MODULE.bazel` registers for the
+    `charon_llbc` targets. Charon loads only crates compiled by its own compiler, so a
+    registered nightly that is not the pinned one fails deep inside the extraction.
+    """
+    pinned = str(toolchains.get("charon", {}).get("rust_toolchain", "")).removeprefix("nightly-")
+    registered = re.findall(r'"nightly/(\d{4}-\d{2}-\d{2})"', module.read_text(encoding="utf-8"))
+    if registered == [pinned]:
+        return None
+    return (
+        f"MODULE.bazel registers nightly {registered or 'none'} and [charon] pins "
+        f"rust_toolchain nightly-{pinned}. The crates Charon reads must be built by the "
+        "compiler its driver is built against, so the two must name one nightly."
+    )
+
+
 def digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -202,6 +222,7 @@ def extraction_identity(toolchains: dict) -> dict[str, str]:
             "toolchain",
             "package_revision",
             "mathlib_revision",
+            "linux_arm64_sha256",
         ):
             if field in entry:
                 out[f"{pin}.{field}"] = str(entry[field])

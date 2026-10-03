@@ -33,7 +33,7 @@
 
 use mcp_re_proxy::cli;
 
-/// The guide, read from disk (runfiles under Bazel, workspace path under Cargo) rather
+/// The guide, read from disk (runfiles under Bazel, source path otherwise) rather
 /// than `include_str!`-ed, so it is the committed document that is checked.
 fn guide() -> String {
     let path = mcp_re_test_paths::resolve_runfile("MCP_RE_SIDECAR_GUIDE");
@@ -134,7 +134,7 @@ fn the_sidecar_guides_worked_example_is_a_configuration_the_proxy_will_start_wit
 fn the_extraction_finds_a_proxy_invocation_and_skips_other_commands() {
     let markdown = "\
 ```sh
-cargo test -p mcp-re-proxy --features x
+bazel test //mcp-re-proxy:x
 bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \\
   --bind 127.0.0.1:8600 \\
   --audience did:example:server-1

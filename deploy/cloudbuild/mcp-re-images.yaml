@@ -18,9 +18,16 @@
 substitutions:
   _AR: us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re
 steps:
+  # The images compile nothing: Bazel builds the Rust binaries they carry, at the version
+  # .bazelversion pins, and stages them under deploy/docker/dist/amd64 for the docker steps.
+  - name: gcr.io/bazel-public/bazel:9.2.0
+    id: binaries
+    entrypoint: bash
+    args: [scripts/stage_image_binaries.sh, --arch, amd64]
   - name: gcr.io/cloud-builders/docker
     id: proxy
-    args: [build, -f, deploy/docker/Dockerfile, --target, proxy, -t, "${_AR}/mcp-re-proxy:0.17.0", .]
+    waitFor: [binaries]
+    args: [build, -f, deploy/docker/Dockerfile, --target, proxy, --build-arg, DIST=deploy/docker/dist/amd64, -t, "${_AR}/mcp-re-proxy:0.17.0", .]
   - name: gcr.io/cloud-builders/docker
     id: inner
     args: [build, -f, deploy/docker/Dockerfile.inner, -t, "${_AR}/mcp-re-inner-fastmcp:0.17.0", .]
@@ -29,12 +36,14 @@ steps:
   # Proof 4 cannot run on GKE.
   - name: gcr.io/cloud-builders/docker
     id: loadgen
-    args: [build, -f, deploy/docker/Dockerfile.loadgen, -t, "${_AR}/mcp-re-loadgen:0.17.0", .]
+    waitFor: [binaries]
+    args: [build, -f, deploy/docker/Dockerfile.loadgen, --build-arg, DIST=deploy/docker/dist/amd64, -t, "${_AR}/mcp-re-loadgen:0.17.0", .]
   # The ADR-051 §7 SLO baseline runner, run as K8s Jobs by tools/slo/run_slo_job.sh.
   # It is measured on the SAME cluster as the proofs, so it is built by the SAME submit.
   - name: gcr.io/cloud-builders/docker
     id: slo-bench
-    args: [build, -f, deploy/docker/Dockerfile.bench, -t, "${_AR}/mcp-re-slo-bench:0.17.0", .]
+    waitFor: [binaries]
+    args: [build, -f, deploy/docker/Dockerfile.bench, --build-arg, DIST=deploy/docker/dist/amd64, -t, "${_AR}/mcp-re-slo-bench:0.17.0", .]
 images:
   - "${_AR}/mcp-re-proxy:0.17.0"
   - "${_AR}/mcp-re-inner-fastmcp:0.17.0"

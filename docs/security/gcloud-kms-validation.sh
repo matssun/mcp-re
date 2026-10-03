@@ -132,13 +132,15 @@ export MCP_RE_GCP_ACCESS_TOKEN="$(gcloud auth print-access-token)"
 cd "$REPO_ROOT"
 
 # 1. Object-signing lane: positive verify + wrong-identity + bad-token + non-Ed25519.
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_live_test -- --ignored --nocapture --test-threads=1
+scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results \
+  //mcp-re-proxy:gcp_kms_live_test \
+  --test_arg=--ignored --test_arg=--nocapture --test_arg=--test-threads=1
 
 # 2. Delegated-TLS lane: real mTLS handshake signed by KMS + wrong-key-binding +
 #    untrusted-client negatives.
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_delegated_tls_live_test -- --ignored --nocapture --test-threads=1
+scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results \
+  //mcp-re-proxy:integration_live_test \
+  --test_arg=--ignored --test_arg=--nocapture --test_arg=--test-threads=1 --test_arg=gcp_kms_delegated_tls_live_test::
 
 # 3. Delegated-REQUIRED serving + authority-flip lane (ADR-MCPRE-052): the KMS root
 #    ISSUES a short-TTL credential through the production `build_delegated_signing`
@@ -146,16 +148,18 @@ cargo test -p mcp-re-proxy --features gcp_kms_keysource \
 #    Proves zero per-request KMS ops at the serving altitude, rotation, the
 #    revocation seam both ways, pre-052 direct-root rejection, and the trust-epoch
 #    flip. This is the lane the cross-cloud delegated-root claim rests on.
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_delegated_required_live_test -- --ignored --nocapture --test-threads=1
+scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results \
+  //mcp-re-proxy:integration_live_test \
+  --test_arg=--ignored --test_arg=--nocapture --test_arg=--test-threads=1 --test_arg=gcp_kms_delegated_required_live_test::
 
 # 4. HTTP standards profile (RFC 9421 + RFC 9530) lane: Cloud KMS signs an RFC 9421
 #    request and response through the profile's external-signer seam
 #    (sign_request_with_signer / sign_response_with_signer, ADR-MCPRE-050 /
 #    MCPRE-106) that the unmodified verify_request / verify_response accept, with
 #    tamper and wrong-key negatives.
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_http_profile_live_test -- --ignored --nocapture --test-threads=1
+scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results \
+  //mcp-re-proxy:integration_live_test \
+  --test_arg=--ignored --test_arg=--nocapture --test_arg=--test-threads=1 --test_arg=gcp_kms_http_profile_live_test::
 
 # 5. ADR-MCPRE-052 delegated-signing custody lane (MCPRE-122): Cloud KMS is the
 #    root ISSUER that signs only a short-lived compact-JWS delegation credential at
@@ -164,8 +168,9 @@ cargo test -p mcp-re-proxy --features gcp_kms_keysource \
 #    response signs ⇒ exactly one KMS asymmetricSign), a verifiable attestation
 #    chain back to the KMS root, rotation overlap with no verification gap, and a
 #    fail-closed body tamper.
-cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_delegated_signing_live_test -- --ignored --nocapture --test-threads=1
+scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results \
+  //mcp-re-proxy:integration_live_test \
+  --test_arg=--ignored --test_arg=--nocapture --test_arg=--test-threads=1 --test_arg=gcp_kms_delegated_signing_live_test::
 
 echo
 echo "OK — live GCP KMS validation passed (object signing + delegated TLS +"

@@ -24,7 +24,7 @@
 //! Both source files are delivered through Bazel `data` runfiles and read from
 //! DISK at test time (resolved via `$(rlocationpath)` against
 //! `TEST_SRCDIR`/`RUNFILES_DIR`, the SAME scheme as the conformance drift_guard
-//! and the method-name drift guard), with the `mcp-re-test-paths` cargo fallback —
+//! and the method-name drift guard) through `mcp-re-test-paths` —
 //! so adding an `McpReError` variant (a new frozen wire_code) or editing the audit
 //! vocabulary is re-read from reality, never trusted as written. The guard does
 //! not hardcode any absolute path.
@@ -405,11 +405,10 @@ fn no_producer_outside_core_mints_a_wire_token() {
 /// audit EVENT types (`mcp-re.request.accepted`, `mcp-re.delegated_key.issued`), a separate
 /// vocabulary the three allowlist tests above pin exactly.
 ///
-/// The crate list is itself derived rather than remembered: it comes from the workspace
-/// `Cargo.toml` at compile time, and a member with no registered source tree fails here
-/// instead of going unscanned. Its scope is therefore exactly the Cargo/Bazel workspace —
-/// see [`CRATE_SOURCE_TREES`] for the two source trees outside it and why the structural
-/// producer check covers them instead.
+/// The crate list is itself derived rather than remembered: it comes from the build graph's
+/// target table at compile time, and a crate with no registered source tree fails here
+/// instead of going unscanned. Its scope is therefore exactly the first-party Rust crates
+/// Bazel builds, both SDK bindings included — see [`NOT_SCANNED`] for the one exclusion.
 /// The walk itself, as a function of the crate set it is given.
 ///
 /// Extracted from the measurement so the SENSITIVITY CONTROL can run the same apparatus
@@ -456,7 +455,7 @@ fn exactly_two_files_decide_what_a_verdict_token_says() {
     //
     // A measured proposition is existential and scoped — over THIS corpus, the observed
     // value was X — and the lane preserves the result as an artifact and digests it. The
-    // lines are the result; everything else cargo prints is timing and progress, which two
+    // lines are the result; everything else the harness prints is timing and progress, which two
     // identical runs do not agree on.
     println!("MEASURED: files_deciding_verdict_tokens={}", found.len());
     for file in &found {
@@ -525,20 +524,13 @@ fn the_measurement_moves_when_the_scanned_set_shrinks() {
     );
 }
 
-/// Every workspace crate that has a source tree, and the sentinel naming it. Derived
-/// against the workspace `Cargo.toml` by [`the_scanned_crate_set_is_the_workspace`], so a
-/// new member cannot be scanned by nobody.
+/// Every first-party crate package, and the sentinel naming its source tree. Derived against
+/// the build graph by [`the_scanned_crate_set_is_the_workspace`], so a new crate cannot be
+/// scanned by nobody.
 ///
-/// # What is NOT here, and why
-///
-/// `sdk/python` and `sdk/typescript` are separate Cargo workspaces with their own lockfiles
-/// and no Bazel target, so they cannot be delivered as runfiles and a cargo-only scan would
-/// make this lane measure two different things in its two lanes. They are thin PyO3/napi
-/// wrappers over `mcp_re_client_core::build_authorization`, and the refusal they render is
-/// `BindingSpecRefusal` — which, since the v0.17 policy-authority slice, derives its token
-/// from the client seam's Core projection rather than from a table. That is the property
-/// [`no_producer_outside_core_mints_a_wire_token`] checks directly, on the file the SDKs
-/// render THROUGH.
+/// The SDK bindings are crates like any other: thin PyO3/napi wrappers over
+/// `mcp_re_client_core::build_authorization`, whose own sources must mint no verdict token.
+/// The TypeScript SDK's `.ts` files spell tokens it RECEIVES, and are not Rust sources.
 const CRATE_SOURCE_TREES: &[(&str, &str)] = &[
     ("mcp-re-core", "MCP_RE_SRC_TREE_CORE"),
     ("mcp-re-proxy", "MCP_RE_SRC_TREE_PROXY"),
@@ -555,62 +547,89 @@ const CRATE_SOURCE_TREES: &[(&str, &str)] = &[
         "mcp-re-operator-display",
         "MCP_RE_SRC_TREE_OPERATOR_DISPLAY",
     ),
+    ("sdk/python", "MCP_RE_SRC_TREE_SDK_PYTHON"),
+    ("sdk/typescript", "MCP_RE_SRC_TREE_SDK_TYPESCRIPT"),
 ];
 
-/// Workspace members with no `src/` tree at all. Named rather than inferred: a crate that
-/// acquires one must be added to [`CRATE_SOURCE_TREES`], and listing it here is the
-/// deliberate act that says it has none.
-const MEMBERS_WITHOUT_A_SOURCE_TREE: &[&str] = &["mcp-re-conformance"];
+/// Crate packages deliberately not scanned, each with its reason. Named rather than
+/// inferred: excluding a package is a decision, and this list is where it is made.
+const NOT_SCANNED: &[(&str, &str)] = &[(
+    "config/clippy-strict",
+    "the lint gate's activation probes: deliberately violating files no product target links",
+)];
+
+/// The build graph's target table, `tools/verification/rust-targets --check` holds it equal
+/// to `bazel query`.
+const TARGET_TABLE: &str = include_str!("../../verification/generated/rust-targets.json");
+
+/// The rule kinds that compile a crate a consumer links, as opposed to a test, a doc test,
+/// or a prover or extractor run over one.
+const CRATE_KINDS: &[&str] = &[
+    "rust_library",
+    "rust_binary",
+    "rust_shared_library",
+    "rust_static_library",
+    "rust_proc_macro",
+];
 
 /// The two files that may hold a verdict-token literal, and the only two.
 const SOLE_MINTING_FILES: &[&str] = &["mcp-re-core/src/error.rs", "mcp-re-policy/src/error.rs"];
 
 /// The scanned set is the workspace, so nothing is scanned by nobody.
 ///
-/// Read from the root `Cargo.toml` at COMPILE time, which is the one input a new crate
-/// cannot be added to the workspace without touching.
+/// Read from the build graph's target table at COMPILE time: a crate Bazel builds is a row
+/// there, so a new one cannot enter the build without entering this set.
 #[test]
 fn the_scanned_crate_set_is_the_workspace() {
-    let members = workspace_members(include_str!("../../Cargo.toml"));
+    let packages = crate_packages(TARGET_TABLE);
     assert!(
-        members.len() >= 10,
-        "parsed {} workspace members — the manifest parser is broken and every membership          assertion below is vacuous",
-        members.len()
+        packages.len() >= 10,
+        "parsed {} crate packages — the table reader is broken and every membership \
+         assertion below is vacuous",
+        packages.len()
     );
     let accounted: BTreeSet<String> = CRATE_SOURCE_TREES
         .iter()
         .map(|(dir, _)| (*dir).to_string())
-        .chain(
-            MEMBERS_WITHOUT_A_SOURCE_TREE
-                .iter()
-                .map(|d| (*d).to_string()),
-        )
+        .chain(NOT_SCANNED.iter().map(|(dir, _)| (*dir).to_string()))
         .collect();
-    let unscanned: Vec<&String> = members.iter().filter(|m| !accounted.contains(*m)).collect();
+    let unscanned: Vec<&String> = packages
+        .iter()
+        .filter(|p| !accounted.contains(*p))
+        .collect();
     assert!(
         unscanned.is_empty(),
-        "workspace member(s) {unscanned:?} are scanned by no source-tree sentinel. Add one to          CRATE_SOURCE_TREES (with its runfiles wiring), or to MEMBERS_WITHOUT_A_SOURCE_TREE if          the crate genuinely has no src/."
+        "crate package(s) {unscanned:?} are scanned by no source-tree sentinel. Add one to \
+         CRATE_SOURCE_TREES (with its runfiles wiring), or to NOT_SCANNED with the reason."
+    );
+    let stale: Vec<&String> = accounted
+        .iter()
+        .filter(|p| !packages.contains(*p))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "{stale:?} are listed here and build no crate — a sentinel over a tree the graph does \
+         not compile scans something no deployment runs"
     );
 }
 
-/// The `members = [...]` entries of the workspace manifest, comments stripped.
-fn workspace_members(manifest: &str) -> BTreeSet<String> {
-    let after = manifest
-        .split_once("members = [")
-        .map(|(_, rest)| rest)
-        .unwrap_or_else(|| panic!("the workspace manifest has no `members = [` list"));
-    let body = after
-        .split_once(']')
-        .map(|(inside, _)| inside)
-        .unwrap_or_else(|| panic!("the workspace `members` list is unterminated"));
-    body.lines()
-        .map(|line| line.split('#').next().unwrap_or(""))
-        .filter_map(|line| {
-            let start = line.find('"')?;
-            let rest = &line[start + 1..];
-            let end = rest.find('"')?;
-            Some(rest[..end].to_string())
+/// The Bazel packages holding a first-party crate, from the target table.
+fn crate_packages(table: &str) -> BTreeSet<String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(table).unwrap_or_else(|e| panic!("the target table is not JSON: {e}"));
+    let targets = parsed
+        .get("targets")
+        .and_then(serde_json::Value::as_object)
+        .unwrap_or_else(|| panic!("the target table has no `targets` object"));
+    targets
+        .values()
+        .filter(|row| {
+            row.get("kind")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|kind| CRATE_KINDS.contains(&kind))
         })
+        .filter_map(|row| row.get("package").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
         .collect()
 }
 

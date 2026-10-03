@@ -1,7 +1,7 @@
 //! MCPS-071 — fault injection ("test of the tests").
 //!
 //! This is the periodic/pre-release "test of the tests": it deliberately BREAKS
-//! the server-authentication control (via the `fault_accept_any_server` cargo
+//! the server-authentication control (via the `fault_accept_any_server` crate
 //! feature, which is OFF by default and never compiled by the normal build /
 //! default `bazel test //...`) and proves that with the control broken the
 //! server-auth property NO LONGER holds. That is exactly what proves the real

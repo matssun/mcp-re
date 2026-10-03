@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Test inventory, compiled half: every test reachable in source is LISTED by a binary that
+# `bazel test //...` runs — or by a `manual` target a named lane runs. Names, not results. It
+# is what notices a `#[cfg(feature = ...)]` test that no Bazel crate flavor enables, which
+# the static half on the merge path (ci.yml, `scripts/test_inventory_gate.py`) cannot see.
+# See scripts/test_inventory_gate.py.
+#
+# It builds every test binary, which is over the PR budget, so it runs weekly and on PRs that
+# change the check itself.
+name: test inventory
+
+on:
+  schedule:
+    - cron: "0 5 * * 0" # Sundays 05:00 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/test_inventory_gate.py
+      - .github/workflows/test-inventory.yml
+
+concurrency:
+  group: test-inventory-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    name: test inventory (compiled)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # cryptoki-sys's build script generates its FFI bindings with bindgen, which needs
+      # libclang; the runner image ships it (see ci.yml).
+      - name: Locate libclang
+        run: |
+          set -euo pipefail
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              echo "LIBCLANG_PATH=$dir" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          done
+          echo "no libclang on the runner image" >&2
+          exit 1
+
+      # Restores the newest cache ci.yml's bazel job saved on main; never saves one.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
+            bazel-${{ runner.os }}-
+
+      - name: Selftest
+        run: python3 scripts/test_inventory_gate.py --selftest
+
+      - name: Collect (build and list every test binary)
+        run: python3 scripts/test_inventory_gate.py --collect bazel.json
+
+      - name: Compare
+        run: python3 scripts/test_inventory_gate.py --compare bazel.json
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: bazel-inventory
+          path: bazel.json

@@ -19,9 +19,9 @@ cost, so the cheapest thing that can be wrong fails first.
 
 | Stage | What | Cost |
 |---|---|---|
-| 1 | Structural gates: image tags == `VERSION`, port registry, tracked secrets, Helm fail-closed guards, JCS vocabulary, SLO-harness invocation, SLO-gate self-test, `cargo fmt --check` over all four manifests | seconds |
-| 2 | `cargo clippy -D warnings`, then `cargo test --workspace` **and** the feature-gated backend lane (they are different builds), the local demo, and both SDK downloader suites (maturin wheel + napi package, each with its coverage bar and the parity-oracle regeneration) | minutes |
-| 3 | `bazel test //...` + the Gazelle drift gate | minutes |
+| 1 | Structural gates: image tags == `VERSION`, port registry, tracked secrets, Helm fail-closed guards, JCS vocabulary, SLO-harness invocation, SLO-gate self-test, no Cargo execution, the workspace-lints membership gate, rustfmt over every Rust target | seconds |
+| 2 | The lint lane (`bazel build --config=lint //...`, clippy under the workspace policy) and its ratchet, then `bazel test //...` — every flavor, feature-gated backends included — the local demo, and both SDK downloader suites (the Bazel-built wheel and npm package, each with its coverage bar and the parity-oracle regeneration), and the repository verdict | minutes |
+| 3 | The Gazelle drift gate and the Rust target table's freshness | minutes |
 | 4 | The ADR-MCPRE-051 §7 local SLO lane (`scripts/local_slo_lane.sh`) | ~5 min |
 | 5 | The four fleet proofs on a local kind cluster — identical harness, chart and images to GKE (opt-in) | ~15 min |
 
@@ -32,24 +32,24 @@ It is not hygiene. Each stage exists because skipping it has already cost someth
 - **Stage 1** — the multi-replica harness deployed `:0.12.1` while Cloud Build had
   moved to `:0.13.0`. Four `ImagePullBackOff`s, discovered *after* `gcloud builds
   submit`, on a cluster that was already billing. A one-second script catches it.
-- **Stage 2** — the default `cargo test --workspace` does **not** compile the
-  non-default feature backends (KMS, PKCS#11, Redis, OCSP, etcd, `async_serve`). A
-  change can be green on the default battery and not compile on the serving path.
-- **Stage 2, the SDK half** — the two downloader artefacts are their own Cargo
-  workspaces, and their suites drive the bindings from Python and Node. No cargo or
-  Bazel lane reaches them. A nonce-length floor added to `build_signed_request_with`
+- **Stage 2** — every library flavor is its own Bazel target with its own features, so
+  `bazel test //...` compiles and tests the feature-gated backends (KMS, PKCS#11, Redis,
+  OCSP, etcd) in the same run as the default ones. A single default build would be
+  green on the default battery while the serving path did not compile.
+- **Stage 2, the SDK half** — the two downloader artefacts' suites drive the bindings
+  from Python and Node. No Rust test reaches them. A nonce-length floor added to `build_signed_request_with`
   therefore passed every local stage and arrived in CI with both downloader jobs red:
   every SDK test nonce and all six frozen parity vectors were below the new floor.
   The gate now builds and runs both, and regenerates the parity oracle from the
   freshly built core — a binding that drifts from the core surfaces as a diff in a
   committed fixture rather than as a test nobody wrote.
-- **Stages 1-2, the lint half** — `--workspace` and `cargo fmt --all` reach only the
-  ROOT universe. `sdk/python`, `sdk/typescript` and `mcp-re-proxy/tests/mock-pkcs11`
-  have their own manifests, and the default feature set does not compile
-  `etcd_store.rs` or `redis_store.rs` at all. When these checks were advisory and
-  root-default-only, they under-reported the tree's warnings by 19 of 60 and never
-  noticed that all three extra manifests were unformatted. Both halves now name
-  every manifest, and both are blocking — locally and in CI.
+- **Stages 1-2, the lint half** — a lint or format pass over one crate universe and one
+  feature set misses code the others compile: when these checks were advisory and
+  default-feature-only, they under-reported the tree's warnings by 19 of 60, never saw
+  `etcd_store.rs` or `redis_store.rs`, and never noticed three unformatted SDK and
+  fixture crates. The lint and format lanes are Bazel aspects over every Rust target —
+  every flavor, both SDK native modules, the mock provider — and both are blocking,
+  locally and in CI.
 - **Stage 5** — running the *same* harness on kind before GKE found six deploy
   defects, three of which would have failed the cloud run outright.
 
@@ -209,26 +209,25 @@ project's images, and the running kind cluster's node image is not ephemeral.
 ## The two traps in the SLO lane
 
 Both produce a lane that **looks green while having measured nothing**, which is
-worse than a red one. `scripts/local_slo_lane.sh` makes both impossible; the notes
-are here because the raw cargo command still exists in the GKE image and in
-`docs/bench/`.
+worse than a red one. `scripts/local_slo_lane.sh` makes both impossible;
+`scripts/slo_invocation_gate.py` refuses the first shape wherever it is written.
 
-**1. `-- --ignored` runs zero tests.** `tls_load_harness_bench` is **not** an
-`#[ignore]` test — the whole file is gated to the `redis_replay` feature lane
-instead, which is what keeps it out of the default battery. `--ignored` selects
-*only* ignored tests, so cargo runs **0 tests**, exits **0**, and writes no report.
-Several docs carried this and were corrected. Use `-- --exact`. The lane script
-asserts `test result: ok. 1 passed` and fails loudly otherwise.
+**1. `--ignored` runs zero tests.** `tls_load_harness_bench` is **not** an
+`#[ignore]` test — it is a `manual` Bazel target, which is what keeps it out of the
+default battery. `--ignored` selects *only* ignored tests, so libtest runs **0 tests**,
+exits **0**, and writes no report. Several docs carried this and were corrected. Select
+it with `--exact`. The lane script asserts `test result: ok. 1 passed` and fails loudly
+otherwise.
 
 **2. A relative `MCP_RE_LOADGEN_OUT` is written somewhere you are not looking.**
-Cargo runs a test binary with cwd = the **package** root, so `out.json` lands under
-`mcp-re-proxy/`, and the gate then reads nothing. Use an absolute path.
+A test binary runs with its cwd in its runfiles tree, so `out.json` lands there, and the
+gate then reads nothing. Use an absolute path.
 
 Two more things the lane script handles, worth knowing if you run it by hand:
 
-- The harness **spawns the real CLI** as a child process (`MCP_RE_PROXY_CLI` →
-  `target/release/mcp-re-proxy`). Building only the *test* target with
-  `--features async_serve,redis_replay` is not enough — the **bin** needs them too.
+- The harness **spawns the real CLI** as a child process (`MCP_RE_PROXY_CLI`, set by the
+  target to the deploy binary it lists in `data`), so `bazel run -c opt` builds both
+  with the features they share.
 - It needs Docker (it stands up its own primary+2-replica Redis fleet), or an
   existing one via `MCP_RE_LOADGEN_REDIS_URL`.
 

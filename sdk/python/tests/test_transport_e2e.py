@@ -14,7 +14,7 @@ built), so the Bazel-free downloader lane stays green without it.
 
 Prerequisites, from the repo root::
 
-    cargo build -p mcp-re-proxy --example http_profile_proxy
+    bazel build //mcp-re-proxy:http_profile_proxy
     pip install "mcp>=2.0,<3" uvicorn
 """
 import base64
@@ -60,7 +60,10 @@ from mcp_re_sdk import (  # noqa: E402
 CLIENT_SEED = bytes([11]) * 32
 ROOT_SEED = bytes([22]) * 32
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PROXY_BIN = REPO_ROOT / "target" / "debug" / "examples" / "http_profile_proxy"
+PROXY_BIN = Path(
+    os.environ.get("MCP_RE_HTTP_PROFILE_PROXY")
+    or REPO_ROOT / "bazel-bin" / "mcp-re-proxy" / "http_profile_proxy"
+)
 BACKEND = REPO_ROOT / "tools" / "fastmcp_inner_backend.py"
 
 
@@ -92,7 +95,7 @@ def _wait_port(port: int, timeout: float = 15.0) -> bool:
 def harness():
     """The real proxy + real MCP SDK backend, as the proof script stands them up."""
     if not PROXY_BIN.exists():
-        pytest.skip(f"{PROXY_BIN} not built (cargo build -p mcp-re-proxy --example http_profile_proxy)")
+        pytest.skip(f"{PROXY_BIN} not built (bazel build //mcp-re-proxy:http_profile_proxy)")
     # This interpreter already has `mcp` (the adapter needs it); the backend additionally
     # needs the server half and uvicorn.
     if importlib.util.find_spec("mcp.server.mcpserver") is None:

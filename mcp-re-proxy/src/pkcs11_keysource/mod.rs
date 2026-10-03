@@ -37,7 +37,7 @@
 //! any error path.
 //!
 //! This entire module compiles ONLY under the non-default `pkcs11_keysource`
-//! cargo feature, so a default build is byte-for-byte unchanged and gains zero
+//! crate feature, so a default build is byte-for-byte unchanged and gains zero
 //! dependencies.
 
 use crate::communication_assurance::ED25519_SIGNATURE_LEN;

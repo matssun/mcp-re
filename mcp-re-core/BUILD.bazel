@@ -1,4 +1,6 @@
 load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
+load("//bazel/charon:defs.bzl", "charon_llbc")
+load("//bazel/verus:defs.bzl", "verus_verify")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -33,8 +35,6 @@ nt_rust_library(
 nt_rust_test(
     name = "mcp_re_core_test",
     crate = ":mcp_re_core",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = ["@crates_mcp_re//:hex"],
 )
@@ -47,22 +47,48 @@ filegroup(
     name = "src_files",
     srcs = glob(["src/**/*.rs"]),
 )
+# The crates `mcp_re_core` links, direct and transitive, read off the build graph.
+genquery(
+    name = "mcp_re_core_dependency_closure",
+    expression = 'kind("rust_library|rust_proc_macro", deps(//mcp-re-core:mcp_re_core))',
+    opts = ["--noimplicit_deps"],
+    scope = [":mcp_re_core"],
+)
+
 # ADR-MCPRE-051 "Compliance and Enforcement": the core purity firewall. Reads the
-# committed Cargo.toml + BUILD.bazel at compile time (include_str!) and fails on
-# any networking/async/fs or up-stack crate in the declared deps — encoding the
-# ADR-051 split (core pure; the async stack is admitted into the proxy serving
-# path only). They must be compile inputs in the sandbox.
+# dependency closure and fails on any networking/async/fs or up-stack crate in it —
+# encoding the ADR-051 split (core pure; the async stack is admitted into the proxy
+# serving path only).
 nt_rust_test(
     name = "firewall_test",
     srcs = ["tests/firewall_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    compile_data = [
-        "Cargo.toml",
-        "BUILD.bazel",
-    ],
+    data = [":mcp_re_core_dependency_closure"],
     edition = "2021",
+    env = {
+        "MCP_RE_CORE_DEPENDENCY_CLOSURE": "$(rlocationpath :mcp_re_core_dependency_closure)",
+    },
     deps = [
         ":mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
     ],
+)
+
+# The Verus lane (ADR-MCPRE-059 §16): the pinned prover over this crate with its `verify`
+# specifications on. `manual`: it needs the pinned install, which only the Verus lane's
+# hosts carry; `tools/verification/verify-verus` builds it.
+verus_verify(
+    name = "mcp_re_core_verus",
+    crate = ":mcp_re_core",
+    spec_features = ["verify"],
+    tags = ["manual"],
+)
+
+# The Lean extraction lane (ADR-MCPRE-059 §8): Charon's LLBC of this crate, built on the
+# nightly Charon's driver is compiled against. `manual`: it runs only inside the pinned
+# extraction container; `tools/verification/regenerate-lean` builds it with the units'
+# `extracted_symbols`.
+charon_llbc(
+    name = "mcp_re_core_llbc",
+    crate = ":mcp_re_core",
+    tags = ["manual"],
 )

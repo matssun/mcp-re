@@ -6,38 +6,15 @@
 # server is fronted by an EXTERNAL plain-MCP adapter (e.g. FastMCP) that exposes
 # HTTP; MCP-RE ships no stdio bridge.
 #
-#   docker build -f deploy/docker/Dockerfile --target proxy -t mcp-re-proxy:0.17.0 .
+# The image compiles nothing. The proxy binary is built by Bazel, for the image's
+# architecture, and staged first:
 #
-# Local validation: this loads into a kind cluster (`kind load docker-image …`) —
-# native arch, no cross-compile. For GKE: build the SAME target for linux/amd64
-# (Cloud Build or `buildx --platform linux/amd64`) and push to Artifact Registry.
-
-FROM rust:1.94.1-slim-bookworm AS builder
-# ring/rustls need a C toolchain; openssl-sys (pulled transitively) needs
-# libssl-dev + perl + pkg-config. Installed once in the builder only.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential perl pkg-config libssl-dev ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /build
-COPY . .
-# The PEP feature set: async per-core fleet (async_serve) + shared Redis replay
-# tier (redis_replay) + BOTH cloud KMS custodies (gcp_kms_keysource,
-# aws_kms_keysource). Every KMS backend is ADDITIVE — each signer is inert unless
-# the chart selects the matching `--key-source`, so one image serves the fileSeed,
-# gcpKms and awsKms deployments the chart offers (values.yaml `keySource`).
+#   scripts/stage_image_binaries.sh --arch amd64      # or arm64 for the local kind fleet
+#   docker build -f deploy/docker/Dockerfile --target proxy \
+#     --build-arg DIST=deploy/docker/dist/amd64 -t mcp-re-proxy:0.17.0 .
 #
-# Both are compiled because the chart renders all three and the un-compiled arm
-# fails closed at startup with a feature-flag error: an EKS/IRSA install would
-# CrashLoopBackOff after the operator had already provisioned a KMS key, an IAM role
-# and an OIDC provider. The image must be able to serve every posture the chart can
-# express.
-#
-# ADR-MCPRE-052: KMS is the delegated-credential ISSUER (off the request path).
-# Override --build-arg FEATURES=… to drop KMS from a fileSeed-only image.
-ARG FEATURES=async_serve,redis_replay,gcp_kms_keysource,aws_kms_keysource
-RUN cargo build --release --locked \
-        -p mcp-re-proxy --features "${FEATURES}" \
-        --bin mcp-re-proxy
+# Local validation loads it into a kind cluster (`kind load docker-image …`); for GKE,
+# Cloud Build stages amd64 and pushes to Artifact Registry.
 
 # --- runtime base ------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime-base
@@ -47,7 +24,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 # --- the PEP image -----------------------------------------------------------
 FROM runtime-base AS proxy
-COPY --from=builder /build/target/release/mcp-re-proxy /usr/local/bin/mcp-re-proxy
+# The shipped feature set is the deploy flavor's (`_PROXY_DEPLOY_FEATURES` in
+# mcp-re-proxy/BUILD.bazel): registration, the shared Redis replay tier, and BOTH cloud
+# KMS custodies. Every KMS backend is ADDITIVE — each signer is inert unless the chart
+# selects the matching `--key-source` — and the image must serve every posture the chart
+# can express, since an un-compiled arm fails closed at startup after the operator has
+# already provisioned the KMS key, IAM role and OIDC provider it needs.
+ARG DIST=deploy/docker/dist/amd64
+COPY ${DIST}/mcp-re-proxy /usr/local/bin/mcp-re-proxy
 # NON-ROOT, declared by the ARTIFACT. This image mounts the response-signing seed and
 # the TLS private key, so a container escape here is a key-compromise event — it is
 # the last process in the system that should run as uid 0. Stating it in the image

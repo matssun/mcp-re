@@ -51,8 +51,8 @@
     ]
   },
   "scripts": {
-    "build:native": "napi build --platform --release --manifest-path Cargo.toml --output-dir native --js binding.js --dts binding.d.ts",
-    "build:native:debug": "napi build --platform --manifest-path Cargo.toml --output-dir native --js binding.js --dts binding.d.ts",
+    "build:native": "node scripts/build-native.mjs",
+    "build:native:debug": "node scripts/build-native.mjs --debug",
     "build:ts": "tsc -p tsconfig.json",
     "build": "npm run build:native && npm run build:ts",
     "test": "npm run build && vitest run"
@@ -70,11 +70,11 @@
     }
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/client": "^2.1.0",
     "@modelcontextprotocol/core": "^2.0.0",
     "@napi-rs/cli": "^3.10.5",
-    "@types/node": "^26.6.2",
-    "@vitest/coverage-v8": "^5.0.1",
+    "@types/node": "^26.6.3",
+    "@vitest/coverage-v8": "^5.0.2",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   },

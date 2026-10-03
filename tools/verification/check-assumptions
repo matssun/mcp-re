@@ -159,6 +159,41 @@ def registered_sites() -> dict[str, set[str]]:
     }
 
 
+def declared_seam_sites() -> set[str]:
+    """The registered sites of `none:` assumptions whose item is declared in the tree.
+
+    A `none:` mechanism (`trusted-seam`, `trusted-primitive`) is a premise no scanner
+    pattern can see, so its site is never among the escape-hatch hits and cannot be
+    confirmed live by one. It is confirmed the only way it can be: the file exists and
+    declares the item the key names. A renamed or moved item stops resolving and is
+    reported as stale, exactly as a Verus site is. The key is the one `site_key` derives,
+    so an enum variant (not an item) is named by its enum.
+
+    WHAT THIS ESTABLISHES, AND NOTHING MORE: that a file at the registered path declares an
+    item of the registered name. It does not establish that the premise holds (a
+    `trusted-seam` is by definition not checked by any code), nor that the item still does
+    what the premise's justification says, nor that a renamed successor is the same seam. A
+    passing site is a location, never a proof; the premise stays `assumed` or
+    `external-boundary` in the registry.
+    """
+    declared: dict[str, set[str]] = {}
+    resolved: set[str] = set()
+    for entry in load_assumptions().get("assumption", []):
+        if not entry["tool_specific_mechanism"].startswith("none:"):
+            continue
+        for site in map(str, entry.get("sites", [])):
+            path, _, item = site.partition("#")
+            if path not in declared:
+                try:
+                    text = (REPO_ROOT / path).read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    text = ""
+                declared[path] = {name for _, name in declared_items(text.splitlines())}
+            if item in declared[path]:
+                resolved.add(site)
+    return resolved
+
+
 def is_registered(
     mechanism: str,
     site: str | None,
@@ -481,7 +516,7 @@ def main() -> int:
     # from the ITEM, so it survives formatting — but not a rename or a deletion, and an entry
     # left pointing at a seam that no longer exists reads as trust the tree no longer needs.
     # Refusing it is what keeps the registry a measurement rather than a memory.
-    live_sites = {hit[5] for hit in hits if hit[5]}
+    live_sites = {hit[5] for hit in hits if hit[5]} | declared_seam_sites()
     stale = {
         asm_id: sorted(sites - live_sites)
         for asm_id, sites in registered_sites().items()
@@ -557,7 +592,10 @@ def main() -> int:
         )
         return 1
 
-    print("\ncheck-assumptions: PASS — every SITE is registered")
+    print(
+        "\ncheck-assumptions: PASS — every SITE is registered; a `none:` site is confirmed "
+        "only as a declared item at its registered location, never as a proved premise"
+    )
     print("VERDICT: PASS")
     return 0
 

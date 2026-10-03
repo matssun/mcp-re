@@ -190,3 +190,80 @@ fn check_binding(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::ClientConfig;
+    use super::MAX_MANIFEST_RELOAD_SECS;
+
+    /// A document valid in every respect except the one under test, so a refusal can only be
+    /// about `trust.reload_secs`.
+    fn with_reload_secs(secs: u64) -> Result<ClientConfig, String> {
+        let doc = format!(
+            r#"{{
+  "local": {{ "bind": "127.0.0.1:8640" }},
+  "identity": {{ "key_id": "c1", "signing_key_seed_path": "/dev/null" }},
+  "remote": {{
+    "addr": "10.0.0.5:8600",
+    "expected_server_name": "proxy.internal",
+    "client_cert_path": "/dev/null",
+    "client_key_path": "/dev/null",
+    "server_ca_path": "/dev/null"
+  }},
+  "trust": {{
+    "manifest_path": "/dev/null",
+    "profile": "mcp-re-http-v1",
+    "org_keys": [{{ "kid": "org-1", "public_key": "AAAA" }}],
+    "floor": {{ "kind": "durable", "dir": "/var/lib/mcp-re/floor" }},
+    "reload_secs": {secs}
+  }},
+  "delegation": {{
+    "verifier_audiences": ["v1"],
+    "expected_audience_hash": "v1",
+    "accepted_epochs": ["e1"]
+  }},
+  "routes": [{{
+    "route_id": "r1",
+    "target_uri": "https://mcp.example.com/mcp",
+    "audience": {{ "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" }},
+    "extra_headers": [{{ "name": "Authorization", "value": "Bearer tok" }}],
+    "artifact_bindings": [{{ "artifact_type": "oauth-dpop", "source": {{ "kind": "header", "name": "Authorization" }} }}]
+  }}]
+}}"#
+        );
+        ClientConfig::from_json(doc.as_bytes()).map_err(|e| e.to_string())
+    }
+
+    /// The refresh cadence is the only place anchors whose manifest has expired are
+    /// withdrawn, so `0` leaves an expired trust picture verifying forever and a long cadence
+    /// is how long it keeps doing so. THM-0127 points at this bound, so it is pinned at both
+    /// edges: a bound moved by one in either direction flips exactly one of these four.
+    #[test]
+    fn the_reload_cadence_bound_is_exactly_one_to_the_documented_maximum() {
+        let just_above = MAX_MANIFEST_RELOAD_SECS
+            .checked_add(1)
+            .expect("the documented maximum leaves room for one more");
+        for refused in [0, just_above] {
+            let error = with_reload_secs(refused)
+                .err()
+                .unwrap_or_else(|| panic!("reload_secs {refused} must not start"));
+            assert!(
+                error.contains("trust.reload_secs")
+                    && error.contains(&format!("1..={MAX_MANIFEST_RELOAD_SECS}")),
+                "reload_secs {refused}: the refusal must name the field and the bound, got {error}"
+            );
+        }
+        for accepted in [1, MAX_MANIFEST_RELOAD_SECS] {
+            with_reload_secs(accepted)
+                .unwrap_or_else(|e| panic!("reload_secs {accepted} is inside the bound: {e}"));
+        }
+    }
+
+    /// The edge test above is written in terms of the constant, so it cannot notice the
+    /// constant moving. This pins the value the field documentation and the round-7 closure
+    /// describe: an hour bounds how long an expired manifest keeps verifying.
+    #[test]
+    fn the_documented_maximum_is_one_hour() {
+        assert_eq!(MAX_MANIFEST_RELOAD_SECS, 3600);
+    }
+}

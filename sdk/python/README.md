@@ -189,10 +189,11 @@ a prebuilt `abi3` wheel and need no Rust toolchain.
 
 ```
 sdk/python/
-  Cargo.toml             # PyO3 cdylib -> mcp_re_sdk._core; OWN workspace (separate from root)
+  BUILD.bazel            # the PyO3 extension mcp_re_sdk._core, and the wheel (//sdk/python:wheel)
+  Cargo.toml             # the crate's description; its lock stays separate from the root one
   src/lib.rs             # the binding: sign_request / sign_request_with_signer /
                          #   verify_response (delegated) / sign_preimage
-  pyproject.toml         # maturin backend, mixed Rust/Python layout, coverage gate
+  pyproject.toml         # project metadata, dev extras, coverage gate; the wheel is Bazel's
   python/mcp_re_sdk/
     __init__.py          # public surface
     custody.py           # CustodyClass / Signer / SignerPolicy / SigningDevice / McpReError
@@ -213,10 +214,11 @@ sdk/python/
 ## Develop
 
 ```sh
+bazel build //sdk/python:wheel   # the wheel, with mcp_re_sdk._core built from the in-repo crates
 cd sdk/python
 python -m venv .venv && . .venv/bin/activate
-pip install -U maturin 'pytest>=8' 'pytest-cov>=5'
-maturin develop            # builds mcp_re_sdk._core against the in-repo Rust crates
+pip install "$(cd ../.. && bazel cquery --output=files //sdk/python:wheel 2>/dev/null)[mcp]" \
+    'pytest>=8' 'pytest-cov>=5'
 pytest --cov               # the suite + the 90% coverage gate (fail_under in pyproject)
 ```
 

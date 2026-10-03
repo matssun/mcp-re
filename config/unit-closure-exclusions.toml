@@ -118,8 +118,3 @@ rule = "UC-1"
 baseline_sha = "7e184961"
 status = "unreviewed"
 
-[[exclusion]]
-path = "mcp-re-test-paths/src/lib.rs"
-rule = "UC-2"
-baseline_sha = "7e184961"
-status = "unreviewed"

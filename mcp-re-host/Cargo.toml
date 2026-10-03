@@ -42,5 +42,3 @@ mcp-re-host = { path = ".", features = ["test-fixtures"] }
 name = "mcp_re_host"
 path = "src/lib.rs"
 
-[lints]
-workspace = true

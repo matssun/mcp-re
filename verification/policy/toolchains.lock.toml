@@ -35,7 +35,7 @@ schema_version = 1
 state = "resolved"
 channel = "1.97.1"
 components = ["rustfmt", "clippy"]
-source = "rust-toolchain.toml, mirrored in MODULE.bazel rust.toolchain versions"
+source = "MODULE.bazel rust.toolchain versions"
 note = """
 Verus requires its own rustc build and will not necessarily accept this channel. If the
 pinned Verus release demands a different rustc, that divergence is itself a finding to
@@ -56,10 +56,11 @@ platform = "macos_aarch64"
 install_root = "/opt/verification/verus/0.2026.08.09.92f466f"
 rust_toolchain = "1.97.1-aarch64-apple-darwin"
 note = """
-The release's own rustc requirement equals the [rust] channel pinned above, so the
-divergence anticipated in that section does not currently exist. A Verus bump that moves
-this off 1.97.1 reintroduces it and must be recorded rather than resolved by letting two
-Rust toolchains float.
+The release's own rustc requirement equals the [rust] channel pinned above, and the lane
+depends on that equality: the prover runs on the registered Bazel Rust toolchain's own
+compiler driver, which is the `librustc_driver` build `rust_verify` links. A Verus bump that
+moves this off 1.97.1 needs MODULE.bazel's toolchain to move with it, and `verify-verus`
+refuses the mismatch by name rather than letting two Rust toolchains float.
 
 install_root is platform-specific and is the only host-dependent value here; a Linux CI
 runner resolves a different source_url/sha256 for the same release, and that lane's
@@ -70,7 +71,6 @@ identity must be recorded separately before it may report a PASS.
 state = "resolved"
 verus = "sha256:72b8b03b8341580500306e9b422360a7361c5a61ffde282874f960e58ed99550"
 rust_verify = "sha256:51b413e6160f06d44d6b1fcb05e1f36386f9d0e30c57e2af16d4eff0954e4966"
-cargo-verus = "sha256:b9204f01a05d06bbe73fb02af4a76b41c8afa938ac822d044299e9f37a9410a0"
 note = """
 R9-C083. Every key is a file name under `verus.install_root`, digested. Nothing identified
 these before: the lane checked `vstd.vir` and the commit `version.json` DECLARES, and a
@@ -130,25 +130,23 @@ named while the lock read as fully pinned.
 # ---------------------------------------------------------------------------
 
 # ADR-MCPRE-059 §19. Everything in this lane resolves INSIDE the extraction container, not
-# on the macOS host. Charon is a rustc driver: on aarch64-apple-darwin the `rustc-dev`
-# component ships the compiler crates as .rmeta only (no .rlib for the crates Charon names),
-# so Charon cannot link there. On aarch64-unknown-linux-gnu the same component ships the
-# .rlib files and Charon builds unmodified. The host is changed rather than the tool.
+# on the macOS host: Charon's driver links the private compiler crates of one exact nightly,
+# and the container is where that nightly and the pinned Aeneas/Charon release binaries live.
+# Neither tool is built anywhere in this repository.
 
 [extraction_container]
-# RESOLVED 2026-09-09, from a build of the definition this tree declares, whose five smoke
-# checks passed and whose exact bytes are preserved under `archive_digest`. The entry this
-# replaces named an image published to a container registry by hand on 2026-08-10 that was
-# a build of none of the three Dockerfiles that followed it and could not run Lean at all.
+# RESOLVED 2026-09-29, from a build of the definition this tree declares: the pinned
+# Aeneas/Charon release binaries, installed and digest-checked, and neither tool built. Its
+# seven smoke checks passed and its exact bytes are preserved under `archive_digest`.
 state = "resolved"
-# Built from the definition this tree declares, smoke-checked BY IMAGE ID — the six checks
-# the build workflow asks, including the harness interpreter and a tiny crate going
-# Rust -> LLBC -> Lean — and preserved before this identity was reported, so what is
-# recorded is what the store holds.
-artifact_digest = "sha256:d38738c18a60306a1f9be0f2e225872ab3825dc408a1f4c561193579bd701d84"
-archive_digest = "sha256:88a97b6e37cdfb755cf30c48ed6099d0b2a9a4a4c1186baf9ed1a150e5681a4b"
-tag = "tc-34eb72d4f6d70d4f"
-definition_digest = "c393c8b6874d6b43f914f42284741bf5fdae231ad1d98322beef6a2e254940f7"
+# Built from the definition this tree declares, smoke-checked BY IMAGE ID — the seven checks
+# `extraction-image smoke` asks, including the digest of every executed binary and a one-file
+# crate going Rust -> LLBC -> Lean — and preserved before this identity was reported, so what
+# is recorded is what the store holds.
+artifact_digest = "sha256:ce0df16f21fb96766708409e80f6c788bd3d42c32a0912576924512a4b7b3c02"
+archive_digest = "sha256:469f57765b0a0786e2bc11d0349103c9c0bfd18a583cbe158e1a785842cb4605"
+tag = "tc-ac2daa3af3dcc7c4"
+definition_digest = "2e244481d49f436f62f4e8cea0abd1f2768f9ae5f7f783bdb59a440e20bdcbef"
 definition = "verification/extraction/Dockerfile"
 platform = "linux/arm64"
 note = """
@@ -156,12 +154,10 @@ WHAT A BUILD MUST RECORD, and why each field exists.
 
   artifact_digest   the image's own content digest, as `tools/verification/extraction-image
                     identity` reports it — what EXECUTES. REQUIRED: the declared pins do not
-                    determine the image. This definition still resolves apt package versions
-                    and opam library versions at build time, and the opam libraries build the
-                    Aeneas binary — so a different `visitors` or `zarith` can produce a
-                    different extracted model from identical Rust. An identity derived from
-                    the pins alone would say which toolchain was INTENDED and nothing about
-                    which one ran.
+                    determine the image. This definition still resolves apt packages, the
+                    rustup installer and the mathlib cache at build time. An identity derived
+                    from the pins alone would say which toolchain was INTENDED and nothing
+                    about which one ran.
 
   archive_digest    SHA-256 over the PRESERVED ARCHIVE's exact bytes, under
                     /opt/verification/extraction-artifacts/sha256/<artifact_digest>.tar.
@@ -202,42 +198,55 @@ deployment claim. Ruling:
 verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
 
 WHAT IS NOT CLAIMED: that this artifact can be reconstructed from the Dockerfile
-indefinitely. The unpinned apt and opam inputs above are a measured limitation. What a
+indefinitely. The unpinned apt, rustup and cache inputs above are a measured limitation. What a
 preserved artifact establishes is the honest, weaker thing — this theorem was checked
 against THIS exact preserved extraction artifact.
 """
 
 [charon]
 state = "resolved"
-commit = "340b1af4df92608d0911fc2ba26eef3fd3a30ab4"
+commit = "b82d2748c1e5bfd9519cd9401f9186d33b44a7f1"
 source_url = "https://github.com/AeneasVerif/charon"
-rust_toolchain = "nightly-2026-06-01"
+release_tag = "nightly-2026.09.04"
+linux_arm64_url = "https://github.com/AeneasVerif/charon/releases/download/nightly-2026.09.04/charon-linux-aarch64.tar.gz"
+linux_arm64_sha256 = "sha256:ef0fc8a0c40e0b57e36ccca035f22a78ce2ad97acabc1bde8134b2314a3b0516"
+charon_sha256 = "sha256:3b718a8c223aaa5a09a610acf1b7b7d218c5775c5d4a8118b78a49ba13104cc0"
+charon_driver_sha256 = "sha256:e1471969ab794c8b6676a8dc1dd836e55ff060cf40561b3ced13fe0c019ce1f9"
+rust_toolchain = "nightly-2026-08-18"
 rust_target = "aarch64-unknown-linux-gnu"
-rust_components = ["rustc-dev", "llvm-tools-preview", "rust-src", "miri"]
+rust_components = ["rustc-dev", "llvm-tools", "rust-src", "miri"]
 note = """
-The commit is not chosen independently: it is the one named in the pinned Aeneas
-checkout's `charon-pin`. Charon and Aeneas move as a pair, and pinning them separately
-would let an extraction run against a Charon whose LLBC output the pinned Aeneas does not
-claim to accept.
+An upstream release binary, never built here. The commit is not chosen independently: it is
+the one the pinned Aeneas commit's own `charon-pin` names. Charon and Aeneas move as a pair,
+and pinning them separately would let an extraction run against a Charon whose LLBC output
+the pinned Aeneas does not claim to accept.
 
-The nightly is a THIRD Rust toolchain, distinct from both the [rust] channel and the one
-Verus requires. This is the divergence the [rust] note anticipates, recorded rather than
-resolved: it is confined to the extraction step and never compiles production code.
+The release is the first nightly cut at that commit. The nightlies at one commit re-archive
+the same binaries (the three at this commit differ only in their tarballs), so the archive
+digest names the download and `charon_sha256` / `charon_driver_sha256` name what runs. The
+Aeneas release ships the same two binaries, byte for byte; the image build checks that.
 
-Resolved together with [extraction_container]: a commit alone does not identify what a
-build of it produces; the pair (commit, image digest) does.
+`rust_toolchain` is the nightly the driver links against at run time — the release's own
+`rust-toolchain` — distinct from both the [rust] channel and the one Verus requires. It is
+confined to the extraction step and never compiles production code. The crates Charon reads
+are built on it by Bazel (`MODULE.bazel` registers the same date, and `regenerate-lean`
+refuses if the two differ).
 """
 
 [aeneas]
 state = "resolved"
-commit = "daa85d7e89400fa978be83fedbc7e475a83f0889"
+commit = "8d58d14ad655b3d871af1038c203c3f524ab4df9"
 source_url = "https://github.com/AeneasVerif/aeneas"
-ocaml_compiler = "5.3.0"
+release_tag = "nightly-2026.09.07-8d58d14"
+linux_arm64_url = "https://github.com/AeneasVerif/aeneas/releases/download/nightly-2026.09.07-8d58d14/aeneas-linux-aarch64.tar.gz"
+linux_arm64_sha256 = "sha256:d170dde7f25cb32604b376f6f74ae442c2e407d20353ce331a2fc269522f7967"
+aeneas_sha256 = "sha256:493fbc8bba182a9d5386e220aef35577a3c3919526919c02a9629ca97e15f16e"
+charon_pin = "b82d2748c1e5bfd9519cd9401f9186d33b44a7f1"
 note = """
-Built inside the extraction container. Aeneas' Makefile requires GNU Make; Apple's
-bundled Make 3.81 is rejected outright, which the container makes moot.
-
-Resolved together with [extraction_container], for the same reason as [charon].
+An upstream release binary, never built here: a static `aeneas` and its Lean backend.
+`charon_pin` is the last line of `charon-pin` at `commit`, and must equal [charon].commit —
+`scripts/extraction_image_gate.py` refuses the lock otherwise, and the image build re-reads
+the file at that commit.
 """
 
 [lean]
@@ -272,13 +281,26 @@ Resolved together with [extraction_container], for the same reason as [charon].
 
 [aeneas_lean_backend]
 state = "resolved"
-package_revision = "daa85d7e89400fa978be83fedbc7e475a83f0889"
+package_revision = "8d58d14ad655b3d871af1038c203c3f524ab4df9"
 mathlib_revision = "fabf563a7c95a166b8d7b6efca11c8b4dc9d911f"
 note = """
-The Aeneas Lean backend/package revision, which moves independently of Aeneas itself. At
-the pinned Aeneas commit the backend ships in-tree, so its revision is that commit; the
+The Aeneas Lean backend/package revision. The pinned Aeneas release ships the backend, so
+its revision is that release's commit; the
 mathlib revision comes from the backend's own lake-manifest.json and is recorded because a
 theorem proved with a different mathlib is a theorem proved in a different environment.
+"""
+
+[bazelisk]
+state = "resolved"
+version = "1.29.0"
+linux_arm64_url = "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-arm64"
+linux_arm64_sha256 = "sha256:e20e8b0f4f240091b7a55bf17b9398bd4f40ee70ae0208dff95dd4c445fb4010"
+note = """
+The Bazel launcher the extraction lane runs inside the pinned container. The crates Charon
+reads are built by Bazel, on the nightly Charon's driver is compiled against, so the lane
+needs a Bazel there; `regenerate-lean` provisions this launcher into the machine-local
+`.verification/tools/` and refuses one whose bytes are not these. The Bazel release it
+starts is `.bazelversion`'s.
 """
 
 # ---------------------------------------------------------------------------

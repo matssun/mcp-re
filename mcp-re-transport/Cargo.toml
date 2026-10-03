@@ -45,5 +45,3 @@ serde_json = { workspace = true }
 name = "mcp_re_transport"
 path = "src/lib.rs"
 
-[lints]
-workspace = true

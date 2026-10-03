@@ -176,15 +176,6 @@ EXEMPT: dict[str, str] = {
         "a kind-cluster Job-spec rehearsal; its wiring is policed by rehearsal_claim_gate.py"
     ),
     "scripts/demo-local.sh": "a demo runner, not a control",
-    # Linting was moved out of CI deliberately (pre-commit and local_gate.sh own it), so the
-    # ADR-MCPRE-061 §6 ratchet has no workflow step. The exemption records that decision; it
-    # does not claim the ratchet is enforced on the merge path.
-    "scripts/clippy_ratchet_gate.py": (
-        "lint ratchet, run by pre-commit and local_gate.sh; linting was moved out of CI"
-    ),
-    # An environment shim consumed by `.` before anything runs. CI pins its toolchain in
-    # the workflow instead, so there is nothing here for a job to invoke.
-    "scripts/use_pinned_toolchain.sh": "sourced toolchain shim; CI pins its own",
     # Architecture ANALYSIS. These report numbers for a human to classify — ADR-MCPRE-060
     # is explicit that the workflow is measure, validate, classify, review, and never
     # "run script, refactor until the number falls". A report has no pass to enforce, and
@@ -601,7 +592,7 @@ def selftest() -> int:
         ("      run: tools/verification/verify-mutations", True, "a program as a run: step"),
         ("  scripts/run_gate.sh --selftest", True, "a program at the head of a line"),
         ("    && python3 tools/verification/test_views.py \\", False, "an argument to python3"),
-        ("    . scripts/use_pinned_toolchain.sh || exit 1", False, "a sourced shim"),
+        ("    . scripts/lib/sat_replay_fleet.sh || exit 1", False, "a sourced shim"),
         ("      run: bash scripts/demo-local.sh", False, "an argument to bash"),
     ]:
         matched = bool(command_position_paths(text))

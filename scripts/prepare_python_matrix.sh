@@ -69,13 +69,11 @@ REQS="$(mktemp -t mcp-re-python-matrix)"
 trap 'rm -f "$REQS"' EXIT
 uv export --quiet --extra dev --no-emit-project --no-hashes -o "$REQS"
 
-# Built with the same pinned Rust toolchain as every other lane: rustup walks up to the
-# repository's rust-toolchain.toml from here.
-echo "prepare_python_matrix: building the abi3 wheel once"
-rm -rf dist
-uv run --quiet --extra dev maturin build --release --out dist >/dev/null
-WHEEL="$(ls dist/*.whl | head -1)"
-[ -n "$WHEEL" ] || { echo "prepare_python_matrix: maturin produced no wheel." >&2; exit 1; }
+# Built with the same pinned Rust toolchain as every other lane: Bazel's, from MODULE.bazel.
+echo "prepare_python_matrix: building the abi3 wheel once (bazel build //sdk/python:wheel)"
+( cd "$ROOT" && bazel build //sdk/python:wheel ) >/dev/null
+WHEEL="$ROOT/$(cd "$ROOT" && bazel cquery --output=files //sdk/python:wheel 2>/dev/null | head -1)"
+[ -f "$WHEEL" ] || { echo "prepare_python_matrix: Bazel produced no wheel." >&2; exit 1; }
 echo "prepare_python_matrix: wheel $WHEEL"
 
 for version in "${RUNTIMES[@]}"; do

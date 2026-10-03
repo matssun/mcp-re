@@ -65,12 +65,13 @@ def test_no_component_is_a_sentinel():
 
 
 def test_the_build_configuration_is_measured_and_names_the_lockfile():
-    """A dependency swap, a lockfile bump or a toolchain channel change alters what a
-    theorem is about without touching the source a unit declares."""
+    """A dependency swap, a lockfile bump or a toolchain pin change alters what a theorem is
+    about without touching the source a unit declares. Bazel builds the crate, so its
+    inputs are Bazel's: the module (the toolchain pin), the crate lock, the package's BUILD."""
     build = components("http_profile.freshness_window")["build_configuration"]
-    assert "Cargo.lock" in build
-    assert "rust-toolchain.toml" in build
-    assert "mcp-re-http-profile/Cargo.toml" in build
+    assert "MODULE.bazel" in build
+    assert "bazel/crates.lock" in build
+    assert "mcp-re-http-profile/BUILD.bazel" in build
     assert all(digest.startswith("sha256:") for digest in build.values())
 
 
@@ -78,7 +79,7 @@ def test_the_build_configuration_is_measured_and_names_the_lockfile():
 
 
 def test_a_formal_units_fingerprint_covers_the_whole_verified_crate():
-    """`cargo verus verify -p <crate>` verifies the crate, not the four files the unit
+    """The crate's `verus_verify` target verifies the crate, not the four files the unit
     lists. `check_params` quantifies over `SignatureParams`, defined in sigbase.rs, which no
     unit declares: editing it changed what the theorem says while every component stayed
     identical and the graph answered FRESH."""
@@ -95,11 +96,11 @@ def test_the_proof_dependency_closures_manifests_are_measured_too():
     else. The source of a crate and the manifest that decides what that crate IS are the
     same input to this question."""
     build = components("http_profile.freshness_window")["build_configuration"]
-    assert "mcp-re-core/Cargo.toml" in build, build
-    assert "mcp-re-http-profile/Cargo.toml" in build
+    assert "mcp-re-core/BUILD.bazel" in build, build
+    assert "mcp-re-http-profile/BUILD.bazel" in build
     # And a V0 unit is not given the closure: its evidence is not a prover run, so a
-    # dependency manifest it never compiles against must not dirty it.
-    assert "mcp-re-core/Cargo.toml" not in components("proxy.runtime_lifecycle")["build_configuration"]
+    # dependency's BUILD file it never compiles against must not dirty it.
+    assert "mcp-re-core/BUILD.bazel" not in components("proxy.runtime_lifecycle")["build_configuration"]
 
 
 def test_a_formal_units_proof_dependencies_reach_the_verified_dependency_closure():
@@ -119,11 +120,14 @@ def test_an_ordinary_unit_is_not_given_a_whole_crate_cone():
 
 def test_the_effective_test_selection_is_measured_not_only_its_uri():
     """A `test://` URI is a LABEL. Until encoding v4 it was the only test component, so a
-    battery could fall from 67 declared controls to 5 — or move to another Cargo package —
-    with the URI, and therefore the fingerprint, unchanged."""
+    battery could fall from 67 declared controls to 5 — or move to another target — with the
+    URI, and therefore the fingerprint, unchanged."""
     unit_id = "http_profile.request_floor_result"
     selection = components(unit_id)["test_selection"]
-    assert selection["package"] == "mcp-re-http-profile"
+    # The unit's paths span two crates, so there is no single project — and none is
+    # needed: each target names its own package, and each is recorded with its row.
+    assert selection["project"] is None
+    assert "//mcp-re-http-profile:proof_path_test" in selection["targets"]
     # COMPARED AGAINST THE REGISTRY rather than against a magnitude. The original assertion
     # was `> 50 symbols`, chosen when this fixture was `http_profile.verifier_results` — one
     # unit carrying 73 controls for ten propositions, which the ADR-MCPRE-068 Phase-1 split
@@ -131,7 +135,7 @@ def test_the_effective_test_selection_is_measured_not_only_its_uri():
     # swapped every member. What the component must hold is THIS unit's declared symbols.
     assert set(selection["symbols"]) == set(UNITS[unit_id]["tested_symbols"])
     assert (
-        "tests/proof_path_test#keyid_swap_to_another_trusted_key_fails_the_signature"
+        "//mcp-re-http-profile:proof_path_test#keyid_swap_to_another_trusted_key_fails_the_signature"
         in selection["symbols"]
     )
 
@@ -146,19 +150,19 @@ def test_dropping_a_declared_control_moves_the_fingerprint():
     assert before != after
 
 
-def test_dropping_a_test_feature_moves_the_fingerprint():
+def test_moving_a_battery_to_a_flavor_without_its_features_moves_the_fingerprint():
     """A feature-gated control does not fail without its feature — it does not EXIST. So a
-    unit that drops a feature loses every control behind it while the symbol list, the
-    package and the source digests all stand still. Encoding v7 puts the feature set in
-    `test_selection` for the same reason v4 put the symbols there: the battery must not be
-    able to shrink to whatever the default crate still contains."""
+    battery moved to a flavor compiled without the feature loses every control behind it.
+    The target's features are in `test_selection` for the same reason v4 put the symbols
+    there: the battery must not be able to shrink to whatever the default crate still
+    contains."""
     unit = dict(UNITS["proxy.outbound_destination"])
-    assert unit["test_features"], "this unit's claim is measured under named features"
+    ext = "//mcp-re-proxy:proxy_ext_unit_test"
+    assert all(s.startswith(f"{ext}#") for s in unit["tested_symbols"]), unit["tested_symbols"]
     before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
-    unit["test_features"] = [f for f in unit["test_features"] if f != "online_ocsp"]
+    unit["tested_symbols"] = [s.replace(ext, "//mcp-re-proxy:proxy_unit_test") for s in unit["tested_symbols"]]
     after = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
     assert before != after
-    assert "online_ocsp" not in components("proxy.kms_endpoint_authority")["test_selection"]["features"]
 
 
 def test_a_credential_egress_claim_is_measured_in_the_crate_that_compiles_it():
@@ -168,28 +172,28 @@ def test_a_credential_egress_claim_is_measured_in_the_crate_that_compiles_it():
     conjunct whose control cannot compile in its own lane would be a theorem established
     through evidence one lane away from it."""
     destination = components("proxy.outbound_destination")["test_selection"]
-    assert destination["features"] == [
-        "aws_kms_keysource",
-        "gcp_kms_keysource",
-        "online_ocsp",
-    ]
+    (features,) = [t["features"] for t in destination["targets"].values()]
+    assert {"aws_kms_keysource", "gcp_kms_keysource", "online_ocsp"} <= set(features)
     assert any("binding::tests::an_agent_does_not_follow_a_redirect" in s for s in destination["symbols"])
     assert any("credential_egress::tests::" in s for s in destination["symbols"])
     endpoint = components("proxy.kms_endpoint_authority")["test_selection"]
-    assert endpoint["features"] == ["aws_kms_keysource", "gcp_kms_keysource"]
+    for target in endpoint["targets"].values():
+        assert {"aws_kms_keysource", "gcp_kms_keysource"} <= set(target["features"]), target
     assert any(
         "endpoint::tests::an_endpoint_the_rule_refuses_yields_no_egress" in s
         for s in endpoint["symbols"]
     )
 
 
-def test_moving_the_battery_to_another_package_moves_the_fingerprint():
-    """`test_package` selects which package the lane runs in, so it decides what was
-    measured; a fingerprint blind to it would let the measurement move under a standing
-    attestation."""
+def test_moving_the_battery_to_another_target_moves_the_fingerprint():
+    """The target decides what runs, so it decides what was measured; a fingerprint blind
+    to it would let the measurement move under a standing attestation."""
     unit = dict(UNITS["http_profile.request_floor_result"])
     before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
-    unit["test_package"] = "mcp-re-core"
+    unit["tested_symbols"] = [
+        s.replace("//mcp-re-http-profile:proof_path_test", "//mcp-re-http-profile:full_profile_test")
+        for s in unit["tested_symbols"]
+    ]
     after = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
     assert before != after
 
@@ -210,14 +214,17 @@ def test_the_integration_test_sources_are_measured_not_only_their_names():
 
 
 def test_in_crate_selectors_are_covered_by_the_units_own_paths():
-    """`lib#`/`doc#` selectors are deliberately absent from `test_sources` because they
-    execute inside files `source_inputs` already digests. That is only safe because the
-    manifest loader REFUSES a selector whose module the unit does not declare."""
+    """Selectors on a target built from a crate are deliberately absent from
+    `test_sources` because they execute inside files `source_inputs` already digests. That
+    is only safe because the manifest loader REFUSES a selector whose module the unit does
+    not declare."""
     from _manifest import ManifestError, _validate_in_crate_selectors
 
     unit = {
         "paths": ["mcp-re-http-profile/src/verify.rs"],
-        "tested_symbols": ["lib#rejection::tests::unbound_rejection_verifies"],
+        "tested_symbols": [
+            "//mcp-re-http-profile:mcp_re_http_profile_test#rejection::tests::unbound_rejection_verifies"
+        ],
     }
     try:
         _validate_in_crate_selectors("unit[0]", unit)
@@ -232,17 +239,19 @@ def test_in_crate_selectors_are_covered_by_the_units_own_paths():
     # A module DIRECTORY resolves through any prefix of the selector's path.
     nested = {
         "paths": ["mcp-re-http-profile/src/verified_response/bound.rs"],
-        "tested_symbols": ["doc#verified_response::bound::VerifiedMcpResponse"],
+        "tested_symbols": [
+            "//mcp-re-http-profile:mcp_re_http_profile_doc_test#verified_response::bound::VerifiedMcpResponse"
+        ],
     }
     _validate_in_crate_selectors("unit[0]", nested)
 
-    # A binary crate's modules live under the same `<pkg>/src` tree, so `bin/<name>#`
-    # carries the identical obligation. Exempting it would put a deployable's own controls
-    # outside every fingerprint component — the one place the question "does the artifact an
+    # A binary crate's tests are built from the binary the same way, so they carry the
+    # identical obligation. Exempting them would put a deployable's own controls outside
+    # every fingerprint component — the one place the question "does the artifact an
     # operator runs do this?" can be asked.
     deployable = {
         "paths": ["mcp-re-client/src/anchors/mod.rs"],
-        "tested_symbols": ["bin/mcp-re-client#startup::tests::t"],
+        "tested_symbols": ["//mcp-re-client:mcp_re_client_cli_test#startup::tests::t"],
     }
     try:
         _validate_in_crate_selectors("unit[0]", deployable)
@@ -256,8 +265,8 @@ def test_in_crate_selectors_are_covered_by_the_units_own_paths():
 
 
 def test_the_test_lane_instrument_is_part_of_the_evidence_identity():
-    """The meaning of a `doc#` selector, of `test_package`, and of which ecosystem runs the
-    battery at all is decided by the lane's own code. Evidence whose measuring instrument
+    """What a selector's target resolves to, and which ecosystem runs the battery at all, is
+    decided by the lane's own code. Evidence whose measuring instrument
     changed is evidence whose meaning changed — the same argument that puts the toolchain in
     the fingerprint, and the reason #745's adapter registry joined the set rather than
     sitting beside it unmeasured."""
@@ -266,6 +275,7 @@ def test_the_test_lane_instrument_is_part_of_the_evidence_identity():
         "tools/verification/verify-tests",
         "tools/verification/_manifest.py",
         "tools/verification/_ecosystems.py",
+        "tools/verification/_rust_targets.py",
     }
     assert all(digest.startswith("sha256:") for digest in lane.values())
 
@@ -531,7 +541,7 @@ def test_the_generated_model_component_has_a_real_population():
     there. Measured: 0 of 244 units had a non-empty one. A declared rule wired to an empty
     population is a rule that has never been able to fire.
 
-    None of them should list one, either: a `.lean` path in a Cargo unit's `paths` collapses
+    None of them should list one, either: a `.lean` path in a Rust unit's `paths` collapses
     `unit_ecosystem` to None and takes the test lane's target resolution with it. So the
     population is derived from the extraction declaration instead."""
     with_model = [
@@ -844,7 +854,7 @@ def test_a_v0_unit_whose_paths_do_not_reach_the_seam_is_untouched():
 def test_a_formal_units_cone_reaches_a_seam_its_declared_paths_do_not():
     """This test previously asserted the OPPOSITE, and the assertion was wrong.
 
-    A V1 unit declaring `hash.rs` is verified by `cargo verus verify -p mcp-re-core`, so the
+    A V1 unit declaring `hash.rs` is verified by `//mcp-re-core:mcp_re_core_verus`, so the
     prover checks the whole crate — including the `external_body` in `time/mod.rs`. The
     proof really does consume that unproved proposition, and the old rule could not see it
     because it compared the boundary against DECLARED PATHS. Declared paths are what a unit
@@ -979,7 +989,7 @@ def test_a_clock_acquisition_site_alone_is_not_a_trusted_premise():
     rightly names it. It carries no trusted seam, and a V1 unit over it consumes no
     unproved proposition FROM IT: to verify at all, the author would have to mark the
     acquisition `external_body` — at which point a seam exists and the cap fires. Until
-    then `cargo verus verify` simply fails, so there is no route to passing V1 evidence
+    then the Verus lane simply fails, so there is no route to passing V1 evidence
     that this rule lets through.
 
     Refusing on the bare file was the source-level conflation the ruling forbids: an
@@ -1216,7 +1226,7 @@ def test_control_6_a_lean_units_invalidation_cone_is_still_the_whole_crate():
     """CONTROL 6. Narrowing what counts as a CROSSING must not narrow what counts as an
     INPUT — control 3's property, restated for the lane control 5 exempts.
 
-    `charon cargo --start-from <item>` compiles the whole crate and follows the named item
+    Charon's `--start-from <item>` compiles the whole crate and follows the named item
     into whatever it calls, so which files the extracted model depends on is decided inside
     the tool and is not reported by it. The cone stays the crate, and a file that
     contributes no premise still stales the evidence.

@@ -40,26 +40,25 @@ cd "$REPO_ROOT"
 # back and FAILS on zero. The CI release gates use the same wrapper; one guard
 # implementation, not two that can drift apart.
 run_suite() {
-  local binary="$1" module="$2"
-  shift 2
+  local target="$1" module="$2"
   "${REPO_ROOT}/scripts/run_test_lane.sh" \
-    cargo test --quiet -p mcp-re-proxy --test "$binary" "$@" -- "${module}::"
+    bazel test --test_output=all --nocache_test_results "$target" --test_arg="${module}::"
 }
 
 echo "== MCP-RE mTLS transport binding (real rustls handshake) =="
-run_suite integration mtls_transport_binding_test
+run_suite //mcp-re-proxy:integration_test mtls_transport_binding_test
 
 echo
 echo "== MCP-RE client leg: signed request over verifying mTLS, bound response =="
-run_suite integration_async mtls_client_leg_e2e_test --features async_serve
+run_suite //mcp-re-proxy:integration_async_test mtls_client_leg_e2e_test
 
 echo
 echo "== MCP-RE delegated-required round trip + fail-closed matrix =="
-run_suite integration_async delegated_client_server_e2e_test --features async_serve
+run_suite //mcp-re-proxy:integration_async_test delegated_client_server_e2e_test
 
 echo
 echo "== MCP-RE verified-context carrier + reserved-field guard =="
-run_suite integration_async verified_context_carrier_test --features async_serve
+run_suite //mcp-re-proxy:integration_async_test verified_context_carrier_test
 
 echo
 echo "OK: MCP-RE local demo completed"

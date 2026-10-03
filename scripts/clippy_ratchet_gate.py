@@ -19,20 +19,22 @@ itself, over production targets only, and holds the per-crate count against
 `unwrap_used` is at **0 across all production code**, measured, so it has no debt entry and
 is denied at zero by the same rule. There is nothing to ratchet.
 
-# Why not `[workspace.lints.clippy]`
+# Why not `//bazel:workspace_lints`
 
-Because every clippy lane in this repository — `scripts/local_gate.sh` and four `ci.yml`
-invocations — runs `--all-targets -- -D warnings`. A workspace-level entry at `warn` is
-therefore a hard error in CI, applied to *all* targets, which includes the thousands of
-`unwrap`/`expect`/indexing sites in test code that the ruling explicitly exempts. Landing
-the lints that way is the "turns the build red immediately" failure C-8 named.
+Because the Rust lint lane (`bazel build --config=lint //...`) runs over every target with
+warnings as errors. A policy entry at `warn` is therefore a hard error, applied to *all*
+targets, which includes the thousands of `unwrap`/`expect`/indexing sites in test code that
+the ruling explicitly exempts. Landing the lints that way is the "turns the build red
+immediately" failure C-8 named.
 
-Running them here, over `--lib --bins`, exempts test code by construction rather than by an
-allowlist somebody has to maintain, and makes the production count a number instead of a
-wall of warnings.
+Running them here, over the production library and binary flavors only, exempts test code
+by construction rather than by an allowlist somebody has to maintain, and makes the
+production count a number instead of a wall of warnings. Every flavor that ships is linted
+— default, `async_serve`, the external backends, the auditor — and a site is counted once
+however many flavors compile it.
 
-The cost is stated rather than hidden: a bare `cargo clippy` does not show these five
-lints. The gate is where they run, and `--activation-probe` proves they run there.
+The cost is stated rather than hidden: the lint lane does not show these lints. The gate is
+where they run, and `--activation-probe` proves they run there.
 
 # Why not a per-crate `#![allow(...)]`
 
@@ -44,9 +46,7 @@ makes the 61st site an error.
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -64,16 +64,16 @@ REGISTRY = REPO / "config" / "clippy-debt.toml"
 # The ADR-MCPRE-061 §6 thresholds, kept OUT of the repository's `/.clippy.toml`.
 # `clippy::excessive_nesting` is warn-by-default with a default threshold of 5, so a value
 # in the root config is enforced immediately by every `--all-targets -- -D warnings` lane —
-# 164 production sites plus test code, red on the first commit. Pointing CLIPPY_CONF_DIR
-# here confines the strict thresholds to this gate's production-only lane.
+# 164 production sites plus test code, red on the first commit. Handing the aspect this
+# directory's `.clippy.toml` confines the strict thresholds to this gate's production lane.
 STRICT_CONF = REPO / "config" / "clippy-strict"
 
 # The adopted lint set (ADR-MCPRE-061 §6.5, C-4 and C-5). THIS is what switches them on:
 # they are allow-by-default and deliberately absent from `[workspace.lints.clippy]`, because
 # every clippy lane in this repo runs `--all-targets -- -D warnings` and a workspace entry
 # would turn thousands of existing TEST-code occurrences into hard errors on one commit.
-# The ruling exempts test code; running the lints here, over `--lib --bins`, exempts it by
-# construction rather than by an allowlist somebody has to maintain.
+# The ruling exempts test code; running the lints here, over production flavors only,
+# exempts it by construction rather than by an allowlist somebody has to maintain.
 ADOPTED = (
     "unwrap_used",              # measured at 0 production sites -> denied at zero
     "expect_used",              # 60  -> ratcheted
@@ -113,92 +113,99 @@ RATCHETED = (
 LINT_FLAGS = [f"-W clippy::{lint}".split()[i] for lint in ADOPTED for i in (0, 1)]
 
 
-def strict_env() -> dict:
-    """The process environment with clippy's config directory pointed at the strict
-    thresholds. Every clippy invocation in this file uses it, so a probe cannot vouch for
-    a configuration the measurement did not use."""
-    env = dict(os.environ)
-    env["CLIPPY_CONF_DIR"] = str(STRICT_CONF)
-    return env
+#: The Bazel label of the strict thresholds, handed to the clippy aspect. Every clippy run in
+#: this file uses it with LINT_FLAGS, so a probe cannot vouch for a configuration the
+#: measurement did not use.
+STRICT_CONF_LABEL = "//config/clippy-strict:.clippy.toml"
+
+#: Library flavors that are test support rather than something that ships: the pre-052
+#: fixture, test-fixture, fault-injection and dev-env key-source builds. The ruling exempts
+#: test code, and these flavors exist to compile it.
+NOT_PRODUCTION = re.compile(r"_(pre052|test_fixtures|fault|dev_env)$")
 
 
-def cargo() -> list[str]:
-    """The pinned toolchain. Homebrew's `cargo` shadows rustup on this machine and
-    ignores `rust-toolchain.toml`, so the channel is named explicitly."""
-    channel = "1.97.1"
-    tc = REPO / "rust-toolchain.toml"
-    if tc.exists():
-        for line in tc.read_text().splitlines():
-            if line.strip().startswith("channel"):
-                channel = line.split("=")[1].strip().strip('"')
-                break
-    if shutil.which("rustup"):
-        return ["rustup", "run", channel, "cargo"]
-    return ["cargo"]
+def clippy_diagnostics(targets: list[str], root: Path = REPO) -> tuple[int, str, list[dict]]:
+    """Lint `targets` with the adopted lints on, and return every diagnostic clippy wrote.
+
+    The diagnostics are CAPTURED to a file per target (`clippy_output_diagnostics`) rather
+    than read off the console, because a cached action prints nothing: a second run over an
+    unchanged tree would otherwise report zero occurrences of everything.
+    """
+    flags = [f"--@rules_rust//rust/settings:clippy_flag={f}"
+             for f in (f"-Wclippy::{lint}" for lint in ADOPTED)]
+    proc = subprocess.run(
+        ["bazel", "build", "--aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect",
+         "--output_groups=clippy_output",
+         f"--@rules_rust//rust/settings:clippy.toml={STRICT_CONF_LABEL}",
+         "--@rules_rust//rust/settings:clippy_output_diagnostics=True",
+         "--@rules_rust//rust/settings:clippy_error_format=json",
+         *flags, *targets],
+        cwd=root, capture_output=True, text=True,
+    )
+    diagnostics: list[dict] = []
+    for target in targets:
+        pkg, name = target[2:].split(":", 1)
+        out = root / "bazel-bin" / pkg / f"{name}.clippy.diagnostics"
+        if not out.is_file():
+            continue
+        for line in out.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                m = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if m.get("$message_type") == "diagnostic":
+                diagnostics.append(m)
+    return proc.returncode, proc.stderr, diagnostics
 
 
-def measure(root: Path, extra_args: list[str] | None = None) -> tuple[Counter, int]:
-    """Run clippy over production targets and count primary spans per (crate, lint).
+def production_targets(root: Path = REPO) -> list[str]:
+    """Every library and binary flavor that ships."""
+    proc = subprocess.run(
+        ["bazel", "query", "--output=label",
+         'kind("^(rust_library|rust_binary) rule$", //...) except attr(tags, "\\bmanual\\b", //...)'],
+        cwd=root, capture_output=True, text=True,
+    )
+    return [t for t in proc.stdout.split() if t.startswith("//") and not NOT_PRODUCTION.search(t)]
+
+
+def measure(root: Path) -> tuple[Counter, int]:
+    """Run clippy over the production targets and count primary spans per (crate, lint).
+
+    A site is counted ONCE however many flavors compile it, and only in a crate's `src/`:
+    examples, `tests/` and the probes are not production code.
 
     Returns (counter keyed by "crate::lint", number of compiler messages seen).
     """
-    cmd = cargo() + [
-        "clippy", "--workspace", "--lib", "--bins",
-        "--message-format=json", "--quiet",
-    ] + (extra_args or []) + ["--"] + LINT_FLAGS
-    proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, env=strict_env())
-    counts: Counter = Counter()
-    messages = 0
-    for line in proc.stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            m = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if m.get("reason") != "compiler-message":
-            continue
-        messages += 1
-        msg = m["message"]
-        code = (msg.get("code") or {}).get("code") or ""
+    targets = production_targets(root)
+    if not targets:
+        raise RuntimeError("the build graph holds no production Rust target — nothing measured")
+    rc, stderr, diagnostics = clippy_diagnostics(targets, root)
+    # A non-zero status means the tree DID NOT COMPILE, and a clippy run that could not
+    # compile a target has not measured it — it reports zero occurrences of every lint in
+    # it. The gate would then say "down to 0 from a baseline of 40 — lower the baseline",
+    # which is the worst possible instruction: it would erase the debt register for code
+    # nobody linted. LINT_FLAGS are all `-W`, so warnings alone never set a non-zero status.
+    if rc != 0:
+        errors = [ln for ln in stderr.splitlines() if ln.startswith(("error", "ERROR"))]
+        raise RuntimeError(
+            f"clippy did not compile the production targets, so it measured nothing "
+            f"(exit {rc}). A partial build reports ZERO occurrences for every target it "
+            f"could not lint.\n" + ("\n".join(errors[:20]) or stderr[-4000:] or "(no stderr)")
+        )
+    sites: set[tuple[str, int, int, str]] = set()
+    for m in diagnostics:
+        code = (m.get("code") or {}).get("code") or ""
         if not code.startswith("clippy::"):
             continue
-        lint = code.split("::", 1)[1]
-        spans = [s for s in msg.get("spans", []) if s.get("is_primary")]
-        if not spans:
+        spans = [x for x in m.get("spans", []) if x.get("is_primary")]
+        if not spans or not re.match(r"^[^/]+/src/", spans[0]["file_name"]):
             continue
-        path = spans[0]["file_name"]
-        if "/tests/" in path or path.startswith("tests/"):
-            continue
-        crate = path.split("/")[0]
-        counts[f"{crate}::{lint}"] += 1
-    # A non-zero status means the workspace DID NOT COMPILE, and a clippy run that could
-    # not compile a crate has not measured that crate — it reports zero occurrences of
-    # every lint in it. The gate then says "down to 0 from a baseline of 40 — lower the
-    # baseline", which is the worst possible instruction: it would erase the debt register
-    # for a crate nobody linted.
-    #
-    # `messages == 0` is NOT the condition. Compile ERRORS are `compiler-message`s too, so
-    # a build that fails with `E0432` produces plenty of messages while measuring nothing.
-    # That is exactly how this was found: a `pub use` of a feature-gated item made
-    # `mcp-re-proxy` fail to build, and the gate reported three lints "down to 0" from
-    # baselines of 35, 40 and 12.
-    #
-    # LINT_FLAGS are all `-W`, so warnings alone never set a non-zero status.
-    if proc.returncode != 0:
-        errors = [
-            line
-            for line in proc.stderr.splitlines()
-            if line.startswith("error") or line.startswith("warning: build failed")
-        ]
-        raise RuntimeError(
-            "clippy did not compile the workspace, so it measured nothing "
-            f"(exit {proc.returncode}). A partial build reports ZERO occurrences for "
-            "every crate it could not lint.\n"
-            + ("\n".join(errors[:20]) or proc.stderr[-4000:] or "(no stderr)")
-        )
-    return counts, messages
+        sites.add((spans[0]["file_name"], spans[0]["line_start"], spans[0]["column_start"],
+                   code.split("::", 1)[1]))
+    counts: Counter = Counter()
+    for path, _, _, lint in sites:
+        counts[f"{path.split('/')[0]}::{lint}"] += 1
+    return counts, len(diagnostics)
 
 
 def load_registry(path: Path) -> dict[str, int]:
@@ -331,18 +338,6 @@ def allow_discipline(root: Path) -> tuple[list[str], int]:
 # probes and selftest
 
 
-NEST_PROBE = """#![allow(clippy::collapsible_if)]
-pub fn depth_two(a: bool, b: bool) -> u32 {
-    if a { if b { return 2; } }
-    0
-}
-pub fn depth_three(a: bool, b: bool, c: bool) -> u32 {
-    if a { if b { if c { return 3; } } }
-    0
-}
-"""
-
-
 def nesting_probe() -> int:
     """Negative control for the nesting rule: depth <= 2 accepted, depth > 2 rejected.
 
@@ -352,64 +347,42 @@ def nesting_probe() -> int:
     off-by-one-shaped: the threshold names the depth that is REJECTED, so "deeper than
     two levels" is threshold 3, not 2.
     """
-    with tempfile.TemporaryDirectory() as tmp:
-        crate = Path(tmp) / "nestprobe"
-        (crate / "src").mkdir(parents=True)
-        (crate / "Cargo.toml").write_text(
-            '[package]\nname = "nestprobe"\nversion = "0.0.0"\nedition = "2021"\n'
-            "[workspace]\n"
-        )
-        (crate / "src" / "lib.rs").write_text(NEST_PROBE)
-        threshold = 3
-        for line in (STRICT_CONF / ".clippy.toml").read_text().splitlines():
-            if line.strip().startswith("excessive-nesting-threshold"):
-                threshold = int(line.split("=")[1].strip())
-        proc = subprocess.run(
-            cargo() + ["clippy", "--quiet", "--message-format=json",
-                       "--", "-W", "clippy::excessive_nesting"],
-            cwd=crate, capture_output=True, text=True, env=strict_env(),
-        )
-        flagged = set()
-        for line in proc.stdout.splitlines():
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                m = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if m.get("reason") != "compiler-message":
-                continue
-            msg = m["message"]
-            if (msg.get("code") or {}).get("code") != "clippy::excessive_nesting":
-                continue
-            for s in msg.get("spans", []):
-                if s.get("is_primary"):
-                    flagged.add(s["line_start"])
+    threshold = 3
+    for line in (STRICT_CONF / ".clippy.toml").read_text().splitlines():
+        if line.strip().startswith("excessive-nesting-threshold"):
+            threshold = int(line.split("=")[1].strip())
+    rc, stderr, diagnostics = clippy_diagnostics(["//config/clippy-strict:nest_probe"])
+    if rc != 0 or not diagnostics:
+        print(f"nesting probe: FAIL — the probe did not build under the gate's flags, so it "
+              f"measured nothing (exit {rc}).\n{stderr[-1500:]}")
+        return 1
+    flagged = {s["line_start"] for m in diagnostics
+               if (m.get("code") or {}).get("code") == "clippy::excessive_nesting"
+               for s in m.get("spans", []) if s.get("is_primary")}
+    # `depth_two` spans lines 5-12 of probes/nest.rs, `depth_three` lines 14-23.
+    two_flagged = any(5 <= ln <= 12 for ln in flagged)
+    three_flagged = any(14 <= ln <= 23 for ln in flagged)
 
-        two_flagged = any(2 <= ln <= 5 for ln in flagged)
-        three_flagged = any(6 <= ln <= 9 for ln in flagged)
-
-        if two_flagged:
-            print(
-                f"nesting probe: FAIL — depth 2 was rejected at "
-                f"excessive-nesting-threshold = {threshold}. The rule is 'deeper than 2', "
-                f"so depth 2 must be accepted."
-            )
-            return 1
-        if not three_flagged:
-            print(
-                f"nesting probe: FAIL — depth 3 was NOT rejected at "
-                f"excessive-nesting-threshold = {threshold}. The lint is configured but "
-                f"enforces nothing; this is the inert-configuration failure ADR-MCPRE-061 "
-                f"§6.1 exists to prevent."
-            )
-            return 1
+    if two_flagged:
         print(
-            f"nesting probe: PASS — at excessive-nesting-threshold = {threshold}, "
-            f"depth 2 accepted and depth 3 rejected (ADR-MCPRE-061 §6.5, C-5)."
+            f"nesting probe: FAIL — depth 2 was rejected at "
+            f"excessive-nesting-threshold = {threshold}. The rule is 'deeper than 2', "
+            f"so depth 2 must be accepted."
         )
-        return 0
+        return 1
+    if not three_flagged:
+        print(
+            f"nesting probe: FAIL — depth 3 was NOT rejected at "
+            f"excessive-nesting-threshold = {threshold}. The lint is configured but "
+            f"enforces nothing; this is the inert-configuration failure ADR-MCPRE-061 "
+            f"§6.1 exists to prevent."
+        )
+        return 1
+    print(
+        f"nesting probe: PASS — at excessive-nesting-threshold = {threshold}, "
+        f"depth 2 accepted and depth 3 rejected (ADR-MCPRE-061 §6.5, C-5)."
+    )
+    return 0
 
 
 def activation_probe() -> int:
@@ -417,98 +390,65 @@ def activation_probe() -> int:
 
     `.clippy.toml` sets thresholds; it does not switch on allow-by-default lints. Before
     this probe existed the project claimed a mechanically enforced 60-line function rule on
-    the strength of `too-many-lines-threshold = 60` plus `cargo clippy -- -D warnings`,
+    the strength of `too-many-lines-threshold = 60` plus a `-D warnings` lint lane,
     and an 80-line function produced no warning at all.
 
     The probe compiles a file that violates the size and nesting rules under the EXACT flag
     list `measure()` uses, so it cannot drift from the gate it vouches for.
     """
-    body = "\n".join(f"    let x{i} = {i}; let _ = x{i};" for i in range(80))
-    src = (
-        "pub fn long_fn() {\n" + body + "\n}\n"
-        "#[allow(clippy::collapsible_if)]\n"
-        "pub fn deep(a: bool, b: bool, c: bool) -> u32 {\n"
-        "    if a { if b { if c { return 3; } } }\n    0\n}\n"
-        # Unconstrained integer addition: overflow semantics are not statically evident.
-        # The neighbours below are the forms the lint deliberately EXCLUDES, so a probe
-        # that started reporting them would be flagging the wrong thing.
-        "pub fn unbounded(x: u64) -> u64 { x + 1 }\n"
-        "pub fn saturating(x: u64) -> u64 { x.saturating_add(1) }\n"
-        "pub fn wrapping(x: u64) -> u64 { x.wrapping_add(1) }\n"
-        "pub fn floating(x: f64) -> f64 { x + 1.0 }\n"
-        "pub fn wrapped(x: std::num::Wrapping<u64>) -> std::num::Wrapping<u64> "
-        "{ x + std::num::Wrapping(1) }\n"
-        "pub const fn constant() -> u64 { 2 + 2 }\n"
-    )
-    with tempfile.TemporaryDirectory() as tmp:
-        crate = Path(tmp) / "activation"
-        (crate / "src").mkdir(parents=True)
-        (crate / "Cargo.toml").write_text(
-            '[package]\nname = "activation"\nversion = "0.0.0"\nedition = "2021"\n'
-            "[workspace]\n"
-        )
-        (crate / "src" / "lib.rs").write_text(src)
-        proc = subprocess.run(
-            cargo() + ["clippy", "--quiet", "--message-format=json", "--"] + LINT_FLAGS,
-            cwd=crate, capture_output=True, text=True, env=strict_env(),
-        )
-        fired = set()
-        arithmetic_lines = []
-        for line in proc.stdout.splitlines():
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                m = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if m.get("reason") != "compiler-message":
-                continue
-            code = (m["message"].get("code") or {}).get("code") or ""
-            if not code.startswith("clippy::"):
-                continue
-            lint = code.split("::", 1)[1]
-            fired.add(lint)
-            if lint == "arithmetic_side_effects":
-                spans = [x for x in m["message"].get("spans", []) if x.get("is_primary")]
-                arithmetic_lines.append(spans[0]["line_start"] if spans else None)
-        missing = [
-            x for x in ("too_many_lines", "excessive_nesting", "arithmetic_side_effects")
-            if x not in fired
-        ]
-        if missing:
-            print(
-                "activation probe: FAIL — a file violating the size, nesting and arithmetic "
-                f"rules did not trigger {missing}. `.clippy.toml` sets thresholds but does "
-                "not switch on allow-by-default lints. These lints are enabled by this "
-                "gate's ADOPTED list, which becomes the `-W` flags in LINT_FLAGS — NOT by "
-                "`[workspace.lints.clippy]`, which ADR-MCPRE-061 §6.2 rejects because every "
-                "clippy lane here runs `--all-targets -- -D warnings` and a workspace entry "
-                "would turn the exempt test-code sites into hard errors. Check ADOPTED, and "
-                "check the thresholds in config/clippy-strict/.clippy.toml."
-            )
-            return 1
-        # The exclusions matter as much as the hits: if the lint ever started reporting
-        # saturating, wrapping, `Wrapping`, float or const arithmetic, the 124-site baseline
-        # would stop meaning what ADR-MCPRE-061 §6.6 says it means.
-        arith_spans = sum(
-            1 for ln in arithmetic_lines if ln is not None
-        )
-        if arith_spans != 1:
-            print(
-                f"activation probe: FAIL — clippy::arithmetic_side_effects fired on "
-                f"{arith_spans} of 6 arithmetic expressions; exactly one (the unconstrained "
-                f"`x + 1`) should fire. Saturating, wrapping, `Wrapping`, float and const "
-                f"arithmetic are excluded by the lint's definition, and ADR-MCPRE-061 §6.6 "
-                f"relies on those exclusions for what a hit MEANS."
-            )
-            return 1
+    rc, stderr, diagnostics = clippy_diagnostics(["//config/clippy-strict:activation_probe"])
+    if rc != 0 or not diagnostics:
+        print(f"activation probe: FAIL — the probe did not build under the gate's flags, so "
+              f"it measured nothing (exit {rc}).\n{stderr[-1500:]}")
+        return 1
+    fired = set()
+    arithmetic_lines = []
+    for m in diagnostics:
+        code = (m.get("code") or {}).get("code") or ""
+        if not code.startswith("clippy::"):
+            continue
+        lint = code.split("::", 1)[1]
+        fired.add(lint)
+        if lint == "arithmetic_side_effects":
+            spans = [x for x in m.get("spans", []) if x.get("is_primary")]
+            arithmetic_lines.append(spans[0]["line_start"] if spans else None)
+    missing = [
+        x for x in ("too_many_lines", "excessive_nesting", "arithmetic_side_effects")
+        if x not in fired
+    ]
+    if missing:
         print(
-            "activation probe: PASS — an 80-line function, a depth-3 block and an "
-            "unconstrained `x + 1` fired; saturating, wrapping, `Wrapping`, float and const "
-            "arithmetic did not (ADR-MCPRE-061 §6.1, §6.6)."
+            "activation probe: FAIL — a file violating the size, nesting and arithmetic "
+            f"rules did not trigger {missing}. `.clippy.toml` sets thresholds but does "
+            "not switch on allow-by-default lints. These lints are enabled by this "
+            "gate's ADOPTED list, which becomes the `-W` flags in LINT_FLAGS — NOT by "
+            "`[workspace.lints.clippy]`, which ADR-MCPRE-061 §6.2 rejects because every "
+            "clippy lane here runs `--all-targets -- -D warnings` and a workspace entry "
+            "would turn the exempt test-code sites into hard errors. Check ADOPTED, and "
+            "check the thresholds in config/clippy-strict/.clippy.toml."
         )
-        return 0
+        return 1
+    # The exclusions matter as much as the hits: if the lint ever started reporting
+    # saturating, wrapping, `Wrapping`, float or const arithmetic, the 124-site baseline
+    # would stop meaning what ADR-MCPRE-061 §6.6 says it means.
+    arith_spans = sum(
+        1 for ln in arithmetic_lines if ln is not None
+    )
+    if arith_spans != 1:
+        print(
+            f"activation probe: FAIL — clippy::arithmetic_side_effects fired on "
+            f"{arith_spans} of 6 arithmetic expressions; exactly one (the unconstrained "
+            f"`x + 1`) should fire. Saturating, wrapping, `Wrapping`, float and const "
+            f"arithmetic are excluded by the lint's definition, and ADR-MCPRE-061 §6.6 "
+            f"relies on those exclusions for what a hit MEANS."
+        )
+        return 1
+    print(
+        "activation probe: PASS — a 70-line function, a depth-3 block and an "
+        "unconstrained `x + 1` fired; saturating, wrapping, `Wrapping`, float and const "
+        "arithmetic did not (ADR-MCPRE-061 §6.1, §6.6)."
+    )
+    return 0
 
 
 def selftest() -> int:
@@ -646,7 +586,7 @@ def main() -> int:
     total = sum(n for k, n in counts.items() if k.split("::", 1)[1] in RATCHETED)
     at_zero = [l for l in ADOPTED if l not in RATCHETED]
     print(
-        f"clippy-ratchet gate: OK — production targets only (--lib --bins). "
+        f"clippy-ratchet gate: OK — production library and binary flavors only. "
         f"Denied at zero: {', '.join('clippy::' + l for l in at_zero)}; "
         f"{total} baselined occurrence(s) of "
         f"{', '.join(RATCHETED)} across {len(baseline)} crate/lint entries, none grew. "

@@ -27,6 +27,9 @@ const MAX_TIMEOUT: Duration = Duration::from_secs(3_600);
 /// bounded. A zero interval is not "poll as fast as possible" — it is a loop with no
 /// progress condition, and the whole point of this value is that the run terminates.
 #[derive(Debug, Clone, Copy)]
+// Read only by the transport. Without `scitt_registration` the policy is still built, so
+// an unusable budget is refused in every build, but nothing polls under it.
+#[cfg_attr(not(feature = "scitt_registration"), allow(dead_code))]
 pub struct RegistrationPolicy {
     timeout: Duration,
     interval: Duration,
@@ -58,11 +61,13 @@ impl RegistrationPolicy {
     }
 
     /// The whole budget for one registration, submission included.
+    #[cfg_attr(not(feature = "scitt_registration"), allow(dead_code))]
     pub(super) fn timeout(&self) -> Duration {
         self.timeout
     }
 
     /// The wait between polls.
+    #[cfg_attr(not(feature = "scitt_registration"), allow(dead_code))]
     pub(super) fn interval(&self) -> Duration {
         self.interval
     }

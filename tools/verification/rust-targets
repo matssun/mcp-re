@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Regenerate, or check, `verification/generated/rust-targets.json` from `bazel query`.
+
+    tools/verification/rust-targets --write   # regenerate the committed table
+    tools/verification/rust-targets --check   # fail if the committed table is stale
+
+The table is the build graph's answer to "which Rust targets exist, with which crate root,
+sources and features" (see `_rust_targets`). `--check` is its freshness control: a table
+that no longer matches the graph would send the census, the manifest and the lanes to
+crates Bazel does not build.
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _rust_targets import REPO_ROOT, TABLE, TargetTableError, generate, render  # noqa: E402
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--write", action="store_true")
+    mode.add_argument("--check", action="store_true")
+    args = ap.parse_args()
+    try:
+        fresh = render(generate())
+    except TargetTableError as err:
+        print(f"rust-targets: FAIL — {err}")
+        return 1
+    rel = TABLE.relative_to(REPO_ROOT)
+    if args.write:
+        TABLE.parent.mkdir(parents=True, exist_ok=True)
+        TABLE.write_text(fresh)
+        print(f"rust-targets: wrote {rel}")
+        return 0
+    committed = TABLE.read_text() if TABLE.is_file() else ""
+    if committed == fresh:
+        print(f"rust-targets: OK — {rel} matches the build graph")
+        return 0
+    diff = difflib.unified_diff(committed.splitlines(), fresh.splitlines(), str(rel), "bazel query", lineterm="", n=1)
+    print(f"rust-targets: FAIL — {rel} does not match the build graph; run "
+          f"`tools/verification/rust-targets --write`")
+    for line in list(diff)[:60]:
+        print(f"  {line}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

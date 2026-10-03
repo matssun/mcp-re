@@ -32,7 +32,7 @@
 //! rather than wedging the single-threaded serve loop.
 //!
 //! This entire module is compiled ONLY under the non-default `cpstore_etcd`
-//! cargo feature, so a default build is byte-for-byte unchanged and gains zero
+//! crate feature, so a default build is byte-for-byte unchanged and gains zero
 //! dependencies (it reuses `ureq` / `serde_json` / `base64`, already in tree).
 
 use std::io::Read;
@@ -201,7 +201,7 @@ impl EtcdTransport for UreqEtcdTransport {
     /// [`ReplayStoreError::Unavailable`] on any transport / non-2xx status /
     /// JSON-parse failure (fail closed). The bounded `timeout` is applied to the
     /// blocking call. The body is serialized and sent with `send_bytes` (the
-    /// `ureq` JSON helpers need an extra cargo feature; this reuses the same
+    /// `ureq` JSON helpers need an extra crate feature; this reuses the same
     /// bounded-read idiom as the KMS signers).
     fn post(&self, path: &str, body: &Value) -> Result<Value, ReplayStoreError> {
         let url = format!("{}/{}", self.base_url, path);

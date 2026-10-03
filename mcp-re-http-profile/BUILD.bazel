@@ -1,5 +1,6 @@
 load("@rules_rust//rust:defs.bzl", "rust_doc_test")
 load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
+load("//bazel/verus:defs.bzl", "verus_verify")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -45,10 +46,9 @@ nt_rust_library(
 )
 
 # ADR-MCPRE-052: the same sources with `pre_052_fixtures` on, so the batteries that
-# exercise the REFUSAL of direct-root response signing can construct one. Under cargo
-# the feature rides a dev-dependency edge and unifies for the whole test invocation;
-# Bazel has no dev edge, so the flavor is how a test target gets it — the identical
-# pattern as `//mcp-re-host:mcp_re_host_test_fixtures` and the proxy's feature flavors.
+# exercise the REFUSAL of direct-root response signing can construct one. A test target
+# gets the feature only by linking this `testonly` flavor — the identical pattern as
+# `//mcp-re-host:mcp_re_host_test_fixtures` and the proxy's feature flavors.
 #
 # It is a SEPARATE target rather than a feature on the base library for the reason the
 # feature exists: the shipped `:mcp_re_http_profile` must export no direct-root response
@@ -56,6 +56,7 @@ nt_rust_library(
 # name, so the split is what keeps the two facts apart.
 nt_rust_library(
     name = "mcp_re_http_profile_pre052",
+    testonly = True,
     srcs = glob(["src/**/*.rs"]),
     crate_features = ["pre_052_fixtures"],
     crate_name = "mcp_re_http_profile",
@@ -77,8 +78,6 @@ nt_rust_library(
 nt_rust_test(
     name = "mcp_re_http_profile_test",
     crate = ":mcp_re_http_profile",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
@@ -98,8 +97,6 @@ nt_rust_test(
 nt_rust_test(
     name = "rfc9421_kat",
     srcs = ["tests/rfc9421_kat.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile",
@@ -115,8 +112,6 @@ nt_rust_test(
 nt_rust_test(
     name = "proof_path_test",
     srcs = ["tests/proof_path_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
@@ -129,8 +124,6 @@ nt_rust_test(
 nt_rust_test(
     name = "structured_fields_strictness_test",
     srcs = ["tests/structured_fields_strictness_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile",
@@ -144,8 +137,6 @@ nt_rust_test(
 nt_rust_test(
     name = "full_profile_test",
     srcs = ["tests/full_profile_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
@@ -160,8 +151,6 @@ nt_rust_test(
 nt_rust_test(
     name = "delegation_e2e_test",
     srcs = ["tests/delegation_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
@@ -176,8 +165,6 @@ nt_rust_test(
 nt_rust_test(
     name = "signer_seam_test",
     srcs = ["tests/signer_seam_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile",
@@ -191,8 +178,6 @@ nt_rust_test(
 nt_rust_test(
     name = "dispatch_test",
     srcs = ["tests/dispatch_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile",
@@ -203,8 +188,6 @@ nt_rust_test(
 nt_rust_test(
     name = "algorithm_confusion_test",
     srcs = ["tests/algorithm_confusion_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile",
@@ -216,8 +199,6 @@ nt_rust_test(
 nt_rust_test(
     name = "binding_identifier_test",
     srcs = ["tests/binding_identifier_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile",
@@ -229,8 +210,6 @@ nt_rust_test(
 nt_rust_test(
     name = "bodyless_202_test",
     srcs = ["tests/bodyless_202_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
@@ -241,8 +220,6 @@ nt_rust_test(
 nt_rust_test(
     name = "chain_reconstruction_test",
     srcs = ["tests/chain_reconstruction_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile",
@@ -253,8 +230,6 @@ nt_rust_test(
 nt_rust_test(
     name = "json_mode_test",
     srcs = ["tests/json_mode_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
@@ -265,8 +240,6 @@ nt_rust_test(
 nt_rust_test(
     name = "mcp_transport_headers_test",
     srcs = ["tests/mcp_transport_headers_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile",
@@ -277,8 +250,6 @@ nt_rust_test(
 nt_rust_test(
     name = "admission_binding_test",
     srcs = ["tests/admission_binding_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile",
@@ -290,8 +261,6 @@ nt_rust_test(
 nt_rust_test(
     name = "delegated_202_test",
     srcs = ["tests/delegated_202_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_http_profile",
@@ -299,9 +268,22 @@ nt_rust_test(
     ],
 )
 
-# The crate's doctests. Cargo runs them in `cargo test --workspace`; the `compile_fail`
-# ones assert that a verified value cannot be built outside its owner.
+# The crate's doctests. The `compile_fail` ones document constructions a verified value
+# refuses outside its owner; rustdoc checks only that they fail, and the structural lane
+# (verification/policy/structural-probes.toml) holds the error code each must fail with.
 rust_doc_test(
     name = "mcp_re_http_profile_doc_test",
     crate = ":mcp_re_http_profile",
+)
+
+# The Verus lane (ADR-MCPRE-059 §16): the pinned prover over this crate with its `verify`
+# specifications on, importing mcp-re-core's verified specifications. `manual`: it needs
+# the pinned install, which only the Verus lane's hosts carry; `tools/verification/
+# verify-verus` builds it.
+verus_verify(
+    name = "mcp_re_http_profile_verus",
+    crate = ":mcp_re_http_profile",
+    spec_features = ["verify"],
+    tags = ["manual"],
+    verus_deps = ["//mcp-re-core:mcp_re_core_verus"],
 )

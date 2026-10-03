@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import _lean_model  # noqa: E402
+from _manifest import load_toolchains  # noqa: E402
 from _lean_model import (  # noqa: E402
     STAMP_FAIL,
     STAMP_OK,
@@ -401,12 +402,13 @@ def test_a_unit_spanning_two_crates_has_no_single_crate_to_extract_from():
     assert _lean_model.unit_crate(unit) is None
 
 
-def test_charon_extracts_rust_so_a_non_cargo_unit_has_no_crate():
+def test_charon_extracts_rust_so_a_non_rust_unit_has_no_crate():
     """Delegating to `unit_projects` is not enough on its own.
 
     It answers "which project", for every ecosystem. A V2 unit whose paths resolve to a
-    Python or TypeScript project would get a project NAME back, and `charon cargo` would
-    then run in a directory with no Cargo manifest — a failure some distance from its cause.
+    Python or TypeScript project would get a project NAME back, and the extraction would
+    then look for a `charon_llbc` target in a package with no Rust crate — a failure some
+    distance from its cause.
     """
     unit = {
         "id": "p",
@@ -498,6 +500,22 @@ def test_the_stale_message_states_an_observation_not_a_consequence(subject: Tree
     for defect in stale:
         assert "constrains source that is no longer there" not in defect, defect
         assert "THIS STAMP RECORDS" in defect, defect
+
+
+def test_the_registered_nightly_is_the_one_charon_pins():
+    assert _lean_model.build_nightly_drift(load_toolchains()) is None
+
+
+def test_a_registered_nightly_charon_does_not_pin_is_refused():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        module = Path(tmp) / "MODULE.bazel"
+        module.write_text('rust.toolchain(versions = ["1.97.1", "nightly/2026-06-02"])\n')
+        drift = _lean_model.build_nightly_drift({"charon": {"rust_toolchain": "nightly-2026-06-01"}}, module)
+        assert drift and "2026-06-02" in drift, drift
+        module.write_text('rust.toolchain(versions = ["1.97.1"])\n')
+        assert _lean_model.build_nightly_drift({"charon": {"rust_toolchain": "nightly-2026-06-01"}}, module)
 
 
 if __name__ == "__main__":

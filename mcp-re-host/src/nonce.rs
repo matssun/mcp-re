@@ -81,7 +81,7 @@ impl NonceSource for SystemNonceSource {
 /// It is a TEST provider with NO real entropy and must never reach a production
 /// binary. Because it is reused as an injectable fixture by integration tests in
 /// this and dependent crates, it is compiled only under `cfg(test)` or the explicit
-/// `test-fixtures` cargo feature — an *enforced* boundary, not a doc-comment one. A
+/// `test-fixtures` crate feature — an *enforced* boundary, not a doc-comment one. A
 /// default (production) build of `mcp-re-host` does not compile this type at all, so
 /// a misconfigured deployment cannot draw predictable nonces from it.
 #[cfg(any(test, feature = "test-fixtures"))]

@@ -222,7 +222,7 @@ def selftest() -> int:
     assert invocations("    `# see tools/slo/run_slo_job.sh` \\") == set()
     assert invocations("    && python3 scripts/x.py --selftest \\") == {"scripts/x.py"}
     assert invocations("  PROVIDER=kind docs/security/h.sh || return $?") == {"docs/security/h.sh"}
-    assert invocations(". scripts/use_pinned_toolchain.sh || exit 1") == {"scripts/use_pinned_toolchain.sh"}
+    assert invocations(". scripts/lib/sat_replay_fleet.sh || exit 1") == {"scripts/lib/sat_replay_fleet.sh"}
     assert invocations('  echo "run tools/slo/run_slo_job.sh yourself"') == set()
 
     real, _ = _read_repo()

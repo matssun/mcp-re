@@ -22,8 +22,9 @@
 //! in `delegation_cross_verification_test.rs` + `tools/jose_cross_verify.py`
 //! (ADR-MCPRE-052 §9; mirrors the RFC 9421 gate, MCPRE-99).
 //!
-//! Regenerate: cargo test -p mcp-re-conformance --test delegation_vectors_test \
-//!   write_delegation_fixtures -- --ignored --exact
+//! Regenerate (writes through the runfiles symlinks into the source tree):
+//!   bazel run //mcp-re-conformance:delegation_vectors_test -- \
+//!     write_delegation_fixtures --ignored --exact
 
 use serde::Deserialize;
 use serde::Serialize;

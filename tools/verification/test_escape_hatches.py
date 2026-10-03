@@ -484,6 +484,57 @@ def test_no_seam_hides_in_a_file_no_unit_declares():
     )
 
 
+# --- a `none:` site is live when its item is declared, stale when it is not ---
+
+
+def _with_none_assumption(tmp: Path, sites: list[str]):
+    """Point the gate at `tmp` and at one `none:trusted-seam` assumption naming `sites`."""
+    saved = (gate.REPO_ROOT, gate.load_assumptions)
+    gate.REPO_ROOT = tmp
+    gate.load_assumptions = lambda: {
+        "assumption": [
+            {"id": "ASM-9999", "tool_specific_mechanism": "none:trusted-seam", "sites": sites}
+        ]
+    }
+    return saved
+
+
+def test_a_none_site_whose_item_is_declared_is_live():
+    """No scanner pattern sees a `trusted-seam`, so its site is never an escape-hatch hit.
+    The gate used to call every such registration stale, which read as a rename that had
+    not happened. A declared item must resolve."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        (tmp / "seam.rs").write_text(
+            "pub struct Carrier;\nimpl Carrier {\n    pub fn attach(&self) {}\n}\n",
+            encoding="utf-8",
+        )
+        saved = _with_none_assumption(tmp, ["seam.rs#Carrier", "seam.rs#Carrier::attach"])
+        try:
+            assert gate.declared_seam_sites() == {"seam.rs#Carrier", "seam.rs#Carrier::attach"}
+        finally:
+            gate.REPO_ROOT, gate.load_assumptions = saved
+
+
+def test_a_none_site_whose_item_was_renamed_or_moved_is_not_live():
+    """The other direction, which is the reason the check exists: a seam renamed, deleted or
+    moved to another file must stop resolving rather than be waved through."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        (tmp / "seam.rs").write_text("pub fn relocated() {}\n", encoding="utf-8")
+        saved = _with_none_assumption(
+            tmp, ["seam.rs#original", "gone.rs#relocated", "seam.rs#relocated"]
+        )
+        try:
+            assert gate.declared_seam_sites() == {"seam.rs#relocated"}
+        finally:
+            gate.REPO_ROOT, gate.load_assumptions = saved
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

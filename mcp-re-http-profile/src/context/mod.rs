@@ -85,9 +85,9 @@
 //! # Where the evidence for the serving path lives
 //!
 //! The composer's own unit tests are in `mcp-re-proxy`'s `body_boundary`, in the
-//! default cargo lane. The END-TO-END served-path tests are in
+//! default-feature targets. The END-TO-END served-path tests are in
 //! `mcp-re-proxy/tests/integration_async/verified_context_carrier_test.rs`, which
-//! compiles only under the `async_serve` feature — a plain `cargo test --workspace`
+//! compiles only under the `async_serve` feature — a default-feature target
 //! builds it to zero tests. Any claim about the served path must name that lane.
 
 mod block_schema;

@@ -419,8 +419,9 @@ weaker proof somewhere else.
 ## Sealing the next owner
 
 1. Make the representation private: `pub struct X { kind: XKind }`, `enum XKind` private.
-2. `cargo check -p <crate> --all-targets`. **The error list is the consumer set.** It is
-   the measurement; greps and audit findings are not.
+2. `bazel build //<crate>/...` — every target that compiles the crate, its tests
+   included. **The error list is the consumer set.** It is the measurement; greps and
+   audit findings are not.
 3. For each error ask *what does this consumer actually need to know?* The answer is
    normally much narrower than the fields it was destructuring. Name that projection.
 4. Where the consumer must branch, give it a borrowed view rather than the representation.

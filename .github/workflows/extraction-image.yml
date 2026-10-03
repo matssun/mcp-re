@@ -3,8 +3,8 @@
 # ADR-MCPRE-059 §19 — build the extraction container and report its identity.
 #
 # WHY IT IS MANUAL. Building the image mints a new evidence identity: the definition is not
-# reproducible — it still resolves apt package versions and opam library versions at build
-# time, and the opam libraries build the Aeneas binary — so a rebuild legitimately
+# reproducible — it still resolves apt packages, the rustup installer and the mathlib cache
+# at build time — so a rebuild legitimately
 # invalidates the Lean evidence that named the previous one. That is a deliberate act, not
 # something a push to a branch should perform.
 #

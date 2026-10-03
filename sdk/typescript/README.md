@@ -237,8 +237,9 @@ if (v.outcome !== "success") throw new Error(`rejected: ${v.wireCode}`);
 ```
 sdk/typescript/
   Cargo.toml             # napi cdylib -> mcp-re-sdk-core; OWN workspace (separate from root)
-  build.rs               # napi-build hook
-  package.json           # @napi-rs/cli build config, mixed Rust/TS layout
+  BUILD.bazel            # the addon + its napi type definitions (//sdk/typescript:native)
+  package.json           # napi config (binary name, targets), mixed Rust/TS layout
+  scripts/               # build-native.mjs (Bazel build + stage) and write-binding.mjs
   native/                # generated: binding.js + binding.d.ts + *.node
   src/
     lib.rs               # the napi binding (the exact analog of sdk/python/src/lib.rs)
@@ -262,7 +263,7 @@ sdk/typescript/
 ```sh
 cd sdk/typescript
 npm install
-npm run build      # napi build (native addon) + tsc (dist)
+npm run build      # Bazel builds the native addon, the pinned napi CLI renders its loader; tsc (dist)
 npm test           # build + vitest run
 ```
 

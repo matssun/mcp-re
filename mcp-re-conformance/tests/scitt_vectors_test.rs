@@ -34,8 +34,8 @@
 //! survived on both sides of this check.
 //!
 //! Regenerate (and re-pin) with:
-//!   cargo test -p mcp-re-conformance --test scitt_vectors_test \
-//!     write_scitt_fixtures -- --ignored
+//!   bazel run //mcp-re-conformance:scitt_vectors_test -- \
+//!     write_scitt_fixtures --ignored
 
 use std::path::PathBuf;
 
@@ -81,7 +81,7 @@ fn stranger() -> SigningKey {
     SigningKey::from_seed_bytes(&[77u8; 32])
 }
 
-/// The corpus directory: the runfiles copy under Bazel, the source tree under cargo.
+/// The corpus directory: the runfiles copy under Bazel, the source tree otherwise.
 ///
 /// Bazel runs tests in a sandbox where `CARGO_MANIFEST_DIR` is not the source tree, so
 /// the manifest's runfile path is passed in. Mirrors `delegation_vectors_test`.

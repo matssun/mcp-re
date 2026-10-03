@@ -1,0 +1,40 @@
+INFO: Invocation ID: 0cd6be1e-edd4-4ae0-aad4-99328dec54de
+Computing main repo mapping:
+Loading:
+Loading: 0 packages loaded
+Analyzing: 18 targets (0 packages loaded, 0 targets configured)
+ERROR: /REPO/components/demo/widgets/BUILD.bazel:113:14: While resolving toolchains for target //components/demo/widgets:test (1ce79ad): No matching toolchains found for types:
+  @@bazel_tools//tools/test:default_test_toolchain_type: By default, tests are executed on the first execution platform that matches all constraints specified by the target platform. Either register the target platform (or a platform with at least the same constraints) as an execution platform, or override the default behavior by registering a custom toolchain for @bazel_tools//tools/test:default_test_toolchain_type.
+To debug, rerun with --toolchain_resolution_debug='@@bazel_tools//tools/test:default_test_toolchain_type'
+For more information on platforms or toolchains see https://bazel.build/concepts/platforms-intro.
+Analyzing: 18 targets (0 packages loaded, 0 targets configured)
+[0 / 1] checking cached actions
+INFO: Analyzed 18 targets (0 packages loaded, 0 targets configured).
+WARNING: errors encountered while analyzing target '//components/demo/widgets:test_image', it will not be built.
+Analysis failed
+WARNING: errors encountered while analyzing target '//components/demo/widgets:test_layer', it will not be built.
+Analysis failed
+WARNING: errors encountered while analyzing target '//components/demo/widgets:load_test_image', it will not be built.
+Analysis failed
+WARNING: errors encountered while analyzing target '//components/demo/widgets:_test_image_index_json', it will not be built.
+Analysis failed
+WARNING: errors encountered while analyzing target '//components/demo/widgets:test_linux', it will not be built.
+Analysis failed
+WARNING: errors encountered while analyzing target '//components/demo/widgets:_test_image_index_json_cp', it will not be built.
+Analysis failed
+WARNING: errors encountered while analyzing target '//components/demo/widgets:test_image.digest', it will not be built.
+Analysis failed
+INFO: Build succeeded for only 11 of 18 top-level targets
+INFO: Found 7 targets and 4 test targets...
+ERROR: command succeeded, but not all targets were analyzed
+INFO: Elapsed time: 0.314s, Critical Path: 0.04s
+INFO: 1 process: 4 action cache hit, 1 internal.
+ERROR: Build did NOT complete successfully
+//components/demo/widgets:common_test                 (cached) PASSED in 2.3s
+//components/demo/widgets:interfaces_test             (cached) PASSED in 5.7s
+//components/demo/widgets:semantic_evaluation_test    (cached) PASSED in 1.8s
+//components/demo/widgets:test                        (cached) PASSED in 6.1s
+
+Executed 0 out of 4 tests: 4 tests pass.
+There were tests whose specified size is too big. Use the --test_verbose_timeout_warnings command line option to see which ones these are.
+All tests passed but there were other errors during the build.
