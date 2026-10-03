@@ -129,7 +129,7 @@ fn live_responder_reports_good_and_revoked_without_restart() {
 
     // Override the AIA URL with the env-provided responder so the test does not
     // depend on the leaf carrying an AIA entry (though the recipe bakes one in).
-    let checker = OcspChecker::new(Some(url.clone()), false);
+    let checker = OcspChecker::new(Some(url.clone()));
 
     let good = checker
         .check(&good_der, &issuer_der)

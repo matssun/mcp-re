@@ -149,8 +149,8 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | A `Good` status was produced by a response that passed all five §3.2 checks | local | none — the type cannot express it (Q11) | **gap, and blocked on the representation** |
 | A cert-supplied responder URL is never fetched without the full SSRF guard | local | call ordering inside `check` | **structural, no registry entry** |
 | Every address the fetch connects to is public | local | `VettingResolver` | **structural, no registry entry** |
-| An `Unknown` status denies unless the operator opted into soft-fail | local | `decide_allow` | **structural, no registry entry** |
-| A responder-signed `Good` cannot be replayed indefinitely | local | `is_fresh`'s unconditional `thisUpdate + max_age` cap | **structural, no registry entry** |
+| Only a `Good` answer inside its own acceptance window admits; `Unknown`, `Revoked` and every unestablished result deny, and the checker has no fail-open posture | local | `TrustedRevocationAnswer::admits_at` through `OcspChecker::allows` | **structural, no registry entry** |
+| A responder-signed `Good` cannot be replayed indefinitely | local | `acceptance_bound`'s unconditional `thisUpdate + max_age` cap | **structural, no registry entry** |
 
 THM-0013's own scope sentence is unusually careful and worth quoting as the model for the rest: it *"establishes reachability and legality only. It does NOT establish the correctness of the retained RFC 6960 implementation … It says what no deployment can turn on, not that what is turned off would be correct if turned on."*
 

@@ -221,8 +221,8 @@ pub struct ServerOptions {
     /// ONLINE OCSP client-cert revocation (#4030), the online sibling of #3839's
     /// offline CRL posture. When `Some`, after the handshake the serve loop asks
     /// the leaf's OCSP responder whether it is revoked, BEFORE the handler, and
-    /// fails closed (rejects) on `Revoked`/`Unknown`/error unless the checker is
-    /// in soft-fail mode (see [`ocsp_rejection_for_chain`]). `None` disables the online
+    /// fails closed (rejects) on `Revoked`/`Unknown`/error (see [`ocsp_rejection_for_chain`]).
+    /// `None` disables the online
     /// check (the default). This field — and the entire online check — exists
     /// ONLY in a build with the `online_ocsp` feature; the default build has no
     /// such field and the hook is a compile-time no-op, so it is byte-for-byte
@@ -485,13 +485,12 @@ pub(crate) fn routing_header_rejection(
 /// `None` when no checker is configured or the leaf is admitted.
 ///
 /// Fail-closed posture (mirrors the offline CRL deny-unknown default): the leaf
-/// is REJECTED when the responder reports `Revoked` (always), or `Unknown`, or
-/// the check errors (unreachable / timeout / parse), UNLESS the checker is in
-/// soft-fail mode — in which case only `Revoked` rejects. The issuer is taken
-/// from the verified peer chain (the cert directly after the leaf); a leaf with
-/// no chained issuer cannot be checked and is treated as an indeterminate
-/// result (rejected unless soft-fail). The HTTP fetch carries the checker's
-/// mandatory timeout so this can never wedge the blocking serve thread.
+/// is REJECTED unless a verified responder answered `Good` within that answer's own
+/// window — `Revoked`, `Unknown`, an error (unreachable / timeout / parse), and a leaf
+/// the supplied issuer did not sign all reject. The issuer is taken from the verified
+/// peer chain (the cert directly after the leaf); a leaf with no chained issuer cannot
+/// be checked and is rejected. The HTTP fetch carries the checker's timeout over
+/// connect, send and the body read, not over name resolution (see `crate::ocsp`).
 ///
 /// The chain is handed in leaf-first, exactly as the channel-associated credential
 /// evidence carries it, so the decision does not depend on who holds the connection. The
@@ -517,32 +516,19 @@ pub(crate) fn ocsp_rejection_for_chain(
 
     let leaf = chain.first()?;
     // The issuer is the next cert in the verified chain. Without it we cannot
-    // build a CertID; treat as an indeterminate (Unknown) result and apply the
-    // fail-closed policy (reject unless soft-fail).
+    // build a CertID, so nothing can be established: reject.
     let Some(issuer) = chain.get(1) else {
-        return if checker.allows_on_error() {
-            None
-        } else {
-            reject()
-        };
+        return reject();
     };
 
-    match checker.check(leaf, issuer) {
-        Ok(status) => {
-            if checker.allows(status) {
-                None
-            } else {
-                reject()
-            }
-        }
-        // Transport/codec error: indeterminate, fail closed unless soft-fail.
-        Err(_) => {
-            if checker.allows_on_error() {
-                None
-            } else {
-                reject()
-            }
-        }
+    // A transport/codec error establishes nothing either: only an answer admits.
+    let admitted = checker
+        .check(leaf, issuer)
+        .is_ok_and(|evidence| checker.allows(evidence, std::time::SystemTime::now()));
+    if admitted {
+        None
+    } else {
+        reject()
     }
 }
 

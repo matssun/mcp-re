@@ -1,72 +1,65 @@
 //! ONLINE client-certificate revocation via OCSP (#4030, Phase 7,
 //! ADR-MCPS-019) — compiled ONLY under the non-default `online_ocsp` feature.
 //!
-//! #3839 shipped OFFLINE CRL revocation (`WebPkiClientVerifier::with_crls`, a
-//! startup-loaded deny-unknown-status CRL set) plus the M-10 `RevocationSource`
-//! taxonomy. This module adds an ONLINE check performed at connection time: the
-//! proxy asks the certificate's OCSP responder (RFC 6960) whether the verified
-//! client leaf is revoked, BEFORE the request reaches the inner server. A
-//! compromised client credential is thus rejected without waiting for a manual
-//! CRL update + restart, and within its short enforced lifetime.
+//! The proxy asks the verified client leaf's OCSP responder (RFC 6960) whether it is
+//! revoked at connection time, before the request reaches the inner server, so a
+//! compromised credential is refused without waiting for a CRL update and restart.
 //!
 //! # Design
 //!
-//! The check is a sibling of `tls::cert_lifetime_rejection`: a per-connection
-//! fail-closed rejection hook that runs after the mTLS handshake (so the leaf is
-//! already chain-verified) and before the handler. The serve loop is BLOCKING
-//! (`std::net` + threads, no async runtime), so the HTTP fetch carries a
-//! MANDATORY timeout — an unbounded fetch would wedge the serving thread. A
-//! timeout, transport error, parse error, or `Unknown` status all fail CLOSED
-//! (the connection is rejected) unless the operator opts into `soft_fail`.
+//! A per-connection fail-closed rejection hook, a sibling of
+//! `tls::cert_lifetime_rejection`: it runs after the mTLS handshake (the leaf is already
+//! chain-verified) and before the handler. A transport error, parse error, trust failure
+//! or `Unknown` status all deny; the checker takes no policy input that could admit one.
 //!
-//! The deterministic pieces — responder-URL extraction, status mapping, and the
-//! allow/reject policy decision — are factored into small pure functions so the
-//! unit tests below exercise them with ZERO network access.
+//! The checker is dormant: no validated deployment enables the online half (THM-0013), and
+//! its fetch is a blocking one. The fetch timeout bounds connect, send and the body read; it
+//! does NOT bound name resolution, which `ureq` does not interrupt, so a hostile responder
+//! hostname can hold a serving thread for the resolver's own limit. Bounding resolution is
+//! the async OCSP follow-up's, not this module's.
+//!
+//! The deterministic pieces — responder-URL extraction, status mapping, the trust
+//! pipeline — are small functions the unit tests exercise with no network.
 //!
 //! # CertID hash
 //!
-//! CertIDs are built with **SHA-256** (`sha2::Sha256`). The responder MUST be
-//! configured to answer SHA-256 CertIDs; an OpenSSL test responder does so with
-//! `openssl ocsp ... -sha256` (see `tests/ocsp_e2e_test.rs`).
+//! CertIDs are built with **SHA-256** (`sha2::Sha256`). The responder MUST be configured to
+//! answer SHA-256 CertIDs; an OpenSSL test responder does so with `openssl ocsp ... -sha256`
+//! (see `tests/ocsp_e2e_test.rs`).
+//!
+//! # Issuer binding
+//!
+//! `check` takes the issuer as an argument, and the CertID, the signer candidate and the
+//! responder identity are all measured against it. [`leaf_is_issued_by`] therefore refuses
+//! an issuer that did not sign the leaf, so those checks run against the key that issued the
+//! handshake-verified leaf and not against whatever a peer presented after it.
 //!
 //! # Responder-response trust chain (#4063 / MCPS-088, closes #4030)
 //!
-//! An OCSP `cert_status` is admission control: a `Good` admits the client. RFC
-//! 6960 §3.2 therefore requires a response be TRUSTED before its status is acted
-//! on. This module performs the full §3.2 trust chain BEFORE mapping a status,
-//! and FAILS CLOSED (maps to [`CertRevocationStatus::Unknown`], which denies
-//! under hard-fail) on ANY gap:
+//! A `Good` admits the client, so RFC 6960 §3.2 requires the response be TRUSTED before its
+//! status is acted on. This module runs the full chain BEFORE mapping a status and fails
+//! CLOSED on any gap:
 //!
-//!   1. **Responder signature** — the `BasicOcspResponse.signature` is verified
-//!      over the DER of `tbs_response_data` against the signer's public key,
-//!      algorithm-agnostically (RSA PKCS#1 v1.5 SHA-256/384/512 and ECDSA
-//!      P-256/P-384, via `x509-parser`'s `ring`-backed verifier). The signer is
-//!      EITHER the issuer itself OR a delegated responder certificate carried in
-//!      `basic.certs` that (a) is itself issuer-signed and (b) carries the
-//!      `id-kp-OCSPSigning` EKU. See [`verify_responder_signature`].
-//!   2. **Responder identity** — `tbs_response_data.responder_id` (byName or
-//!      byKey) must match the signer chosen in (1). See [`responder_id_matches`].
-//!   3. **CertID binding** — the `SingleResponse` acted on must be the one whose
-//!      `CertID` equals the CertID we requested (hash alg OID, issuer name hash,
-//!      issuer key hash, serial). A response that answers a DIFFERENT cert is not
-//!      evidence about ours. See [`select_matching_single_response`].
-//!   4. **Freshness** — `now >= thisUpdate - skew` and `now <= upper + skew`,
-//!      where `upper` is `nextUpdate` when present, capped unconditionally at
-//!      `thisUpdate + max_response_age`. The cap bounds acceptance even when a
-//!      response omits `nextUpdate`, so an old responder-signed Good cannot be
-//!      replayed indefinitely. A stale or not-yet-valid response is treated as
-//!      Unknown. See [`is_fresh`].
-//!   5. **Nonce** — the request carries a 16-byte CSPRNG nonce; when the
-//!      responder echoes a nonce it MUST equal the request's, else the response
-//!      is a replay/substitution and is rejected. See [`nonce_ok`].
+//!   1. **Responder signature** — verified over the DER of `tbs_response_data`,
+//!      algorithm-agnostically (RSA PKCS#1 v1.5 SHA-256/384/512, ECDSA P-256/P-384, Ed25519,
+//!      via `x509-parser`'s `ring`-backed verifier). The signer is EITHER the issuer OR a
+//!      delegated responder certificate in `basic.certs` that is in its validity window,
+//!      issuer-signed, and carries the `id-kp-OCSPSigning` EKU and `id-pkix-ocsp-nocheck`,
+//!      is not a CA and, when it states key usage, permits `digitalSignature`. See
+//!      [`verify_responder_signature`] and [`delegated_responder_is_valid`].
+//!   2. **Responder identity** — `responder_id` (byName or byKey) must match the signer from
+//!      (1). See [`responder_id_matches`].
+//!   3. **Nonce** — the request carries a 16-byte CSPRNG nonce; a responder that echoes one
+//!      MUST echo ours. See [`nonce_ok`].
+//!   4. **CertID binding** — exactly one `SingleResponse` must bind to the CertID we
+//!      requested; none, or more than one, is refused. See [`select_matching_single_response`].
+//!   5. **Freshness** — `now >= thisUpdate - skew` and `now <= upper + skew`, where `upper`
+//!      is `nextUpdate` capped at `thisUpdate + max_response_age`, so a response omitting
+//!      `nextUpdate` cannot be replayed indefinitely. See [`acceptance_bound`].
 //!
-//! The cryptographic verifier in (1) (`x509-parser/verify`, the `ring`-backed
-//! algorithm-agnostic RSA+ECDSA verifier) is enabled unconditionally at the
-//! workspace level and compiled into THIS `online_ocsp` module, so the shipping
-//! `online_ocsp` + `--client-ocsp require` build performs the full §3.2 trust
-//! chain for real. A response whose signature does not verify maps to `Unknown`
-//! and is DENIED under hard-fail — the path can NEVER admit on an unverified
-//! signature.
+//! The answer that comes out carries the end of its own acceptance window, so possession
+//! means "a verified responder said this, valid until T": [`OcspChecker::allows`] refuses an
+//! answer past it.
 
 use std::time::Duration;
 use std::time::SystemTime;
@@ -105,6 +98,12 @@ use crate::outbound_fetch::VettedDestination;
 /// for its signature over the response to be trusted.
 const ID_KP_OCSP_SIGNING: &str = "1.3.6.1.5.5.7.3.9";
 
+/// The `id-pkix-ocsp-nocheck` extension OID (`1.3.6.1.5.5.7.48.1.5`, RFC 6960 §4.2.2.2.1).
+/// This module has no revocation source for a delegated responder certificate, so the
+/// extension — which licenses a relying party to skip that check — is the only way the
+/// responder's standing can be established here.
+const ID_PKIX_OCSP_NOCHECK: &str = "1.3.6.1.5.5.7.48.1.5";
+
 /// The request nonce length in bytes (RFC 8954 permits 1..32; 16 is ample
 /// entropy against replay/substitution while staying within responders that cap
 /// nonce length). The nonce is freshly drawn per request from the OS CSPRNG.
@@ -137,10 +136,9 @@ const ID_AD_OCSP: &str = "1.3.6.1.5.5.7.48.1";
 /// digest crate exposing its `AssociatedOid` impl under the current feature set.
 const OID_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
 
-/// The default HTTP fetch timeout. The serve loop is blocking, so an unbounded
-/// fetch would hang the serving thread; this bounds it and the check fails
-/// closed on timeout. Five seconds is generous for a healthy responder yet short
-/// enough not to starve the connection.
+/// The default HTTP fetch timeout: a per-request deadline over connect, send and the body
+/// read, after which the check fails closed. It does not cover DNS resolution, which `ureq`
+/// does not interrupt.
 const DEFAULT_OCSP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// What a VERIFIED responder said about the client leaf certificate.
@@ -167,41 +165,46 @@ pub enum CertRevocationStatus {
 
 /// The conclusion the RFC 6960 §3.2 trust chain reached — and the ONLY way to speak one.
 ///
-/// # What the census found
-///
-/// EX-006 named this the sharpest instance the campaign has produced:
-///
-/// > `verify_and_map_response` performs all five §3.2 checks and returns a three-valued
-/// > `Copy` enum. `decide_allow(CertRevocationStatus::Good, false) == true` is reachable
-/// > from anywhere, with no responder, no signature and no freshness. **The entire trust
-/// > chain collapses into a value carrying no evidence of having been through it.**
-///
 /// The representation is private and [`verify_and_map_response`] is its sole producer, so
 /// possession of one means all five checks ran: the responder signature verified against
 /// the issuer or a delegated `id-kp-OCSPSigning` responder, the `responder_id` matched that
 /// signer, a present nonce echoed ours, a `SingleResponse` bound to the CertID we asked
 /// about, and that response was fresh. There is no constructor taking a status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// It also carries the end of its own acceptance window, as a `Duration` since the Unix
+/// epoch: a freshness proof taken at T is not an admission token forever. It is not `Copy`,
+/// so the dated value is handed on rather than duplicated.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustedRevocationAnswer {
     status: CertRevocationStatus,
+    valid_until: Duration,
 }
 
 impl TrustedRevocationAnswer {
     /// What the verified responder said.
-    pub fn status(self) -> CertRevocationStatus {
+    pub fn status(&self) -> CertRevocationStatus {
         self.status
+    }
+
+    /// Whether this answer admits the certificate at `now`: it said `Good` and `now` is
+    /// still inside the window it was accepted for.
+    fn admits_at(&self, now: SystemTime) -> bool {
+        self.status == CertRevocationStatus::Good
+            && system_time_to_unix(now).is_some_and(|now| now <= self.valid_until)
     }
 
     /// A verified answer, for a test whose subject is the POLICY rather than the chain.
     ///
-    /// `#[cfg(test)]`. The policy — `Revoked` always denies, `Good` allows, `Unknown`
-    /// denies unless soft-fail — is a different proposition from "the chain ran", and a
-    /// test of the first should not have to mint a signed OCSP response to state it. It
-    /// compiles to nothing outside the test build, so the seal holds against every
-    /// production path and against every other crate.
+    /// `#[cfg(test)]`. The policy — only a `Good` inside its window admits — is a different
+    /// proposition from "the chain ran", and a test of the first should not have to mint a
+    /// signed OCSP response to state it. It compiles to nothing outside the test build, so
+    /// the seal holds against every production path and against every other crate.
     #[cfg(test)]
-    fn answered(status: CertRevocationStatus) -> Self {
-        TrustedRevocationAnswer { status }
+    fn answered(status: CertRevocationStatus, valid_until: Duration) -> Self {
+        TrustedRevocationAnswer {
+            status,
+            valid_until,
+        }
     }
 }
 
@@ -210,9 +213,9 @@ impl TrustedRevocationAnswer {
 /// The two are not the same fact and the census asked for them to stop being the same
 /// value. A responder that answered `unknown` was reached and verified; a check with no
 /// responder URL, or one whose destination the outbound guard refused, reached nothing.
-/// Both deny under hard-fail — that is the POLICY, and it is [`OcspChecker::allows`]'s —
-/// but only one of them is a statement about the certificate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Both deny — that is the POLICY, and it is [`OcspChecker::allows`]'s — but only one of
+/// them is a statement about the certificate.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RevocationEvidence {
     /// A verified responder answered. See [`TrustedRevocationAnswer`].
     Answered(TrustedRevocationAnswer),
@@ -235,7 +238,7 @@ pub enum NotEstablished {
 }
 
 /// Errors performing an online OCSP check. Every variant is a fail-closed
-/// condition: under hard-fail (the default) the connection is rejected.
+/// condition: the connection is rejected.
 #[derive(Debug, thiserror::Error)]
 pub enum OcspError {
     /// A certificate (leaf or issuer) could not be decoded from DER.
@@ -286,57 +289,55 @@ pub enum OcspError {
 /// Performs an online OCSP revocation check for a verified client leaf
 /// certificate against its issuer. Holds only configuration; it is cheap to
 /// clone and carries no network state between calls.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is written by hand: the configured responder URL may carry userinfo
+/// credentials, and `ServerOptions` derives `Debug` over this type.
+#[derive(Clone)]
 pub struct OcspChecker {
     /// An explicit responder URL that OVERRIDES the leaf's AIA OCSP URL. `None`
-    /// means "use the AIA URL from the leaf" (and a leaf without one yields
-    /// `Unknown`).
+    /// means "use the AIA URL from the leaf" (and a leaf without one establishes nothing).
     ///
     /// Held as the raw string rather than a [`VettedDestination`]: an override that fails
-    /// the scheme allowlist must produce `Unknown` for the connection being checked, not a
-    /// construction failure at startup for a deployment that may never reach this code.
+    /// the scheme allowlist must fail the connection being checked, not construction at
+    /// startup for a deployment that may never reach this code.
     responder_url_override: Option<String>,
-    /// When `true`, an indeterminate result (`Unknown`, unreachable responder,
-    /// timeout, parse error, signature failure) ALLOWS the connection instead of
-    /// rejecting it. Default `false` = hard-fail (deny on anything but `Good`).
-    soft_fail: bool,
-    /// The mandatory HTTP fetch timeout (see [`DEFAULT_OCSP_TIMEOUT`]).
+    /// The HTTP fetch timeout (see [`DEFAULT_OCSP_TIMEOUT`]).
     timeout: Duration,
+}
+
+impl std::fmt::Debug for OcspChecker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OcspChecker")
+            .field("responder_override", &self.responder_url_override.is_some())
+            .field("timeout", &self.timeout)
+            .finish()
+    }
 }
 
 impl OcspChecker {
     /// Build a checker. `responder_url_override` (the `--ocsp-responder-url`
     /// AIA override) is used verbatim when set; otherwise the responder URL is
-    /// read from the leaf's AIA OCSP entry. `soft_fail` is the
-    /// `--ocsp-soft-fail` posture (default hard-fail). The timeout defaults to
-    /// [`DEFAULT_OCSP_TIMEOUT`].
-    pub fn new(responder_url_override: Option<String>, soft_fail: bool) -> Self {
+    /// read from the leaf's AIA OCSP entry. The timeout defaults to
+    /// [`DEFAULT_OCSP_TIMEOUT`]. There is no fail-open posture to select.
+    pub fn new(responder_url_override: Option<String>) -> Self {
         OcspChecker {
             responder_url_override,
-            soft_fail,
             timeout: DEFAULT_OCSP_TIMEOUT,
         }
-    }
-
-    /// Whether this checker is configured to fail OPEN (allow on indeterminate
-    /// result). Exposed so the serve integration can describe its posture.
-    pub fn soft_fail(&self) -> bool {
-        self.soft_fail
     }
 
     /// Perform the full online check for `leaf_der` against `issuer_der`:
     ///
     ///   a. resolve the responder URL (override, else the leaf's AIA OCSP URL;
-    ///      none → `Unknown`);
-    ///   b. build a SHA-256 CertID OCSP request and DER-encode it;
-    ///   c. POST it to the responder with the mandatory timeout, reading the
-    ///      response body (any transport/timeout error → `Err`);
-    ///   d. decode the `OCSPResponse`, require `Successful`, parse the
-    ///      `BasicOCSPResponse`, and map its single `CertStatus`.
+    ///      none, or one the outbound guard refuses, establishes nothing);
+    ///   b. require that `issuer_der` signed `leaf_der`;
+    ///   c. build a SHA-256 CertID OCSP request carrying a fresh nonce;
+    ///   d. POST it to the responder, reading the body (any transport/timeout
+    ///      error → `Err`);
+    ///   e. run the §3.2 trust chain over the response.
     ///
-    /// Returns the mapped [`CertRevocationStatus`]; transport/codec failures are
-    /// `Err(OcspError)`. The allow/reject decision (which folds in `soft_fail`)
-    /// is [`OcspChecker::decision`].
+    /// Transport, codec and trust failures are `Err(OcspError)`. The admit/deny
+    /// decision is [`OcspChecker::allows`].
     pub fn check(
         &self,
         leaf_der: &[u8],
@@ -344,23 +345,20 @@ impl OcspChecker {
     ) -> Result<RevocationEvidence, OcspError> {
         // The guard is `crate::outbound_fetch`'s and it runs at CONSTRUCTION: there is no
         // way to reach `post_request` with a destination that did not pass the guard its
-        // provenance requires. A refused destination fails CLOSED exactly like a missing AIA
-        // URL — an indeterminate result (Unknown) that denies under hard-fail.
-        let Some(destination) = self.responder_destination(leaf_der) else {
-            return Ok(RevocationEvidence::NotEstablished(
-                if self.responder_url_override.is_some()
-                    || extract_ocsp_responder_url(leaf_der).is_some()
-                {
-                    NotEstablished::DestinationRefused
-                } else {
-                    NotEstablished::NoResponderConfigured
-                },
-            ));
+        // provenance requires. The reason nothing was established is decided there, once.
+        let destination = match self.responder_destination(leaf_der) {
+            Ok(destination) => destination,
+            Err(reason) => return Ok(RevocationEvidence::NotEstablished(reason)),
         };
+        if !leaf_is_issued_by(leaf_der, issuer_der)? {
+            return Err(OcspError::BadCertificate(
+                "leaf is not signed by the supplied issuer".into(),
+            ));
+        }
 
         // A fresh per-request CSPRNG nonce binds the response to THIS request: a
         // captured/replayed response carries a stale (mismatched) nonce and is
-        // rejected (RFC 6960 §4.4.1 / RFC 8954). Drawn from the OS CSPRNG.
+        // rejected (RFC 6960 §4.4.1 / RFC 8954).
         let nonce = random_nonce()?;
         let request_der = build_ocsp_request_der_with_nonce(leaf_der, issuer_der, &nonce)?;
         let response_der = self.post_request(&destination, &request_der)?;
@@ -376,23 +374,22 @@ impl OcspChecker {
         .map(RevocationEvidence::Answered)
     }
 
-    /// The destination to fetch from, guarded according to where it came from.
+    /// The destination to fetch from, guarded according to where it came from — or why
+    /// there is none.
     ///
     /// The configured override wins and is OPERATOR-CONFIGURED; otherwise the AIA OCSP URL
     /// is read from the leaf and is CERTIFICATE-DERIVED. Which constructor is called is the
     /// whole of the provenance decision, and it is made HERE, once — the guard each one
     /// applies belongs to [`crate::outbound_fetch`] and this module cannot choose between
-    /// them after the fact.
-    ///
-    /// `None` means either that there is no responder URL at all or that the one there is
-    /// did not pass. Both are indeterminate, and the caller treats them the same.
-    /// Pure (no network) and unit-tested.
-    fn responder_destination(&self, leaf_der: &[u8]) -> Option<VettedDestination> {
-        match &self.responder_url_override {
-            Some(url) => VettedDestination::operator_configured(url.clone()),
-            None => extract_ocsp_responder_url(leaf_der)
-                .and_then(VettedDestination::certificate_derived),
+    /// them after the fact. Pure (no network) and unit-tested.
+    fn responder_destination(&self, leaf_der: &[u8]) -> Result<VettedDestination, NotEstablished> {
+        if let Some(url) = &self.responder_url_override {
+            return VettedDestination::operator_configured(url.clone())
+                .ok_or(NotEstablished::DestinationRefused);
         }
+        let url =
+            extract_ocsp_responder_url(leaf_der).ok_or(NotEstablished::NoResponderConfigured)?;
+        VettedDestination::certificate_derived(url).ok_or(NotEstablished::DestinationRefused)
     }
 
     /// POST a DER OCSP request to `destination` and return the raw response body bytes.
@@ -405,6 +402,9 @@ impl OcspChecker {
     /// What this function still owns is the RESPONSE bound: a well-formed OCSP response is
     /// well under a kilobyte, and a hostile responder streaming an unbounded body into the
     /// serving thread is refused by the read cap rather than by the network.
+    ///
+    /// A transport failure is reported by its kind, never by `ureq`'s rendering of it: that
+    /// rendering prefixes the request URL, and an operator-configured URL may carry userinfo.
     fn post_request(
         &self,
         destination: &VettedDestination,
@@ -417,7 +417,7 @@ impl OcspChecker {
             .set("Accept", "application/ocsp-response")
             .timeout(self.timeout)
             .send_bytes(request_der)
-            .map_err(|e| OcspError::Http(e.to_string()))?;
+            .map_err(|e| OcspError::Http(e.kind().to_string()))?;
         // Bound the response body read so a hostile/oversized responder reply
         // cannot exhaust memory; a well-formed OCSP response is small.
         let mut body = Vec::new();
@@ -430,28 +430,20 @@ impl OcspChecker {
         Ok(body)
     }
 
-    /// The allow/reject decision for the evidence a check produced, under this checker's
-    /// fail-closed posture.
+    /// The admit/deny decision for the evidence a check produced, at `now`.
     ///
-    /// `Revoked` is ALWAYS rejected, even under soft-fail. `Good` is allowed. Everything
-    /// else — a responder that said `unknown`, and every reason no trusted result was
-    /// established — is rejected UNLESS `soft_fail`.
+    /// Only a `Good` answer still inside its own acceptance window admits. `Revoked`, a
+    /// responder that said `unknown`, an answer past its window, and every reason no
+    /// trusted result was established all deny.
     ///
     /// It takes [`RevocationEvidence`], not a status: a `Good` that nothing earned cannot
     /// be handed to this function, because there is no way to make one.
-    /// Returns `true` to ALLOW the connection, `false` to REJECT.
-    pub fn allows(&self, evidence: RevocationEvidence) -> bool {
+    /// Returns `true` to ALLOW the connection, `false` to REJECT it.
+    pub fn allows(&self, evidence: RevocationEvidence, now: SystemTime) -> bool {
         match evidence {
-            RevocationEvidence::Answered(answer) => decide_allow(answer.status(), self.soft_fail),
-            // Not a responder verdict, and the policy treats it as indeterminate.
-            RevocationEvidence::NotEstablished(_) => self.soft_fail,
+            RevocationEvidence::Answered(answer) => answer.admits_at(now),
+            RevocationEvidence::NotEstablished(_) => false,
         }
-    }
-
-    /// As [`OcspChecker::allows`] but for the error path: a transport/codec
-    /// error is an indeterminate result, allowed ONLY under soft-fail.
-    pub fn allows_on_error(&self) -> bool {
-        decide_allow(CertRevocationStatus::Unknown, self.soft_fail)
     }
 }
 
@@ -464,7 +456,7 @@ const MAX_OCSP_RESPONSE_BYTES: u64 = 64 * 1024;
 /// Information Access (AIA) extension — the first `id-ad-ocsp` access
 /// description whose location is a URI. Returns `None` if the cert cannot be
 /// parsed, has no AIA extension, or has no OCSP URI entry. Pure (no network).
-pub fn extract_ocsp_responder_url(leaf_der: &[u8]) -> Option<String> {
+fn extract_ocsp_responder_url(leaf_der: &[u8]) -> Option<String> {
     let (_, cert) = X509Certificate::from_der(leaf_der).ok()?;
     for ext in cert.extensions() {
         if let ParsedExtension::AuthorityInfoAccess(aia) = ext.parsed_extension() {
@@ -480,24 +472,10 @@ pub fn extract_ocsp_responder_url(leaf_der: &[u8]) -> Option<String> {
     None
 }
 
-/// Build a DER-encoded OCSP request for `leaf_der` against `issuer_der`, using a
-/// SHA-256 CertID and NO nonce. Retained for the request-codec round-trip test;
-/// the live [`OcspChecker::check`] path always uses
-/// [`build_ocsp_request_der_with_nonce`] so a fresh nonce binds every request.
-pub fn build_ocsp_request_der(leaf_der: &[u8], issuer_der: &[u8]) -> Result<Vec<u8>, OcspError> {
-    let cert_id = build_cert_id(leaf_der, issuer_der)?;
-    let ocsp_request = OcspRequestBuilder::default()
-        .with_request(Request::new(cert_id))
-        .build();
-    ocsp_request
-        .to_der()
-        .map_err(|e| OcspError::BuildRequest(format!("DER encode: {e}")))
-}
-
 /// Build a DER-encoded OCSP request for `leaf_der` against `issuer_der` carrying
 /// a SHA-256 CertID and the request `nonce` as the RFC 6960 §4.4.1 Nonce
 /// extension. Pure (no network).
-pub fn build_ocsp_request_der_with_nonce(
+fn build_ocsp_request_der_with_nonce(
     leaf_der: &[u8],
     issuer_der: &[u8],
     nonce: &[u8],
@@ -518,7 +496,7 @@ pub fn build_ocsp_request_der_with_nonce(
 /// Build the SHA-256 `CertID` for `leaf_der` under `issuer_der`, decoding both
 /// certificates. The same CertID is sent in the request AND recomputed after the
 /// response arrives to bind the acted-on `SingleResponse` to our query.
-pub fn build_cert_id(leaf_der: &[u8], issuer_der: &[u8]) -> Result<CertId, OcspError> {
+fn build_cert_id(leaf_der: &[u8], issuer_der: &[u8]) -> Result<CertId, OcspError> {
     let leaf = Certificate::from_der(leaf_der)
         .map_err(|e| OcspError::BadCertificate(format!("leaf: {e}")))?;
     let issuer = Certificate::from_der(issuer_der)
@@ -576,7 +554,7 @@ fn build_sha256_cert_id(issuer: &Certificate, cert: &Certificate) -> Result<Cert
 
 /// Map an OCSP `CertStatus` CHOICE to a [`CertRevocationStatus`]. Pure and
 /// unit-tested. `good` → `Good`, `revoked` → `Revoked`, `unknown` → `Unknown`.
-pub fn map_cert_status(status: &CertStatus) -> CertRevocationStatus {
+fn map_cert_status(status: &CertStatus) -> CertRevocationStatus {
     match status {
         CertStatus::Good(_) => CertRevocationStatus::Good,
         CertStatus::Revoked(_) => CertRevocationStatus::Revoked,
@@ -592,8 +570,8 @@ pub fn map_cert_status(status: &CertStatus) -> CertRevocationStatus {
 /// `nonce` echoes (when present); (4) a `SingleResponse` binds to
 /// `expected_cert_id`; (5) that response is fresh at `now`. Only then is its
 /// `cert_status` mapped. ANY failure is an `Err`, which the caller treats as
-/// fail-closed (Unknown → deny under hard-fail). Pure (no network), unit-tested.
-pub fn verify_and_map_response(
+/// fail-closed (deny). Pure (no network), unit-tested.
+fn verify_and_map_response(
     response_der: &[u8],
     issuer_der: &[u8],
     expected_cert_id: &CertId,
@@ -628,25 +606,38 @@ pub fn verify_and_map_response(
         return Err(OcspError::NonceMismatch);
     }
 
-    // (4) CertID binding: select the SingleResponse that answers OUR cert.
+    // (4) CertID binding: select the one SingleResponse that answers OUR cert.
     let single = select_matching_single_response(&basic, expected_cert_id)
         .ok_or(OcspError::CertIdMismatch)?;
 
-    // (5) freshness of the selected response.
-    if !is_fresh(single, now, OCSP_FRESHNESS_SKEW, OCSP_MAX_RESPONSE_AGE) {
+    // (5) freshness of the selected response, which also yields the end of its window.
+    let Some(valid_until) =
+        acceptance_bound(single, now, OCSP_FRESHNESS_SKEW, OCSP_MAX_RESPONSE_AGE)
+    else {
         return Err(OcspError::NotFresh(
             "response not fresh: now outside [thisUpdate - skew, upper + skew], \
              where upper = min(nextUpdate, thisUpdate + max_response_age)"
                 .into(),
         ));
-    }
+    };
 
     // The ONLY construction of a `TrustedRevocationAnswer` in the crate, and it is here,
     // after all five checks. Everything above this line is what possession of the returned
     // value means.
     Ok(TrustedRevocationAnswer {
         status: map_cert_status(&single.cert_status),
+        valid_until,
     })
+}
+
+/// Whether `issuer_der` issued `leaf_der`: the leaf names it as issuer AND its signature
+/// verifies under the issuer's key. A parse failure is `BadCertificate`.
+fn leaf_is_issued_by(leaf_der: &[u8], issuer_der: &[u8]) -> Result<bool, OcspError> {
+    let (_, leaf) = X509Certificate::from_der(leaf_der)
+        .map_err(|e| OcspError::BadCertificate(format!("leaf: {e}")))?;
+    let (_, issuer) = X509Certificate::from_der(issuer_der)
+        .map_err(|e| OcspError::BadCertificate(format!("issuer: {e}")))?;
+    Ok(leaf.issuer() == issuer.subject() && cert_is_signed_by(&leaf, &issuer)?)
 }
 
 /// Verify the `BasicOcspResponse` signature over its `tbs_response_data` and
@@ -709,11 +700,12 @@ fn verify_responder_signature(
 }
 
 /// Whether `cert_der` is a valid delegated OCSP responder for `issuer_der` at
-/// `now`: it is within its own `notBefore`/`notAfter` validity window AND signed by
-/// the issuer AND carries the `id-kp-OCSPSigning` extended key usage (RFC 6960
-/// §4.2.2.2 / §4.2.2.2.1). Pure; the cryptographic issuer-signature check is
-/// compiled with the `online_ocsp` module exactly as the response-signature check
-/// is.
+/// `now` (RFC 6960 §4.2.2.2 / §4.2.2.2.1): within its own `notBefore`/`notAfter`
+/// window, carrying the `id-kp-OCSPSigning` extended key usage and
+/// `id-pkix-ocsp-nocheck`, not a CA, permitting `digitalSignature` when it states key
+/// usage, and signed by the issuer. An extension that fails to parse refuses. Pure; the
+/// cryptographic issuer-signature check is compiled with the `online_ocsp` module exactly
+/// as the response-signature check is.
 fn delegated_responder_is_valid(
     cert_der: &[u8],
     issuer_der: &[u8],
@@ -748,13 +740,30 @@ fn delegated_responder_is_valid(
         }
         _ => false,
     };
-    if !has_ocsp_eku {
+    if !has_ocsp_eku || !responder_standing_is_established(&cert) {
         return Ok(false);
     }
     // Must be signed by the issuer.
     let (_, issuer) = X509Certificate::from_der(issuer_der)
         .map_err(|e| OcspError::SignatureNotVerified(format!("issuer parse: {e}")))?;
     cert_is_signed_by(&cert, &issuer)
+}
+
+/// Whether a delegated responder certificate's own standing is established: it carries
+/// `id-pkix-ocsp-nocheck` (the only licence this module has to skip a revocation check of
+/// it), is not a CA, and permits `digitalSignature` when it states key usage.
+fn responder_standing_is_established(cert: &X509Certificate<'_>) -> bool {
+    let nocheck = cert
+        .extensions()
+        .iter()
+        .any(|ext| ext.oid.to_id_string() == ID_PKIX_OCSP_NOCHECK);
+    let not_a_ca = cert
+        .basic_constraints()
+        .is_ok_and(|bc| !bc.is_some_and(|bc| bc.value.ca));
+    let may_sign = cert
+        .key_usage()
+        .is_ok_and(|ku| ku.is_none_or(|ku| ku.value.digital_signature()));
+    nocheck && not_a_ca && may_sign
 }
 
 /// Whether `child`'s signature verifies under `issuer`'s public key, via
@@ -899,17 +908,20 @@ fn sha1_hash(data: &[u8]) -> [u8; 20] {
 /// Select the `SingleResponse` whose `CertID` binds to `expected` — the cert we
 /// asked about. Compares the binding fields (hash-algorithm OID, issuer name
 /// hash, issuer key hash, serial number) so a response answering a DIFFERENT cert
-/// is never mistaken for evidence about ours. Returns `None` if no SingleResponse
-/// matches (the caller fails closed). Pure.
+/// is never mistaken for evidence about ours. Returns `None` when none matches, and when
+/// MORE THAN ONE does: two verdicts for one certificate would resolve to whichever came
+/// first, so the caller fails closed instead. Pure.
 fn select_matching_single_response<'a>(
     basic: &'a BasicOcspResponse,
     expected: &CertId,
 ) -> Option<&'a SingleResponse> {
-    basic
+    let mut matching = basic
         .tbs_response_data
         .responses
         .iter()
-        .find(|single| cert_ids_bind(&single.cert_id, expected))
+        .filter(|single| cert_ids_bind(&single.cert_id, expected));
+    let only = matching.next()?;
+    matching.next().is_none().then_some(only)
 }
 
 /// Whether two CertIDs identify the same certificate: same hash-algorithm OID and
@@ -921,37 +933,31 @@ fn cert_ids_bind(a: &CertId, b: &CertId) -> bool {
         && a.serial_number == b.serial_number
 }
 
-/// Whether `single` is fresh at `now` within `skew`: `now >= thisUpdate - skew`
-/// and `now <= upper + skew`, where `upper` is `nextUpdate` when present, capped
-/// at `thisUpdate + max_age`. A response with no `nextUpdate` therefore still has
-/// an absolute upper bound of `thisUpdate + max_age + skew`, so a captured
-/// responder-signed response cannot be replayed indefinitely even when the
+/// The end of `single`'s acceptance window, as a `Duration` since the Unix epoch, when it is
+/// fresh at `now` within `skew` — `None` otherwise. Fresh means `now >= thisUpdate - skew`
+/// and `now <= upper + skew`, where `upper` is `nextUpdate` when present, capped at
+/// `thisUpdate + max_age`; the returned bound is `upper + skew`. A response with no
+/// `nextUpdate` therefore still has an absolute bound of `thisUpdate + max_age + skew`, so
+/// a captured responder-signed response cannot be replayed indefinitely even when the
 /// responder omits `nextUpdate` and ignores the nonce. Pure.
-fn is_fresh(single: &SingleResponse, now: SystemTime, skew: Duration, max_age: Duration) -> bool {
-    let Some(now_unix) = system_time_to_unix(now) else {
-        return false;
-    };
+fn acceptance_bound(
+    single: &SingleResponse,
+    now: SystemTime,
+    skew: Duration,
+    max_age: Duration,
+) -> Option<Duration> {
+    let now_unix = system_time_to_unix(now)?;
     let this_update = single.this_update.0.to_unix_duration();
-    // now must be at or after thisUpdate (minus skew).
     if now_unix.saturating_add(skew) < this_update {
-        return false;
+        return None;
     }
-    // Absolute cap derived from thisUpdate, applied unconditionally.
     let age_cap = this_update.saturating_add(max_age);
-    // The effective upper bound is the responder-asserted nextUpdate when present,
-    // but never beyond the absolute age cap. With no nextUpdate, the age cap alone
-    // bounds acceptance — preventing unbounded replay of a no-nextUpdate response.
     let upper = match &single.next_update {
-        Some(next_update) => {
-            let next = next_update.0.to_unix_duration();
-            next.min(age_cap)
-        }
+        Some(next_update) => next_update.0.to_unix_duration().min(age_cap),
         None => age_cap,
     };
-    if now_unix > upper.saturating_add(skew) {
-        return false;
-    }
-    true
+    let bound = upper.saturating_add(skew);
+    (now_unix <= bound).then_some(bound)
 }
 
 /// `now` as a `Duration` since the Unix epoch, or `None` if it predates the epoch
@@ -970,24 +976,11 @@ fn nonce_ok(basic: &BasicOcspResponse, request_nonce: &[u8]) -> bool {
     }
 }
 
-/// The fail-closed policy decision: returns `true` to ALLOW the connection,
-/// `false` to REJECT it. `Good` always allows; `Revoked` ALWAYS rejects (even
-/// under soft-fail — a known-revoked cert is never admitted); `Unknown` rejects
-/// unless `soft_fail`. Pure and unit-tested.
-fn decide_allow(status: CertRevocationStatus, soft_fail: bool) -> bool {
-    match status {
-        CertRevocationStatus::Good => true,
-        CertRevocationStatus::Revoked => false,
-        CertRevocationStatus::Unknown => soft_fail,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::build_ocsp_request_der;
-    use super::decide_allow;
     use super::delegated_responder_is_valid;
     use super::extract_ocsp_responder_url;
+    use super::leaf_is_issued_by;
     use super::map_cert_status;
     use super::sha1_hash;
     use super::CertRevocationStatus;
@@ -1052,15 +1045,36 @@ mod tests {
         (rcgen::Issuer::new(params, key), der)
     }
 
-    /// Mint a delegated OCSP responder cert SIGNED BY `issuer`, carrying the
-    /// `id-kp-OCSPSigning` EKU, valid over `[nb_ymd, na_ymd)` (each a
-    /// `(year, month, day)` triple).
-    fn mint_delegated_responder(
+    /// What a delegated responder certificate carries, for the standing tests.
+    #[derive(Clone)]
+    struct ResponderShape {
+        ocsp_signing_eku: bool,
+        nocheck: bool,
+        ca: bool,
+        key_usages: Vec<rcgen::KeyUsagePurpose>,
+    }
+
+    impl ResponderShape {
+        /// A well-formed delegated responder: EKU and nocheck, not a CA, no key usage stated.
+        fn proper() -> Self {
+            ResponderShape {
+                ocsp_signing_eku: true,
+                nocheck: true,
+                ca: false,
+                key_usages: Vec::new(),
+            }
+        }
+    }
+
+    /// Mint a delegated OCSP responder cert SIGNED BY `issuer` over its own key, shaped by
+    /// `shape`, valid over `[nb_ymd, na_ymd)` (each a `(year, month, day)` triple).
+    fn mint_responder_with(
         issuer: &rcgen::Issuer<'_, KeyPair>,
+        responder_key: &KeyPair,
+        shape: &ResponderShape,
         nb_ymd: (i32, u8, u8),
         na_ymd: (i32, u8, u8),
     ) -> Vec<u8> {
-        let responder_key = KeyPair::generate().expect("responder key");
         let mut params =
             CertificateParams::new(vec!["ocsp-responder.example".to_string()]).expect("params");
         params
@@ -1068,13 +1082,57 @@ mod tests {
             .push(DnType::CommonName, "ocsp-responder.example");
         params.not_before = date_time_ymd(nb_ymd.0, nb_ymd.1, nb_ymd.2);
         params.not_after = date_time_ymd(na_ymd.0, na_ymd.1, na_ymd.2);
-        params
-            .extended_key_usages
-            .push(ExtendedKeyUsagePurpose::OcspSigning);
+        if shape.ocsp_signing_eku {
+            params
+                .extended_key_usages
+                .push(ExtendedKeyUsagePurpose::OcspSigning);
+        }
+        if shape.nocheck {
+            // id-pkix-ocsp-nocheck, value NULL.
+            params
+                .custom_extensions
+                .push(CustomExtension::from_oid_content(
+                    &[1, 3, 6, 1, 5, 5, 7, 48, 1, 5],
+                    vec![0x05, 0x00],
+                ));
+        }
+        if shape.ca {
+            params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        }
+        params.key_usages = shape.key_usages.clone();
         let cert = params
-            .signed_by(&responder_key, issuer)
+            .signed_by(responder_key, issuer)
             .expect("responder signed by issuer");
         cert.der().as_ref().to_vec()
+    }
+
+    /// A well-formed delegated OCSP responder cert (see [`ResponderShape::proper`]).
+    fn mint_delegated_responder(
+        issuer: &rcgen::Issuer<'_, KeyPair>,
+        nb_ymd: (i32, u8, u8),
+        na_ymd: (i32, u8, u8),
+    ) -> Vec<u8> {
+        let key = KeyPair::generate().expect("responder key");
+        mint_responder_with(issuer, &key, &ResponderShape::proper(), nb_ymd, na_ymd)
+    }
+
+    /// A leaf (carrying an AIA OCSP URL) SIGNED THROUGH `issuer`.
+    fn mint_leaf_signed_by(issuer: &rcgen::Issuer<'_, KeyPair>) -> Vec<u8> {
+        let key = KeyPair::generate().expect("leaf key");
+        let mut params =
+            CertificateParams::new(vec!["leaf.example".to_string()]).expect("leaf params");
+        params
+            .custom_extensions
+            .push(CustomExtension::from_oid_content(
+                &[1, 3, 6, 1, 5, 5, 7, 1, 1],
+                build_aia_extension_der("http://ocsp.example.test/r"),
+            ));
+        params
+            .signed_by(&key, issuer)
+            .expect("leaf signed by issuer")
+            .der()
+            .as_ref()
+            .to_vec()
     }
 
     /// RFC 6960 §4.2.2.2.1: a delegated responder cert OUTSIDE its validity window
@@ -1106,6 +1164,63 @@ mod tests {
             !delegated_responder_is_valid(&responder_der, &issuer_der, at_unix(1_546_300_800))
                 .unwrap(),
             "a not-yet-valid delegated responder cert must be rejected" // 2019-01-01
+        );
+    }
+
+    /// RFC 6960 §4.2.2.2.1: this module has no revocation source for a delegated responder,
+    /// so a responder certificate without `id-pkix-ocsp-nocheck` has no established standing.
+    #[test]
+    fn delegated_responder_without_nocheck_is_refused() {
+        let (issuer, issuer_der) = mint_ca_issuer();
+        let key = KeyPair::generate().expect("responder key");
+        let shape = ResponderShape {
+            nocheck: false,
+            ..ResponderShape::proper()
+        };
+        let responder = mint_responder_with(&issuer, &key, &shape, (2020, 1, 1), (2021, 1, 1));
+        assert!(
+            !delegated_responder_is_valid(&responder, &issuer_der, at_unix(1_593_561_600)).unwrap(),
+            "an in-window, issuer-signed, OCSP-EKU responder lacking nocheck must be refused"
+        );
+    }
+
+    /// A delegated responder that is itself a CA, or whose stated key usage does not permit
+    /// `digitalSignature`, is not a signer of OCSP responses.
+    #[test]
+    fn delegated_responder_that_is_a_ca_or_lacks_digital_signature_is_refused() {
+        let (issuer, issuer_der) = mint_ca_issuer();
+        let key = KeyPair::generate().expect("responder key");
+        let now = at_unix(1_593_561_600);
+        for (label, shape) in [
+            (
+                "a CA",
+                ResponderShape {
+                    ca: true,
+                    ..ResponderShape::proper()
+                },
+            ),
+            (
+                "key usage without digitalSignature",
+                ResponderShape {
+                    key_usages: vec![rcgen::KeyUsagePurpose::KeyEncipherment],
+                    ..ResponderShape::proper()
+                },
+            ),
+        ] {
+            let responder = mint_responder_with(&issuer, &key, &shape, (2020, 1, 1), (2021, 1, 1));
+            assert!(
+                !delegated_responder_is_valid(&responder, &issuer_der, now).unwrap(),
+                "a responder that is {label} must be refused"
+            );
+        }
+        let signing = ResponderShape {
+            key_usages: vec![rcgen::KeyUsagePurpose::DigitalSignature],
+            ..ResponderShape::proper()
+        };
+        let responder = mint_responder_with(&issuer, &key, &signing, (2020, 1, 1), (2021, 1, 1));
+        assert!(
+            delegated_responder_is_valid(&responder, &issuer_der, now).unwrap(),
+            "the positive control: digitalSignature key usage is admitted"
         );
     }
 
@@ -1230,7 +1345,7 @@ mod tests {
         let key = KeyPair::generate().expect("key");
         let params = CertificateParams::new(vec!["no-aia.example".to_string()]).expect("params");
         let leaf = params.self_signed(&key).expect("self-signed").der().clone();
-        let checker = OcspChecker::new(None, false); // no override, hard-fail
+        let checker = OcspChecker::new(None); // no override
         let evidence = checker
             .check(leaf.as_ref(), leaf.as_ref())
             .expect("the no-responder-URL path returns without network I/O");
@@ -1242,8 +1357,8 @@ mod tests {
             RevocationEvidence::NotEstablished(NotEstablished::NoResponderConfigured),
         );
         assert!(
-            !checker.allows(evidence),
-            "a check that could not run must deny under hard-fail"
+            !checker.allows(evidence, SystemTime::now()),
+            "a check that could not run must deny"
         );
     }
 
@@ -1253,7 +1368,7 @@ mod tests {
         // The leaf need not be issued by the issuer; CertID only hashes the
         // issuer subject/key and copies the leaf serial.
         let leaf = mint_leaf_with_aia("http://ocsp.example.test/r");
-        let der = build_ocsp_request_der(&leaf, &issuer_der).expect("build request");
+        let der = build_ocsp_request_der(&leaf, &issuer_der);
         let decoded = OcspRequest::from_der(&der).expect("request DER round-trips");
         assert_eq!(
             decoded.tbs_request.request_list.len(),
@@ -1262,9 +1377,9 @@ mod tests {
         );
     }
 
+    use super::acceptance_bound;
     use super::build_cert_id;
     use super::cert_ids_bind;
-    use super::is_fresh;
     use super::nonce_ok;
     use super::responder_id_matches;
     use super::select_matching_single_response;
@@ -1304,6 +1419,27 @@ mod tests {
     fn at(y: u16, m: u8, d: u8) -> SystemTime {
         let dt = der::DateTime::new(y, m, d, 0, 0, 0).expect("datetime");
         UNIX_EPOCH + dt.unix_duration()
+    }
+
+    /// Whether `single` is fresh at `now` — `acceptance_bound` answering at all.
+    fn is_fresh(
+        single: &SingleResponse,
+        now: SystemTime,
+        skew: Duration,
+        max_age: Duration,
+    ) -> bool {
+        acceptance_bound(single, now, skew, max_age).is_some()
+    }
+
+    /// A DER OCSP request for `leaf_der` against `issuer_der` with a SHA-256 CertID and NO
+    /// nonce, for the request-codec round-trip test; the checker's own path always carries one.
+    fn build_ocsp_request_der(leaf_der: &[u8], issuer_der: &[u8]) -> Vec<u8> {
+        let cert_id = build_cert_id(leaf_der, issuer_der).expect("cert id");
+        OcspRequestBuilder::default()
+            .with_request(x509_ocsp::Request::new(cert_id))
+            .build()
+            .to_der()
+            .expect("DER encode")
     }
 
     /// Build a `(issuer_der, leaf_der, response_der)` triple. The response wraps a
@@ -1472,13 +1608,16 @@ mod tests {
     }
 
     /// ACCEPTANCE 5 (status-policy negatives) — Revoked and Unknown both DENY
-    /// under hard-fail. The positive (signed Good → ADMIT) is the `mod verify`
+    /// The positive (signed Good → ADMIT) is the `mod verify`
     /// test below (it needs a real responder signature).
     #[test]
     fn acceptance_revoked_and_unknown_deny() {
-        // Pure policy: Revoked always rejects, Unknown rejects under hard-fail.
-        assert!(!decide_allow(CertRevocationStatus::Revoked, false));
-        assert!(!decide_allow(CertRevocationStatus::Unknown, false));
+        // Pure policy: neither Revoked nor Unknown admits, however fresh.
+        let checker = OcspChecker::new(None);
+        for status in [CertRevocationStatus::Revoked, CertRevocationStatus::Unknown] {
+            let answer = TrustedRevocationAnswer::answered(status, FAR_FUTURE);
+            assert!(!checker.allows(RevocationEvidence::Answered(answer), at(2024, 1, 1)));
+        }
         // An UNSIGNED Revoked/Unknown response is refused at the signature gate,
         // before any status is mapped. Assert that exact outcome: a bare
         // "did not admit" would also be satisfied by an unrelated failure.
@@ -1762,7 +1901,7 @@ mod tests {
             })),
             CertRevocationStatus::Revoked,
             "a responder's revoked CHOICE must map to Revoked, the only value \
-             decide_allow refuses unconditionally"
+             nothing admits"
         );
         assert_eq!(
             map_cert_status(&CertStatus::unknown()),
@@ -1770,53 +1909,146 @@ mod tests {
         );
     }
 
-    #[test]
-    fn policy_revoked_always_rejects() {
-        // Revoked is rejected under BOTH hard-fail and soft-fail.
-        assert!(!decide_allow(CertRevocationStatus::Revoked, false));
-        assert!(!decide_allow(CertRevocationStatus::Revoked, true));
-    }
-
-    #[test]
-    fn policy_good_always_allows() {
-        assert!(decide_allow(CertRevocationStatus::Good, false));
-        assert!(decide_allow(CertRevocationStatus::Good, true));
-    }
-
-    #[test]
-    fn policy_unknown_hard_fail_rejects_soft_fail_allows() {
-        assert!(
-            !decide_allow(CertRevocationStatus::Unknown, false),
-            "Unknown under hard-fail must reject"
-        );
-        assert!(
-            decide_allow(CertRevocationStatus::Unknown, true),
-            "Unknown under soft-fail must allow"
-        );
-    }
+    /// The end of an answer's window, far beyond any `now` the policy tests use.
+    const FAR_FUTURE: Duration = Duration::from_secs(u64::MAX / 4);
 
     #[test]
     fn checker_allows_methods_match_policy() {
-        let hard = OcspChecker::new(None, false);
-        assert!(hard.allows(RevocationEvidence::Answered(
-            TrustedRevocationAnswer::answered(CertRevocationStatus::Good)
-        )));
-        assert!(!hard.allows(RevocationEvidence::Answered(
-            TrustedRevocationAnswer::answered(CertRevocationStatus::Revoked)
-        )));
-        assert!(!hard.allows(RevocationEvidence::Answered(
-            TrustedRevocationAnswer::answered(CertRevocationStatus::Unknown)
-        )));
-        assert!(!hard.allows_on_error());
+        let checker = OcspChecker::new(None);
+        let now = at(2024, 1, 1);
+        let answer = |status| {
+            RevocationEvidence::Answered(TrustedRevocationAnswer::answered(status, FAR_FUTURE))
+        };
+        assert!(checker.allows(answer(CertRevocationStatus::Good), now));
+        assert!(!checker.allows(answer(CertRevocationStatus::Revoked), now));
+        assert!(!checker.allows(answer(CertRevocationStatus::Unknown), now));
+        for reason in [
+            NotEstablished::NoResponderConfigured,
+            NotEstablished::DestinationRefused,
+        ] {
+            assert!(
+                !checker.allows(RevocationEvidence::NotEstablished(reason), now),
+                "{reason:?} establishes nothing and must deny"
+            );
+        }
+    }
 
-        let soft = OcspChecker::new(None, true);
-        assert!(soft.allows(RevocationEvidence::Answered(
-            TrustedRevocationAnswer::answered(CertRevocationStatus::Unknown)
-        )));
-        assert!(soft.allows_on_error());
-        assert!(!soft.allows(RevocationEvidence::Answered(
-            TrustedRevocationAnswer::answered(CertRevocationStatus::Revoked)
-        )));
+    /// Possession of an answer is not an admission token forever: the answer carries the
+    /// end of the window it was accepted for, and `allows` refuses it past that.
+    #[test]
+    fn an_answer_past_its_own_freshness_bound_is_not_admitted() {
+        let checker = OcspChecker::new(None);
+        let bound = Duration::from_secs(1_700_000_000);
+        let evidence = || {
+            RevocationEvidence::Answered(TrustedRevocationAnswer::answered(
+                CertRevocationStatus::Good,
+                bound,
+            ))
+        };
+        assert!(
+            checker.allows(evidence(), UNIX_EPOCH + bound),
+            "at the bound"
+        );
+        assert!(
+            !checker.allows(evidence(), UNIX_EPOCH + bound + Duration::from_secs(1)),
+            "one second past the bound"
+        );
+    }
+
+    /// The bound `verify_and_map_response` stores is the one `acceptance_bound` computes,
+    /// so an answer taken at T is refused once T's window has closed.
+    #[test]
+    fn a_verified_answer_is_admitted_only_inside_its_acceptance_window() {
+        let (_i, _l, response, _id) = good_unsigned_fixture();
+        let basic = decode_basic(&response);
+        let single = &basic.tbs_response_data.responses[0];
+        let bound = acceptance_bound(
+            single,
+            at(2024, 1, 1),
+            OCSP_FRESHNESS_SKEW,
+            OCSP_MAX_RESPONSE_AGE,
+        )
+        .expect("fresh at thisUpdate");
+        assert_eq!(
+            bound,
+            at(2024, 1, 2).duration_since(UNIX_EPOCH).unwrap() + OCSP_FRESHNESS_SKEW,
+            "nextUpdate plus skew"
+        );
+        assert_eq!(
+            acceptance_bound(
+                single,
+                at(2024, 1, 2) + OCSP_FRESHNESS_SKEW + Duration::from_secs(1),
+                OCSP_FRESHNESS_SKEW,
+                OCSP_MAX_RESPONSE_AGE
+            ),
+            None
+        );
+    }
+
+    /// A credential in the configured responder URL reaches no operational text: not the
+    /// checker's `Debug` (which `ServerOptions` derives over), and not a transport error.
+    #[test]
+    fn a_credential_in_the_responder_url_reaches_no_operational_text() {
+        const URL: &str = "http://user:s3cret@127.0.0.1:1/ocsp";
+        let checker = OcspChecker::new(Some(URL.to_string()));
+        let debug = format!("{checker:?}");
+        assert!(!debug.contains("s3cret"), "{debug}");
+        assert!(debug.contains("responder_override: true"), "{debug}");
+        let destination = VettedDestination::operator_configured(URL).expect("loopback http");
+        let error = checker
+            .post_request(&destination, b"x")
+            .expect_err("nothing listens on 127.0.0.1:1");
+        let rendered = error.to_string();
+        assert!(!rendered.contains("s3cret"), "{rendered}");
+        assert!(!rendered.contains("127.0.0.1:1/ocsp"), "{rendered}");
+    }
+
+    /// The per-connection admit decision over the checker: only a verified `Good` admits, so a
+    /// chain the checker cannot establish anything about is rejected, and no checker rejects
+    /// nothing.
+    #[test]
+    fn the_connection_hook_rejects_what_the_checker_cannot_establish() {
+        use crate::tls::ocsp_rejection_for_chain;
+        use crate::tls::ServerOptions;
+        let options = ServerOptions {
+            ocsp_checker: Some(OcspChecker::new(None)),
+            ..Default::default()
+        };
+        let request = b"{\"id\":1}";
+        let leaf: &[u8] = b"leaf";
+        assert!(
+            ocsp_rejection_for_chain(&[leaf], &options, request).is_some(),
+            "a leaf with no chained issuer is rejected"
+        );
+        // No override and no AIA URL on the leaf: nothing is asked, so nothing is admitted.
+        let chain: [&[u8]; 2] = [b"leaf", b"issuer"];
+        assert!(
+            ocsp_rejection_for_chain(&chain, &options, request).is_some(),
+            "a check that establishes nothing is rejected"
+        );
+        assert!(
+            ocsp_rejection_for_chain(&chain, &ServerOptions::default(), request).is_none(),
+            "without a checker nothing is rejected"
+        );
+    }
+
+    /// The checker only asks about a leaf the supplied issuer issued: the CertID, the
+    /// signer candidate and the responder identity are all measured against that issuer.
+    #[test]
+    fn check_refuses_an_issuer_that_did_not_sign_the_leaf() {
+        let leaf = mint_leaf_with_aia("http://127.0.0.1:1/ocsp");
+        let (unrelated_issuer, _) = mint_issuer();
+        let checker = OcspChecker::new(Some("http://127.0.0.1:1/ocsp".to_string()));
+        let result = checker.check(&leaf, &unrelated_issuer);
+        assert!(
+            matches!(result, Err(OcspError::BadCertificate(_))),
+            "an issuer that did not sign the leaf must be refused before any request: {result:?}"
+        );
+        // The relation itself: a leaf signed through a CA is issued by that CA and by no other.
+        let (issuer, issuer_der) = mint_ca_issuer();
+        let issued = mint_leaf_signed_by(&issuer);
+        assert!(leaf_is_issued_by(&issued, &issuer_der).expect("parses"));
+        assert!(!leaf_is_issued_by(&issued, &unrelated_issuer).expect("parses"));
     }
 
     // === #4078 (MCP-RE-MED-5, M14) — AIA responder-URL SSRF guard =============
@@ -1826,7 +2058,7 @@ mod tests {
     // leaf can point the proxy at `file://`, `gopher://`, or an internal/link-local
     // host (169.254/16, 127/8, ::1, 10/8, 172.16/12, 192.168/16, metadata
     // endpoints) → SSRF. The guard must reject such a responder URL BEFORE any
-    // network fetch, failing CLOSED (Unknown → deny under hard-fail) exactly as a
+    // network fetch, failing CLOSED (deny) exactly as a
     // missing AIA URL does. The operator-supplied `--ocsp-responder-url` override
     // is scheme-checked (http/https only) but, by design, NOT subject to the
     // private-IP block (an operator may legitimately run an internal responder).
@@ -1839,7 +2071,7 @@ mod tests {
         // A leaf whose ONLY AIA OCSP URL is a file:// URL.
         let leaf = mint_leaf_with_aia("file:///etc/passwd");
         let (issuer_der, _) = mint_issuer();
-        let checker = OcspChecker::new(None, false);
+        let checker = OcspChecker::new(None);
         // If the guard were absent the path would try to POST to `file:///...`
         // (ureq) and return Err(Http(..)); WITH the guard it short-circuits to
         // NotEstablished WITHOUT any fetch — the destination was refused, which is a
@@ -1853,8 +2085,8 @@ mod tests {
             "a file:// AIA responder URL must be refused pre-fetch"
         );
         assert!(
-            !checker.allows(evidence),
-            "an unestablished result under hard-fail must deny"
+            !checker.allows(evidence, SystemTime::now()),
+            "an unestablished result must deny"
         );
     }
 
@@ -1866,7 +2098,7 @@ mod tests {
     fn check_rejects_cert_aia_loopback_host_before_fetch() {
         let leaf = mint_leaf_with_aia("http://127.0.0.1:1/ocsp");
         let (issuer_der, _) = mint_issuer();
-        let checker = OcspChecker::new(None, false);
+        let checker = OcspChecker::new(None);
         let status = checker
             .check(leaf.as_slice(), &issuer_der)
             .expect("a loopback AIA URL fails closed, not Err");
@@ -1882,7 +2114,7 @@ mod tests {
     fn check_rejects_cert_aia_localhost_before_fetch() {
         let leaf = mint_leaf_with_aia("http://localhost:1/ocsp");
         let (issuer_der, _) = mint_issuer();
-        let checker = OcspChecker::new(None, false);
+        let checker = OcspChecker::new(None);
         let status = checker
             .check(leaf.as_slice(), &issuer_der)
             .expect("a localhost AIA URL fails closed");
@@ -1936,7 +2168,7 @@ mod tests {
             }
         });
 
-        let checker = OcspChecker::new(None, false);
+        let checker = OcspChecker::new(None);
         let url = format!("http://{responder_addr}/ocsp");
         // The result itself is irrelevant (a 302 carries no valid OCSP body); the
         // security property is that NO request reaches the sentinel.
@@ -1981,7 +2213,7 @@ mod tests {
         let params = CertificateParams::new(vec!["no-aia.example".to_string()]).expect("params");
         let leaf = params.self_signed(&key).expect("self-signed");
         let (issuer_der, _) = mint_issuer();
-        let checker = OcspChecker::new(None, false);
+        let checker = OcspChecker::new(None);
         let status = checker
             .check(leaf.der().as_ref(), &issuer_der)
             .expect("the no-URL check returns without network I/O");
@@ -2017,12 +2249,15 @@ mod tests {
     mod verify {
         use super::super::verify_and_map_response;
         use super::super::CertRevocationStatus;
+        use super::super::OcspChecker;
         use super::super::OcspError;
+        use super::super::RevocationEvidence;
         use super::at;
         use super::build_cert_id;
-        use super::decide_allow;
         use super::gtime;
         use super::mint_leaf_with_aia;
+        use super::mint_responder_with;
+        use super::ResponderShape;
         use der::asn1::BitString;
         use der::Decode;
         use der::Encode;
@@ -2034,7 +2269,9 @@ mod tests {
         use rcgen::KeyPair;
         use rcgen::PKCS_ED25519;
         use spki::AlgorithmIdentifierOwned;
+        use x509_cert::ext::AsExtension;
         use x509_cert::Certificate;
+        use x509_ocsp::ext::Nonce;
         use x509_ocsp::BasicOcspResponse;
         use x509_ocsp::CertStatus;
         use x509_ocsp::OcspResponse;
@@ -2043,16 +2280,20 @@ mod tests {
         use x509_ocsp::SingleResponse;
         use x509_ocsp::Version;
 
+        fn ed25519_key(signer: &SigningKey) -> KeyPair {
+            let pkcs8 = signer.to_pkcs8_der().expect("pkcs8");
+            KeyPair::from_pkcs8_der_and_sign_algo(
+                &rustls_pki_types::PrivatePkcs8KeyDer::from(pkcs8.as_bytes().to_vec()),
+                &PKCS_ED25519,
+            )
+            .expect("rcgen import")
+        }
+
         /// Mint an Ed25519 issuer cert whose private key is `signer` (so the test
         /// can sign an OCSP response with the SAME key the issuer SPKI carries).
         /// Returns the issuer DER.
         fn mint_issuer_with_key(signer: &SigningKey) -> Vec<u8> {
-            let pkcs8 = signer.to_pkcs8_der().expect("pkcs8");
-            let key = KeyPair::from_pkcs8_der_and_sign_algo(
-                &rustls_pki_types::PrivatePkcs8KeyDer::from(pkcs8.as_bytes().to_vec()),
-                &PKCS_ED25519,
-            )
-            .expect("rcgen import");
+            let key = ed25519_key(signer);
             let mut params = CertificateParams::new(Vec::new()).expect("params");
             params
                 .distinguished_name
@@ -2061,27 +2302,59 @@ mod tests {
             cert.der().as_ref().to_vec()
         }
 
+        /// What the response says beyond a single verdict, so each test isolates one gate.
+        #[derive(Default)]
+        struct Shape {
+            /// `None` ⇒ the signing certificate's own subject (byName).
+            responder_id: Option<ResponderId>,
+            /// `Some(bytes)` ⇒ echo this nonce in the response extensions.
+            echoed_nonce: Option<Vec<u8>>,
+            /// Further verdicts for the SAME CertID, after the first.
+            more_verdicts: Vec<CertStatus>,
+            /// Certificates carried in `basic.certs` (a delegated responder).
+            certs: Option<Vec<Certificate>>,
+        }
+
         /// Build a response for `(issuer, leaf)` with `status`, then sign its
         /// `tbs_response_data` with `signer`. The `corrupt` flag flips a signature
-        /// byte to model a forgery. Returns the response DER and the requested
-        /// CertID.
-        fn signed_response(
+        /// byte to model a forgery. `signer_subject_der` is the subject the response
+        /// names as its responder unless `shape` names another. Returns the response DER
+        /// and the requested CertID.
+        fn signed_response_with(
             signer: &SigningKey,
+            signer_cert_der: &[u8],
             issuer_der: &[u8],
             leaf_der: &[u8],
             status: CertStatus,
             corrupt: bool,
+            shape: Shape,
         ) -> (Vec<u8>, x509_ocsp::CertId) {
             let issuer = Certificate::from_der(issuer_der).expect("issuer");
+            let signer_cert = Certificate::from_der(signer_cert_der).expect("signer");
             let requested = build_cert_id(leaf_der, issuer_der).expect("cert id");
-            let mut single = SingleResponse::new(requested.clone(), status, gtime(2024, 1, 1));
-            single.next_update = Some(gtime(2024, 1, 2));
+            let responses = std::iter::once(status)
+                .chain(shape.more_verdicts)
+                .map(|status| {
+                    let mut single =
+                        SingleResponse::new(requested.clone(), status, gtime(2024, 1, 1));
+                    single.next_update = Some(gtime(2024, 1, 2));
+                    single
+                })
+                .collect();
+            let response_extensions = shape.echoed_nonce.map(|bytes| {
+                let nonce = Nonce::new(bytes).expect("nonce");
+                vec![nonce
+                    .to_extension(&issuer.tbs_certificate.subject, &[])
+                    .expect("nonce extension")]
+            });
             let tbs = ResponseData {
                 version: Version::V1,
-                responder_id: ResponderId::ByName(issuer.tbs_certificate.subject.clone()),
+                responder_id: shape.responder_id.unwrap_or_else(|| {
+                    ResponderId::ByName(signer_cert.tbs_certificate.subject.clone())
+                }),
                 produced_at: gtime(2024, 1, 1),
-                responses: vec![single],
-                response_extensions: None,
+                responses,
+                response_extensions,
             };
             let tbs_der = tbs.to_der().expect("tbs der");
             let mut sig = signer.sign(&tbs_der).to_bytes().to_vec();
@@ -2096,10 +2369,29 @@ mod tests {
                     parameters: None,
                 },
                 signature: BitString::from_bytes(&sig).expect("bitstring"),
-                certs: None,
+                certs: shape.certs,
             };
             let response = OcspResponse::successful(basic).expect("successful");
             (response.to_der().expect("der"), requested)
+        }
+
+        /// As [`signed_response_with`], signed by the issuer key itself.
+        fn signed_response(
+            signer: &SigningKey,
+            issuer_der: &[u8],
+            leaf_der: &[u8],
+            status: CertStatus,
+            corrupt: bool,
+        ) -> (Vec<u8>, x509_ocsp::CertId) {
+            signed_response_with(
+                signer,
+                issuer_der,
+                issuer_der,
+                leaf_der,
+                status,
+                corrupt,
+                Shape::default(),
+            )
         }
 
         #[test]
@@ -2109,7 +2401,7 @@ mod tests {
             let leaf = mint_leaf_with_aia("http://ocsp.example.test/r");
             let (response, requested) =
                 signed_response(&signer, &issuer, &leaf, CertStatus::good(), false);
-            let status = verify_and_map_response(
+            let answer = verify_and_map_response(
                 &response,
                 &issuer,
                 &requested,
@@ -2118,16 +2410,23 @@ mod tests {
             )
             .expect("a correctly-signed, fresh, bound Good must verify");
             assert_eq!(
-                status.status(),
+                answer.status(),
                 CertRevocationStatus::Good,
                 "a verified Good admits the connection"
+            );
+            let checker = OcspChecker::new(None);
+            let evidence = || RevocationEvidence::Answered(answer.clone());
+            assert!(checker.allows(evidence(), at(2024, 1, 1)));
+            assert!(
+                !checker.allows(evidence(), at(2025, 1, 1)),
+                "the same answer is not an admission token a year later"
             );
         }
 
         /// The end-to-end negative control for the `revoked` CHOICE: a response
         /// that clears every trust gate (real signature, matching responder id,
         /// bound CertID, fresh) and carries `revoked` must map to `Revoked` and
-        /// be refused by the policy under both fail modes.
+        /// be refused by the policy.
         #[test]
         fn signed_revoked_is_mapped_revoked_and_refused() {
             let signer = SigningKey::from_bytes(&[7u8; 32]);
@@ -2138,7 +2437,7 @@ mod tests {
                 revocation_reason: None,
             });
             let (response, requested) = signed_response(&signer, &issuer, &leaf, revoked, false);
-            let status = verify_and_map_response(
+            let answer = verify_and_map_response(
                 &response,
                 &issuer,
                 &requested,
@@ -2147,17 +2446,14 @@ mod tests {
             )
             .expect("a correctly-signed, fresh, bound response must verify");
             assert_eq!(
-                status.status(),
+                answer.status(),
                 CertRevocationStatus::Revoked,
                 "a verified revoked wire status must reach the policy as Revoked"
             );
             assert!(
-                !decide_allow(status.status(), false),
-                "revoked denies under hard-fail"
-            );
-            assert!(
-                !decide_allow(status.status(), true),
-                "revoked denies under soft-fail"
+                !OcspChecker::new(None)
+                    .allows(RevocationEvidence::Answered(answer), at(2024, 1, 1)),
+                "revoked denies"
             );
         }
 
@@ -2226,6 +2522,206 @@ mod tests {
                 matches!(result, Err(OcspError::CertIdMismatch)),
                 "a signed Good for a different CertID must be rejected, got {result:?}"
             );
+        }
+
+        /// Two verdicts for the requested certificate would resolve to whichever came first;
+        /// a correctly signed, fresh response carrying `good` then `revoked` is refused.
+        #[test]
+        fn signed_response_answering_our_certid_twice_is_denied() {
+            let signer = SigningKey::from_bytes(&[7u8; 32]);
+            let issuer = mint_issuer_with_key(&signer);
+            let leaf = mint_leaf_with_aia("http://ocsp.example.test/r");
+            let revoked = CertStatus::revoked(x509_ocsp::RevokedInfo {
+                revocation_time: gtime(2023, 6, 1),
+                revocation_reason: None,
+            });
+            let (response, requested) = signed_response_with(
+                &signer,
+                &issuer,
+                &issuer,
+                &leaf,
+                CertStatus::good(),
+                false,
+                Shape {
+                    more_verdicts: vec![revoked],
+                    ..Shape::default()
+                },
+            );
+            let result = verify_and_map_response(
+                &response,
+                &issuer,
+                &requested,
+                b"req-nonce",
+                at(2024, 1, 1),
+            );
+            assert!(
+                matches!(result, Err(OcspError::CertIdMismatch)),
+                "an ambiguous answer must fail closed, got {result:?}"
+            );
+        }
+
+        /// The responder-identity gate in isolation: the response is signed by the issuer key,
+        /// so the signature gate passes, but it names another responder.
+        #[test]
+        fn signed_good_with_a_foreign_responder_id_is_denied() {
+            let signer = SigningKey::from_bytes(&[7u8; 32]);
+            let issuer = mint_issuer_with_key(&signer);
+            let leaf = mint_leaf_with_aia("http://ocsp.example.test/r");
+            let (response, requested) = signed_response_with(
+                &signer,
+                &issuer,
+                &issuer,
+                &leaf,
+                CertStatus::good(),
+                false,
+                Shape {
+                    responder_id: Some(ResponderId::ByName(
+                        "CN=some-other-responder".parse().expect("name"),
+                    )),
+                    ..Shape::default()
+                },
+            );
+            let result = verify_and_map_response(
+                &response,
+                &issuer,
+                &requested,
+                b"req-nonce",
+                at(2024, 1, 1),
+            );
+            assert!(
+                matches!(result, Err(OcspError::ResponderIdentityMismatch(_))),
+                "a response naming a responder it did not sign as must be denied, got {result:?}"
+            );
+        }
+
+        /// The nonce gate in isolation: a correctly signed response echoing nonce A under a
+        /// request that carried nonce B is a replay; the same response under A is admitted.
+        #[test]
+        fn signed_good_echoing_another_nonce_is_denied() {
+            let signer = SigningKey::from_bytes(&[7u8; 32]);
+            let issuer = mint_issuer_with_key(&signer);
+            let leaf = mint_leaf_with_aia("http://ocsp.example.test/r");
+            let respond = |echoed: &[u8]| {
+                signed_response_with(
+                    &signer,
+                    &issuer,
+                    &issuer,
+                    &leaf,
+                    CertStatus::good(),
+                    false,
+                    Shape {
+                        echoed_nonce: Some(echoed.to_vec()),
+                        ..Shape::default()
+                    },
+                )
+            };
+            let (response, requested) = respond(b"nonce-A-aaaaaaaa");
+            let replayed = verify_and_map_response(
+                &response,
+                &issuer,
+                &requested,
+                b"nonce-B-bbbbbbbb",
+                at(2024, 1, 1),
+            );
+            assert!(
+                matches!(replayed, Err(OcspError::NonceMismatch)),
+                "a response echoing another request's nonce must be denied, got {replayed:?}"
+            );
+            verify_and_map_response(
+                &response,
+                &issuer,
+                &requested,
+                b"nonce-A-aaaaaaaa",
+                at(2024, 1, 1),
+            )
+            .expect("the positive control: the same response under its own nonce is admitted");
+        }
+
+        /// A CA, an Ed25519 delegated responder it signed, and the key that signs responses.
+        fn delegated_responder(shape: &ResponderShape) -> (Vec<u8>, SigningKey, Vec<u8>) {
+            let ca_signer = SigningKey::from_bytes(&[7u8; 32]);
+            let ca_key = ed25519_key(&ca_signer);
+            let mut ca_params = CertificateParams::new(Vec::new()).expect("ca params");
+            ca_params
+                .distinguished_name
+                .push(DnType::CommonName, "mcp-re-ed25519-ca");
+            ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+            ca_params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+            let ca_der = ca_params
+                .self_signed(&ca_key)
+                .expect("ca self-signed")
+                .der()
+                .as_ref()
+                .to_vec();
+            let issuer = rcgen::Issuer::new(ca_params, ca_key);
+            let responder_signer = SigningKey::from_bytes(&[11u8; 32]);
+            let responder_der = mint_responder_with(
+                &issuer,
+                &ed25519_key(&responder_signer),
+                shape,
+                (2023, 1, 1),
+                (2025, 1, 1),
+            );
+            (ca_der, responder_signer, responder_der)
+        }
+
+        fn delegated_response(shape: &ResponderShape) -> Result<CertRevocationStatus, OcspError> {
+            let (ca_der, responder_signer, responder_der) = delegated_responder(shape);
+            let leaf = mint_leaf_with_aia("http://ocsp.example.test/r");
+            let (response, requested) = signed_response_with(
+                &responder_signer,
+                &responder_der,
+                &ca_der,
+                &leaf,
+                CertStatus::good(),
+                false,
+                Shape {
+                    certs: Some(vec![
+                        Certificate::from_der(&responder_der).expect("responder cert")
+                    ]),
+                    ..Shape::default()
+                },
+            );
+            verify_and_map_response(&response, &ca_der, &requested, b"req-nonce", at(2024, 1, 1))
+                .map(|answer| answer.status())
+        }
+
+        /// The delegated-responder ADMIT path end to end: the response is signed by a responder
+        /// certificate the CA issued, which names it, carries the OCSP-signing EKU and nocheck.
+        #[test]
+        fn delegated_responder_signed_good_is_admitted() {
+            assert_eq!(
+                delegated_response(&ResponderShape::proper()).expect("a delegated Good verifies"),
+                CertRevocationStatus::Good
+            );
+        }
+
+        /// Each requirement on the delegated responder is load-bearing: dropping the EKU (the
+        /// gap EX-006 names) or nocheck turns the admitted response into a denial.
+        #[test]
+        fn a_delegated_responder_missing_a_requirement_is_denied() {
+            for (label, shape) in [
+                (
+                    "the OCSP-signing EKU",
+                    ResponderShape {
+                        ocsp_signing_eku: false,
+                        ..ResponderShape::proper()
+                    },
+                ),
+                (
+                    "id-pkix-ocsp-nocheck",
+                    ResponderShape {
+                        nocheck: false,
+                        ..ResponderShape::proper()
+                    },
+                ),
+            ] {
+                let result = delegated_response(&shape);
+                assert!(
+                    matches!(result, Err(OcspError::SignatureNotVerified(_))),
+                    "a delegated responder without {label} must be denied, got {result:?}"
+                );
+            }
         }
 
         #[test]

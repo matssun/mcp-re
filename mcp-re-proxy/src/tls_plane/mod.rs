@@ -22,9 +22,9 @@
 //!   every reload, because it would never fall out of force. Past `nextUpdate` the
 //!   verdict for that issuer is `Unknown`,
 //!   and unknown status is refused unconditionally — no CRL builder on either the handshake
-//!   or the per-request side takes a policy input at all. The online OCSP checker does
-//!   carry `soft_fail`; what keeps it from falsifying the second clause is THM-0013 (no
-//!   validated deployment enables online OCSP client revocation), not an absence. So a CRL nobody is refreshing
+//!   or the per-request side takes a policy input at all. Nor does the online OCSP checker;
+//!   THM-0013 (no validated deployment enables online OCSP client revocation) keeps it off
+//!   every validated deployment as well. So a CRL nobody is refreshing
 //!   converges on refusing that issuer's certificates rather than on admitting revoked
 //!   ones. The artifact bounds itself; the plane does not have to.
 //!
