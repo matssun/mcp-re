@@ -17,12 +17,15 @@
 //! **Reachable-and-absent is not unreachable.** The two failures read the same to a
 //! naive `Option`, and they must not:
 //!
-//! - `Ok(Some(state))` — the authority has a record; compare generations.
-//! - `Ok(None)` — the authority is healthy and knows nothing about this workload.
-//!   That is a definitive negative: the call is refused. Treating it as "unreachable"
-//!   would route an unknown workload into degraded mode, where it would be SERVED on
-//!   its own assertion — turning an unadmitted caller into an admitted one by being
-//!   unknown, which is backwards.
+//! - `Ok(AnsweredAs::State(state))` — the authority has a record; compare generations.
+//! - `Ok(AnsweredAs::NoRecord)` — the authority is healthy and knows nothing about this
+//!   workload. That is a definitive negative: the call is refused. Treating it as
+//!   "unreachable" would route an unknown workload into degraded mode, where it would be
+//!   SERVED on its own assertion — turning an unadmitted caller into an admitted one by
+//!   being unknown, which is backwards.
+//! - `Ok(AnsweredAs::Refused(class))` — the authority holds something this deployment will
+//!   not act on, and the class says what (forged, rewound, expired, about another workload,
+//!   ...). The same definitive negative, and a different fact from an absent record.
 //! - `Err(Unavailable)` — no answer. Only this reaches the §5.2 degraded fork, and
 //!   only when the deployment opted in, bounded by P.
 //!
@@ -30,7 +33,9 @@
 //! same reason: an outage is not a statement about the caller.
 //!
 //! **A store is not an authority.** Every source here reads bytes somebody else wrote, so
-//! what it hands the gate is [`CurrentAdmissionState`] — a value obtainable only by
+//! what it hands the gate is a
+//! [`CurrentAdmissionState`](mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState)
+//! — a value obtainable only by
 //! verifying a record against the configured admission authority, inside the deployment's
 //! declared currentness budget. A party with store-write access and no signing authority
 //! can therefore delete state, corrupt it or make the store unreachable; it cannot mint an
@@ -39,14 +44,12 @@
 //! [`AdmissionRecordVerifier`], so a source cannot forget to make it.
 //!
 //! A REACHABLE store answering with a record that fails any of those checks is a definitive
-//! negative — `Ok(None)` — and never `Err(Unavailable)`. Sending it to the degraded fork
+//! negative — `Ok(AnsweredAs::Refused(_))` — and never `Err(Unavailable)`. Sending it to the degraded fork
 //! would serve the caller on its own assertion, which would make corrupting a record a
 //! cheaper un-revoke than issuing one.
 
 use std::future::Future;
 use std::pin::Pin;
-
-use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
 
 /// What a reachable store's answer means — the one owner of the classification, so that
 /// "a store that answered is never an outage" is a property of a type rather than a rule
@@ -58,13 +61,13 @@ mod verifier;
 pub use in_memory::InMemoryAdmissionSource;
 pub use verifier::AdmissionRecordVerifier;
 
-// Crate-visible, and only these two items: the shared arm of this authority lives in
-// `crate::redis_admission_source` because that module is compiled under `redis_replay`,
-// which makes it a sibling rather than a child. The classification is the rule the
-// statement quantifies over every source, so the sibling must reach it — while `answer`'s
-// module body stays private, so nothing else about it becomes crate API.
+// `AnsweredAs` is the trait's answer and so is public. The classifier is crate-visible: the
+// shared arm of this authority lives in `crate::redis_admission_source` because that module
+// is compiled under `redis_replay`, which makes it a sibling rather than a child, and the
+// classification is the rule the statement quantifies over every source. `answer`'s module
+// body stays private, so nothing else about it becomes crate API.
 pub(crate) use answer::classify_answer;
-pub(crate) use answer::AnsweredAs;
+pub use answer::AnsweredAs;
 
 /// A fail-closed admission-source failure: the authority could not be reached or
 /// did not answer. NOT a verdict about the workload, and never a fallback to allow.
@@ -93,21 +96,19 @@ pub type AdmissionFuture<'a, T> =
 /// Implementations MUST be non-blocking: `current` is awaited on the per-core
 /// request path, before the inner backend runs.
 pub trait AsyncAdmissionSource: Send + Sync {
-    /// The current, AUTHENTICATED authoritative state for `admission_id`.
+    /// What the store says about `admission_id`: the current, AUTHENTICATED authoritative
+    /// state, or the definitive negative it answered with.
     ///
-    /// `Ok(None)` means the store answered and has no record this deployment will act on —
-    /// absent, or present and not the configured authority's current statement. Both are
-    /// definitive negatives. `Err` means no answer at all; see the module docs for why the
-    /// two must not collapse.
+    /// [`AnsweredAs::NoRecord`] and [`AnsweredAs::Refused`] mean the store answered and has no
+    /// record this deployment will act on — absent, or present and not the configured
+    /// authority's current statement — and the answer says WHICH, so a forged record and an
+    /// absent one are different facts to the gate and to the audit record. `Err` means no
+    /// answer at all; see the module docs for why the two must not collapse.
     ///
     /// `now` is the verifier's clock, passed rather than read here: currentness is decided
     /// against the same instant the rest of the exchange is decided against, and a source
     /// reading its own clock would be a second one to disagree with.
-    fn current<'a>(
-        &'a self,
-        admission_id: &'a str,
-        now: i64,
-    ) -> AdmissionFuture<'a, Option<CurrentAdmissionState>>;
+    fn current<'a>(&'a self, admission_id: &'a str, now: i64) -> AdmissionFuture<'a, AnsweredAs>;
 }
 
 /// The key an admission record lives under in a shared store.

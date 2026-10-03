@@ -585,6 +585,75 @@ fn an_admission_refusal_is_recorded_as_the_gates_refusal() {
     );
 }
 
+/// The refusal classes a replica's audit sink recorded for the request records it refused.
+fn recorded_refusal_classes(
+    sink: &mcp_re_proxy::CollectingAuditSink,
+) -> Vec<Option<mcp_re_proxy::admission_enforcer::AdmissionRefusalClass>> {
+    sink.records()
+        .iter()
+        .filter(|r| r.event().event_type == "mcp-re.request.rejected")
+        .map(|r| r.subject.admission_refusal())
+        .collect()
+}
+
+/// One refusal through a fresh replica over `source`, and the classes its record carried.
+fn refusal_classes_for(
+    source: Arc<InMemoryAdmissionSource>,
+    claims: Option<&AdmissionClaims>,
+    nonce: &str,
+) -> Vec<Option<mcp_re_proxy::admission_enforcer::AdmissionRefusalClass>> {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = replica(
+        source,
+        strict_policy(),
+        AdmissionEnforcement::Required,
+        Arc::new(AtomicUsize::new(0)),
+    )
+    .with_audit_sink(sink.clone());
+    let key = authority_key();
+    let req = signed_call(claims.map(|c| (c, &key)), nonce);
+    let served = block_on(proxy.handle(served_of(&req), NOW));
+    assert_eq!(served.status, 403);
+    recorded_refusal_classes(&sink)
+}
+
+/// A forged record and an absent one are the same wire refusal and DIFFERENT facts, and the
+/// durable record is the only place the difference survives. Each cause the gate can tell
+/// apart names itself in the `admission_refusal` coordinate.
+#[test]
+fn a_refused_admission_names_which_fact_refused_it_in_the_record() {
+    use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal as Bad;
+    use mcp_re_proxy::admission_enforcer::AdmissionRefusalClass as Class;
+
+    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
+
+    // Nothing published: the authority has nothing to say about this workload.
+    let absent = refusal_classes_for(Arc::new(admission_store()), Some(&claims), "n-absent");
+    assert_eq!(absent, vec![Some(Class::NoRecord)]);
+
+    // Something published that the authority did not sign.
+    let forged = Arc::new(admission_store());
+    forged.publish(WORKLOAD, "not-a-record".to_owned());
+    assert_eq!(
+        refusal_classes_for(forged, Some(&claims), "n-forged"),
+        vec![Some(Class::RecordRefused(Bad::Malformed))]
+    );
+
+    // An authentic record at a newer generation: a superseded call, not a missing record.
+    let moved_on = Arc::new(admission_store());
+    publish_admitted(&moved_on, 6);
+    assert_eq!(
+        refusal_classes_for(moved_on, Some(&claims), "n-superseded"),
+        vec![Some(Class::NotCurrent)]
+    );
+
+    // The deployment requires admission and the call presented none.
+    assert_eq!(
+        refusal_classes_for(Arc::new(admission_store()), None, "n-none"),
+        vec![Some(Class::NoEvidence)]
+    );
+}
+
 #[test]
 fn a_revoked_workload_is_refused_though_its_assertion_is_still_valid() {
     let source = Arc::new(admission_store());

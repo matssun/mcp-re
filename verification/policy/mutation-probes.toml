@@ -4425,7 +4425,7 @@ conjunct = "a DegradedCandidate becomes a serve only while this replica's own mo
 path = "mcp-re-proxy/src/admission_enforcer/replica_history.rs"
 anchor = """
             AdmissionVerdict::DegradedCandidate(_) if self.window.exhausted(&self.policy) => {
-                Err(HttpProfileError::AdmissionStateUnavailable)
+                Err(AdmissionRefusal::window_closed())
             }
 """
 weakening = """
@@ -4501,14 +4501,14 @@ anchor = """
         AuditSubject(Subject::Request {
             event: AuditEvent::request_accepted(),
             authorization,
-            admission,
+            admission: AdmissionStatement::of(admission),
         })
 """
 weakening = """
         AuditSubject(Subject::Request {
             event: AuditEvent::response_signed(),
             authorization,
-            admission,
+            admission: AdmissionStatement::of(admission),
         })
 """
 expect_red = [
@@ -8205,12 +8205,10 @@ theorem = "THM-0085"
 conjunct = "each emitter takes the typed cause and asks IT for its projections, rather than rendering one of its own"
 path = "mcp-re-proxy/src/http_profile_serve/receipt/audit_event.rs"
 anchor = """
-                cause.core_verdict().as_ref(),
-                cause.authorization_facet(authorization),
+        let authorization = cause.authorization_facet(authorization);
 """
 weakening = """
-                cause.core_verdict().as_ref(),
-                cause.authorization_facet(None),
+        let authorization = cause.authorization_facet(None);
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#refusal_audit_emission_test::each_emitter_records_the_typed_projections",

@@ -11,10 +11,13 @@
 
 use mcp_re_http_profile::admission::AdmissionVerdict;
 use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
-use mcp_re_http_profile::HttpProfileError;
+
+use crate::admission_source::AnsweredAs;
 
 use super::AdmissionEnforcer;
 use super::AdmissionFacet;
+use super::AdmissionRefusal;
+use super::AdmissionRefusalClass;
 
 impl AdmissionEnforcer {
     /// The authoritative lookup, keyed on the AUTHENTICATED workload id.
@@ -24,7 +27,7 @@ impl AdmissionEnforcer {
     /// will act on: no record, or a record that is not the configured authority's current
     /// statement. Both are refused here rather than handed to a fork that would serve the
     /// call on its own assertion, which is what would make corrupting a record a cheaper
-    /// un-revoke than issuing one.
+    /// un-revoke than issuing one. The refusal carries which of the two the store said.
     ///
     /// The degraded window is a DURATION, so it is read from the monotonic clock and never
     /// from `now` — see `degraded_window`. A read is recorded at the instant the lookup was
@@ -33,21 +36,24 @@ impl AdmissionEnforcer {
         &self,
         admission_id: &str,
         now: i64,
-    ) -> Result<Option<CurrentAdmissionState>, HttpProfileError> {
+    ) -> Result<Option<CurrentAdmissionState>, AdmissionRefusal> {
         let elapsed_at = std::time::Instant::now();
-        match self.source.current(admission_id, now).await {
-            Ok(Some(state)) => {
-                self.window.record_read(elapsed_at);
-                Ok(Some(state))
-            }
-            Ok(None) => {
-                self.window.record_read(elapsed_at);
-                Err(HttpProfileError::AdmissionNotCurrent)
-            }
+        let answer = match self.source.current(admission_id, now).await {
+            Ok(answer) => answer,
             // The source is unreachable. Whether this replica may still SERVE on it is
             // decided at the conversion and not here: one check, so that deleting it makes an
             // out-of-window serve reachable rather than leaving a second copy still enforcing.
-            Err(_) => Ok(None),
+            Err(_) => return Ok(None),
+        };
+        self.window.record_read(elapsed_at);
+        match answer {
+            AnsweredAs::State(state) => Ok(Some(state)),
+            AnsweredAs::NoRecord => {
+                Err(AdmissionRefusal::at_store(AdmissionRefusalClass::NoRecord))
+            }
+            AnsweredAs::Refused(refusal) => Err(AdmissionRefusal::at_store(
+                AdmissionRefusalClass::RecordRefused(refusal),
+            )),
         }
     }
 
@@ -69,11 +75,11 @@ impl AdmissionEnforcer {
     pub(super) fn convert(
         &self,
         verdict: AdmissionVerdict,
-    ) -> Result<AdmissionFacet, HttpProfileError> {
+    ) -> Result<AdmissionFacet, AdmissionRefusal> {
         match verdict {
             AdmissionVerdict::Live(_) => Ok(AdmissionFacet::LiveConfirmed),
             AdmissionVerdict::DegradedCandidate(_) if self.window.exhausted(&self.policy) => {
-                Err(HttpProfileError::AdmissionStateUnavailable)
+                Err(AdmissionRefusal::window_closed())
             }
             AdmissionVerdict::DegradedCandidate(_) => Ok(AdmissionFacet::Degraded),
         }

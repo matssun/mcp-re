@@ -14,6 +14,7 @@
 use mcp_re_core::McpReError;
 
 use crate::admission_enforcer::AdmissionFacet;
+use crate::admission_enforcer::AdmissionRefusalClass;
 use crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject;
 use crate::communication_assurance::RequestPeerBindingFacts;
 use crate::exchange_state::Established;
@@ -53,6 +54,14 @@ impl AdmissionDecidedOver {
     pub(super) fn binding(&self) -> Option<&RequestPeerBindingFacts> {
         self.binding.as_ref()
     }
+}
+
+/// A refusal by the §7 gate: what the client is served, and which fact the record names.
+pub(super) struct AdmissionDenied {
+    /// The refusal the exchange machine signs.
+    pub(super) refusal: Refusal,
+    /// Which fact made the gate refuse; the record's `admission_refusal` coordinate.
+    pub(super) class: AdmissionRefusalClass,
 }
 
 impl HttpProfileProxy {
@@ -116,7 +125,7 @@ impl HttpProfileProxy {
         &self,
         ex: &Exchange<'_>,
         bound: Option<&RequestPeerBindingFacts>,
-    ) -> Result<(Established<AdmissionDecidedOver>, AdmissionFacet), Refusal> {
+    ) -> Result<(Established<AdmissionDecidedOver>, AdmissionFacet), AdmissionDenied> {
         let admitted = || {
             Established::new(
                 AdmissionDecidedOver {
@@ -144,7 +153,10 @@ impl HttpProfileProxy {
             // downstream reconstructs what admission decided from the fact that it did not
             // refuse. A live-confirmed serve and a degraded one are different serves.
             Ok(facet) => Ok((admitted(), facet)),
-            Err(e) => Err(Refusal::before_admission(e, 403)),
+            Err(denied) => Err(AdmissionDenied {
+                class: denied.class(),
+                refusal: Refusal::before_admission(denied.into_error(), 403),
+            }),
         }
     }
 }

@@ -44,7 +44,7 @@ use super::verifier::AdmissionRecordVerifier;
 /// something, and the absence of an outage variant is what makes the degraded fork
 /// unreachable from here.
 #[derive(Debug)]
-pub(crate) enum AnsweredAs {
+pub enum AnsweredAs {
     /// The answer is this deployment's current authoritative state for the workload.
     State(CurrentAdmissionState),
     /// The store holds no record for the workload. A negative, not an absence of
@@ -54,14 +54,11 @@ pub(crate) enum AnsweredAs {
     /// The store answered with something this deployment will not act on, and which class
     /// of thing it was.
     ///
-    /// The class is carried unconditionally because what an ANSWER means does not depend
-    /// on which adapter is compiled — every source that classifies one classifies it the
-    /// same way. Its consumer is not unconditional: the operator line naming the class is
-    /// paced by `redis_admission_source::refusal_report`, which exists only under
-    /// `redis_replay`, so with that feature off nothing reads the payload. That is the
-    /// lane's shape, not a value nobody needs, and conditioning the VARIANT on the feature
-    /// would make one type mean two things.
-    Refused(#[allow(dead_code)] AdmissionRecordRefusal),
+    /// The class travels with the answer to the gate, which records it as the refusal's
+    /// cause: a forged record and an absent one are different facts, and the durable audit
+    /// record is where a deployment finds out which one it had. The shared source also
+    /// names the class on a paced operator line.
+    Refused(AdmissionRecordRefusal),
 }
 
 /// Classify a reachable store's answer. `raw` is `None` when the store holds no record.

@@ -14,6 +14,7 @@
 //! decided.
 
 use crate::admission_enforcer::AdmissionFacet;
+use crate::admission_enforcer::AdmissionRefusalClass;
 use crate::authorization::AuthorizationFacet;
 
 /// The two request-side verdicts, each in its own authority's vocabulary.
@@ -27,9 +28,19 @@ pub(super) struct AuthorityVerdicts {
     /// What the §7 admission gate established. Rendered `not-reached` when absent, never as
     /// a guess at one of its four verdicts.
     pub(super) admission: Option<AdmissionFacet>,
+    /// Which fact made the gate refuse. `Some` only where `admission` is `Refused` — the one
+    /// way to set it is [`Self::refused_at_admission`], which sets both, so the pair cannot
+    /// disagree.
+    pub(super) admission_refusal: Option<AdmissionRefusalClass>,
 }
 
 impl AuthorityVerdicts {
+    /// The §7 gate refused, for this reason.
+    pub(super) fn refused_at_admission(&mut self, class: AdmissionRefusalClass) {
+        self.admission = Some(AdmissionFacet::Refused);
+        self.admission_refusal = Some(class);
+    }
+
     /// The admission coordinate as the record states it: an unrecorded slot is `NotReached`.
     pub(super) fn admission_facet(&self) -> AdmissionFacet {
         self.admission.unwrap_or(AdmissionFacet::NotReached)
@@ -65,5 +76,16 @@ mod tests {
         assert_eq!(v.admission_facet(), AdmissionFacet::NotReached);
         v.admission = Some(AdmissionFacet::Refused);
         assert_eq!(v.admission_facet(), AdmissionFacet::Refused);
+    }
+
+    /// A refusal at the gate sets the facet and the class together, so a record can never
+    /// carry a refusal cause beside an admission that was not refused.
+    #[test]
+    fn a_gate_refusal_records_the_facet_and_its_class_together() {
+        let mut v = AuthorityVerdicts::default();
+        assert_eq!(v.admission_refusal, None);
+        v.refused_at_admission(AdmissionRefusalClass::NoRecord);
+        assert_eq!(v.admission, Some(AdmissionFacet::Refused));
+        assert_eq!(v.admission_refusal, Some(AdmissionRefusalClass::NoRecord));
     }
 }

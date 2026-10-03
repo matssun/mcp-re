@@ -19,8 +19,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
-use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
-
 use super::classify_answer;
 use super::verifier::AdmissionRecordVerifier;
 use super::AnsweredAs;
@@ -116,11 +114,7 @@ impl InMemoryAdmissionSource {
     /// The read, written as a plain function so the trait method is the `Box::pin` and
     /// nothing else. The async block is not a scope this logic belongs inside: none of it
     /// awaits.
-    fn read(
-        &self,
-        admission_id: &str,
-        now: i64,
-    ) -> Result<Option<CurrentAdmissionState>, AdmissionSourceError> {
+    fn read(&self, admission_id: &str, now: i64) -> Result<AnsweredAs, AdmissionSourceError> {
         if *self.recovered(&self.unavailable) {
             return Err(AdmissionSourceError::Unavailable {
                 details: "in-memory source marked unavailable".to_owned(),
@@ -128,25 +122,21 @@ impl InMemoryAdmissionSource {
         }
         let raw = self.recovered(&self.records).get(admission_id).cloned();
         // A record this store HAS but cannot authenticate is a definitive negative, exactly
-        // as an absent one is. Never an outage: that fork serves the caller on its own
-        // assertion. The rule belongs to `answer`, which is why it is not restated here —
-        // one source spelling it differently from the other is the failure the shared owner
-        // removes.
-        Ok(
-            match classify_answer(&self.verifier, admission_id, raw.as_deref(), now) {
-                AnsweredAs::State(state) => Some(state),
-                AnsweredAs::NoRecord | AnsweredAs::Refused(_) => None,
-            },
-        )
+        // as an absent one is, and the answer says which. Never an outage: that fork serves
+        // the caller on its own assertion. The rule belongs to `answer`, which is why it is
+        // not restated here — one source spelling it differently from the other is the
+        // failure the shared owner removes.
+        Ok(classify_answer(
+            &self.verifier,
+            admission_id,
+            raw.as_deref(),
+            now,
+        ))
     }
 }
 
 impl AsyncAdmissionSource for InMemoryAdmissionSource {
-    fn current<'a>(
-        &'a self,
-        admission_id: &'a str,
-        now: i64,
-    ) -> AdmissionFuture<'a, Option<CurrentAdmissionState>> {
+    fn current<'a>(&'a self, admission_id: &'a str, now: i64) -> AdmissionFuture<'a, AnsweredAs> {
         Box::pin(async move { self.read(admission_id, now) })
     }
 }
@@ -156,6 +146,8 @@ mod tests {
     use super::super::test_support::{signed_admitted, signed_revoked, verifier_for};
     use super::*;
     use mcp_re_core::SigningKey;
+    use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal;
+    use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
     use mcp_re_http_profile::AdmissionStatus;
     use std::future::Future;
 
@@ -174,12 +166,20 @@ mod tests {
         InMemoryAdmissionSource::new(verifier_for(key, 60, 5))
     }
 
+    /// The state a lookup answered with, panicking on every other answer.
+    fn state_of(answer: Result<AnsweredAs, AdmissionSourceError>) -> CurrentAdmissionState {
+        match answer.expect("reachable") {
+            AnsweredAs::State(state) => state,
+            other => panic!("expected a current state, the store answered {other:?}"),
+        }
+    }
+
     #[test]
     fn an_unknown_workload_is_a_definitive_negative_not_an_outage() {
         let key = authority();
         assert!(matches!(
             block_on(source(&key).current("nobody", 1_030)),
-            Ok(None)
+            Ok(AnsweredAs::NoRecord)
         ));
     }
 
@@ -213,9 +213,7 @@ mod tests {
             "workload-7",
             signed_revoked(&key, "workload-7", 5, 2, 1_000),
         );
-        let state = block_on(s.current("workload-7", 1_030))
-            .expect("reachable")
-            .expect("record");
+        let state = state_of(block_on(s.current("workload-7", 1_030)));
         assert_eq!(state.state().generation(), 5);
         assert_eq!(state.state().status(), AdmissionStatus::Revoked);
     }
@@ -228,15 +226,21 @@ mod tests {
         let key = authority();
         let attacker = SigningKey::from_seed_bytes(&[4u8; 32]);
         let s = source(&key);
-        for forged in [
-            signed_admitted(&attacker, "workload-7", 5, 1, 1_000),
-            "not-a-record".to_owned(),
-            String::new(),
+        for (forged, class) in [
+            (
+                signed_admitted(&attacker, "workload-7", 5, 1, 1_000),
+                AdmissionRecordRefusal::SignatureInvalid,
+            ),
+            ("not-a-record".to_owned(), AdmissionRecordRefusal::Malformed),
+            (String::new(), AdmissionRecordRefusal::Malformed),
         ] {
             s.publish("workload-7", forged);
             assert!(
-                matches!(block_on(s.current("workload-7", 1_030)), Ok(None)),
-                "an unauthenticatable record must be Ok(None), never an outage"
+                matches!(
+                    block_on(s.current("workload-7", 1_030)),
+                    Ok(AnsweredAs::Refused(got)) if got == class
+                ),
+                "an unauthenticatable record is a refusal that names its class, never an outage"
             );
         }
     }
@@ -250,7 +254,10 @@ mod tests {
             "workload-9",
             signed_admitted(&key, "workload-7", 5, 1, 1_000),
         );
-        assert!(matches!(block_on(s.current("workload-9", 1_030)), Ok(None)));
+        assert!(matches!(
+            block_on(s.current("workload-9", 1_030)),
+            Ok(AnsweredAs::Refused(AdmissionRecordRefusal::SubjectMismatch))
+        ));
     }
 
     /// The rollback attack in the single-process store: revoke, then restore the old bytes.
@@ -262,18 +269,14 @@ mod tests {
         let s = source(&key);
         let admitted = signed_admitted(&key, "workload-7", 5, 1, 1_000);
         s.publish("workload-7", admitted.clone());
-        assert!(block_on(s.current("workload-7", 1_010))
-            .expect("reachable")
-            .is_some());
+        state_of(block_on(s.current("workload-7", 1_010)));
 
         s.publish(
             "workload-7",
             signed_revoked(&key, "workload-7", 5, 2, 1_000),
         );
         assert_eq!(
-            block_on(s.current("workload-7", 1_020))
-                .expect("reachable")
-                .expect("record")
+            state_of(block_on(s.current("workload-7", 1_020)))
                 .state()
                 .status(),
             AdmissionStatus::Revoked
@@ -281,7 +284,10 @@ mod tests {
 
         s.publish("workload-7", admitted);
         assert!(
-            matches!(block_on(s.current("workload-7", 1_030)), Ok(None)),
+            matches!(
+                block_on(s.current("workload-7", 1_030)),
+                Ok(AnsweredAs::Refused(AdmissionRecordRefusal::RevisionRewound))
+            ),
             "the restored publication is older than one this replica accepted"
         );
     }
@@ -314,9 +320,7 @@ mod tests {
         .join();
         assert!(died.is_err(), "the fixture must actually have panicked");
 
-        let state = block_on(s.current("workload-7", 1_030))
-            .expect("a poisoned lock is not an outage")
-            .expect("the record is still there");
+        let state = state_of(block_on(s.current("workload-7", 1_030)));
         assert_eq!(state.state().generation(), 5);
         assert_eq!(
             s.poison_observed(),
@@ -327,7 +331,7 @@ mod tests {
 
         // And the second read does not count a second panic, which is what a sticky flag
         // would have made it do.
-        assert!(block_on(s.current("workload-7", 1_030)).is_ok());
+        state_of(block_on(s.current("workload-7", 1_030)));
         assert_eq!(s.poison_observed(), 1);
     }
 
@@ -342,6 +346,9 @@ mod tests {
             signed_admitted(&key, "workload-7", 5, 1, 1_000),
         );
         s.remove("workload-7");
-        assert!(matches!(block_on(s.current("workload-7", 1_030)), Ok(None)));
+        assert!(matches!(
+            block_on(s.current("workload-7", 1_030)),
+            Ok(AnsweredAs::NoRecord)
+        ));
     }
 }

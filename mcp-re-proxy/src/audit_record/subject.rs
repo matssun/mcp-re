@@ -32,6 +32,8 @@ use mcp_re_core::audit::AuditEvent;
 use mcp_re_core::McpReError;
 
 use crate::admission_enforcer::AdmissionFacet;
+use crate::admission_enforcer::AdmissionRefusalClass;
+use crate::admission_enforcer::AdmissionStatement;
 
 use crate::audit_record::text::AuditField;
 use crate::authorization::AuthorizationFacet;
@@ -60,7 +62,7 @@ enum Subject {
         authorization: AuthorizationFacet,
         /// What the §7 ADMISSION authority says about it — an independent coordinate on the
         /// same terms, never expressed in the other's vocabulary (R11-106).
-        admission: AdmissionFacet,
+        admission: AdmissionStatement,
     },
     /// The response half: a Core lifecycle outcome, and nothing about authorization.
     Response {
@@ -75,7 +77,7 @@ impl AuditSubject {
         AuditSubject(Subject::Request {
             event: AuditEvent::request_accepted(),
             authorization,
-            admission,
+            admission: AdmissionStatement::of(admission),
         })
     }
 
@@ -92,8 +94,21 @@ impl AuditSubject {
                 None => AuditEvent::request_rejected_elsewhere(),
             },
             authorization,
-            admission,
+            admission: AdmissionStatement::of(admission),
         })
+    }
+
+    /// A record for a request the §7 gate REFUSED, naming the fact that fired.
+    pub fn request_refused_at_admission(
+        verdict: Option<&McpReError>,
+        authorization: AuthorizationFacet,
+        class: AdmissionRefusalClass,
+    ) -> Self {
+        let mut subject = Self::request_rejected(verdict, authorization, AdmissionFacet::Refused);
+        if let Subject::Request { admission, .. } = &mut subject.0 {
+            *admission = AdmissionStatement::refused(class);
+        }
+        subject
     }
 
     /// A record for a SIGNED response.
@@ -141,7 +156,16 @@ impl AuditSubject {
     /// is a request-side decision and a response has nothing to say about it.
     pub fn admission(&self) -> Option<AdmissionFacet> {
         match &self.0 {
-            Subject::Request { admission, .. } => Some(*admission),
+            Subject::Request { admission, .. } => Some(admission.facet()),
+            Subject::Response { .. } => None,
+        }
+    }
+
+    /// Why the §7 gate refused, when it did. `None` on every record it did not refuse and on
+    /// a response record.
+    pub fn admission_refusal(&self) -> Option<AdmissionRefusalClass> {
+        match &self.0 {
+            Subject::Request { admission, .. } => admission.refusal(),
             Subject::Response { .. } => None,
         }
     }
@@ -212,6 +236,51 @@ mod tests {
             own.len() + AdmissionFacet::NotConfigured.audit_fields().len(),
             "and it adds only the OTHER authority's own fields — nothing this type invented"
         );
+    }
+
+    /// The refusal cause is a THIRD coordinate, present only on a record the §7 gate refused,
+    /// and it never moves the admission facet's own token.
+    ///
+    /// The facet stays one token per verdict; what a gate refusal adds is a separate
+    /// `admission_refusal` field. A record the gate did not refuse carries none, and the
+    /// constructor that names a cause fixes the facet to `Refused`, so a cause cannot sit
+    /// beside an admission that was not refused.
+    #[test]
+    fn a_gate_refusal_names_its_cause_beside_an_unchanged_admission_coordinate() {
+        use crate::admission_enforcer::AdmissionRefusalClass;
+        let err = mcp_re_core::McpReError::ActorBindingFailed;
+        let refused = AuditSubject::request_refused_at_admission(
+            Some(&err),
+            AuthorizationFacet::NotConfigured,
+            AdmissionRefusalClass::NoRecord,
+        );
+        assert_eq!(refused.admission(), Some(AdmissionFacet::Refused));
+        assert_eq!(
+            refused.admission_refusal(),
+            Some(AdmissionRefusalClass::NoRecord)
+        );
+        let fields = refused.audit_fields();
+        let admission: Vec<_> = fields.iter().filter(|f| f.name == "admission").collect();
+        assert_eq!(admission.len(), 1, "the facet's one token is unchanged");
+        assert_eq!(
+            fields.last().map(|f| (f.name, f.value.clone())),
+            Some((
+                "admission_refusal",
+                crate::audit_record::text::AuditValue::Token("no-record")
+            )),
+        );
+
+        let plain = AuditSubject::request_rejected(
+            Some(&err),
+            AuthorizationFacet::NotConfigured,
+            AdmissionFacet::Refused,
+        );
+        assert_eq!(plain.admission_refusal(), None);
+        assert!(plain
+            .audit_fields()
+            .iter()
+            .all(|f| f.name != "admission_refusal"));
+        assert_eq!(AuditSubject::response_signed().admission_refusal(), None);
     }
 
     /// R5: a response record has nothing to say about authorization, and says nothing.

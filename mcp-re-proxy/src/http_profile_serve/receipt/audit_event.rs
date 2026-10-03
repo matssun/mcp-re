@@ -45,20 +45,26 @@ impl ResponseSigning {
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
         authorization: Option<&crate::authorization::AuthorizationFacet>,
         admission: crate::admission_enforcer::AdmissionFacet,
+        admission_refusal: Option<crate::admission_enforcer::AdmissionRefusalClass>,
     ) -> ServedHttpResponse {
-        crate::audit_record::record_to(
-            audit,
-            // `None` means Core reached no verdict: a policy did. Its token belongs in the
-            // authorization coordinate, never in Core's `reason`.
-            crate::audit_record::AuditSubject::request_rejected(
-                cause.core_verdict().as_ref(),
-                cause.authorization_facet(authorization),
+        // `None` means Core reached no verdict: a policy did. Its token belongs in the
+        // authorization coordinate, never in Core's `reason`.
+        let core_verdict = cause.core_verdict();
+        let authorization = cause.authorization_facet(authorization);
+        let subject = match admission_refusal {
+            // The §7 gate refused, and says why: its own coordinate beside the facet.
+            Some(class) => crate::audit_record::AuditSubject::request_refused_at_admission(
+                core_verdict.as_ref(),
+                authorization,
+                class,
+            ),
+            None => crate::audit_record::AuditSubject::request_rejected(
+                core_verdict.as_ref(),
+                authorization,
                 admission,
             ),
-            actor_id,
-            status,
-            now,
-        );
+        };
+        crate::audit_record::record_to(audit, subject, actor_id, status, now);
         self.signed_rejection(
             request,
             cause.wire_code(),

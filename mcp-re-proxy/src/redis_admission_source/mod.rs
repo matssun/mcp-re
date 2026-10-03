@@ -43,7 +43,7 @@
 //!
 //! A store that answered with something this deployment will not act on — absent, malformed,
 //! wrongly signed, wrongly issued, about another workload, or past the currentness budget —
-//! is `Ok(None)`, a definitive negative. Routing those to the degraded fork would serve the
+//! is a definitive negative (`AnsweredAs::NoRecord` or `AnsweredAs::Refused`). Routing those to the degraded fork would serve the
 //! caller on its own assertion, so corrupting a `revoked` record would be a cheaper
 //! un-revoke than issuing a new admission.
 
@@ -53,8 +53,6 @@ use redis::aio::ConnectionManager;
 mod refusal_report;
 
 use refusal_report::ReportedClasses;
-
-use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
 
 use crate::admission_source::admission_key;
 use crate::admission_source::classify_answer;
@@ -160,7 +158,7 @@ impl RedisAdmissionSource {
         &self,
         admission_id: &str,
         now: i64,
-    ) -> Result<Option<CurrentAdmissionState>, AdmissionSourceError> {
+    ) -> Result<AnsweredAs, AdmissionSourceError> {
         let mut conn = self.conn.clone();
         let raw: Result<Option<String>, redis::RedisError> = redis::cmd("GET")
             .arg(admission_key(admission_id))
@@ -172,27 +170,18 @@ impl RedisAdmissionSource {
         let raw = raw.map_err(|e| AdmissionSourceError::Unavailable {
             details: format!("redis GET admission failed: {e}"),
         })?;
-        Ok(
-            match classify_answer(&self.verifier, admission_id, raw.as_deref(), now) {
-                AnsweredAs::State(state) => Some(state),
-                AnsweredAs::NoRecord => None,
-                // What this adapter adds to the shared classification: saying WHICH class
-                // fired, at a pace a caller cannot set.
-                AnsweredAs::Refused(refusal) => {
-                    self.reported.report_once(refusal);
-                    None
-                }
-            },
-        )
+        let answer = classify_answer(&self.verifier, admission_id, raw.as_deref(), now);
+        // What this adapter adds to the shared classification: saying WHICH class fired, at
+        // a pace a caller cannot set. The answer itself still carries the class to the gate.
+        if let AnsweredAs::Refused(refusal) = &answer {
+            self.reported.report_once(*refusal);
+        }
+        Ok(answer)
     }
 }
 
 impl AsyncAdmissionSource for RedisAdmissionSource {
-    fn current<'a>(
-        &'a self,
-        admission_id: &'a str,
-        now: i64,
-    ) -> AdmissionFuture<'a, Option<CurrentAdmissionState>> {
+    fn current<'a>(&'a self, admission_id: &'a str, now: i64) -> AdmissionFuture<'a, AnsweredAs> {
         Box::pin(async move { self.current_state(admission_id, now).await })
     }
 }

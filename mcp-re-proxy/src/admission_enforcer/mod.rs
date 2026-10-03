@@ -16,7 +16,6 @@ use std::sync::Arc;
 use mcp_re_http_profile::authenticate_admission;
 use mcp_re_http_profile::check_admission;
 use mcp_re_http_profile::AdmissionPolicy;
-use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::VerifiedMcpRequest;
 
 use crate::admission_source::AsyncAdmissionSource;
@@ -26,10 +25,16 @@ use crate::http_profile_serve::AdmissionAuthorityResolver;
 mod degraded_window;
 mod enforcement;
 mod facet;
+mod refusal;
+mod refusal_class;
 mod replica_history;
+mod statement;
 
 pub use enforcement::AdmissionEnforcement;
 pub use facet::AdmissionFacet;
+pub(crate) use refusal::AdmissionRefusal;
+pub use refusal_class::AdmissionRefusalClass;
+pub(crate) use statement::AdmissionStatement;
 
 use degraded_window::DegradedWindow;
 
@@ -87,7 +92,7 @@ impl AdmissionEnforcer {
         actor_id: &str,
         audience_id: &str,
         now: i64,
-    ) -> Result<AdmissionFacet, HttpProfileError> {
+    ) -> Result<AdmissionFacet, AdmissionRefusal> {
         let block = verified.request_block();
         let (binding, assertion) = match (
             block.admission.as_ref(),
@@ -100,7 +105,7 @@ impl AdmissionEnforcer {
                 if self.enforcement == AdmissionEnforcement::Required {
                     // The client presented nothing: the evidence it owed is absent, which is
                     // not the authority being unreachable.
-                    return Err(HttpProfileError::MissingEvidence("admission"));
+                    return Err(AdmissionRefusal::no_evidence());
                 }
                 // The call declared no admission and this deployment tolerates that. NOT
                 // the same fact as having been checked and passed, and the record now says
@@ -127,7 +132,8 @@ impl AdmissionEnforcer {
             &self.policy,
             now,
             move |kid: &str| resolve(kid),
-        )?;
+        )
+        .map_err(AdmissionRefusal::authentication)?;
         let authoritative = self.lookup(authenticated.admission_id(), now).await?;
         // The PROJECTION, not the product. `CurrentAdmissionState` exists so that reaching
         // this line means the state was authenticated as the configured authority's and found
@@ -138,7 +144,8 @@ impl AdmissionEnforcer {
             authoritative.as_ref().map(|current| current.state()),
             &self.policy,
             now,
-        )?;
+        )
+        .map_err(AdmissionRefusal::currency)?;
         self.convert(verdict)
     }
 }

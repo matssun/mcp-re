@@ -60,12 +60,39 @@ admission EVIDENCE's facts and belong to whatever records those. This coordinate
 *what did the gate decide about this exchange*; one that also restated the evidence would make
 two owners' statements indistinguishable on one line.
 
+### 3a. The refusal cause is a separate coordinate
+
+A refused exchange needs a second statement the facet deliberately does not make: WHICH fact
+the gate refused on. The wire code of an admission refusal is frozen and nearly uniform — a
+forged record, an absent one, a revoked workload and a closed degraded window all reach the
+client as a 403 it cannot tell apart — so the durable record is the only place an operator
+learns which one fired.
+
+That is `AdmissionRefusalClass`, rendered as `admission_refusal=<token>` on a request record
+the gate refused and on no other. The facet stays one token per verdict; widening it would
+have made every consumer of the facet a consumer of a refusal taxonomy. The two cannot
+disagree: the constructor that names a cause fixes the facet to `Refused`.
+
+| token | the gate refused because |
+|---|---|
+| `no-evidence` | the deployment requires admission and the call presented none |
+| `assertion-invalid` / `assertion-expired` | the assertion did not authenticate, or is outside its window |
+| `binding-mismatch` | the assertion is another actor's, or the binding does not describe it |
+| `not-current` | an authentic statement says the workload is not admitted now |
+| `no-record` | the store answered and holds nothing for the workload |
+| `record-<class>` | the store answered with a record this deployment will not act on; the class is `AdmissionRecordRefusal`'s (`malformed`, `issuer-untrusted`, `signature-invalid`, `profile-mismatch`, `subject-mismatch`, `expired`, `window-exceeds-budget`, `revision-rewound`) |
+| `state-unavailable` | no current state could be established and degraded serving was off, closed, or unavailable |
+
+The store-side classes come from the source's own answer (`AnsweredAs`), not from the error
+that answer became: an absent record and a record failing its signature both refuse as
+`AdmissionNotCurrent`, and only the class says which.
+
 ## 4. Where it comes from, and why that matters
 
 The facet is the enforcer's own return value, not a reconstruction:
 
 ```text
-AdmissionEnforcer::decide -> Result<AdmissionFacet, HttpProfileError>
+AdmissionEnforcer::decide -> Result<AdmissionFacet, AdmissionRefusal>
   no enforcer deployed          -> NotConfigured
   AdmissionVerdict::Live        -> LiveConfirmed
   AdmissionVerdict::DegradedCandidate, window unexhausted -> Degraded

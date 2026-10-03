@@ -85,6 +85,7 @@ impl HttpProfileProxy {
                 // own answer and not a stand-in for one of the gate's four.
                 None,
                 AdmissionFacet::NotReached,
+                None,
             )),
         }
     }
@@ -117,9 +118,9 @@ impl HttpProfileProxy {
             .map_err(|refusal| self.refuse(ex, refusal, progress))?;
         let (decided_over, admission) = match self.admission_stage(ex, bound.as_ref()).await {
             Ok((established, facet)) => (progress.establish(established), facet),
-            Err(refusal) => {
-                ex.verdicts.admission = Some(AdmissionFacet::Refused);
-                return Err(self.refuse(ex, refusal, progress));
+            Err(denied) => {
+                ex.verdicts.refused_at_admission(denied.class);
+                return Err(self.refuse(ex, denied.refusal, progress));
             }
         };
         // The gate's verdict, recorded where it is obtained — the same rule the
