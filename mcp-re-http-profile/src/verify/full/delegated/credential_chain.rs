@@ -208,9 +208,8 @@ mod tests {
 
     #[test]
     fn a_wrong_slot_root_actor_is_refused_not_accepted() {
-        let result = chain(&|_, _| {
-            ResolverOutcome::Resolved(Box::new(root_actor(SignerSlot::Request)))
-        });
+        let result =
+            chain(&|_, _| ResolverOutcome::Resolved(Box::new(root_actor(SignerSlot::Request))));
         assert!(matches!(result, Err(HttpProfileError::ActorSlotMismatch)));
     }
 
