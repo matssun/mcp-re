@@ -821,6 +821,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::each_scope_failure_names_what_it_is",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::revocation_is_consulted_with_every_identifier_the_credential_carries",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::a_definitive_not_trusted_root_stays_issuer_untrusted",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::a_root_cannot_issue_for_another_principals_server_signer",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::a_response_slot_root_with_a_matching_credential_verifies",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::a_wrong_slot_root_actor_is_refused_not_accepted",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::an_outage_resolving_the_root_is_reported_as_unavailable",
@@ -7796,10 +7797,12 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_credential_for_another_key_is_not_a_key_to_serve_on",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_claim_the_root_did_not_echo_is_refused_field_by_field",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_header_the_root_did_not_echo_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_credential_that_is_not_yet_valid_at_the_requested_instant_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_window_that_is_not_a_window_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::an_unreadable_credential_publishes_nothing",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_credential_attesting_another_key_fails_the_issuance_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_audit_records_the_issued_window_not_the_requested_one",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_root_stamping_a_future_nbf_fails_the_rotation_and_the_predecessor_keeps_serving",
   # The window's own relation. `key_window.rs` entered `paths` with this slice, so it was a
   # fingerprint input whose controls no unit named — the file could have been emptied and
   # every declared symbol would still have passed.
@@ -10113,6 +10116,8 @@ evidence = [
 tested_symbols = [
   "//mcp-re-core:mcp_re_core_test#audit::tests::rejection_reason_is_exact_wire_code",
   "//mcp-re-core:mcp_re_core_test#audit::tests::success_events_are_the_two_item_allowlist",
+  "//mcp-re-core:mcp_re_core_test#audit::tests::key_lifecycle_events_are_the_three_item_allowlist",
+  "//mcp-re-core:mcp_re_core_test#audit::tests::rejected_elsewhere_is_a_rejection_without_a_core_reason",
   # Core BINDS the authorization artifact and never interprets it, so a "mismatch" reason
   # here would claim a comparison Core did not make.
   "//mcp-re-core:mcp_re_core_test#audit::tests::no_authorization_hash_mismatch_audit_reason",

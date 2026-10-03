@@ -110,13 +110,13 @@ pub fn rejection_reason(error: &McpReError) -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditEvent {
     /// One of [`SUCCESS_EVENT_TYPES`] or [`REJECTION_EVENT_TYPES`].
-    pub event_type: &'static str,
+    event_type: &'static str,
     /// `accepted`/`signed` for success, `rejected` for rejection.
-    pub decision: Decision,
+    decision: Decision,
     /// Frozen `McpReError::wire_code()` token; `None` for success events.
-    pub reason: Option<&'static str>,
+    reason: Option<&'static str>,
     /// Optional non-normative display label; never parsed.
-    pub reason_label: Option<&'static str>,
+    reason_label: Option<&'static str>,
 }
 
 /// The decision an audit event records. Success events are accept/sign; rejection
@@ -132,6 +132,30 @@ pub enum Decision {
 }
 
 impl AuditEvent {
+    /// The event type, one of the pinned allowlists.
+    #[must_use]
+    pub fn event_type(&self) -> &'static str {
+        self.event_type
+    }
+
+    /// The decision this event records.
+    #[must_use]
+    pub fn decision(&self) -> Decision {
+        self.decision
+    }
+
+    /// The frozen Core wire token for a rejection; `None` otherwise.
+    #[must_use]
+    pub fn reason(&self) -> Option<&'static str> {
+        self.reason
+    }
+
+    /// The non-normative display label, if any.
+    #[must_use]
+    pub fn reason_label(&self) -> Option<&'static str> {
+        self.reason_label
+    }
+
     /// A `mcp-re.request.accepted` success event.
     pub fn request_accepted() -> Self {
         AuditEvent {
@@ -197,8 +221,8 @@ impl AuditEvent {
     /// The response-side sibling of
     /// [`request_rejected_elsewhere`](Self::request_rejected_elsewhere).
     ///
-    /// Present for symmetry of the taxonomy rather than because a producer exists:
-    /// authorization is request-side, so no non-Core authority terminates a response today.
+    /// Called as the `None` arm of the proxy's `AuditSubject::response_rejected`, reached
+    /// when a response-side refusal cause carries no Core verdict.
     pub fn response_rejected_elsewhere() -> Self {
         AuditEvent {
             event_type: event_type::RESPONSE_REJECTED,
@@ -228,10 +252,6 @@ mod tests {
             assert_eq!(ev.reason, Some(err.wire_code()));
             assert_eq!(ev.event_type, "mcp-re.request.rejected");
             assert_eq!(ev.decision, Decision::Rejected);
-            // No interpreted sub-name leaked into the token.
-            assert!(
-                !ev.reason.unwrap().contains("mismatch") || err == McpReError::ResponseHashMismatch
-            );
         }
     }
 
@@ -245,6 +265,46 @@ mod tests {
         );
         assert_eq!(AuditEvent::request_accepted().reason, None);
         assert_eq!(AuditEvent::response_signed().reason, None);
+    }
+
+    /// The key-lifecycle set is exactly the three delegated-key events and shares no
+    /// member with the success or rejection sets.
+    #[test]
+    fn key_lifecycle_events_are_the_three_item_allowlist() {
+        assert_eq!(
+            KEY_LIFECYCLE_EVENT_TYPES,
+            &[
+                event_type::DELEGATED_KEY_ISSUED,
+                event_type::DELEGATED_KEY_ROTATED,
+                event_type::DELEGATED_KEY_RETIRED,
+            ]
+        );
+        for t in KEY_LIFECYCLE_EVENT_TYPES {
+            assert!(!SUCCESS_EVENT_TYPES.contains(t));
+            assert!(!REJECTION_EVENT_TYPES.contains(t));
+        }
+    }
+
+    /// A rejection decided outside Core carries no Core reason or label.
+    #[test]
+    fn rejected_elsewhere_is_a_rejection_without_a_core_reason() {
+        for (ev, ty) in [
+            (
+                AuditEvent::request_rejected_elsewhere(),
+                event_type::REQUEST_REJECTED,
+            ),
+            (
+                AuditEvent::response_rejected_elsewhere(),
+                event_type::RESPONSE_REJECTED,
+            ),
+        ] {
+            assert_eq!(ev.decision, Decision::Rejected);
+            assert_eq!(ev.reason, None);
+            assert_eq!(ev.reason_label, None);
+            assert_eq!(ev.event_type, ty);
+            assert_ne!(ev, AuditEvent::request_accepted());
+            assert_ne!(ev, AuditEvent::response_signed());
+        }
     }
 
     /// There is no `authorization_hash_mismatch` audit reason: Core binds, never

@@ -729,7 +729,7 @@ fn an_accepted_request_emits_accepted_then_signed_with_the_resolved_actor() {
     assert_eq!(out.kind, ResponseKind::Success);
 
     let records = sink.records();
-    let types: Vec<&str> = records.iter().map(|r| r.event().event_type).collect();
+    let types: Vec<&str> = records.iter().map(|r| r.event().event_type()).collect();
     assert_eq!(
         types,
         vec!["mcp-re.request.accepted", "mcp-re.response.signed"],
@@ -742,7 +742,7 @@ fn an_accepted_request_emits_accepted_then_signed_with_the_resolved_actor() {
             "an admitted request's records must carry the resolved actor"
         );
         assert_eq!(
-            record.event().reason,
+            record.event().reason(),
             None,
             "a success event carries no rejection reason"
         );
@@ -766,7 +766,7 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
     let records = sink.records();
     let accepted = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.accepted")
+        .find(|r| r.event().event_type() == "mcp-re.request.accepted")
         .expect("the admitted request is recorded");
     assert_eq!(
         accepted.subject,
@@ -781,7 +781,7 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
     // response does not represent a second authorization decision.
     let signed = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.response.signed")
+        .find(|r| r.event().event_type() == "mcp-re.response.signed")
         .expect("the signed response is recorded");
     assert!(
         signed.subject.authorization().is_none(),
@@ -811,9 +811,9 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
         "the replayed request records ONE decision, got {replay_records:?}"
     );
     let record = &replay_records[0];
-    assert_eq!(record.event().event_type, "mcp-re.request.rejected");
+    assert_eq!(record.event().event_type(), "mcp-re.request.rejected");
     assert_eq!(
-        record.event().reason,
+        record.event().reason(),
         Some("mcp-re.replay_detected"),
         "the reason is the exact frozen wire code, never a parallel sub-name"
     );

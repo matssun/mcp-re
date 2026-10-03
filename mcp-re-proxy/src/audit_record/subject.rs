@@ -399,8 +399,8 @@ mod tests {
             AuthorizationFacet::NotConfigured,
             AdmissionFacet::LiveConfirmed,
         );
-        assert_eq!(decided.event().reason, Some(err.wire_code()));
-        assert_eq!(elsewhere.event().reason, None);
+        assert_eq!(decided.event().reason(), Some(err.wire_code()));
+        assert_eq!(elsewhere.event().reason(), None);
         assert_ne!(decided.event(), elsewhere.event());
     }
 }

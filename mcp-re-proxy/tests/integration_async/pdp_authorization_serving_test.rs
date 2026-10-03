@@ -861,7 +861,7 @@ async fn an_authorized_request_records_which_policy_permitted_what() {
 
     let accepted = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.accepted")
+        .find(|r| r.event().event_type() == "mcp-re.request.accepted")
         .expect("the admitted request is recorded");
     let Some(authorization) = accepted.subject.authorization() else {
         panic!("a request record carries the authorization coordinate");
@@ -928,7 +928,7 @@ async fn the_record_names_the_enrolled_authority_and_not_the_one_the_decision_cl
 
     let accepted = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.accepted")
+        .find(|r| r.event().event_type() == "mcp-re.request.accepted")
         .expect("the admitted request is recorded");
     let Some(authorization) = accepted.subject.authorization() else {
         panic!("a request record carries the authorization coordinate");
@@ -962,7 +962,7 @@ async fn a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_reje
 
     let rejected = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.rejected")
+        .find(|r| r.event().event_type() == "mcp-re.request.rejected")
         .expect("the denial is recorded");
     let Some(authorization) = rejected.subject.authorization() else {
         panic!("a request record carries the authorization coordinate");
@@ -979,11 +979,11 @@ async fn a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_reje
     // verdict. This is the end of #637 — the policy's token is in the authorization
     // coordinate and nowhere else, so a reader can no longer mistake it for a Core one.
     assert_eq!(
-        rejected.event().reason,
+        rejected.event().reason(),
         None,
         "a policy denial is not a Core verdict, so Core must state none"
     );
-    assert_eq!(rejected.event().event_type, "mcp-re.request.rejected");
+    assert_eq!(rejected.event().event_type(), "mcp-re.request.rejected");
 }
 
 #[tokio::test]
@@ -1003,7 +1003,7 @@ async fn a_request_refused_before_any_policy_ran_is_not_attributed_to_one() {
 
     let rejected = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.rejected")
+        .find(|r| r.event().event_type() == "mcp-re.request.rejected")
         .expect("the refusal is recorded");
     let Some(authorization) = rejected.subject.authorization() else {
         panic!("a request record carries the authorization coordinate");
@@ -1013,7 +1013,7 @@ async fn a_request_refused_before_any_policy_ran_is_not_attributed_to_one() {
         &AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
         "the configured profile reached a verdict; the record must not say none did"
     );
-    assert_eq!(rejected.event().reason, None, "still not a Core verdict");
+    assert_eq!(rejected.event().reason(), None, "still not a Core verdict");
 }
 
 #[tokio::test]
@@ -1031,10 +1031,10 @@ async fn a_core_verification_failure_still_records_its_frozen_core_reason() {
 
     let rejected = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.rejected")
+        .find(|r| r.event().event_type() == "mcp-re.request.rejected")
         .expect("the refusal is recorded");
     assert_eq!(
-        rejected.event().reason,
+        rejected.event().reason(),
         Some("mcp-re.digest_mismatch"),
         "Core reached this verdict and the record says which one"
     );

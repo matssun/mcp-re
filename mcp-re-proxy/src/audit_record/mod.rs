@@ -123,16 +123,16 @@ impl AuditRecord {
     pub(crate) fn audit_fields(&self) -> Vec<AuditField<'_>> {
         let event = self.event();
         let mut fields = vec![
-            AuditField::token("event", event.event_type),
+            AuditField::token("event", event.event_type()),
             AuditField::token(
                 "decision",
-                match event.decision {
+                match event.decision() {
                     Decision::Accepted => "Accepted",
                     Decision::Signed => "Signed",
                     Decision::Rejected => "Rejected",
                 },
             ),
-            AuditField::token_or_absent("reason", event.reason),
+            AuditField::token_or_absent("reason", event.reason()),
             AuditField::text_or_absent("actor", self.actor_id.as_deref()),
             AuditField::number("status", i64::from(self.status)),
             AuditField::number("at", self.at_unix),
@@ -287,7 +287,7 @@ mod tests {
             status: 403,
             at_unix: 1,
         };
-        assert_eq!(r.event().reason, Some("mcp-re.digest_mismatch"));
+        assert_eq!(r.event().reason(), Some("mcp-re.digest_mismatch"));
         let rendered = render_record(&r.subject.audit_fields());
         assert!(
             rendered.contains("authz_policy_reason=mcp-re.authorization_scope_denied"),

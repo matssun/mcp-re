@@ -310,8 +310,8 @@ mod tests {
         });
         let records = sink.records();
         assert_eq!(records.len(), 2);
-        assert_eq!(records[0].event().event_type, "mcp-re.request.accepted");
-        assert_eq!(records[1].event().reason, Some("mcp-re.replay_detected"));
+        assert_eq!(records[0].event().event_type(), "mcp-re.request.accepted");
+        assert_eq!(records[1].event().reason(), Some("mcp-re.replay_detected"));
     }
 
     /// A record's ATTRIBUTION is what chooses its ceiling, and the unattributed one is

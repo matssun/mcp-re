@@ -576,7 +576,7 @@ fn an_admission_refusal_is_recorded_as_the_gates_refusal() {
     let admissions: Vec<_> = sink
         .records()
         .iter()
-        .filter(|r| r.event().event_type == "mcp-re.request.rejected")
+        .filter(|r| r.event().event_type() == "mcp-re.request.rejected")
         .filter_map(|r| r.subject.admission())
         .collect();
     assert_eq!(
@@ -591,7 +591,7 @@ fn recorded_refusal_classes(
 ) -> Vec<Option<mcp_re_proxy::admission_enforcer::AdmissionRefusalClass>> {
     sink.records()
         .iter()
-        .filter(|r| r.event().event_type == "mcp-re.request.rejected")
+        .filter(|r| r.event().event_type() == "mcp-re.request.rejected")
         .map(|r| r.subject.admission_refusal())
         .collect()
 }
@@ -791,7 +791,7 @@ fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
     let admissions: Vec<_> = sink
         .records()
         .iter()
-        .filter(|r| r.event().event_type == "mcp-re.request.accepted")
+        .filter(|r| r.event().event_type() == "mcp-re.request.accepted")
         .filter_map(|r| r.subject.admission())
         .collect();
     assert_eq!(
