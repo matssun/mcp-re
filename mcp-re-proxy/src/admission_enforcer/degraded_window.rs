@@ -87,7 +87,7 @@ impl DegradedWindow {
         }
     }
 
-    /// Has the authority been unreachable for longer than P (+ skew)?
+    /// Has the authority been unreachable for longer than P?
     ///
     /// True also when it has never been reachable, and whenever degraded mode is not
     /// enabled at all — in both cases there is no window to be inside of.
@@ -108,11 +108,8 @@ impl DegradedWindow {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
         else {
             // Never reached: no last-known state to serve on, and this arm is the only
-            // thing that says so. It is NOT redundant with the comparison below — where
-            // `P + skew` saturates, `i64::MAX > i64::MAX` is false and a replica that never
-            // reached the authority would read as INSIDE a window it never earned. With the
-            // reading typed as `Option<Instant>` the corner is unrepresentable rather than
-            // guarded, which is why the guard is a `let-else` and not an `if`.
+            // thing that says so. Typing the reading as `Option<Instant>` leaves no sentinel
+            // instant for the comparison below to mistake for a window, hence the `let-else`.
             return true;
         };
         now.saturating_duration_since(last) > window_of(policy)
@@ -200,11 +197,11 @@ mod tests {
 
         assert!(
             !window.exhausted_at(&p, after(t0, 60)),
-            "inside P + skew the last-known state is still usable"
+            "at exactly P the last-known state is still usable"
         );
         assert!(
             window.exhausted_at(&p, after(t0, 61)),
-            "past P + skew an unreachable authority fails closed, however fresh the \
+            "past P an unreachable authority fails closed, however fresh the \
              assertion the caller presents"
         );
     }

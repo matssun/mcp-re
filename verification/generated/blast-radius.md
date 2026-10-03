@@ -480,3 +480,4 @@ attestations this view cannot see.
 | ASM-0053 | description, justification, scope or mechanism | proxy.pkcs11_adapter | assumption review |
 | ASM-0054 | description, justification, scope or mechanism | proxy.pkcs11_adapter | assumption review |
 | ASM-0055 | description, justification, scope or mechanism | proxy.pkcs11_adapter | assumption review |
+| ASM-0056 | description, justification, scope or mechanism | proxy.admission_currency_gate | assumption review |

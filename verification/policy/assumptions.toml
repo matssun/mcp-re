@@ -2049,3 +2049,35 @@ sites = [
   "mcp-re-proxy/src/pkcs11_keysource/token.rs#find_token_slot",
 ]
 tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0056"
+description = "`std::time::Instant` readings taken in one process never decrease."
+justification = """
+`DegradedWindow` stores the instant of the last successful authority read and measures the
+outage as `now.saturating_duration_since(last)`. A backwards-stepping reading would make the
+elapsed time read smaller than the true outage and hold a replica inside its window past P;
+saturation would hide the step rather than refuse it.
+
+The premise also excludes host suspend: `CLOCK_MONOTONIC` on Linux and `CLOCK_UPTIME_RAW` on
+macOS do not advance while the host is suspended, so the window counts less time than the
+wall-clock outage. The bound P is therefore a bound on running time, not on elapsed wall
+time.
+"""
+scope = [
+  "unit://proxy.admission_currency_gate",
+  "boundary://boundary.rust_std",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 degraded_window remediation (cc270e98327e4309)"
+review_requirement = "Owner review if the window is measured from any clock other than `std::time::Instant`, or if suspend-resume must count toward P."
+premise_class = "external-boundary"
+boundary_owner = """
+The STANDARD LIBRARY and the host OS clock beneath it: `Instant::now()` readings within one
+process are non-decreasing, and do not advance across host suspend.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-proxy/src/admission_enforcer/degraded_window.rs#DegradedWindow::exhausted_at",
+]
+tool_specific_mechanism = "none:trusted-seam"
