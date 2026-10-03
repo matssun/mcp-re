@@ -178,14 +178,19 @@ pub fn classify_and_validate(
     (Some(facts), violations)
 }
 
-/// The resolved facts that are present but say nothing.
+/// The resolved facts that are not canonical: empty, or unequal to their trimmed form.
 ///
 /// Separate from [`ttl_violations`] because the two gate construction differently: a TTL out
 /// of range is a defect in a posture that is otherwise fully determined, while a fact that
 /// is empty leaves the posture uninhabitable, so no `DelegatedSigningFacts` is built.
+///
+/// A minted fact is non-empty and equal to its trimmed form. It is refused rather than
+/// trimmed because the same string is read verbatim by other owners (`server_key_id`,
+/// `audience`), so trimming here would fork the credential's label from the one they hold.
 fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
     [
         (
+            "--delegated-trust-epoch",
             facts.trust_epoch.as_str(),
             "--delegated-trust-epoch is empty: the base label is minted into every delegation \
              credential — verbatim where no shared counter is configured, and as the base of \
@@ -193,12 +198,14 @@ fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
              posture",
         ),
         (
+            "the delegated issuer kid",
             facts.issuer_kid.as_str(),
             "the delegated issuer kid resolves to empty: set --delegated-issuer-kid, or give \
              --server-key-id a value, since the credential chains to whichever this resolves \
              to and an empty kid names no root key for a verifier to find",
         ),
         (
+            "the delegated audience scope",
             facts.audience_hash.as_str(),
             "the delegated audience scope resolves to empty: set --delegated-audience-hash, \
              or give --audience a value, since an empty scope makes two deployments' \
@@ -206,12 +213,22 @@ fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
         ),
     ]
     .into_iter()
-    // TRIMMED, like every other required coordinate at this boundary. A label of spaces
-    // satisfies a presence check and names nothing, so the two must be one refusal: these
-    // three are minted verbatim into every delegation credential, where whitespace is
-    // indistinguishable from absence to the verifier reading them back.
-    .filter(|(value, _)| value.trim().is_empty())
-    .map(|(_, message)| message.to_string())
+    // A label of spaces satisfies a presence check and names nothing, and a padded label
+    // names a different one from the label written without the padding; these three are
+    // minted verbatim into every delegation credential, so both are refused.
+    .filter_map(|(name, value, empty_message)| {
+        if value.trim().is_empty() {
+            Some(empty_message.to_string())
+        } else if value != value.trim() {
+            Some(format!(
+                "{name} {value:?} has leading or trailing whitespace: it is minted verbatim \
+                 into every delegation credential, so it names a different label from the one \
+                 written without it"
+            ))
+        } else {
+            None
+        }
+    })
     .collect()
 }
 
@@ -553,34 +570,49 @@ mod tests {
         }
     }
 
-    /// Whitespace is emptiness for all three minted facts.
+    /// Whitespace-only and padded values are refused for all three minted facts.
     ///
     /// They are minted VERBATIM into every delegation credential, so a label of spaces is
-    /// indistinguishable from absence to the verifier reading it back — while satisfying any
-    /// presence check on the way in. `--server-key-id "   "` was admitted until this rule was
-    /// trimmed, which made it the one required coordinate at this boundary whose emptiness
-    /// test disagreed with every other one.
+    /// indistinguishable from absence to the verifier reading it back, and a padded label
+    /// names a different one from the unpadded label other owners hold. Refusal, not
+    /// trimming, keeps the checked fact and the stored fact one value.
     #[test]
     fn a_whitespace_minted_fact_is_refused_like_an_empty_one() {
-        type MintedFact = (&'static str, fn(&mut DeploymentRequest));
-        let cases: [MintedFact; 3] = [
-            ("the base label", |c| {
+        type MintedFact = (&'static str, &'static str, fn(&mut DeploymentRequest));
+        let cases: [MintedFact; 7] = [
+            ("--delegated-trust-epoch", "blank", |c| {
                 c.delegated_signing.trust_epoch = Some("   ".to_string());
             }),
-            ("the delegated issuer kid", |c| {
+            ("--delegated-trust-epoch", "padded", |c| {
+                c.delegated_signing.trust_epoch = Some(" epoch-1".to_string());
+            }),
+            ("the delegated issuer kid", "blank server key id", |c| {
                 c.delegated_signing.issuer_kid = None;
                 c.server_key_id = "   ".to_string();
             }),
-            ("the delegated audience scope", |c| {
+            ("the delegated issuer kid", "padded override", |c| {
+                c.delegated_signing.issuer_kid = Some("kid ".to_string());
+            }),
+            ("the delegated issuer kid", "padded server key id", |c| {
+                c.delegated_signing.issuer_kid = None;
+                c.server_key_id = " server-key-1".to_string();
+            }),
+            ("the delegated audience scope", "blank", |c| {
                 c.delegated_signing.audience_hash = Some("   ".to_string());
             }),
+            ("the delegated audience scope", "padded", |c| {
+                c.delegated_signing.audience_hash = Some(" aud".to_string());
+            }),
         ];
-        for (what, mutate) in cases {
-            let mut config = crate::config_state::test_support::legal_config();
-            mutate(&mut config);
+        for (name, label, mutate) in cases {
+            let (facts, violations) = run(mutate);
             assert!(
-                !crate::config_state::validation::unsafe_config_violations(&config).is_empty(),
-                "{what} of whitespace names nothing and must be refused"
+                facts.is_none(),
+                "{name} ({label}) must not resolve to a fact"
+            );
+            assert!(
+                violations.iter().any(|v| v.contains(name)),
+                "{name} ({label}) must be named in the refusal: {violations:?}"
             );
         }
     }
