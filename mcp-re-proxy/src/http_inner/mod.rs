@@ -253,12 +253,11 @@ impl HttpInnerPool {
     /// Override the bound on concurrent in-flight inner dispatches (default
     /// [`DEFAULT_MAX_IN_FLIGHT`]). Beyond `n` concurrent dispatches the pool fails
     /// closed immediately rather than queue (ADR-MCPRE-051 §3 pool-exhaustion
-    /// backpressure). `n` must be > 0.
+    /// backpressure).
     #[must_use]
-    pub fn with_max_in_flight(mut self, n: usize) -> Self {
-        assert!(n > 0, "HttpInnerPool max_in_flight must be > 0");
-        self.in_flight = Arc::new(Semaphore::new(n));
-        self.max_in_flight = n;
+    pub fn with_max_in_flight(mut self, n: std::num::NonZeroUsize) -> Self {
+        self.in_flight = Arc::new(Semaphore::new(n.get()));
+        self.max_in_flight = n.get();
         self
     }
 
@@ -299,7 +298,8 @@ impl HttpInnerPool {
 
     /// Monotonic nanoseconds since the pool's clock origin.
     fn now_nanos(&self) -> u64 {
-        self.origin.elapsed().as_nanos() as u64
+        // Saturates at the latest instant, the most-ejected end of every cooldown comparison.
+        u64::try_from(self.origin.elapsed().as_nanos()).unwrap_or(u64::MAX)
     }
 
     /// Fold one dispatch outcome into the chosen backend's breaker state.
@@ -317,19 +317,25 @@ impl HttpInnerPool {
             return;
         }
 
-        let reopen = now_nanos.saturating_add(self.breaker.ejection_duration.as_nanos() as u64);
+        // An unrepresentable cooldown saturates at the most-ejected end, never a short one.
+        let cooldown = u64::try_from(self.breaker.ejection_duration.as_nanos()).unwrap_or(u64::MAX);
+        let reopen = now_nanos.saturating_add(cooldown);
         if is_probe {
             // A failed recovery trial re-ejects for another full cooldown.
             b.reopen_at_nanos.store(reopen, Ordering::Release);
             b.state.store(STATE_OPEN, Ordering::Release);
             b.probe_inflight.store(false, Ordering::Release);
         } else {
-            // Saturating: compared only against `failure_threshold`, so the ceiling is
-            // the most-ejected end and wrapping is the permissive one — a backend failing
-            // without pause would count back through zero and stop tripping the breaker.
+            // Saturating, both the stored count and the value compared: it is compared only
+            // against `failure_threshold`, so the ceiling is the most-ejected end and
+            // wrapping is the permissive one — a backend failing without pause would count
+            // back through zero and stop tripping the breaker.
             let fails = b
                 .consecutive_failures
-                .fetch_add(1, Ordering::AcqRel)
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                    Some(n.saturating_add(1))
+                })
+                .unwrap_or_else(|n| n)
                 .saturating_add(1);
             if fails >= self.breaker.failure_threshold {
                 b.reopen_at_nanos.store(reopen, Ordering::Release);
@@ -630,7 +636,7 @@ mod tests {
     /// exactly that window, and it must now be closed at the pre-commitment refusal.
     #[test]
     fn a_held_preparation_consumes_the_in_flight_bound() {
-        let p = pool(1, 1).with_max_in_flight(1);
+        let p = pool(1, 1).with_max_in_flight(std::num::NonZeroUsize::MIN);
         let held = p
             .prepare(b"{}")
             .expect("the first preparation takes the permit");
@@ -689,6 +695,36 @@ mod tests {
         assert!(!is_probe, "a Closed backend is normal traffic, not a probe");
         p.record_outcome(idx, is_probe, true, 0);
         assert_eq!(p.ejected_backend_count(), 0);
+    }
+
+    #[test]
+    fn the_failure_count_saturates_instead_of_wrapping_back_through_zero() {
+        let p = pool(1, 3);
+        p.backends[0]
+            .consecutive_failures
+            .store(u32::MAX, Ordering::Release);
+        p.record_outcome(0, false, false, 0);
+        assert_eq!(
+            p.backends[0].consecutive_failures.load(Ordering::Acquire),
+            u32::MAX
+        );
+        assert_eq!(p.ejected_backend_count(), 1);
+    }
+
+    #[test]
+    fn an_unrepresentable_ejection_duration_saturates_instead_of_wrapping_to_no_cooldown() {
+        let p = HttpInnerPool::with_breaker_config(
+            vec![uri(9200)],
+            Duration::from_secs(1),
+            BreakerConfig {
+                failure_threshold: 1,
+                ejection_duration: Duration::new(18_446_744_073, 709_551_616),
+            },
+        )
+        .expect("pool");
+        let (idx, probe, _) = p.select_backend(0).expect("selectable");
+        p.record_outcome(idx, probe, false, 0);
+        assert!(p.select_backend(1).is_none());
     }
 
     #[test]

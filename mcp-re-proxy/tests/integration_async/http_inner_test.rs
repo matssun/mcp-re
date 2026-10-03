@@ -211,7 +211,7 @@ fn preparing_refuses_a_saturated_plane_without_transmitting_anything() {
         let (addr, hits) = spawn_slow_counting_backend(Duration::from_secs(30), INNER_OK).await;
         let pool = HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(60))
             .expect("pool")
-            .with_max_in_flight(1);
+            .with_max_in_flight(std::num::NonZeroUsize::MIN);
 
         let idle = pool.prepare(b"{}").expect("an idle plane prepares");
         drop(idle);
@@ -752,7 +752,7 @@ fn pool_exhaustion_fails_closed_immediately_without_queuing() {
         let (addr, hits) = spawn_slow_counting_backend(Duration::from_secs(30), INNER_OK).await;
         let pool = HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(60))
             .expect("pool")
-            .with_max_in_flight(2);
+            .with_max_in_flight(std::num::NonZeroUsize::new(2).expect("2 is not zero"));
         assert_eq!(pool.max_in_flight(), 2);
 
         let req = br#"{"jsonrpc":"2.0","id":1}"#;

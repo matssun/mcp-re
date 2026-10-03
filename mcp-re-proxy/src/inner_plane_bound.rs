@@ -33,6 +33,7 @@ pub(crate) fn raised_to_fleet_ceiling(
     );
     let Some(raised) =
         crate::startup_plan::inner_plane_raise(ceiling, crate::http_inner::DEFAULT_MAX_IN_FLIGHT)
+            .and_then(std::num::NonZeroUsize::new)
     else {
         return pool;
     };
