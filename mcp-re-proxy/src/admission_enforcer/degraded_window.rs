@@ -91,7 +91,14 @@ impl DegradedWindow {
     ///
     /// True also when it has never been reachable, and whenever degraded mode is not
     /// enabled at all — in both cases there is no window to be inside of.
-    pub(super) fn exhausted(&self, policy: &AdmissionPolicy, now: Instant) -> bool {
+    ///
+    /// Judged at the instant of the decision, read here, so no caller can judge the window
+    /// against an earlier reading.
+    pub(super) fn exhausted(&self, policy: &AdmissionPolicy) -> bool {
+        self.exhausted_at(policy, Instant::now())
+    }
+
+    fn exhausted_at(&self, policy: &AdmissionPolicy, now: Instant) -> bool {
         if !policy.allow_degraded_mode {
             return true;
         }
@@ -160,7 +167,7 @@ mod tests {
     /// so startup is not a confirmation.
     #[test]
     fn a_replica_that_never_reached_the_authority_has_no_window() {
-        assert!(DegradedWindow::unearned().exhausted(&policy(60, 5, true), base()));
+        assert!(DegradedWindow::unearned().exhausted_at(&policy(60, 5, true), base()));
     }
 
     /// An unbounded window does not entitle a replica that never earned one.
@@ -177,7 +184,7 @@ mod tests {
     #[test]
     fn an_unbounded_window_does_not_make_an_unearned_one_open() {
         assert!(
-            DegradedWindow::unearned().exhausted(&policy(i64::MAX, 60, true), base()),
+            DegradedWindow::unearned().exhausted_at(&policy(i64::MAX, 60, true), base()),
             "no bound, however large, entitles a replica that never reached the authority"
         );
     }
@@ -192,11 +199,11 @@ mod tests {
         let p = policy(60, 5, true);
 
         assert!(
-            !window.exhausted(&p, after(t0, 60)),
+            !window.exhausted_at(&p, after(t0, 60)),
             "inside P + skew the last-known state is still usable"
         );
         assert!(
-            window.exhausted(&p, after(t0, 61)),
+            window.exhausted_at(&p, after(t0, 61)),
             "past P + skew an unreachable authority fails closed, however fresh the \
              assertion the caller presents"
         );
@@ -214,7 +221,7 @@ mod tests {
         let window = DegradedWindow::unearned();
         window.record_read(after(t0, 1_000));
         window.record_read(t0);
-        assert!(!window.exhausted(&policy(60, 0, true), after(t0, 1_050)));
+        assert!(!window.exhausted_at(&policy(60, 0, true), after(t0, 1_050)));
     }
 
     /// A clock STEP moves nothing, which is the whole reason for the monotonic reading.
@@ -232,9 +239,9 @@ mod tests {
         // A policy whose skew allowance is enormous — the wall-clock vocabulary at its most
         // permissive — still does not make the elapsed measurement anything but elapsed.
         let p = policy(60, 5, true);
-        assert!(window.exhausted(&p, after(t0, 61)));
+        assert!(window.exhausted_at(&p, after(t0, 61)));
         assert!(
-            window.exhausted(&p, after(t0, 86_400)),
+            window.exhausted_at(&p, after(t0, 86_400)),
             "a day of outage is a day of outage whatever the wall clock did"
         );
     }
@@ -251,7 +258,7 @@ mod tests {
         let window = DegradedWindow::unearned();
         window.record_read(t0);
         assert!(
-            window.exhausted(&policy(60, 86_400, true), after(t0, 61)),
+            window.exhausted_at(&policy(60, 86_400, true), after(t0, 61)),
             "a day of skew tolerance must not buy a second of degraded serving"
         );
         assert_eq!(
@@ -267,7 +274,7 @@ mod tests {
         let t0 = base();
         let window = DegradedWindow::unearned();
         window.record_read(t0);
-        assert!(window.exhausted(&policy(3_600, 30, false), after(t0, 1)));
+        assert!(window.exhausted_at(&policy(3_600, 30, false), after(t0, 1)));
     }
 
     /// A configuration the wire vocabulary admits and a `Duration` does not: the window is
@@ -278,6 +285,18 @@ mod tests {
         let window = DegradedWindow::unearned();
         window.record_read(t0);
         assert_eq!(window_of(&policy(-1, 0, true)), Duration::ZERO);
-        assert!(window.exhausted(&policy(-1, 0, true), after(t0, 1)));
+        assert!(window.exhausted_at(&policy(-1, 0, true), after(t0, 1)));
+    }
+
+    /// The window owns its judging instant: a lookup that took time cannot be judged
+    /// against a reading from before it.
+    #[test]
+    fn the_window_is_judged_at_the_instant_of_the_call() {
+        let window = DegradedWindow::unearned();
+        let read = Instant::now();
+        window.record_read(read);
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(window.exhausted(&policy(0, 0, true)));
+        assert!(!window.exhausted_at(&policy(0, 0, true), read));
     }
 }
