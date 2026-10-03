@@ -333,7 +333,10 @@ introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; MUST be discharged before any theorem claiming the binding commits to the assertion's admitted state."
 premise_class = "review-obligation"
 discharging_event = { kind = "owner-event", statement = "A theorem claims the binding commits to the assertion's admitted state. This premise MUST be discharged before that claim may be made." }
-affected_contracts = ["contract://http_profile/admission/check_admission"]
+affected_contracts = [
+  "contract://http_profile/admission/authenticate_admission",
+  "contract://http_profile/admission/check_admission",
+]
 sites = [
   "mcp-re-http-profile/src/admission/mod.rs#AdmissionBinding::matches_state",
 ]
@@ -343,17 +346,18 @@ tool_specific_mechanism = "verus:external_body"
 id = "ASM-0012"
 description = "`verify_admission_assertion` is opaque to the currency theorem, and contributes NO postcondition to it."
 justification = """
-The strongest form this assumption can take: no `ensures` at all. The §7 currency property
-is established entirely by `check_admission`'s own comparisons against the authoritative
-state, so the JWS verifier below it may return anything and the theorem still holds. This
+The strongest form this assumption can take: no `ensures` at all. The §7 properties are
+established entirely by `authenticate_admission`'s comparisons of the assertion against the
+presenter and the binding, and `check_admission`'s comparisons against the authoritative
+state, so the JWS verifier below them may return anything and the theorems still hold. This
 is the point the dependency-cone rule (Operational Rule 17) makes concrete — the trusted
 frontier of this theorem does not include signature verification, JSON decoding, base64,
 Ed25519, or the assertion's own freshness window, even though the proved function calls
 all of them.
 
 An assumption WITHOUT an ensures cannot weaken the theorem it sits under; it can only
-limit what that theorem says. What it costs is stated plainly: `check_admission` returning
-`Ok` does NOT, by this proof, mean the assertion was validly signed or fresh. Those remain
+limit what that theorem says. What it costs is stated plainly: `authenticate_admission`
+returning `Ok` does NOT, by this proof, mean the assertion was validly signed or fresh. Those remain
 test-and-review properties until their own unit exists.
 """
 scope = ["unit://http_profile.admission_currency", "boundary://boundary.unmodelled_own_behaviour"]
@@ -362,7 +366,10 @@ introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; a separate unit for assertion validity is the discharge, not an ensures added here."
 premise_class = "review-obligation"
 discharging_event = { kind = "owner-event", statement = "A unit for assertion validity is registered. That unit is the discharge; an `ensures` added to this opaque function is not." }
-affected_contracts = ["contract://http_profile/admission/check_admission"]
+affected_contracts = [
+  "contract://http_profile/admission/authenticate_admission",
+  "contract://http_profile/admission/check_admission",
+]
 sites = [
   "mcp-re-http-profile/src/admission/mod.rs#verify_admission_assertion",
 ]
@@ -384,7 +391,10 @@ introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; revisit if a theorem ever needs to say something about a key."
 premise_class = "review-obligation"
 discharging_event = { kind = "owner-event", statement = "A theorem needs to say something about a `VerificationKey`. The opaque datatype is adequate only while nothing reads it." }
-affected_contracts = ["contract://http_profile/admission/check_admission"]
+affected_contracts = [
+  "contract://http_profile/admission/authenticate_admission",
+  "contract://http_profile/admission/check_admission",
+]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#ExVerificationKey",
 ]
@@ -409,7 +419,10 @@ premise_class = "external-boundary"
 boundary_owner = """
 The Rust compiler, across `#[derive(PartialEq)]` on a fieldless enum: the documented expansion is structural equality over the discriminant.
 """
-affected_contracts = ["contract://http_profile/admission/check_admission"]
+affected_contracts = [
+  "contract://http_profile/admission/authenticate_admission",
+  "contract://http_profile/admission/check_admission",
+]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#<AdmissionStatus as core::cmp::PartialEq>::eq",
 ]

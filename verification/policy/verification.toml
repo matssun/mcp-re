@@ -1249,12 +1249,16 @@ description = "#415 §7 admission currency: an Ok verdict is Admitted at the bou
 # would make the conjunct unprovable while every other file here stayed byte-identical.
 paths = [
   "mcp-re-http-profile/src/admission/mod.rs",
+  "mcp-re-http-profile/src/admission/authenticated.rs",
   "mcp-re-http-profile/src/admission/verdict.rs",
   "mcp-re-http-profile/src/admission_policy.rs",
   "mcp-re-http-profile/src/authoritative_admission/mod.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
-exported_contracts = ["contract://http_profile/admission/check_admission"]
+exported_contracts = [
+  "contract://http_profile/admission/authenticate_admission",
+  "contract://http_profile/admission/check_admission",
+]
 evidence_class = "proved"
 direct_consequence_severity = "critical"
 evidence = [
@@ -1301,8 +1305,18 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::verdict::tests::a_candidate_is_not_a_live_verdict",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::verdict::tests::both_arms_project_the_same_facts_about_the_call",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::verdict::tests::the_admitted_call_carries_no_degraded_flag",
+  # Authentication is its own half of the check, so the lookup the currency comparison runs
+  # against is keyed on an identity the authority issued to this presenter. These measure that
+  # an assertion the authority did not sign, or one borrowed from another actor, yields no
+  # authenticated value to look anything up under.
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::authenticated::tests::an_authenticated_admission_names_the_workload_and_actor_the_call_bound",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::authenticated::tests::an_assertion_the_authority_did_not_sign_authenticates_nothing",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::authenticated::tests::a_borrowed_assertion_authenticates_nothing",
 ]
-proved_symbols = ["mcp_re_http_profile::admission::check_admission"]
+proved_symbols = [
+  "mcp_re_http_profile::admission::authenticated::authenticate_admission",
+  "mcp_re_http_profile::admission::check_admission",
+]
 features = ["verify"]
 pilot = "verus-wp2"
 
@@ -7453,6 +7467,8 @@ description = "The §7 admission gate: a call declaring no admission is refused 
 paths = [
   "mcp-re-proxy/src/admission_enforcer/mod.rs",
   "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+  "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
+  "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
   # R11-106. The gate's verdict as a record coordinate. It is in THIS closure and not the
   # audit record's because the vocabulary is the gate's — what the RECORD does with it is
   # `proxy.audit_record_coordinates`, which measures that the two authorities stay separate.
@@ -7475,6 +7491,7 @@ evidence = [
 # Both controls are in `//mcp-re-proxy:integration_async_test`, the default-lane target.
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::tests::a_new_enforcer_has_a_window_nobody_earned",
+  "//mcp-re-proxy:proxy_unit_test#admission_enforcer::enforcement::tests::the_two_postures_are_distinct",
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::degraded_window::tests::a_replica_that_never_reached_the_authority_has_no_window",
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::degraded_window::tests::the_degraded_window_closes_exactly_p_after_the_last_successful_read",
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::degraded_window::tests::a_wall_clock_excursion_cannot_widen_the_window",

@@ -6,6 +6,21 @@
 //! the deployment is still entitled to act without one — a fact about the replica's recent
 //! history, not about any request.
 //!
+//! # One window per replica, deliberately
+//!
+//! The window is replica-wide: ANY answer from the authority, for any workload, restarts it.
+//! That is the declared P bound, and it is a choice. A replica whose store is reachable for
+//! some workloads and not for another keeps its window open for the unreachable one. A
+//! per-workload timer is the alternative that would be wrong: it would give every workload
+//! this replica has not yet seen a fresh window to start in during one outage, so the time the
+//! deployment may act without confirmation would grow with the number of distinct workloads
+//! that arrive, not with how long the authority has been unreachable.
+//!
+//! What can refresh it is bounded the other way: only a lookup issued for a request whose
+//! assertion was authenticated against the configured authority and the verifier-resolved
+//! presenter. A caller who has proved nothing cannot hold the window open by sending requests
+//! that cause reads.
+//!
 //! # What P has to bound, and what it must not
 //!
 //! R7-C093. The revocation channel IS the store, so during a store outage the assertion

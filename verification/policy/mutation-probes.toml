@@ -2089,7 +2089,7 @@ conjunct = "a live verdict implies the authoritative state is about the workload
 # — before, there was no check here to delete.
 path = "mcp-re-http-profile/src/admission/mod.rs"
 anchor = """
-            if state.admission_id != binding.admission_id {
+            if state.admission_id != authenticated.admission_id {
                 return Err(HttpProfileError::AdmissionStateUnavailable);
             }
 """
@@ -4422,7 +4422,7 @@ conjunct = "a DegradedCandidate becomes a serve only while this replica's own mo
 # one call site. Under it a replica that lost the authority hours ago keeps serving any caller
 # whose assertion is recent, and the caller controls that: the issuer keeps minting during an
 # outage, so refetching satisfies the assertion-level rule for as long as the outage runs.
-path = "mcp-re-proxy/src/admission_enforcer/mod.rs"
+path = "mcp-re-proxy/src/admission_enforcer/replica_history.rs"
 anchor = """
             AdmissionVerdict::DegradedCandidate(_) if self.window.exhausted(&self.policy) => {
                 Err(HttpProfileError::AdmissionStateUnavailable)
@@ -4550,7 +4550,7 @@ conjunct = "the gate's own verdict is reported, so a serve on a stale snapshot i
 # WHETHER it serves still passes, and the only thing lost is an operator's ability to find the
 # serves this deployment made without confirmation — which is exactly how the defect survived
 # a green battery for as long as it did.
-path = "mcp-re-proxy/src/admission_enforcer/mod.rs"
+path = "mcp-re-proxy/src/admission_enforcer/replica_history.rs"
 anchor = """
             AdmissionVerdict::DegradedCandidate(_) => Ok(AdmissionFacet::Degraded),
 """

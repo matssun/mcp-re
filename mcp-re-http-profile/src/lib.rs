@@ -82,7 +82,9 @@ pub mod verify;
 
 // A CURATED surface, not a mirror: every module above is `pub`, so a root re-export is a
 // SECOND path to an item, kept only where the root path is the one consumers are meant to use.
+pub use admission::authenticate_admission;
 pub use admission::check_admission;
+pub use admission::AuthenticatedAdmission;
 // ADR-MCPRE-059 Phase 2: the registered assumptions the Verus lane needs. Not a
 // production module — it exists only while `--features verify` is on.
 #[cfg(feature = "verify")]

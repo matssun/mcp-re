@@ -246,10 +246,10 @@ id = "THM-0004"
 title = "Admission anti-rollback"
 statement = """
 A non-degraded Ok verdict implies the authoritative admission state was reachable, that
-state is ABOUT the workload the call is bound to — its `admission_id` equals the binding's,
-which the earlier binding/assertion comparison has already equated with the verified
-assertion's — and at that workload its generation equals the binding's generation and its
-status is Admitted.
+state is ABOUT the workload the call is bound to — its `admission_id` equals the
+authenticated admission's, which `authenticate_admission` has already equated with the
+call's binding and with the verified assertion's — and at that workload its generation
+equals the authenticated generation (the binding's) and its status is Admitted.
 
 The three conjuncts are ordered, and the order is the claim. Generation equality and
 `Admitted` are properties OF a subject; asserted about an unnamed record they are satisfied
@@ -428,8 +428,9 @@ depends_on = []
 id = "THM-0006"
 title = "Presenter binding"
 statement = """
-A successful admission implies the admitted actor named by the assertion is the presenter
-of this call — the actor the verifier resolved from the request signature.
+A successful authentication implies the admitted actor named by the assertion is the
+presenter of this call — the actor the verifier resolved from the request signature — and
+the currency verdict built from it carries that same actor unchanged.
 """
 security_consequence = """
 An assertion describing some admitted workload cannot authorize a different presenter

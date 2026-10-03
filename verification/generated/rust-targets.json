@@ -1167,6 +1167,7 @@
    "package": "mcp-re-http-profile",
    "root": "mcp-re-http-profile/src/lib.rs",
    "srcs": [
+    "mcp-re-http-profile/src/admission/authenticated.rs",
     "mcp-re-http-profile/src/admission/mod.rs",
     "mcp-re-http-profile/src/admission/verdict.rs",
     "mcp-re-http-profile/src/admission_policy.rs",
@@ -1301,6 +1302,7 @@
    "package": "mcp-re-http-profile",
    "root": "mcp-re-http-profile/src/lib.rs",
    "srcs": [
+    "mcp-re-http-profile/src/admission/authenticated.rs",
     "mcp-re-http-profile/src/admission/mod.rs",
     "mcp-re-http-profile/src/admission/verdict.rs",
     "mcp-re-http-profile/src/admission_policy.rs",
@@ -1439,6 +1441,7 @@
    "package": "mcp-re-http-profile",
    "root": "mcp-re-http-profile/src/lib.rs",
    "srcs": [
+    "mcp-re-http-profile/src/admission/authenticated.rs",
     "mcp-re-http-profile/src/admission/mod.rs",
     "mcp-re-http-profile/src/admission/verdict.rs",
     "mcp-re-http-profile/src/admission_policy.rs",
@@ -1575,6 +1578,7 @@
    "package": "mcp-re-http-profile",
    "root": "mcp-re-http-profile/src/lib.rs",
    "srcs": [
+    "mcp-re-http-profile/src/admission/authenticated.rs",
     "mcp-re-http-profile/src/admission/mod.rs",
     "mcp-re-http-profile/src/admission/verdict.rs",
     "mcp-re-http-profile/src/admission_policy.rs",
@@ -1711,6 +1715,7 @@
    "package": "mcp-re-http-profile",
    "root": "mcp-re-http-profile/src/lib.rs",
    "srcs": [
+    "mcp-re-http-profile/src/admission/authenticated.rs",
     "mcp-re-http-profile/src/admission/mod.rs",
     "mcp-re-http-profile/src/admission/verdict.rs",
     "mcp-re-http-profile/src/admission_policy.rs",
@@ -2509,8 +2514,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -2916,8 +2923,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -3323,8 +3332,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -3730,8 +3741,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -4159,8 +4172,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -4592,8 +4607,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -5004,8 +5021,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -5444,8 +5463,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -5851,8 +5872,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -6256,8 +6279,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -6701,8 +6726,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -7106,8 +7133,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -7518,8 +7547,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",
@@ -7921,8 +7952,10 @@
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+    "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
     "mcp-re-proxy/src/admission_enforcer/mod.rs",
+    "mcp-re-proxy/src/admission_enforcer/replica_history.rs",
     "mcp-re-proxy/src/admission_source/answer.rs",
     "mcp-re-proxy/src/admission_source/in_memory.rs",
     "mcp-re-proxy/src/admission_source/mod.rs",

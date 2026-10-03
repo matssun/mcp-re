@@ -205,7 +205,7 @@ any of them is closed.
 
 ### THM-0004 — Admission anti-rollback
 
-**Statement.** A non-degraded Ok verdict implies the authoritative admission state was reachable, that state is ABOUT the workload the call is bound to — its `admission_id` equals the binding's, which the earlier binding/assertion comparison has already equated with the verified assertion's — and at that workload its generation equals the binding's generation and its status is Admitted. The three conjuncts are ordered, and the order is the claim. Generation equality and `Admitted` are properties OF a subject; asserted about an unnamed record they are satisfied by any workload that happens to sit at the same number, and a generation is a per-workload counter, so that is the ordinary case rather than a contrived one.
+**Statement.** A non-degraded Ok verdict implies the authoritative admission state was reachable, that state is ABOUT the workload the call is bound to — its `admission_id` equals the authenticated admission's, which `authenticate_admission` has already equated with the call's binding and with the verified assertion's — and at that workload its generation equals the authenticated generation (the binding's) and its status is Admitted. The three conjuncts are ordered, and the order is the claim. Generation equality and `Admitted` are properties OF a subject; asserted about an unnamed record they are satisfied by any workload that happens to sit at the same number, and a generation is a per-workload counter, so that is the ordinary case rather than a contrived one.
 
 **Security consequence.** A workload whose admission has been superseded or revoked cannot buy a call with an assertion that has not yet expired, and cannot buy one with ANOTHER WORKLOAD'S authoritative state either — not even a state at the same generation, still admitted, and in every other respect a well-formed answer.
 
@@ -225,7 +225,7 @@ any of them is closed.
 
 ### THM-0006 — Presenter binding
 
-**Statement.** A successful admission implies the admitted actor named by the assertion is the presenter of this call — the actor the verifier resolved from the request signature.
+**Statement.** A successful authentication implies the admitted actor named by the assertion is the presenter of this call — the actor the verifier resolved from the request signature — and the currency verdict built from it carries that same actor unchanged.
 
 **Security consequence.** An assertion describing some admitted workload cannot authorize a different presenter merely because the workload itself is admissible. Without it the assertion is a bearer token: anyone whose key the enforcement point resolves could copy an admitted peer's assertion into their own evidence block, derive the matching binding, and pass the gate.
 
