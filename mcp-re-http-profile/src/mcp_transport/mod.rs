@@ -46,9 +46,11 @@ mod agreement;
 
 /// The verifier-local MCP transport contract (§4.1).
 ///
-/// Construct with [`McpTransportPolicy::mcp_2026_07_28`] for the strict per-request
-/// contract, or build one field-by-field for a mixed-version deployment. All fields
-/// are private and read-only after construction.
+/// [`McpTransportPolicy::mcp_2026_07_28`] is the only constructor; it takes the
+/// deployment's accepted protocol-version set. The only waiver is
+/// [`McpTransportPolicy::with_legacy_header_omission`], which waives header absence for a
+/// request carrying none of the three headers and never agreement. All fields are
+/// private and read-only after construction.
 #[derive(Debug, Clone)]
 pub struct McpTransportPolicy {
     supported_protocol_versions: Vec<String>,
@@ -127,21 +129,21 @@ impl McpTransportPolicy {
         Ok(())
     }
 
-    /// Find the protocol version the body declares, under top-level `_meta` or
-    /// `params._meta`. Absent → agreement is not checkable (the header presence and
+    /// Every protocol version the body states, under top-level `_meta` and under
+    /// `params._meta`. None stated → agreement is not checkable (the header presence and
     /// supported-set checks still apply); this mirrors the method-divergence rule,
     /// which also does nothing when there is no body value to disagree with.
-    fn body_protocol_version<'a>(
-        &self,
+    fn body_protocol_versions<'a>(
+        &'a self,
         body: &'a Value,
         params: Option<&'a Value>,
-    ) -> Option<&'a str> {
-        let from = |v: &'a Value| -> Option<&'a str> {
+    ) -> impl Iterator<Item = &'a str> + 'a {
+        let from = move |v: &'a Value| -> Option<&'a str> {
             v.get("_meta")
                 .and_then(|m| m.get(&self.protocol_version_body_key))
                 .and_then(Value::as_str)
         };
-        from(body).or_else(|| params.and_then(from))
+        [Some(body), params].into_iter().flatten().filter_map(from)
     }
 }
 
@@ -337,6 +339,30 @@ mod tests {
             strict().enforce(&r).unwrap_err(),
             HttpProfileError::McpTransportDivergence("mcp-protocol-version"),
         );
+    }
+
+    #[test]
+    fn a_params_meta_version_contradicting_an_agreeing_top_level_meta_is_rejected() {
+        let headers = || {
+            vec![
+                ("Mcp-Method", "tools/call"),
+                ("Mcp-Name", "read"),
+                ("MCP-Protocol-Version", "2026-07-28"),
+            ]
+        };
+        let split = req(
+            headers(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"},"params":{"name":"read","_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18"}}}"#,
+        );
+        assert_eq!(
+            strict().enforce(&split).unwrap_err(),
+            HttpProfileError::McpTransportDivergence("mcp-protocol-version"),
+        );
+        let agreeing = req(
+            headers(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"},"params":{"name":"read","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#,
+        );
+        assert!(strict().enforce(&agreeing).is_ok());
     }
 
     #[test]

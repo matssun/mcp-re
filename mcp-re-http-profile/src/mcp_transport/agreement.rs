@@ -107,14 +107,15 @@ impl McpTransportPolicy {
         if !self.supported_protocol_versions.iter().any(|s| s == v) {
             return Err(HttpProfileError::McpProtocolVersionUnsupported);
         }
-        match self.body_protocol_version(body, params) {
-            // The covered header and the covered body name different protocol versions:
-            // the signer contradicting itself.
-            Some(body_version) if body_version != v => Err(
-                HttpProfileError::McpTransportDivergence(MCP_PROTOCOL_VERSION_HEADER),
-            ),
-            _ => Ok(()),
+        // Any stated body version differing from the covered header is the signer
+        // contradicting itself; requiring every location to equal the header also makes
+        // them equal to each other.
+        if self.body_protocol_versions(body, params).any(|b| b != v) {
+            return Err(HttpProfileError::McpTransportDivergence(
+                MCP_PROTOCOL_VERSION_HEADER,
+            ));
         }
+        Ok(())
     }
 
     /// `Mcp-Name`: required for the methods that name a target, and agreeing with the params
