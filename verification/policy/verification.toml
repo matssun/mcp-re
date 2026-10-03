@@ -917,8 +917,6 @@ paths = [
   "mcp-re-proxy/src/tls_plane/crl_evidence.rs",
   "mcp-re-proxy/src/tls_plane/revocation_currency.rs",
   "mcp-re-proxy/src/tls_plane/crl_reload_worker/supervision.rs",
-  # Carries the unit's own clause: each successful reload republishes what it installed.
-  "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
   # Also in `proxy.tls_listener_state`, and deliberately: this file has two halves. Loading
   # and indexing the CRLs is what a listener is built with; RENDERING the posture is what
   # the deployment says about them. A change to either dirties both units, which is the
@@ -948,9 +946,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::supervision::tests::a_failed_reload_is_degraded_and_a_dead_worker_is_stopped",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::client_revocation_posture::revocation_posture_tests::with_no_crl_the_per_request_check_is_reported_as_not_configured",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::client_revocation_posture::revocation_posture_tests::every_loaded_crl_reports_its_own_digest_and_window",
-  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_halted_reload_loop_retracts_the_cadence_it_advertised",
-  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_successful_reload_republishes_the_evidence_it_installed",
-  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_crl_that_never_falls_out_of_force_produces_no_evidence",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_near_expiry_crl_is_installable_and_names_its_deadline",
 ]
@@ -6305,6 +6300,10 @@ tested_symbols = [
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_composition_root_constructs_no_rival_key_source",
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_signing_plane_is_materialized_from_the_materialized_source",
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_rules_would_catch_each_regression",
+  # THM-0073's NotCompared arm rests on these two: the root reads the channel chain and the
+  # response key eagerly, after the witness opens, and a failure refuses composition.
+  "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_composition_root_reads_both_signing_roles_eagerly_and_fallibly",
+  "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_role_reads_follow_the_witness_exit",
 ]
 
 [[unit]]
@@ -8818,6 +8817,30 @@ tested_symbols = [
 # `etcd_store`/`async_etcd_store` only under `cpstore_etcd`. The default-feature targets
 # compile both to zero tests, so each unit's selectors name its feature target.
 
+# NP-146 (ADR-MCPRE-069), ratified by owner ruling 12 item 25 as its own unit rather than as an
+# addition to `proxy.async_replay_retention`: that unit's claim is the retention ACCOUNT, and
+# every clause of it holds under an implementation that renders its refusal line inside the
+# guard or lets it unwind. What an operator can tell a budget refusal from a store outage by,
+# without the reporter being able to stall the tier or poison the lock, is this unit's claim.
+[[unit]]
+id = "proxy.budget_refusal_report"
+class = "V0"
+description = "A BUDGET REFUSAL IS DIAGNOSABLE WITHOUT THE REPORTER BEING ABLE TO TAKE THE TIER DOWN: the line that tells an operator a replay refusal was a budget refusal and not a store outage is paced by the process while every refusal is COUNTED IN FULL, a write that fails is lost rather than unwound, and a peer-influenced actor name is rendered escaped so it can neither end a field nor forge a line. It owns the report and the refusal's wire detail, and nothing about where the caller renders it relative to the retention ledger's guard, which is the caller's."
+paths = ["mcp-re-proxy/src/async_replay/budget_report.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/replay/budget_refusal_report",
+  "mutation://proxy/replay/budget_refusal_report",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#async_replay::budget_report::tests::a_burst_within_one_window_yields_one_line_and_is_counted_in_full",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::budget_report::tests::a_sustained_refuser_stays_visible_at_any_count",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::budget_report::tests::a_failed_diagnostic_write_does_not_unwind",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::budget_report::tests::the_actor_cannot_forge_a_line_or_a_field",
+]
+
 [[unit]]
 id = "proxy.redis_replay_adapter"
 class = "V0"
@@ -8842,6 +8865,7 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_noeviction_redis_is_accepted",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::every_pooled_connection_is_asked_for_its_eviction_policy",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_store_refuses_to_connect_to_an_evicting_redis",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::every_evicting_policy_is_refused_and_so_is_an_unreadable_one",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::the_policy_is_read_out_of_either_protocols_reply",
@@ -11410,6 +11434,28 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::handle_lifetime_tests::a_retired_plane_stops_claiming_a_cadence",
+]
+
+# THM-0131's republish conjunct lives in the reload loop, and the loop is its own file. A twin
+# unit owns it rather than widening `proxy.client_revocation_currency`, whose paths name the
+# evidence constructor, the maintenance algebra and the supervision arm: a unit's fingerprint
+# covers what its claim is about, and a reload loop edit must not re-open those.
+[[unit]]
+id = "proxy.client_crl_reload_republish"
+class = "V0"
+description = "EACH SUCCESSFUL CLIENT-CRL RELOAD REPUBLISHES THE EVIDENCE IT INSTALLED, and a halted reload loop retracts the cadence it advertised: the reload loop installs a verifier and a per-request index only from evidence it has built through the freshness gate, and reports the CRLs now in force to the posture rather than leaving the boot digest and window standing. A failed rebuild keeps last-good and is degraded, not stopped. This is the republish and halt arms of the claim whose evidence-constructor, maintenance-algebra and worker-death arms `proxy.client_revocation_currency` measures; it is registered separately because the loop is `crl_reload_worker/mod.rs`, which that unit's paths do not name."
+paths = ["mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/tls/client_crl_reload_republish",
+  "mutation://proxy/tls/client_crl_reload_republish",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_successful_reload_republishes_the_evidence_it_installed",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_halted_reload_loop_retracts_the_cadence_it_advertised",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped",
 ]
 
 # ---------------------------------------------------------------------------

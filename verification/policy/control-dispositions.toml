@@ -8441,7 +8441,7 @@ record = "docs/architecture/control-dispositions.md#np-145"
 [[proposition]]
 id = "NP-146"
 title = "A budget refusal is diagnosable without the reporter being able to take the tier down"
-carrier = "mcp-re-proxy/src/async_replay/budget_report.rs and retention_ledger.rs"
+carrier = "mcp-re-proxy/src/async_replay/retention_ledger.rs"
 likely_owner = ""
 consequence = "high"
 root_relationship = "beside THM-0105, which states the account and not how a refusal is reported"
@@ -12589,38 +12589,6 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#async_redis_store::tests::an_existing_key_is_a_replay"
 decision = "new-proposition"
 proposition = "NP-120"
-recorded = "2026-09-29"
-
-[[disposition]]
-id = "CD-20058"
-project = "mcp-re-proxy"
-control = "src/lib.rs#async_replay::budget_report::tests::a_burst_within_one_window_yields_one_line_and_is_counted_in_full"
-decision = "new-proposition"
-proposition = "NP-146"
-recorded = "2026-09-29"
-
-[[disposition]]
-id = "CD-20059"
-project = "mcp-re-proxy"
-control = "src/lib.rs#async_replay::budget_report::tests::a_failed_diagnostic_write_does_not_unwind"
-decision = "new-proposition"
-proposition = "NP-146"
-recorded = "2026-09-29"
-
-[[disposition]]
-id = "CD-20060"
-project = "mcp-re-proxy"
-control = "src/lib.rs#async_replay::budget_report::tests::a_sustained_refuser_stays_visible_at_any_count"
-decision = "new-proposition"
-proposition = "NP-146"
-recorded = "2026-09-29"
-
-[[disposition]]
-id = "CD-20061"
-project = "mcp-re-proxy"
-control = "src/lib.rs#async_replay::budget_report::tests::the_actor_cannot_forge_a_line_or_a_field"
-decision = "new-proposition"
-proposition = "NP-146"
 recorded = "2026-09-29"
 
 [[disposition]]

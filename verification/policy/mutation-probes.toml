@@ -10938,3 +10938,141 @@ the produced-but-not-consumed shape one step worse — consumed, and always the 
 survives resolution, which is that unit's claim. Only the provenance is lost, and only the
 two controls above can see it.
 """
+
+[[probe]]
+id = "M428-proxy-a-successful-reload-republishes-its-evidence"
+unit = "proxy.client_crl_reload_republish"
+theorem = "THM-0131"
+conjunct = "each successful reload republishes the evidence it installed, so the posture names the CRLs in force rather than the ones read at boot"
+path = "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs"
+anchor = """
+                currency.republish(evidence);
+"""
+weakening = """
+                let _ = evidence;
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_successful_reload_republishes_the_evidence_it_installed",
+]
+note = """
+THE REPUBLISH IS THE ONLY LINE THAT MOVES THE POSTURE OFF THE BOOT CRL. The swap itself still
+succeeds, the verifier and the per-request index are still the new ones, and the operator
+transcript still says "new verifier is live" -- everything that can be observed from the
+handshake side is correct while the posture reports a digest and window nobody is enforcing.
+`a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped` stays green under this
+weakening, correctly: a failed reload republishes nothing by design.
+"""
+
+[[probe]]
+id = "M429-proxy-a-failed-diagnostic-write-unwinds"
+unit = "proxy.budget_refusal_report"
+conjunct = "a diagnostic write that fails is lost, never unwound, so the reporter cannot poison the lock the refusal is decided under"
+path = "mcp-re-proxy/src/async_replay/budget_report.rs"
+anchor = """
+        refusal.held, refusal.budget, refusal.level, refusal.max_entries,
+    );
+"""
+weakening = """
+        refusal.held, refusal.budget, refusal.level, refusal.max_entries,
+    )
+    .expect("stderr");
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#async_replay::budget_report::tests::a_failed_diagnostic_write_does_not_unwind",
+]
+note = """
+`eprintln!` is the shape this weakening restores in effect: a write result that is unwrapped
+instead of discarded. The refusal's wire outcome is untouched and every honest write still
+succeeds, so nothing short of a failing sink distinguishes the two.
+"""
+
+[[probe]]
+id = "M430-proxy-the-refusal-line-is-not-paced"
+unit = "proxy.budget_refusal_report"
+conjunct = "the line is paced by the process while every refusal is counted in full"
+path = "mcp-re-proxy/src/async_replay/budget_report.rs"
+anchor = """
+        if now_ms.saturating_sub(last) < LINE_INTERVAL_MS {
+"""
+weakening = """
+        if now_ms.saturating_sub(last) < 0 {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#async_replay::budget_report::tests::a_burst_within_one_window_yields_one_line_and_is_counted_in_full",
+]
+note = """
+Without pacing, one over-quota peer drives one stderr write per request: it is handed the
+write rate of the process's stderr. The count stays true under this weakening, which is why
+the control asserts both halves of the pair and not the line count alone.
+"""
+
+[[probe]]
+id = "M431-proxy-the-actor-name-is-rendered-raw"
+unit = "proxy.budget_refusal_report"
+conjunct = "a peer-influenced actor name cannot end a field or forge a line"
+path = "mcp-re-proxy/src/async_replay/budget_report.rs"
+anchor = '''
+         {} entries with the {level} at {} of {}; actor={actor:?}; {total} such refusals so \
+'''
+weakening = '''
+         {} entries with the {level} at {} of {}; actor={actor}; {total} such refusals so \
+'''
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#async_replay::budget_report::tests::the_actor_cannot_forge_a_line_or_a_field",
+]
+note = """
+The actor name comes from a signature-valid peer. Rendered with `{}` it can carry a newline
+and a second, well-formed line, so the operator reads a refusal that names a victim. Rendered
+with `{:?}` it is one escaped field however hostile.
+"""
+
+[[probe]]
+id = "M432-proxy-the-channel-role-read-is-swallowed"
+unit = "proxy.signing_credential_provenance"
+theorem = "THM-0073"
+conjunct = "a role that materialized no key contributes none to the comparison because the composition root reads both roles eagerly and fallibly straight afterwards"
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+    let server_chain = key_source
+        .tls_server_cert_chain()
+        .map_err(|e| e.to_string())?;
+"""
+weakening = """
+    let server_chain = key_source
+        .tls_server_cert_chain()
+        .unwrap_or_default();
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_composition_root_reads_both_signing_roles_eagerly_and_fallibly",
+]
+note = """
+THE NOT-COMPARED ARM OF `RoleSeparation` IS SAFE ONLY BECAUSE OF THIS READ. A channel role that
+produced no key is admitted by `MaterializedSigningRoles::establish` on the argument that the
+root asks for the channel chain a moment later and refuses when it cannot be had. Swallowing
+that failure leaves a server that starts with an empty chain, and the comparison that was
+skipped is the only thing that would have said whether the two roles were one key.
+"""
+
+[[probe]]
+id = "M433-proxy-the-eviction-policy-is-read-on-one-connection-only"
+unit = "proxy.redis_replay_adapter"
+theorem = "THM-0106"
+conjunct = "the eviction policy is asserted on every pooled connection at connect, because the URL can resolve to a different server per connection"
+path = "mcp-re-proxy/src/async_redis_store.rs"
+anchor = """
+            Self::assert_no_eviction(&mut conn).await?;
+"""
+weakening = """
+            if pool.is_empty() {
+                Self::assert_no_eviction(&mut conn).await?;
+            }
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::every_pooled_connection_is_asked_for_its_eviction_policy",
+]
+note = """
+THE POLICY ONE CONNECTION REPORTED IS A FACT ABOUT ONE SERVER. Reading it on the first
+connection and trusting the rest accepts a pool whose later connections reached a failover
+target or a replacement that evicts, and every single-server control stays green: the first
+connection still answers `noeviction`.
+"""

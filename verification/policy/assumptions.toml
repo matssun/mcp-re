@@ -2081,3 +2081,175 @@ sites = [
   "mcp-re-proxy/src/admission_enforcer/degraded_window.rs#DegradedWindow::exhausted_at",
 ]
 tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0057"
+description = "The per-request wall-clock `now` the serving path hands each verifier operation is the current UTC time, to within the deployment's configured skew of every peer's clock."
+justification = """
+Every `Verifier` operation takes `now: i64` as an argument. The verifier holds no clock, and
+that is deliberate rather than an omission: `chain/hop.rs` verifies a retained exchange at the
+instant it was retained, so a clock owned by the verifier would be wrong for the historical
+operations, and a clock pinned at construction would drift from the request it is applied to.
+The serving path builds a verifier per request and reads `now_unix()` once at the point it
+calls `handle`.
+
+So the freshness, window-width and currentness conclusions the verifier reaches are
+conclusions about the instant it was GIVEN. They are conclusions about the present only if
+the value supplied is the present, and nothing in this repository can establish that: the
+reading is `SystemTime::now()` through `mcp-re-proxy/src/clock.rs`, a host clock disciplined
+by whatever the operator runs. ASM-0025 and ASM-0026 state the skew and window bounds the
+policy configures; this states what the reading they are compared against must be.
+
+The premise is about the reading and not about monotonicity. A host clock that steps backwards
+re-admits what a forward-running clock had already expired, and one that steps forwards
+refuses what is fresh; both are the same failure of this premise and neither is detectable
+from a single request. `now_unix()` maps a pre-epoch error to 0, which the startup plan
+diagnoses as a clock fault; that catches a dead clock, not a wrong one.
+
+It stops being acceptable if a verifier operation is ever handed a value that is not an
+acquisition of the host wall clock at the request's own arrival, or if a verifier gains a clock
+of its own that the historical operations cannot override.
+"""
+scope = [
+  "unit://http_profile.freshness_window",
+  "unit://http_profile.admission_currency",
+  "boundary://boundary.clock",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 11 (verifier clock provenance, 20f1fdce, 71053a1e)"
+review_requirement = "Owner review if any verifier operation is given a clock source other than the per-request wall-clock reading, or if the reading moves off `crate::clock::now_unix`."
+premise_class = "external-boundary"
+boundary_owner = """
+The DEPLOYMENT OPERATOR's host clock discipline (NTP or equivalent), across the `SystemTime::now()`
+acquisition in `mcp-re-proxy/src/clock.rs`: the reading taken at a request's arrival is the current
+UTC time to within the configured skew of every peer's clock.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-proxy/src/clock.rs#now_unix",
+  "mcp-re-http-profile/src/verifier.rs#Verifier",
+]
+tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0058"
+description = "Write access to the replay keyspace of the shared replay tier is confined to the fleet's own replicas: the instance is dedicated to the deployment, or an access-control list denies every other principal `DEL`, `UNLINK` and `FLUSH*` on it."
+justification = """
+"Key present" is the whole replay signal. A replay store records an admitted nonce by creating
+a key and refuses a repeat because the key exists, so anything able to delete that key makes the
+nonce `Fresh` again for the rest of its freshness window, on every replica at once, with the
+store reporting nothing. The keys are written verbatim as `signer|audience|nonce` into the
+instance's global keyspace: they carry no owned prefix, so nothing in the store separates them
+from a neighbour's, and `FLUSHALL` by an unrelated tenant is a replay bypass.
+
+The premise is about ACCESS, in the sense ASM-0047 uses the word for the correlation keyspace,
+and it is not about the store behaving correctly (ASM-0040 for the Redis count, ASM-0041 for
+etcd consensus). It is also the reason no key prefix is added: a prefix would namespace the keys
+against a collision and would not confine them against a principal that holds write access,
+while changing the persisted key names would let a nonce admitted by an old replica replay on a
+new one during a rolling upgrade.
+
+Redis AUTH and TLS are transport and identity controls on the same boundary. They are what an
+operator uses to establish this premise; they are not themselves required by the code, because
+an instance on a private network that nothing else can reach satisfies it with neither.
+
+It stops being acceptable if the replay instance is shared with a tenant that is not this
+dispatch boundary, or reachable by any principal that is not a replica of this fleet. An
+operator console with delete access counts.
+"""
+scope = [
+  "unit://proxy.replay_admission_gate",
+  "unit://proxy.redis_replay_adapter",
+  "unit://proxy.etcd_replay_adapter",
+  "boundary://boundary.shared_state_store",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 19 (3821b832, 12bb2a61, 78a5dbfe, e6adb4a3)"
+review_requirement = "Owner review; any deployment topology that widens who may delete or flush the replay keyspace, and any change that makes replay keys a store-owned namespace."
+premise_class = "external-boundary"
+boundary_owner = """
+The deployment operator, across the replay tier's network and access-control configuration: write
+access to the replay keyspace, including `DEL`, `UNLINK` and `FLUSH*`, is confined to the fleet's
+own replicas.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0059"
+description = "Every server reachable at `--replay-redis-url`, failover targets and replacements included, runs `maxmemory-policy noeviction` for as long as it serves the replay tier."
+justification = """
+THM-0106's refusal is taken at connect: the store asks the server for `maxmemory-policy` and
+refuses to open unless it answers `noeviction`, and it asks on every pooled connection it
+opens. That establishes what the server a connection reached said when the connection was
+made. A `ConnectionManager` reconnects without a hook the store can use, a Sentinel or cluster
+failover can answer the next command from a different server, and an operator can run
+`CONFIG SET maxmemory-policy` on a live one, so what is asserted at connect is a statement
+about one server at one time.
+
+The premise states the rest: every server the URL can resolve to runs `noeviction`, and keeps
+running it. It is a property of the deployment's topology and its operators, not of anything
+this repository can check on the hot path without a `CONFIG` round trip per insert and the
+ACL surface that implies. A server that evicts discards admitted nonces before their TTL, so
+each becomes `Fresh` again for the remainder of its window on every replica, which is the
+outcome THM-0106 exists to exclude.
+
+It stops being acceptable if a replica or failover target is provisioned from a template whose
+policy differs from the primary's, or if the policy is changeable by a principal other than the
+operator of the replay tier.
+"""
+scope = [
+  "unit://proxy.redis_replay_adapter",
+  "boundary://boundary.shared_state_store",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 20 (2f30e027, 64ee075d)"
+review_requirement = "Owner review; any change to when the eviction policy is asserted, and any failover topology whose members are not provisioned alike."
+premise_class = "external-boundary"
+boundary_owner = """
+The deployment operator, across the replay tier's server configuration: every server reachable at
+the configured replay URL, including failover targets and replacements, runs `noeviction`.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0060"
+description = "For any two distinct (audience, resolved actor, `requestState`) triples this deployment handles, the continuation key derivation produces distinct SHA-256 digest values."
+justification = """
+`continuation_key` digests a domain tag, the length-prefixed audience and actor, and the opaque
+state bytes, and both legs recompute it and use the result as the address of the retained bases.
+So THM-0087's *an entry is reachable only by the actor the verifier resolved* is conditional on
+two distinct triples not addressing the same entry, and `proxy.continuation_correlation_store`
+registered no premise saying so. The length prefixes make the ENCODING injective; what they
+cannot do is make the DIGEST injective, and a claim may not exceed its evidence closure.
+
+It is the second-preimage property and no stronger, and the difference is the whole argument.
+The adversary does not choose the open leg's triple: the audience is the deployment's, the
+actor is the one the verifier resolved, and the state is minted by this fleet. What an adversary
+holds is a victim's triple and its own free choice of a second actor and second state, and
+needs one that lands on the victim's key. That is a second preimage of a value it was handed.
+This premise is therefore deliberately weaker than collision resistance (ASM-0037) and is a
+per-unit entry rather than a widening of ASM-0028, whose scope the ADR-068 Phase-1 split
+narrowed to the six propositions that conclude byte agreement from digest agreement: widening
+an owner-reviewed premise would reopen assumption review for all six consumers, and none of
+them is this one.
+
+Nothing here may be read as MCP-RE having proved SHA-256's second-preimage resistance, and
+colliding triples exist because the digest is not injective. The claim is computational and
+deployment-scoped.
+
+It stops being acceptable if the key moves to a digest without SHA-256's standing, or if the
+state bytes become attacker-chosen before the open leg is minted, which would need collision
+resistance and not this.
+"""
+scope = [
+  "unit://proxy.continuation_correlation_store",
+  "boundary://boundary.crypto_primitives",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 27 (c5af44c1)"
+review_requirement = "Owner review; any change to the continuation key's digest algorithm or domain separation, and any change that lets the request state be chosen by the answering party before the open leg is minted."
+premise_class = "assumed"
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-primitive"

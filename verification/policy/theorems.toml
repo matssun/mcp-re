@@ -3701,6 +3701,12 @@ reads both immediately afterwards to build the listener and the delegation, so a
 where either is unavailable starts no server, and the only executions that arm admits are
 executions that never serve.
 
+That reading is measured and not merely argued. `proxy.signing_credential_provenance`, the unit
+that carries THM-0082, pins both reads: `the_composition_root_reads_both_signing_roles_eagerly_and_fallibly`
+goes red when the channel chain or the response key is read lazily or has its failure swallowed,
+and `M432` is the probe that swallows it. This claim therefore rests on that control for the one
+clause the materializer cannot seal.
+
 TWO PREMISES, both found by the missing-edge pass over this very claim rather than assumed.
 The comparison is over `raw_point()`, so "different points implies different keys" needs
 THM-0025: possession of an `Ed25519PublicKeyValue` means it was interpreted from the canonical
@@ -3715,7 +3721,7 @@ about the chain being trusted.
 """
 owner = "proxy.signing_role_separation"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.signing_role_separation"]
+supported_by = ["unit://proxy.signing_role_separation", "unit://proxy.signing_credential_provenance"]
 depends_on = ["THM-0049", "THM-0025", "THM-0027"]
 
 [[theorem]]
@@ -4271,6 +4277,11 @@ nothing; THM-0064 establishes what a custody selection asserts about exposure; T
 establishes that a source obtained through the materializer kept its two roles apart. None of
 them says the root USED the materializer — `FileKeySource` and the KMS adapters are public
 constructors, as external embedders need, so a root that opened one beside it would compile.
+
+The root's two eager, fallible reads of the roles it composes — the channel chain and the
+response public key — are part of what it measures: they are what turns THM-0073's
+`NotCompared` outcome into a refusal rather than a serving deployment, and
+`the_composition_root_reads_both_signing_roles_eagerly_and_fallibly` pins them.
 
 Evidence, not unconstructibility, and for that exact reason. The measurement is over the
 composition root's own source, the shape `serving_trust_seam_test` uses for the resolver:
@@ -5236,6 +5247,12 @@ deliberately unsealed and legitimately constructible through the resolver seam, 
 of one establishes only what it was handed; the provenance is earned by the chain above and by
 the controls, never by a constructor's argument type.
 
+WHAT THE KEY'S DIGEST CONTRIBUTES, AND WHAT IT ASSUMES. The derivation is injective over the
+(audience, resolved actor, state) triple as an ENCODING; that two distinct triples do not
+address one entry is a statement about the DIGEST, and rests on SHA-256 second-preimage
+resistance, registered for this unit alone as ASM-0060. It is deliberately not ASM-0028's
+(whose scope is the six digest-equals-bytes propositions) and not collision resistance.
+
 WHAT "REACHABLE" QUANTIFIES OVER: requests that reach this proxy. Every path by which an
 entry is read or removed through MCP-RE derives its key from the resolved actor, and that is
 the whole of what is measured. A party with direct WRITE access to the `mcp-re:cont:`
@@ -6032,10 +6049,15 @@ Nothing here restates it or strengthens it, and this theorem is not evidence for
 NOT A LIVENESS CLAIM: it says no failure becomes a `Fresh`, never that a healthy Redis
 answers.
 
-THE POLICY IS READ ONCE, AT CONNECT. A server whose policy is changed underneath a live
-connection is not detected by this mechanism, and nothing here claims otherwise; that is an
-operator control, and the connect-time refusal is what stops a misconfigured deployment from
-starting rather than what stops one from being reconfigured.
+THE POLICY IS ASSERTED AT CONNECT, ON EVERY CONNECTION, AND NOT AFTERWARDS. Each pooled
+connection asks the server it reached, so a URL that resolves to a different server per
+connection is refused if any of them evicts. A server whose policy is changed underneath a
+live connection, or a failover or reconnect that lands a live connection on a different
+server, is not detected by this mechanism, and nothing here claims otherwise. What covers
+that is ASM-0059 — every server reachable at the replay URL, failover targets and
+replacements included, runs `noeviction` for as long as it serves the tier — an operator
+premise this claim rests on rather than establishes. The connect-time refusal is what stops a
+misconfigured deployment from starting rather than what stops one from being reconfigured.
 
 The `WAIT` conjunct governs the tier the store was BUILT with. That the tier a deployment
 DECLARED is the tier the store was built with is `app.rs`'s composition and THM-0092's
@@ -7412,7 +7434,7 @@ outside this repository, and no claim here rests on its doing so.
 """
 owner = "proxy.client_revocation_currency"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.client_revocation_currency", "unit://proxy.client_crl_next_update_gate", "unit://proxy.retired_plane_cadence_retraction"]
+supported_by = ["unit://proxy.client_revocation_currency", "unit://proxy.client_crl_next_update_gate", "unit://proxy.retired_plane_cadence_retraction", "unit://proxy.client_crl_reload_republish"]
 depends_on = ["THM-0054"]
 
 [[theorem]]

@@ -14,7 +14,8 @@
 //!
 //! The key is derivable by anyone from three public identifiers: it contributes
 //! injectivity, not unpredictability. Isolation from a party that can WRITE the
-//! `mcp-re:cont:` keyspace is the store's premise ASM-0047, not the key's.
+//! `mcp-re:cont:` keyspace is the store's premise ASM-0047, not the key's. That two distinct
+//! triples digest to distinct keys is SHA-256's second-preimage resistance, ASM-0060.
 
 /// The key prefix for a continuation correlation entry in the shared store.
 pub const CONTINUATION_KEY_PREFIX: &str = "mcp-re:cont:";

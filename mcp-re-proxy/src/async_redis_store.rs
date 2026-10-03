@@ -163,18 +163,19 @@ impl RedisAsyncAtomicReplayStore {
             .set_response_timeout(Some(Self::response_timeout_for(wait_quorum)));
         let mut pool = Vec::with_capacity(pool_size.max(1));
         for _ in 0..pool_size.max(1) {
-            let conn = client
+            let mut conn = client
                 .get_connection_manager_with_config(config.clone())
                 .await
                 .map_err(|e| ReplayStoreError::Unavailable {
                     details: format!("connect redis async: {e}"),
                 })?;
+            // Asked on EVERY connection: the URL can resolve to a different server per
+            // connection (a failover pair, a replacement), so the policy one connection
+            // reported says nothing about the server the next one reached. The premise
+            // that every server behind the URL keeps `noeviction` afterwards is ASM-0059.
+            Self::assert_no_eviction(&mut conn).await?;
             pool.push(conn);
         }
-        // Asked ONCE rather than per connection: every connection in the pool addresses
-        // the same server, so an eviction policy is a property of that server and asking
-        // n times would only add n-1 round trips to startup.
-        Self::assert_no_eviction(&mut pool[0]).await?;
         Ok(RedisAsyncAtomicReplayStore {
             pool,
             next: AtomicUsize::new(0),
@@ -199,10 +200,11 @@ impl RedisAsyncAtomicReplayStore {
 
     /// Refuse to serve on a Redis that may drop a replay record before its TTL.
     ///
-    /// Asked once, at connect, because it is a property of the server rather than of
-    /// a request — and asked at all because nothing on the insert path can detect an
-    /// eviction after the fact: the next `SET NX` on an evicted key simply succeeds,
-    /// which is indistinguishable from a nonce that was never presented.
+    /// Asked at connect, on each connection, because it is a property of the server a
+    /// connection reached rather than of a request — and asked at all because nothing on
+    /// the insert path can detect an eviction after the fact: the next `SET NX` on an
+    /// evicted key simply succeeds, which is indistinguishable from a nonce that was
+    /// never presented.
     async fn assert_no_eviction(conn: &mut ConnectionManager) -> Result<(), ReplayStoreError> {
         eviction_policy_verdict(retention_promise::read_policy(conn).await.as_deref())
     }
@@ -387,6 +389,63 @@ mod tests {
             details.contains(MAXMEMORY_POLICY_PARAM) && details.contains("volatile-lru"),
             "the refusal must say which policy it read, got: {details}"
         );
+    }
+
+    /// A server whose first connection reports `first` and every later one `rest`,
+    /// standing for a URL that resolves to a different server after the first connect.
+    async fn serve_policy_per_connection(first: &'static str, rest: &'static str) -> String {
+        use super::retention_promise::scripted_server::read_command;
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let mut accepted = 0usize;
+            while let Ok((stream, _)) = listener.accept().await {
+                let policy = if accepted == 0 { first } else { rest };
+                accepted += 1;
+                tokio::spawn(async move {
+                    let (rx, mut tx) = stream.into_split();
+                    let mut reader = tokio::io::BufReader::new(rx);
+                    while let Some(args) = read_command(&mut reader).await {
+                        let is_config = args
+                            .first()
+                            .is_some_and(|c| c.eq_ignore_ascii_case("CONFIG"));
+                        let frame = if is_config {
+                            format!(
+                                "*2\r\n${}\r\n{MAXMEMORY_POLICY_PARAM}\r\n${}\r\n{policy}\r\n",
+                                MAXMEMORY_POLICY_PARAM.len(),
+                                policy.len()
+                            )
+                        } else {
+                            "+OK\r\n".to_string()
+                        };
+                        if tx.write_all(frame.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        format!("redis://{addr}")
+    }
+
+    #[tokio::test]
+    async fn every_pooled_connection_is_asked_for_its_eviction_policy() {
+        // The first connection reaches a `noeviction` server and the rest an evicting
+        // one. A policy read once on the first connection would accept this pool.
+        let url = serve_policy_per_connection("noeviction", "volatile-lru").await;
+        let err = RedisAsyncAtomicReplayStore::connect_pooled(&url, system_clock(), None, 4)
+            .await
+            .err()
+            .expect("a pooled connection that reached an evicting server must be refused");
+        let ReplayStoreError::Unavailable { details } = err;
+        assert!(details.contains("volatile-lru"), "got: {details}");
+        let url = serve_policy_per_connection("noeviction", "noeviction").await;
+        RedisAsyncAtomicReplayStore::connect_pooled(&url, system_clock(), None, 4)
+            .await
+            .expect("every connection reporting noeviction is the supported configuration");
     }
 
     #[tokio::test]

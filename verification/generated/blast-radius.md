@@ -135,6 +135,7 @@ attestations this view cannot see.
 | unit://proxy.aws_kms_adapter | source, contracts or evidence | THM-0116 | _no consumer_ |
 | unit://proxy.aws_sts_credentials | source, contracts or evidence | THM-0117 | _no consumer_ |
 | unit://proxy.aws_web_identity_credential_exchange | source, contracts or evidence | THM-0117 | _no consumer_ |
+| unit://proxy.budget_refusal_report | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.capsule_anchor_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.certificate_identity | source, contracts or evidence | THM-0024 | proxy.channel_associated_identity (COMPILE_DEPENDENCY) |
 | unit://proxy.certificate_identity_authority_boundary | source, contracts or evidence | THM-0024 | _no consumer_ |
@@ -147,6 +148,7 @@ attestations this view cannot see.
 | unit://proxy.client_credential_window | source, contracts or evidence | THM-0102 | _no consumer_ |
 | unit://proxy.client_credential_window_sole_producer | source, contracts or evidence | THM-0102 | _no consumer_ |
 | unit://proxy.client_crl_next_update_gate | source, contracts or evidence | THM-0131 | _no consumer_ |
+| unit://proxy.client_crl_reload_republish | source, contracts or evidence | THM-0131 | _no consumer_ |
 | unit://proxy.client_revocation_currency | source, contracts or evidence | THM-0131 | _no consumer_ |
 | unit://proxy.client_revocation_index_verdict | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.client_revocation_snapshot | source, contracts or evidence | THM-0032 | _no consumer_ |
@@ -237,7 +239,7 @@ attestations this view cannot see.
 | unit://proxy.serving_drain | source, contracts or evidence | THM-0104 | _no consumer_ |
 | unit://proxy.serving_identity_provenance | source, contracts or evidence | THM-0080 | _no consumer_ |
 | unit://proxy.serving_trust_seam | source, contracts or evidence | THM-0066, THM-0099 | _no consumer_ |
-| unit://proxy.signing_credential_provenance | source, contracts or evidence | THM-0082 | _no consumer_ |
+| unit://proxy.signing_credential_provenance | source, contracts or evidence | THM-0073, THM-0082 | _no consumer_ |
 | unit://proxy.signing_plane_epoch_read_refusal | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.signing_role_separation | source, contracts or evidence | THM-0073 | _no consumer_ |
 | unit://proxy.startup_plan_legality | source, contracts or evidence | THM-0077 | _no consumer_ |
@@ -482,3 +484,7 @@ attestations this view cannot see.
 | ASM-0054 | description, justification, scope or mechanism | proxy.pkcs11_adapter | assumption review |
 | ASM-0055 | description, justification, scope or mechanism | proxy.pkcs11_adapter | assumption review |
 | ASM-0056 | description, justification, scope or mechanism | proxy.admission_currency_gate | assumption review |
+| ASM-0057 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.freshness_window | assumption review |
+| ASM-0058 | description, justification, scope or mechanism | proxy.etcd_replay_adapter, proxy.redis_replay_adapter, proxy.replay_admission_gate | assumption review |
+| ASM-0059 | description, justification, scope or mechanism | proxy.redis_replay_adapter | assumption review |
+| ASM-0060 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |

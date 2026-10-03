@@ -71,5 +71,9 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0054 | external-boundary | The PKCS#11 module is thread-safe, as requested by `CKF_OS_LOCKING_OK` at `C_Initialize`. | proxy.pkcs11_adapter | THM-0116 |
 | ASM-0055 | external-boundary | A token label is unique across the slots present when the proxy starts. | proxy.pkcs11_adapter | THM-0116 |
 | ASM-0056 | external-boundary | `std::time::Instant` readings taken in one process never decrease. | proxy.admission_currency_gate | THM-0132 |
+| ASM-0057 | external-boundary | The per-request wall-clock `now` the serving path hands each verifier operation is the current UTC time, to within the deployment's configured skew of every peer's clock. | http_profile.admission_currency, http_profile.freshness_window | THM-0001, THM-0003, THM-0004, THM-0005, THM-0006, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 |
+| ASM-0058 | external-boundary | Write access to the replay keyspace of the shared replay tier is confined to the fleet's own replicas: the instance is dedicated to the deployment, or an access-control list denies every other principal `DEL`, `UNLINK` and `FLUSH*` on it. | proxy.etcd_replay_adapter, proxy.redis_replay_adapter, proxy.replay_admission_gate | THM-0092, THM-0106, THM-0107 |
+| ASM-0059 | external-boundary | Every server reachable at `--replay-redis-url`, failover targets and replacements included, runs `maxmemory-policy noeviction` for as long as it serves the replay tier. | proxy.redis_replay_adapter | THM-0106 |
+| ASM-0060 | assumed | For any two distinct (audience, resolved actor, `requestState`) triples this deployment handles, the continuation key derivation produces distinct SHA-256 digest values. | proxy.continuation_correlation_store | THM-0087 |
 
-19 assumption(s) are reached by more than one theorem.
+21 assumption(s) are reached by more than one theorem.

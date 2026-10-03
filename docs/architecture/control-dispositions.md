@@ -3163,8 +3163,8 @@ are retired with it. The third is separated as NP-187.
 
 ## NP-146 — a budget refusal is diagnosable without the reporter being able to take the tier down
 
-**Controls:** `mcp-re-proxy/src/async_replay/budget_report.rs` (4),
-`async_replay/retention_ledger.rs` (1).
+**Controls:** `async_replay/retention_ledger.rs` (1). The four `mcp-re-proxy/src/async_replay/budget_report.rs`
+controls are registered, below.
 **Statement.** *The line that tells an operator a refusal was a BUDGET refusal and not a store
 outage is rendered OUTSIDE the ledger guard, is paced by the process while every refusal is
 COUNTED IN FULL, and never panics — including on an actor name carrying control bytes.*
@@ -3196,6 +3196,15 @@ the reporter being able to stall or poison the tier is this record's.
 **One is split out under RR-002 C5.** `l1_fast_reject_never_fresh_and_evicts_fifo` is
 **NP-197**: THM-0105's scope excludes it by name — *"NOTHING ABOUT THE DORMANT L1."*
 **Packet:** `verification/reviews/packets/adr069-np-146-np-197-ratification-2026-09-20.md`.
+
+**Registered in part, owner ruling 12 item 25.** The four `budget_report.rs` controls are
+`unit://proxy.budget_refusal_report`, NP-146 ratified as its own unit over that file rather than as an
+addition to `proxy.async_replay_retention`: that unit's claim is the retention account, and the budget
+refusal's diagnosability is not a conjunct of it. It is falsified by `M429-proxy-a-failed-diagnostic-write-unwinds`,
+`M430-proxy-the-refusal-line-is-not-paced` and `M431-proxy-the-actor-name-is-rendered-raw`, and its
+`UC-1` exclusion is withdrawn because the file is now inside a unit's closure. What stays is
+`a_budget_refusal_is_rendered_without_the_ledger_lock`, the OUTSIDE-THE-GUARD half, which is a fact about
+the callers in `retention_ledger.rs` and not about the report.
 
 **Extended 2026-09-29.** The four `budget_report` controls that replaced `refusals_are_paced_by_the_process_and_counted_in_full` and `reporting_never_panics` also establish that a peer-influenced actor name cannot end a field or forge a line (`the_actor_cannot_forge_a_line_or_a_field`); the statement carries that clause from here.
 
