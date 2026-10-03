@@ -105,7 +105,8 @@ impl ActiveDelegatedKey {
         }
 
         // The static delegation context: issuer, audience, profile, scope, epoch, key use,
-        // `jti`, `cnf`. Exempt are the window (`nbf`/`exp`), which the root owns, and `iat`,
+        // `jti`, `cnf`. Exempt are the window (`nbf`/`exp`), which the root owns within the
+        // activation bound below, and `iat`,
         // the root's own issuance stamp: no verifier stores or consumes it, so it is taken as
         // the root states it.
         let mut as_requested = requested_claims.clone();
@@ -120,6 +121,14 @@ impl ActiveDelegatedKey {
         // not a narrower credential, it is an incoherent one, and `exp` is what the whole
         // fail-closed path is decided on.
         if claims.nbf >= claims.exp {
+            return Err(HttpProfileError::DelegationCredentialInvalid);
+        }
+
+        // Activation. The root owns the window's edges, but a key whose `nbf` is later than the
+        // instant it was requested at would be published and served at once while every
+        // verifier still refuses it. A root whose clock runs ahead therefore FAILS the
+        // issuance, and the predecessor keeps serving through the overlap.
+        if claims.nbf > requested_claims.nbf {
             return Err(HttpProfileError::DelegationCredentialInvalid);
         }
 
@@ -400,6 +409,23 @@ mod tests {
                 "nbf={NBF} exp={exp} was accepted as a window"
             );
         }
+    }
+
+    /// A root that stamps a `nbf` later than the instant requested yields no serving key; one
+    /// that stamps an earlier `nbf` is accepted.
+    #[test]
+    fn a_credential_that_is_not_yet_valid_at_the_requested_instant_is_refused() {
+        let key = delegated();
+        let (header, request, _) = requested(&key);
+        let mut ahead = request.clone();
+        ahead.nbf = NBF + 1;
+        assert!(offer(&request, &header, &ahead).is_err());
+        let mut behind = request.clone();
+        behind.nbf = NBF - 1;
+        assert!(
+            offer(&request, &header, &behind).is_ok(),
+            "positive control"
+        );
     }
 
     /// The whole-claim-set comparison rests on `DelegationClaims` being closed: a claim the

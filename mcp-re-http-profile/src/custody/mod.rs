@@ -563,6 +563,32 @@ mod tests {
         assert_eq!(c.audit()[0].exp, snapshot.exp());
     }
 
+    /// A root whose clock is ahead stamps a `nbf` in the future. That issuance fails, and the
+    /// predecessor keeps serving through the overlap instead of being replaced by a key every
+    /// verifier still refuses.
+    #[test]
+    fn a_root_stamping_a_future_nbf_fails_the_rotation_and_the_predecessor_keeps_serving() {
+        let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+        let mut first = true;
+        let mut c = DelegatedSigningCustody::new(
+            cfg(),
+            move |h: &DelegationHeader, claims: &DelegationClaims| {
+                let mut stamped = claims.clone();
+                if !std::mem::take(&mut first) {
+                    stamped.nbf = claims.nbf + 30;
+                }
+                Some(issue_delegation_credential(&root, h, &stamped))
+            },
+            factory(),
+        );
+        c.ensure_active(1_000).expect("issue");
+        let predecessor = c.active_kid().expect("active").to_owned();
+        c.ensure_active(1_250)
+            .expect("the predecessor still serves");
+        assert_eq!(c.active_kid(), Some(predecessor.as_str()));
+        assert_eq!(c.audit().len(), 1, "no rotation event was published");
+    }
+
     /// Rotation overlap: crossing `exp − O` mints a successor (a `rotated` event)
     /// while the predecessor is still valid — no gap.
     #[test]
