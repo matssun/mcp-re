@@ -23,7 +23,15 @@
 //! confusion the C079 fix removed everywhere else — and it dropped the slot assertion, so a
 //! resolver handing back a Request-slot actor would have had its key accepted as a
 //! delegation root. Both are captured here and re-reported as themselves.
+//!
+//! # Whose credentials a root may issue
+//!
+//! The resolved root's role, trust domain and subject must equal those of the
+//! `server_signer` the credential names: a trusted Response-slot root vouches for its own
+//! principal and for no other, so a root cannot mint a key that speaks as a different
+//! server. A mismatch is `mcp-re.delegation_issuer_untrusted`.
 
+use crate::block::ActorIdentity;
 use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
@@ -70,11 +78,15 @@ pub(super) fn chain_to_root<R: Into<ResolverOutcome>>(
     };
     let resolve_failure: std::cell::RefCell<Option<HttpProfileError>> =
         std::cell::RefCell::new(None);
+    let resolved_root: std::cell::RefCell<Option<ActorIdentity>> = std::cell::RefCell::new(None);
     let verified = verify_delegation_credential(
         credential,
         &params,
         |issuer_kid| match resolve_actor_for_slot(resolve_actor, issuer_kid, SignerSlot::Response) {
-            Ok(actor) => Some(actor.verification_key),
+            Ok(actor) => {
+                *resolved_root.borrow_mut() = Some(actor.identity);
+                Some(actor.verification_key)
+            }
             // A definitive "not trusted" stays the credential layer's own verdict
             // (`mcp-re.delegation_issuer_untrusted`) — that IS the right token for an
             // issuer nobody vouches for. Only an OUTAGE and a wrong-slot actor are
@@ -87,7 +99,21 @@ pub(super) fn chain_to_root<R: Into<ResolverOutcome>>(
         },
         |kid| is_revoked(kid),
     );
-    verified.map_err(|e| resolve_failure.into_inner().unwrap_or(e))
+    let verified = verified.map_err(|e| resolve_failure.into_inner().unwrap_or(e))?;
+    let root = resolved_root.into_inner();
+    if !root.is_some_and(|root| speaks_for(&root, &block.server_signer)) {
+        return Err(HttpProfileError::DelegationIssuerUntrusted);
+    }
+    Ok(verified)
+}
+
+/// A root may only scope credentials to its own principal: the role, trust domain and
+/// subject it was resolved as must be those the credential names as the server signer. The
+/// keyid differs by construction (the delegated key is not the root key).
+fn speaks_for(root: &ActorIdentity, server_signer: &ActorIdentity) -> bool {
+    root.role == server_signer.role
+        && root.trust_domain == server_signer.trust_domain
+        && root.subject == server_signer.subject
 }
 
 #[cfg(test)]
@@ -195,6 +221,19 @@ mod tests {
             max_clock_skew: 60,
         };
         chain_to_root(&credential, &block, resolve, &expect, &|_| false, NOW)
+    }
+
+    #[test]
+    fn a_root_cannot_issue_for_another_principals_server_signer() {
+        let result = chain(&|_, slot| {
+            let mut actor = root_actor(slot);
+            actor.identity.subject = "did:example:someone-else".into();
+            ResolverOutcome::Resolved(Box::new(actor))
+        });
+        assert!(matches!(
+            result,
+            Err(HttpProfileError::DelegationIssuerUntrusted)
+        ));
     }
 
     #[test]

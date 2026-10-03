@@ -165,7 +165,7 @@ fn server_resolver() -> ActorResolver {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
                     role: "server".into(),
-                    trust_domain: "example.com".into(),
+                    trust_domain: "mcp.example.com".into(),
                     subject: "did:example:server".into(),
                     keyid: ROOT_KID.into(),
                 },
@@ -246,7 +246,7 @@ fn publish_manifest(path: &std::path::Path, version: u64, revoke_root: bool) {
             issuer_kid: ROOT_KID.into(),
             public_key: root_key().public_key().to_b64url(),
             role: "server".into(),
-            trust_domain: "example.com".into(),
+            trust_domain: "mcp.example.com".into(),
             subject: "did:example:server".into(),
         }],
         retiring_issuers: vec![],

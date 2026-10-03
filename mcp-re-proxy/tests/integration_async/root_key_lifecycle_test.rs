@@ -101,7 +101,7 @@ fn root_actor(issuer_kid: &str, seed: &[u8; 32]) -> ResolvedActor {
         identity: ActorIdentity {
             role: "server".into(),
             trust_domain: "example.com".into(),
-            subject: "did:example:issuer".into(),
+            subject: "did:example:server".into(),
             keyid: issuer_kid.into(),
         },
         verification_key: root_pub(seed),

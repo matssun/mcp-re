@@ -188,7 +188,7 @@ fn resolver(
         Some(ResolvedActor {
             identity: ActorIdentity {
                 role: role.into(),
-                trust_domain: "example.com".into(),
+                trust_domain: "mcp.example.com".into(),
                 subject: format!("did:example:{role}"),
                 keyid: key_id.into(),
             },

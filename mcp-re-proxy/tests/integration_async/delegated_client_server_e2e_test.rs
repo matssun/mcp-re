@@ -154,7 +154,7 @@ fn server_resolver() -> ActorResolver {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
                     role: "server".into(),
-                    trust_domain: "example.com".into(),
+                    trust_domain: "mcp.example.com".into(),
                     subject: "did:example:server".into(),
                     keyid: ROOT_KID.into(),
                 },
@@ -295,7 +295,7 @@ fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
                     role: "server".into(),
-                    trust_domain: "example.com".into(),
+                    trust_domain: "mcp.example.com".into(),
                     subject: "did:example:server".into(),
                     keyid: ROOT_KID.into(),
                 },
@@ -392,7 +392,7 @@ fn issuers_from_signed_manifest(
             issuer_kid: ROOT_KID.into(),
             public_key: root_key().public_key().to_b64url(),
             role: "server".into(),
-            trust_domain: "example.com".into(),
+            trust_domain: "mcp.example.com".into(),
             subject: "did:example:server".into(),
         }],
         retiring_issuers: vec![],
@@ -1005,7 +1005,7 @@ fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
             issuer_kid: ROOT_KID.into(),
             public_key: root_key().public_key().to_b64url(),
             role: "server".into(),
-            trust_domain: "example.com".into(),
+            trust_domain: "mcp.example.com".into(),
             subject: "did:example:server".into(),
         }],
         retiring_issuers: vec![],

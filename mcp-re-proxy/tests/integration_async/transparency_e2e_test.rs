@@ -165,7 +165,7 @@ fn resolver() -> ActorResolver {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
                     role: "server".into(),
-                    trust_domain: "example.com".into(),
+                    trust_domain: "mcp.example.com".into(),
                     subject: "did:example:server".into(),
                     keyid: ROOT_KID.into(),
                 },
@@ -1018,7 +1018,7 @@ struct AuditFixtures {
 fn audit_profile_json() -> serde_json::Value {
     serde_json::json!({
         "schema": "mcp-re-audit-profile/v1",
-        "trust_domain": "example.com",
+        "trust_domain": "mcp.example.com",
         "expected_audience": {
             "audience_id": AUD,
             "target_uri": TARGET,
