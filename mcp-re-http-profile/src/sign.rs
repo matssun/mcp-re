@@ -349,8 +349,7 @@ mod tests {
     #[test]
     fn the_delegated_response_block_is_inside_the_digested_body() {
         let response = signed(&[]);
-        let body: serde_json::Value =
-            serde_json::from_slice(&response.body).expect("body is JSON");
+        let body: serde_json::Value = serde_json::from_slice(&response.body).expect("body is JSON");
         assert_eq!(
             body["_meta"][RESPONSE_EVIDENCE_BLOCK_KEY]["server_signer"]["keyid"],
             KID

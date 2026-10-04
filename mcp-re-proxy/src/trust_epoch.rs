@@ -139,7 +139,11 @@ impl<R: EpochReader> TrustEpochSource<R> {
     /// state is silent, so a seconds-cadence poll logs once per outage, not per poll.
     fn set_healthy(&self, now: bool, cause: &str) -> bool {
         let changed = std::mem::replace(&mut *recover(self.healthy.lock()), now) != now;
-        let effect = if now { "recovered" } else { "push tier UNHEALTHY, bounded-T trust-cache TTL" };
+        let effect = if now {
+            "recovered"
+        } else {
+            "push tier UNHEALTHY, bounded-T trust-cache TTL"
+        };
         if changed {
             eprintln!("mcp-re-proxy: WARNING: trust-epoch health changed ({cause}): {effect}.");
         }
@@ -565,7 +569,10 @@ mod tests {
         src.poll_once();
         src.reader.fail();
         src.poll_once();
-        assert!(!src.set_healthy(false, "probe"), "poll_once latched the edge");
+        assert!(
+            !src.set_healthy(false, "probe"),
+            "poll_once latched the edge"
+        );
         assert!(src.set_healthy(true, "probe"));
         assert!(!src.set_healthy(true, "probe"));
     }

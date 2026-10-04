@@ -213,10 +213,8 @@ mod revocation_posture_tests {
     /// loaded would describe a mechanism that is not running.
     #[test]
     fn with_no_crl_the_per_request_check_is_reported_as_not_configured() {
-        let lines = revocation_posture_lines(
-            &plan(3600),
-            &ClientRevocationCurrency::new(no_crls(), None),
-        );
+        let lines =
+            revocation_posture_lines(&plan(3600), &ClientRevocationCurrency::new(no_crls(), None));
         assert!(
             lines[0].contains("per_request_crl_check=not_configured"),
             "got: {}",
@@ -251,8 +249,10 @@ mod revocation_posture_tests {
                 next_update_unix: None,
             },
         ]);
-        let lines =
-            revocation_posture_lines(&plan(3600), &ClientRevocationCurrency::new(crls, Some(3600)));
+        let lines = revocation_posture_lines(
+            &plan(3600),
+            &ClientRevocationCurrency::new(crls, Some(3600)),
+        );
         assert!(
             lines[0].contains("per_request_crl_check=enforced"),
             "got: {}",

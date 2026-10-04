@@ -61,7 +61,9 @@ mod tests {
             ];
             for want in &expected {
                 assert!(
-                    heads.iter().any(|(head, gated)| *gated && head.starts_with(want.as_str())),
+                    heads
+                        .iter()
+                        .any(|(head, gated)| *gated && head.starts_with(want.as_str())),
                     "{name}: `{want}` is absent or not under the gate"
                 );
             }
@@ -88,9 +90,7 @@ mod tests {
             );
         }
         // Negative control: the gate moved onto an unrelated item, total count unchanged.
-        let moved = format!(
-            "{GATE}\npub struct Other;\n/// doc\npub struct SeededNonceSource;\n"
-        );
+        let moved = format!("{GATE}\npub struct Other;\n/// doc\npub struct SeededNonceSource;\n");
         assert_eq!(
             gated_item_heads(&moved, "SeededNonceSource"),
             vec![("pub struct SeededNonceSource;", false)],

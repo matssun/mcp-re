@@ -59,10 +59,16 @@ mod tests {
         assert_eq!(AmzDate::from_unix(0).as_str(), "19700101T000000Z");
         assert_eq!(AmzDate::from_unix(0).datestamp(), "19700101");
         // 2001-09-09T01:46:40Z — the well-known 1e9 UNIX timestamp.
-        assert_eq!(AmzDate::from_unix(1_000_000_000).as_str(), "20010909T014640Z");
+        assert_eq!(
+            AmzDate::from_unix(1_000_000_000).as_str(),
+            "20010909T014640Z"
+        );
         assert_eq!(AmzDate::from_unix(1_000_000_000).datestamp(), "20010909");
         // 2015-08-30T12:36:00Z — the get-vanilla vector's instant.
-        assert_eq!(AmzDate::from_unix(1_440_938_160).as_str(), "20150830T123600Z");
+        assert_eq!(
+            AmzDate::from_unix(1_440_938_160).as_str(),
+            "20150830T123600Z"
+        );
         assert_eq!(AmzDate::from_unix(1_440_938_160).datestamp(), "20150830");
     }
 }

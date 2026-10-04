@@ -46,9 +46,11 @@ pub fn build_attested_ingress_binding(
         );
     }
     if attested.audience.trim() != attested.audience {
-        return Err("--ingress-audience carries surrounding whitespace: the verifier compares \
+        return Err(
+            "--ingress-audience carries surrounding whitespace: the verifier compares \
              the audience verbatim, so it must be the exact route an attestor mints"
-            .to_string());
+                .to_string(),
+        );
     }
     let mut binding =
         crate::transport::ingress::LbAssertionV2Binding::new(source, &attested.audience);

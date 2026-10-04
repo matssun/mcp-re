@@ -154,7 +154,11 @@ mod tests {
 
     #[test]
     fn two_present_tokens_under_the_configured_label_are_refused_not_first_matched() {
-        let slots = vec![(1, b"prod".to_vec()), (2, b"other".to_vec()), (5, b"prod".to_vec())];
+        let slots = vec![
+            (1, b"prod".to_vec()),
+            (2, b"other".to_vec()),
+            (5, b"prod".to_vec()),
+        ];
         assert!(matches!(
             select_token_slot(slots, "prod"),
             Err(KeyError::Malformed(_))
@@ -163,7 +167,11 @@ mod tests {
 
     #[test]
     fn exactly_one_present_token_under_the_label_is_selected() {
-        let slots = vec![(1, b"other".to_vec()), (4, b"prod".to_vec()), (6, b"x".to_vec())];
+        let slots = vec![
+            (1, b"other".to_vec()),
+            (4, b"prod".to_vec()),
+            (6, b"x".to_vec()),
+        ];
         assert!(matches!(select_token_slot(slots, "prod"), Ok(4)));
         assert!(matches!(
             select_token_slot(Vec::new(), "prod"),

@@ -261,7 +261,10 @@ mod tests {
             VERIFIED_CONTEXT_BLOCK_KEY,
             "se.syncom/mcp-re.verified-context"
         );
-        assert_eq!(RESPONSE_EVIDENCE_BLOCK_KEY, "se.syncom/mcp-re.http.response");
+        assert_eq!(
+            RESPONSE_EVIDENCE_BLOCK_KEY,
+            "se.syncom/mcp-re.http.response"
+        );
         assert_ne!(REQUEST_EVIDENCE_BLOCK_KEY, VERIFIED_CONTEXT_BLOCK_KEY);
         assert_ne!(REQUEST_EVIDENCE_BLOCK_KEY, RESPONSE_EVIDENCE_BLOCK_KEY);
         assert_ne!(VERIFIED_CONTEXT_BLOCK_KEY, RESPONSE_EVIDENCE_BLOCK_KEY);

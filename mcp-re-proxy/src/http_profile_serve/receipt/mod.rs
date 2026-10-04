@@ -112,7 +112,12 @@ impl ResponseSigning {
             )
         };
         sign_result
-            .map(|base| (response, Established::new(base, ExchangeEvent::ResponseSigned)))
+            .map(|base| {
+                (
+                    response,
+                    Established::new(base, ExchangeEvent::ResponseSigned),
+                )
+            })
             .map_err(|e| Refusal::after_admission(e, 500))
     }
 

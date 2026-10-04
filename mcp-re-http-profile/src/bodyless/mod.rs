@@ -192,8 +192,9 @@ fn check_request_evidence(
     response_headers: &[(String, String)],
     request: &HttpRequest,
 ) -> Result<(), HttpProfileError> {
-    let claimed = single_header(response_headers, MCP_RE_REQUEST_EVIDENCE_HEADER)?
-        .ok_or(HttpProfileError::MissingEvidence("response request-evidence"))?;
+    let claimed = single_header(response_headers, MCP_RE_REQUEST_EVIDENCE_HEADER)?.ok_or(
+        HttpProfileError::MissingEvidence("response request-evidence"),
+    )?;
     let derived = request_evidence_of(request)?;
     if claimed != derived.digest_value {
         // The existing "this response does not bind to that request" verdict — no new

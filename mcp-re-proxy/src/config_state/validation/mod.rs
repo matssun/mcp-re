@@ -389,7 +389,9 @@ mod required_coordinate_tests {
         ("trust_domain", |c, v| c.trust_domain = v),
         ("peer_trust_anchors", |c, v| c.peer_trust_anchors = v),
         ("trust_path", |c, v| c.trust_path = v),
-        ("credential_chain", |c, v| c.channel_credential.credential_chain = v),
+        ("credential_chain", |c, v| {
+            c.channel_credential.credential_chain = v
+        }),
     ];
 
     /// **Requiredness is the BOUNDARY's rule, not the parser's.**

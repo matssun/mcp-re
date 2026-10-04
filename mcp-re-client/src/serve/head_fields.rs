@@ -279,14 +279,22 @@ mod tests {
         let guard = authority("127.0.0.1:8640", false);
         assert_eq!(
             check_framing_and_caller_shape(
-                &head(&[&at, "Host: 127.0.0.1:8640", "Content-Type: application/json"]),
+                &head(&[
+                    &at,
+                    "Host: 127.0.0.1:8640",
+                    "Content-Type: application/json"
+                ]),
                 &guard,
             ),
             Ok(MAX_BODY_BYTES),
         );
         assert_eq!(
             check_framing_and_caller_shape(
-                &head(&[&past, "Host: 127.0.0.1:8640", "Content-Type: application/json"]),
+                &head(&[
+                    &past,
+                    "Host: 127.0.0.1:8640",
+                    "Content-Type: application/json"
+                ]),
                 &guard,
             ),
             Err(413),

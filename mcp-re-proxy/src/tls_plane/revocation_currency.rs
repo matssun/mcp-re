@@ -174,7 +174,10 @@ mod tests {
         c.mark_degraded();
         assert_eq!(c.maintenance(), CrlMaintenance::Degraded);
         c.republish(ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"));
-        assert_eq!(c.maintenance(), CrlMaintenance::Maintained { cadence_secs: 300 });
+        assert_eq!(
+            c.maintenance(),
+            CrlMaintenance::Maintained { cadence_secs: 300 }
+        );
     }
 
     /// THE latch. A straggler reload landing after the worker died must not report the

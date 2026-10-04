@@ -391,9 +391,8 @@ fn window_violation(state: RequestedState) -> Option<String> {
         | RequestedState::PushInert { t_secs }
         | RequestedState::PushNetworked { t_secs } => t_secs,
     };
-    (t_secs < 1).then(|| {
-        format!("--revocation-tier window {t_secs}s is not a positive revocation window")
-    })
+    (t_secs < 1)
+        .then(|| format!("--revocation-tier window {t_secs}s is not a positive revocation window"))
 }
 
 /// Classify the requested trust-revocation state and check its four columns.

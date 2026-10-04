@@ -305,10 +305,7 @@ mod reload_loop_tests {
         let landed = wait_for(Duration::from_secs(10), || {
             store.signer_for("kid-second").is_some()
         });
-        assert!(
-            landed,
-            "the loop did not swap in the rotated key"
-        );
+        assert!(landed, "the loop did not swap in the rotated key");
         assert!(
             store.signer_for("kid-first").is_none(),
             "the swap must retire the previous map in the same cycle"

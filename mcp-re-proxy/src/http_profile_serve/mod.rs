@@ -532,7 +532,10 @@ mod tests {
         let mut dispatched = ExchangeProgress::new();
         dispatched.advance(ExchangeEvent::BackendDispatched);
         assert_eq!(safe.retry_semantics(), RetrySemantics::SafeNothingExecuted);
-        assert_eq!(spent.retry_semantics(), RetrySemantics::RequiresNewElicitation);
+        assert_eq!(
+            spent.retry_semantics(),
+            RetrySemantics::RequiresNewElicitation
+        );
         assert_eq!(dispatched.retry_semantics(), RetrySemantics::NotRetrySafe);
 
         let refinements = [

@@ -116,10 +116,7 @@ mod tests {
         assert_eq!(v.admission_refusal(), None);
         v.refused_at_admission(AdmissionRefusalClass::NoRecord);
         assert_eq!(v.admission(), Some(AdmissionFacet::Refused));
-        assert_eq!(
-            v.admission_refusal(),
-            Some(AdmissionRefusalClass::NoRecord)
-        );
+        assert_eq!(v.admission_refusal(), Some(AdmissionRefusalClass::NoRecord));
     }
 
     /// A recorded verdict stands: `record_admission`, `refused_at_admission` and

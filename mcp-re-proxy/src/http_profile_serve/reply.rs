@@ -61,10 +61,7 @@ impl ValidatedReply {
     /// no relationship to protocol legality. A deployment without it signed unparseable
     /// bodies as opaque payload and the client's own verifier then rejected a message the
     /// enforcement boundary had vouched for.
-    pub(super) fn of(
-        response: HttpResponse,
-        outstanding: &OutstandingId,
-    ) -> Result<Self, Refusal> {
+    pub(super) fn of(response: HttpResponse, outstanding: &OutstandingId) -> Result<Self, Refusal> {
         let parsed = parse_response_body(&response.body).map_err(|e| match e {
             HttpProfileError::UpstreamResponseInvalid(clause) => invalid(clause),
             _ => invalid("response body"),

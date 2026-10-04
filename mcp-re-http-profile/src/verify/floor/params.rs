@@ -108,8 +108,12 @@ pub(crate) fn check_params(
         .as_deref()
         .and_then(|alg| policy.accepted_algorithm(alg))
         .ok_or(HttpProfileError::UnsupportedAlgorithm)?;
-    let created = params.created.ok_or(HttpProfileError::MissingEvidence("created"))?;
-    let expires = params.expires.ok_or(HttpProfileError::MissingEvidence("expires"))?;
+    let created = params
+        .created
+        .ok_or(HttpProfileError::MissingEvidence("created"))?;
+    let expires = params
+        .expires
+        .ok_or(HttpProfileError::MissingEvidence("expires"))?;
     // Freshness with a bounded, symmetric skew tolerance (§5.1), through the one
     // predicate that states it. A signer deciding whether a window it is about to mint
     // will still be acceptable when its exchange completes asks the SAME function, so the
@@ -167,10 +171,7 @@ mod tests {
         p.created = None;
         let err = refusal(&p, NOW);
         assert_eq!(err, Some(HttpProfileError::MissingEvidence("created")));
-        assert_eq!(
-            err.map(|e| e.wire_code()),
-            Some("mcp-re.missing_envelope")
-        );
+        assert_eq!(err.map(|e| e.wire_code()), Some("mcp-re.missing_envelope"));
     }
 
     #[test]

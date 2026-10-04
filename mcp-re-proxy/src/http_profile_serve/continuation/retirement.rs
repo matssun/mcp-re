@@ -43,10 +43,7 @@ impl ContinuationPlane {
     /// A store-less deployment answering nothing is [`Retirement::NotInvolved`]; a
     /// store-less deployment answering SOMETHING never arrives, because `prepare` refused
     /// it.
-    pub(in crate::http_profile_serve) async fn retire(
-        &self,
-        prep: ContinuationPrep,
-    ) -> Retirement {
+    pub(in crate::http_profile_serve) async fn retire(&self, prep: ContinuationPrep) -> Retirement {
         let (Some(store), Some(key)) = (&self.store, prep.answer_key()) else {
             return Retirement::NotInvolved;
         };

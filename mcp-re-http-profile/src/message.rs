@@ -73,8 +73,8 @@ pub fn require_json_media_type(
     headers: &[(String, String)],
     what: &'static str,
 ) -> Result<(), HttpProfileError> {
-    let value = single_header(headers, "content-type")?
-        .ok_or(HttpProfileError::MissingEvidence(what))?;
+    let value =
+        single_header(headers, "content-type")?.ok_or(HttpProfileError::MissingEvidence(what))?;
     let media_type = value.split(';').next().unwrap_or("").trim();
     if media_type.eq_ignore_ascii_case(JSON_MEDIA_TYPE) {
         Ok(())

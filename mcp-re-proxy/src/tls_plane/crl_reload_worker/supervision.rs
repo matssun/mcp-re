@@ -187,7 +187,10 @@ mod tests {
         std::thread::spawn(supervised)
             .join()
             .expect("a normal return joins Ok");
-        assert_eq!(currency.maintenance(), CrlMaintenance::Maintained { cadence_secs: 300 });
+        assert_eq!(
+            currency.maintenance(),
+            CrlMaintenance::Maintained { cadence_secs: 300 }
+        );
 
         let hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));

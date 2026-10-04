@@ -54,8 +54,8 @@ impl ClientTlsConfig {
                 "no client certificate in PEM".to_string(),
             ));
         }
-        let client_key = PrivateKeyDer::from_pem_slice(client_key_pem)
-            .map_err(client_key_parse_error)?;
+        let client_key =
+            PrivateKeyDer::from_pem_slice(client_key_pem).map_err(client_key_parse_error)?;
         let server_ca = certs_from_pem(server_ca_pem).map_err(TransportError::BadServerCa)?;
         Self::from_der(client_chain, client_key, server_ca)
     }
@@ -160,7 +160,8 @@ mod tests {
     #[test]
     fn a_private_key_pem_failure_is_a_fixed_classification_never_parser_text() {
         let cert = b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
-        let flattened = b"-----BEGIN PRIVATE KEY-----MIIEsecretkeybytes\n-----END PRIVATE KEY-----\n";
+        let flattened =
+            b"-----BEGIN PRIVATE KEY-----MIIEsecretkeybytes\n-----END PRIVATE KEY-----\n";
         let Err(err) = ClientTlsConfig::from_pem(cert, flattened, cert) else {
             panic!("a malformed key PEM must be refused");
         };

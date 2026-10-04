@@ -74,8 +74,9 @@ pub(crate) fn delegated_unbound_response<R: Into<ResolverOutcome>>(
     verify_content_digest_sha256(digest_header, &response.body)?;
 
     // Response-only signature parse: required response components, and NO `;req`.
-    let input_header = single_header(&response.headers, "signature-input")?
-        .ok_or(HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?.ok_or(
+        HttpProfileError::MissingEvidence("response signature-input"),
+    )?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {

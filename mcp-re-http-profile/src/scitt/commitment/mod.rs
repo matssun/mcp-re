@@ -227,15 +227,36 @@ mod tests {
     fn incomplete_label_tokens_are_a_frozen_vocabulary() {
         let diag = || crate::error::HttpProfileError::MalformedEvidence("internal diagnostic");
         let cases = [
-            (IncompleteReason::RequestUnverifiable(diag()), "request_unverifiable"),
-            (IncompleteReason::ResponseUnverifiable(diag()), "response_unverifiable"),
-            (IncompleteReason::MissingContinuation, "missing_continuation"),
-            (IncompleteReason::ContinuationDoesNotLink, "continuation_does_not_link"),
-            (IncompleteReason::NonTerminalExpected, "non_terminal_expected"),
+            (
+                IncompleteReason::RequestUnverifiable(diag()),
+                "request_unverifiable",
+            ),
+            (
+                IncompleteReason::ResponseUnverifiable(diag()),
+                "response_unverifiable",
+            ),
+            (
+                IncompleteReason::MissingContinuation,
+                "missing_continuation",
+            ),
+            (
+                IncompleteReason::ContinuationDoesNotLink,
+                "continuation_does_not_link",
+            ),
+            (
+                IncompleteReason::NonTerminalExpected,
+                "non_terminal_expected",
+            ),
             (IncompleteReason::TerminalExpected, "terminal_expected"),
-            (IncompleteReason::UnrecognizedResultType, "unrecognized_result_type"),
+            (
+                IncompleteReason::UnrecognizedResultType,
+                "unrecognized_result_type",
+            ),
             (IncompleteReason::EmptyChain, "empty_chain"),
-            (IncompleteReason::HopAfterAuditInstant, "hop_after_audit_instant"),
+            (
+                IncompleteReason::HopAfterAuditInstant,
+                "hop_after_audit_instant",
+            ),
         ];
         for (reason, token) in cases {
             let label = label_token(&ChainLabel::Incomplete { hop: 2, reason });

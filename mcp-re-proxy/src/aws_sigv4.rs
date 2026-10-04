@@ -385,8 +385,14 @@ mod tests {
         let rendered = format!("{c:?}");
         assert!(rendered.contains("AKIDEXAMPLE"), "{rendered}");
         assert!(rendered.contains("<redacted>"), "{rendered}");
-        assert!(!rendered.contains("secret-bytes-must-not-render"), "{rendered}");
-        assert!(!rendered.contains("token-bytes-must-not-render"), "{rendered}");
+        assert!(
+            !rendered.contains("secret-bytes-must-not-render"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("token-bytes-must-not-render"),
+            "{rendered}"
+        );
         c.session_token = None;
         assert!(format!("{c:?}").contains("<none>"));
     }

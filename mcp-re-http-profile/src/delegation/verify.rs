@@ -368,7 +368,9 @@ mod tests {
     fn a_header_kid_that_names_another_root_is_an_invalid_credential() {
         let root = root_signer();
         let mut c = claims();
-        c.cnf.jwk.x = SigningKey::from_seed_bytes(&[2u8; 32]).public_key().to_b64url();
+        c.cnf.jwk.x = SigningKey::from_seed_bytes(&[2u8; 32])
+            .public_key()
+            .to_b64url();
         let auds = ["https://example.org/mcp"];
         let epochs = ["7"];
         let p = params(1_500, &auds, &epochs);
@@ -406,7 +408,9 @@ mod tests {
     #[test]
     fn the_root_signature_verdict_precedes_every_claim_check() {
         let mut c = claims();
-        c.cnf.jwk.x = SigningKey::from_seed_bytes(&[2u8; 32]).public_key().to_b64url();
+        c.cnf.jwk.x = SigningKey::from_seed_bytes(&[2u8; 32])
+            .public_key()
+            .to_b64url();
         c.nbf = 5_000;
         c.exp = 6_000;
         c.aud = crate::Audience::One("https://elsewhere.example".into());

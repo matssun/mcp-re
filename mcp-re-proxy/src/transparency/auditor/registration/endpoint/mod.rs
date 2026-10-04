@@ -129,15 +129,15 @@ impl RegistrationTarget {
         pin: &ScittServiceTrustPin,
     ) -> Result<RegisteredStatement, RegistrationError> {
         let exchange = super::ureq_exchange::UreqExchange::operator_configured(&self.base_url)
-        .ok_or_else(|| {
-            // Defence in depth, and unreachable under the current legality model: `new`
-            // already put this value through the same vetting. Redacted regardless — a
-            // branch that cannot fire today is the one nobody re-reads when it can.
-            RegistrationError::Refused(format!(
-                "{} is not a destination this proxy may fetch from",
-                crate::deployment_request::RedactedLocator::of(&self.base_url),
-            ))
-        })?;
+            .ok_or_else(|| {
+                // Defence in depth, and unreachable under the current legality model: `new`
+                // already put this value through the same vetting. Redacted regardless — a
+                // branch that cannot fire today is the one nobody re-reads when it can.
+                RegistrationError::Refused(format!(
+                    "{} is not a destination this proxy may fetch from",
+                    crate::deployment_request::RedactedLocator::of(&self.base_url),
+                ))
+            })?;
         // The one place a target becomes a protocol. Which arm runs is the operator's
         // stated choice, and both arms hand the SAME verifying function a mechanism —
         // there is no second path to a `RegisteredStatement`.

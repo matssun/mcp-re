@@ -84,8 +84,9 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     verify_content_digest_sha256(digest_header, &response.body)?;
 
     // Signature-input parse + required components + params gate (keyid).
-    let input_header = single_header(&response.headers, "signature-input")?
-        .ok_or(HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?.ok_or(
+        HttpProfileError::MissingEvidence("response signature-input"),
+    )?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(
         &parsed.components,

@@ -70,7 +70,11 @@ mod tests {
         for m in ["tools/call", "prompts/get"] {
             assert_eq!(mcp_name_source(m), Some(McpNameSource::ParamsName), "{m}");
         }
-        for m in ["resources/read", "resources/subscribe", "resources/unsubscribe"] {
+        for m in [
+            "resources/read",
+            "resources/subscribe",
+            "resources/unsubscribe",
+        ] {
             assert_eq!(mcp_name_source(m), Some(McpNameSource::ParamsUri), "{m}");
         }
         for m in ["tools/list", "initialize", "prompts/list"] {

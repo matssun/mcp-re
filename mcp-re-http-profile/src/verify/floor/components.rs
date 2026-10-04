@@ -126,7 +126,10 @@ mod tests {
                 require_conditional_coverage(&hs, &uncovered),
                 Err(HttpProfileError::MissingCoveredComponent(name))
             );
-            let covered = [CoveredComponent::new("@method"), CoveredComponent::new(name)];
+            let covered = [
+                CoveredComponent::new("@method"),
+                CoveredComponent::new(name),
+            ];
             assert_eq!(require_conditional_coverage(&hs, &covered), Ok(()));
         }
     }

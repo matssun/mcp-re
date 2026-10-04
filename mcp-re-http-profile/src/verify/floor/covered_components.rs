@@ -144,7 +144,9 @@ mod tests {
         }
         assert!(matches!(
             flags("\"x-foreign\""),
-            Err(HttpProfileError::MalformedEvidence("unknown covered component"))
+            Err(HttpProfileError::MalformedEvidence(
+                "unknown covered component"
+            ))
         ));
     }
 
@@ -156,7 +158,9 @@ mod tests {
         ] {
             assert!(matches!(
                 flags(list),
-                Err(HttpProfileError::MalformedEvidence("duplicate covered component"))
+                Err(HttpProfileError::MalformedEvidence(
+                    "duplicate covered component"
+                ))
             ));
         }
         assert_eq!(

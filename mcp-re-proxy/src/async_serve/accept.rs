@@ -15,9 +15,9 @@ const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(50);
 /// error costs one interval, while misclassifying a persistent one costs the core.
 fn backoff_after(error: &std::io::Error) -> Option<Duration> {
     match error.kind() {
-        ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset | ErrorKind::ConnectionRefused => {
-            None
-        }
+        ErrorKind::ConnectionAborted
+        | ErrorKind::ConnectionReset
+        | ErrorKind::ConnectionRefused => None,
         _ => Some(ACCEPT_ERROR_BACKOFF),
     }
 }

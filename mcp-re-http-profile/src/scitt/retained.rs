@@ -551,8 +551,7 @@ mod tests {
     /// measured here.
     #[test]
     fn one_digest_has_one_spelling() {
-        const ALPHABET: &str =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        const ALPHABET: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
         for input in [&b"a hop"[..], b"another hop", b"retained"] {
             let computed = EvidenceDigest::of(input);
             let canonical = computed.as_str();
@@ -562,7 +561,11 @@ mod tests {
             // reads.
             let last = canonical.chars().last().expect("a non-empty token");
             let index = ALPHABET.find(last).expect("a base64url character");
-            assert_eq!(index % 4, 0, "the padding bits are clear in a canonical spelling");
+            assert_eq!(
+                index % 4,
+                0,
+                "the padding bits are clear in a canonical spelling"
+            );
             let alias_last = ALPHABET
                 .chars()
                 .nth(index | 1)

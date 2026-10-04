@@ -48,10 +48,7 @@ pub(super) fn start_reload_worker(
 ) -> (WorkerSet, Arc<ClientRevocationCurrency>) {
     let mut workers = WorkerSet::new(deployment);
     let Some(cadence_secs) = plan.client_revocation.reload_cadence_secs() else {
-        return (
-            workers,
-            Arc::new(ClientRevocationCurrency::new(crls, None)),
-        );
+        return (workers, Arc::new(ClientRevocationCurrency::new(crls, None)));
     };
     let currency = Arc::new(ClientRevocationCurrency::new(crls, Some(cadence_secs)));
     let custody = material.label();
@@ -319,7 +316,10 @@ mod tests {
 
         assert_eq!(failures, 0);
         assert!(!currency.in_force().0.is_empty());
-        assert_eq!(currency.maintenance(), CrlMaintenance::Maintained { cadence_secs: 300 });
+        assert_eq!(
+            currency.maintenance(),
+            CrlMaintenance::Maintained { cadence_secs: 300 }
+        );
         assert!(!revocation.load().is_empty());
     }
 

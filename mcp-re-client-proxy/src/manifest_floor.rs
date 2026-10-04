@@ -616,7 +616,10 @@ mod tests {
         let scratch = Scratch::new("owner-only");
         let dir = scratch.0.join("floor");
         FileManifestFloor::with_bounds(&dir, 0, None).expect("open");
-        let mode = std::fs::metadata(&dir).expect("metadata").permissions().mode();
+        let mode = std::fs::metadata(&dir)
+            .expect("metadata")
+            .permissions()
+            .mode();
         assert_eq!(
             mode & 0o077,
             0,

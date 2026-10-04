@@ -270,7 +270,9 @@ fn endpoint_of(url: &str) -> Result<KmsEndpoint, KeyError> {
 /// The SigV4 date for a clock reading, refusing one the clock owner marks as faulted.
 fn amz_date_at(now: i64) -> Result<AmzDate, RemoteSignerFailure> {
     match u64::try_from(now) {
-        Ok(secs) if !crate::startup_plan::host_clock_is_faulted(now) => Ok(AmzDate::from_unix(secs)),
+        Ok(secs) if !crate::startup_plan::host_clock_is_faulted(now) => {
+            Ok(AmzDate::from_unix(secs))
+        }
         _ => Err(RemoteSignerFailure::malformed(format!(
             "aws-kms: the host clock reads {now}, which no KMS request can be signed at"
         ))),

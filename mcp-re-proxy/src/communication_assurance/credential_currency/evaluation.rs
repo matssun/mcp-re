@@ -173,8 +173,9 @@ fn issuer_revocation_refusal(
     if index.is_empty() {
         return None;
     }
-    issuers.iter().find_map(|der| {
-        match read_currency_facts(der) {
+    issuers
+        .iter()
+        .find_map(|der| match read_currency_facts(der) {
             None => Some(CredentialCurrencyRefusal::IssuerUnreadable),
             Some(facts)
                 if index.verdict(&facts.coordinate(), now) == RevocationVerdict::Revoked =>
@@ -182,8 +183,7 @@ fn issuer_revocation_refusal(
                 Some(CredentialCurrencyRefusal::IssuerRevoked)
             }
             Some(_) => None,
-        }
-    })
+        })
 }
 
 // Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
@@ -908,7 +908,10 @@ mod per_request_revocation_tests {
         let inverted_root = params.self_signed(&key).expect("presented root");
         let revocation = shared(&[&ca], &[crl(&ca, &[], (2035, 1, 1))]);
         assert_eq!(
-            outcome(&[peer.as_ref(), inverted_root.der().as_ref()], &options(&revocation)),
+            outcome(
+                &[peer.as_ref(), inverted_root.der().as_ref()],
+                &options(&revocation)
+            ),
             SERVED
         );
     }

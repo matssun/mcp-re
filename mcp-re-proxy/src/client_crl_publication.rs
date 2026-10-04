@@ -338,7 +338,9 @@ mod client_crl_loading_tests {
 
     #[test]
     fn a_non_pem_client_crl_is_passed_through_as_one_der() {
-        let der = super::test_support::crl_with_next_update().as_ref().to_vec();
+        let der = super::test_support::crl_with_next_update()
+            .as_ref()
+            .to_vec();
         let crls = load_fixture("der", &der).expect("load");
         assert_eq!(crls, vec![der]);
     }

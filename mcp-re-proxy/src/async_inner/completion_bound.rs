@@ -70,7 +70,10 @@ mod tests {
 
     #[test]
     fn an_unstated_bound_has_no_completion_instant() {
-        assert_eq!(DispatchCompletionBound::Unstated.latest_completion(1_000), None);
+        assert_eq!(
+            DispatchCompletionBound::Unstated.latest_completion(1_000),
+            None
+        );
     }
 
     #[test]

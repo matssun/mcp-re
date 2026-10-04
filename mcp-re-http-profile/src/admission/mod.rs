@@ -232,7 +232,9 @@ pub fn issue_admission_assertion(
     let signing_input = format!("{h}.{p}");
     let sig = sign_root(signing_input.as_bytes())?;
     if sig.len() != ED25519_SIGNATURE_LEN {
-        return Err(HttpProfileError::MalformedEvidence("admission signature length"));
+        return Err(HttpProfileError::MalformedEvidence(
+            "admission signature length",
+        ));
     }
     Ok(format!("{h}.{p}.{}", b64url_encode(&sig)))
 }
