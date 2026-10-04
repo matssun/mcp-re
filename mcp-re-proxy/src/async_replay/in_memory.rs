@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The DEFAULT-BUILD authoritative L2: retained nonces, their expiry, and whose share of
-//! the store they occupy.
+//! The single-process reference L2: retained nonces, their expiry, and whose share of the
+//! store they occupy.
+//!
+//! # Reachability
+//!
+//! The store inherits `durability_class() == ReplayDurabilityClass::SingleProcessReference`
+//! from the trait default. `replay_plane`'s `assert_durable` refuses any tier declaring that
+//! posture and replay materialization never constructs this store, so no deployable
+//! configuration reaches its three refusals, its eviction cadence or its per-actor share.
+//! Its constructions are unit tests, the `l1_fast_reject` tests and
+//! `examples/http_profile_proxy.rs`; evidence credited to the `in_memory::tests::*`
+//! selectors describes this reference store, not a path a deployment holds. The deployed
+//! replay bound is carried by the durable backends and the retention ledger above the seam.
 //!
 //! A REAL store rather than a test mock. Its atomic op is a short critical section with no
 //! I/O, so it satisfies the async contract without ever blocking a runtime worker, and
