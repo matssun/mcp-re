@@ -2,7 +2,8 @@
 //! The REGISTRATION CAPABILITY — what registering establishes, and what it refuses in.
 //!
 //! One fact: **this statement was registered with the pinned service, and the receipt for
-//! it verifies offline against the exact bytes submitted.**
+//! it verifies offline against the exact bytes submitted, under a service key the audit
+//! profile states is acceptable at the auditor's current time.**
 //!
 //! Both halves, or nothing. A mechanism can only hand back bytes; the accepted product is
 //! constructed in this module and nowhere else, by the one function that verifies them.
@@ -19,6 +20,8 @@ use mcp_re_http_profile::scitt::Receipt;
 use mcp_re_http_profile::scitt::ScittServiceTrustPin;
 #[cfg(feature = "scitt_registration")]
 use mcp_re_http_profile::scitt::SignedStatement;
+#[cfg(feature = "scitt_registration")]
+use mcp_re_http_profile::scitt::TransparencyKeyLifecycle;
 
 /// What a mechanism produces: the bytes a service answered with, and nothing about
 /// whether they are good.
@@ -64,12 +67,13 @@ pub enum RegistrationError {
     /// NOT a failure to register. The service may hold the statement, and a caller that
     /// treats this as a negative will re-submit a record that is already in a log.
     Indeterminate(String),
-    /// A receipt came back and did NOT verify against the statement submitted and the
-    /// operator's pin.
+    /// A receipt came back and did NOT verify against the statement submitted, the
+    /// operator's pin, and the lifecycle the audit profile states for its service key.
     ///
     /// Its own variant because it is not an outage. Either the service is not the one the
-    /// pin names, or the receipt is not about the statement that was sent — and both are
-    /// facts about trust rather than about availability.
+    /// pin names, the receipt is not about the statement that was sent, or its key is not
+    /// acceptable at the auditor's current time — and all are facts about trust rather
+    /// than about availability.
     ReceiptUnverified(String),
 }
 
@@ -92,8 +96,8 @@ impl std::fmt::Display for RegistrationError {
             ),
             RegistrationError::ReceiptUnverified(d) => write!(
                 f,
-                "a receipt came back and does not verify against the statement submitted \
-                 and the pinned service: {d}"
+                "a receipt came back and does not verify against the statement submitted, \
+                 the pinned service and its key's stated lifecycle: {d}"
             ),
         }
     }
@@ -162,18 +166,36 @@ impl RegisteredStatement {
 /// with, and nothing here fetches or refreshes either. A verifier that reached for a key
 /// while checking a receipt would be verifying against whatever the network offered at
 /// that moment, which is the property the pin exists to remove.
+///
+/// The receipt's service key is judged by `ts_key`, the lifecycle the audit profile states
+/// for it, at `now`, the auditor's trusted current time. No time the receipt or the
+/// statement carries is an input, so past a key's `revoked_at` or `valid_until` every
+/// receipt under it is refused.
 #[cfg(feature = "scitt_registration")]
 pub fn register_and_verify(
     mechanism: &dyn TransparencyRegistration,
     statement: &SignedStatement,
     issuer_key: &mcp_re_core::VerificationKey,
     pin: &ScittServiceTrustPin,
+    ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
+    now: i64,
 ) -> Result<RegisteredStatement, RegistrationError> {
     let response = mechanism.register(statement.to_cose())?;
     let receipt = Receipt::from_cose(response.bytes()).map_err(|e| {
         RegistrationError::ReceiptUnverified(format!(
             "the answer is not a well-formed receipt ({})",
             e.wire_code()
+        ))
+    })?;
+    let ts_kid = receipt.ts_kid();
+    let lifecycle = ts_key(ts_kid).ok_or_else(|| {
+        RegistrationError::ReceiptUnverified(format!(
+            "the audit profile states no lifecycle for transparency-service key {ts_kid:?}"
+        ))
+    })?;
+    lifecycle.admits_at(now).map_err(|refusal| {
+        RegistrationError::ReceiptUnverified(format!(
+            "transparency-service key {ts_kid:?} is not acceptable at {now}: {refusal}"
         ))
     })?;
     let issuer_kid = statement.issuer_kid().to_owned();
@@ -223,6 +245,8 @@ mod tests {
             &statement,
             &issuer().public_key(),
             &pin(),
+            &ts_lifecycle,
+            NOW,
         )
         .expect("the receipt verifies against the statement and the pin");
         assert_eq!(registered.receipt_bytes(), receipt.as_slice());
@@ -249,6 +273,8 @@ mod tests {
             &statement,
             &issuer().public_key(),
             &pin(),
+            &ts_lifecycle,
+            NOW,
         )
         .expect("the receipt verifies");
         let artifact = artifact_carrying(&statement)
@@ -273,6 +299,8 @@ mod tests {
             &statement,
             &issuer().public_key(),
             &pin(),
+            &ts_lifecycle,
+            NOW,
         )
         .expect("the receipt verifies");
         artifact_carrying(&another_statement())
@@ -294,6 +322,8 @@ mod tests {
             &statement,
             &issuer().public_key(),
             &pin(),
+            &ts_lifecycle,
+            NOW,
         )
         .expect_err("a receipt about another statement must not be accepted");
         assert!(
@@ -316,17 +346,95 @@ mod tests {
             .expect("the impostor issues a well-formed receipt")
             .to_cose()
             .to_vec();
+        // A lifecycle for every kid, so the refusal is the pin's and not the lifecycle's.
+        let any_kid = |_: &str| TransparencyKeyLifecycle::new(1_600_000_000, None, None).ok();
         let refused = register_and_verify(
             &Canned(Ok(receipt)),
             &statement,
             &issuer().public_key(),
             &pin(),
+            &any_kid,
+            NOW,
         )
         .expect_err("a log the pin does not name is not the pinned service");
         assert!(
-            matches!(refused, RegistrationError::ReceiptUnverified(_)),
+            matches!(&refused, RegistrationError::ReceiptUnverified(d) if !d.contains("lifecycle")),
             "{refused:?}",
         );
+    }
+
+    /// Register a receipt the pinned log really issued, judging its key by `lifecycle` at
+    /// [`NOW`].
+    fn register_under(
+        lifecycle: Option<TransparencyKeyLifecycle>,
+    ) -> Result<RegisteredStatement, RegistrationError> {
+        let statement = a_statement();
+        let ts_key = move |kid: &str| (kid == TS_KID).then_some(lifecycle).flatten();
+        register_and_verify(
+            &Canned(Ok(receipt_for(&statement))),
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_key,
+            NOW,
+        )
+    }
+
+    /// A receipt is refused when the audit profile states no lifecycle for its service
+    /// key, however well it verifies against the pin.
+    #[test]
+    fn a_receipt_under_a_key_with_no_stated_lifecycle_is_refused() {
+        let refused = register_under(None).expect_err("no lifecycle is stated for the key");
+        assert!(
+            matches!(&refused, RegistrationError::ReceiptUnverified(d)
+                if d.contains("states no lifecycle") && d.contains(TS_KID)),
+            "{refused:?}",
+        );
+    }
+
+    /// A receipt under a key revoked at or before the auditor's current time is refused.
+    #[test]
+    fn a_receipt_under_a_revoked_key_is_refused() {
+        for revoked_at in [NOW, NOW - 1] {
+            let lifecycle = TransparencyKeyLifecycle::new(1_600_000_000, None, Some(revoked_at));
+            let refused = register_under(lifecycle.ok()).expect_err("the key is revoked");
+            assert!(
+                matches!(&refused, RegistrationError::ReceiptUnverified(d) if d.contains("revoked")),
+                "{refused:?}",
+            );
+        }
+    }
+
+    /// A receipt under a key whose `valid_until` is at or before the auditor's current time
+    /// is refused.
+    #[test]
+    fn a_receipt_under_an_expired_key_is_refused() {
+        for valid_until in [NOW, NOW - 1] {
+            let lifecycle = TransparencyKeyLifecycle::new(1_600_000_000, Some(valid_until), None);
+            let refused = register_under(lifecycle.ok()).expect_err("the key has expired");
+            assert!(
+                matches!(&refused, RegistrationError::ReceiptUnverified(d) if d.contains("expired")),
+                "{refused:?}",
+            );
+        }
+    }
+
+    /// A receipt under a key not yet valid at the auditor's current time is refused.
+    #[test]
+    fn a_receipt_under_a_not_yet_valid_key_is_refused() {
+        let lifecycle = TransparencyKeyLifecycle::new(NOW + 1, None, None);
+        let refused = register_under(lifecycle.ok()).expect_err("the key is not yet valid");
+        assert!(
+            matches!(&refused, RegistrationError::ReceiptUnverified(d) if d.contains("not_yet_valid")),
+            "{refused:?}",
+        );
+    }
+
+    /// A key whose window contains the auditor's current time admits the receipt.
+    #[test]
+    fn a_receipt_under_a_key_admitted_at_now_is_accepted() {
+        let lifecycle = TransparencyKeyLifecycle::new(NOW, Some(NOW + 1), Some(NOW + 1));
+        register_under(lifecycle.ok()).expect("the key is acceptable at NOW");
     }
 
     /// Bytes that are not a receipt at all are refused as unverified, not as an outage.
@@ -338,6 +446,8 @@ mod tests {
             &statement,
             &issuer().public_key(),
             &pin(),
+            &ts_lifecycle,
+            NOW,
         )
         .expect_err("unparseable bytes are not a receipt");
         assert!(
@@ -351,9 +461,15 @@ mod tests {
     #[test]
     fn a_mechanism_refusal_is_carried_through_with_its_certainty() {
         let statement = a_statement();
-        let refused =
-            register_and_verify(&Canned(Err(())), &statement, &issuer().public_key(), &pin())
-                .expect_err("the mechanism refused");
+        let refused = register_and_verify(
+            &Canned(Err(())),
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_lifecycle,
+            NOW,
+        )
+        .expect_err("the mechanism refused");
         assert!(
             matches!(refused, RegistrationError::Indeterminate(_)),
             "an unknown outcome must not become a definite one: {refused:?}",

@@ -2395,3 +2395,25 @@ premise_class = "review-obligation"
 discharging_event = { kind = "owner-event", statement = "The ADR-MCPRE-053 serialization slice lands: the new manifest representation, its version boundary and cutover, signing semantics and golden vectors. This entry is then withdrawn, never renewed beside the new format." }
 affected_contracts = []
 tool_specific_mechanism = "none:compatibility-constraint"
+
+[[assumption]]
+id = "ASM-0067"
+description = "The operator keeps the audit profile's `transparency_service_keys` lifecycle (`valid_from`, `valid_until`, `revoked_at`) current with the transparency service's actual key status, so a key the service has revoked or retired is stated as such before the auditor next registers."
+justification = """
+The auditor judges a receipt's service key only against the lifecycle the audit profile
+states, at the host's current time; it does not discover revocation from the service, so a
+revocation the operator has not written down is honoured. That is an operator obligation
+across the profile document, not a property MCP-RE can establish. No time a receipt or its
+statement carries is consulted, and past `revoked_at` or `valid_until` every receipt under
+the key is refused: archived receipts are distrusted unless independently anchored, and no
+anchor mechanism exists. It stops being acceptable if the auditor is expected to track a
+service's key status itself. Owner Ruling 14.1 (2026-10-04, finding 89aa1a1a453cf723).
+"""
+scope = ["boundary://boundary.unmodelled_own_behaviour"]
+owner = "mats@sundvall.name"
+introduced_by = "Owner Ruling 14.1 (r12 remediation, 89aa1a1a453cf723)"
+review_requirement = "Owner review; any change to how the auditor learns a transparency-service key's status."
+premise_class = "external-boundary"
+boundary_owner = "The operator writing the audit profile, across the profile document's `transparency_service_keys` member, under every registering auditor run (`--register-to`)."
+affected_contracts = []
+tool_specific_mechanism = "none:operator-assertion"

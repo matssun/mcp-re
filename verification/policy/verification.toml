@@ -6776,6 +6776,32 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::service::tests::a_stated_service_carries_exactly_what_the_caller_said",
 ]
 
+[[unit]]
+id = "http_profile.scitt_key_lifecycle"
+class = "V0"
+description = "Whether a transparency-service key may vouch for a receipt at an instant: acceptable iff valid_from <= now, now < valid_until when one is stated, and now < revoked_at when one is stated; a lifecycle whose valid_until is not after its valid_from, or whose revoked_at precedes it, is never constructed. The instant is the caller's trusted current time, and no time a receipt or a statement carries is an input."
+paths = [
+  "mcp-re-http-profile/src/scitt/key_lifecycle.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/key_lifecycle",
+  "mutation://http_profile/scitt/key_lifecycle",
+]
+# Each boundary is a control: the first instant admitted, and the instant each of
+# valid_until and revoked_at takes effect.
+tested_symbols = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::valid_from_itself_is_admitted_and_the_instant_before_is_not",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::valid_until_itself_is_expired",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::revoked_at_itself_is_revoked",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::a_key_revoked_at_its_first_instant_admits_nothing",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::an_open_ended_lifecycle_admits_the_far_future",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::contradictory_bounds_are_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::every_refusal_has_a_distinct_code",
+]
+
 # ---------------------------------------------------------------------------------------
 # Stage 7 — accountability, up to the exception channel.
 #

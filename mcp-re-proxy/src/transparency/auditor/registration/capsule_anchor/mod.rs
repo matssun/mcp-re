@@ -255,8 +255,15 @@ mod tests {
         let client =
             CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test", policy());
 
-        let registered = register_and_verify(&client, &statement, &issuer().public_key(), &pin())
-            .expect("the receipt verifies");
+        let registered = register_and_verify(
+            &client,
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_lifecycle,
+            NOW,
+        )
+        .expect("the receipt verifies");
 
         assert_eq!(registered.protocol(), CAPSULE_ANCHOR_CONTRACT);
     }
@@ -270,8 +277,15 @@ mod tests {
         let client =
             CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test", policy());
 
-        let refused = register_and_verify(&client, &statement, &issuer().public_key(), &pin())
-            .expect_err("a receipt about another statement is not this one's");
+        let refused = register_and_verify(
+            &client,
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_lifecycle,
+            NOW,
+        )
+        .expect_err("a receipt about another statement is not this one's");
 
         assert!(
             matches!(refused, RegistrationError::ReceiptUnverified(_)),
@@ -314,8 +328,15 @@ mod tests {
             policy(),
         );
 
-        register_and_verify(&client, &statement, &issuer().public_key(), &pin())
-            .expect("the receipt is what establishes the registration");
+        register_and_verify(
+            &client,
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_lifecycle,
+            NOW,
+        )
+        .expect("the receipt is what establishes the registration");
     }
 
     /// A transport failure while submitting leaves the outcome unknown.

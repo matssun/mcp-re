@@ -15427,3 +15427,76 @@ control = "src/lib.rs#trust_plane::reload::reload_loop_tests::a_replacement_with
 decision = "new-proposition"
 proposition = "NP-272"
 recorded = "2026-10-04"
+
+[[proposition]]
+id = "NP-273"
+title = "A transparency-service receipt is accepted only under a key the audit profile states is acceptable at the auditor's trusted current time"
+carrier = "mcp-re-http-profile/src/scitt/key_lifecycle.rs (TransparencyKeyLifecycle::admits_at), mcp-re-proxy/src/transparency/auditor/registration/capability.rs (register_and_verify) and auditor/profile (transparency_service_keys)"
+likely_owner = "none. http_profile.scitt_key_lifecycle owns the judgment admits_at makes and claims its own tests; this proposition is that registration consults it, from the audit profile, at the auditor's clock. NP-042 is the auditor's registration proposition and is unratified."
+consequence = "high"
+root_relationship = "the auditor product claim the graph does not hold; rests on ASM-0067 (the operator keeps the stated lifecycle current) and boundary.clock (the host clock)"
+record = "docs/architecture/control-dispositions.md#np-273"
+
+[[disposition]]
+id = "CD-20339"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_under_a_key_with_no_stated_lifecycle_is_refused"
+decision = "new-proposition"
+proposition = "NP-273"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20340"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_under_a_revoked_key_is_refused"
+decision = "new-proposition"
+proposition = "NP-273"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20341"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_under_an_expired_key_is_refused"
+decision = "new-proposition"
+proposition = "NP-273"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20342"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_under_a_not_yet_valid_key_is_refused"
+decision = "new-proposition"
+proposition = "NP-273"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20343"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_under_a_key_admitted_at_now_is_accepted"
+decision = "new-proposition"
+proposition = "NP-273"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20344"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::profile::tests::a_transparency_key_lifecycle_is_projected_by_its_kid"
+decision = "new-proposition"
+proposition = "NP-273"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20345"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::profile::tests::an_incoherent_transparency_key_lifecycle_never_becomes_a_profile"
+decision = "new-proposition"
+proposition = "NP-273"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20346"
+project = "mcp-re-proxy"
+control = "tests/integration_async/main.rs#transparency_e2e_test::a_receipt_under_a_revoked_service_key_is_not_recorded"
+decision = "new-proposition"
+proposition = "NP-273"
+recorded = "2026-10-04"

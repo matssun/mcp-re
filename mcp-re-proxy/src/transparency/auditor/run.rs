@@ -106,11 +106,16 @@ pub fn attest(invocation: &AuditInvocation) -> Result<AttestationArtifact, Audit
     let Some(target) = invocation.registration() else {
         return Ok(artifact);
     };
+    // The receipt's service key is judged at the host's current time, never at `--at`:
+    // that instant dates the statement, and a key revoked since must not be honoured.
+    let ts_key = |kid: &str| inputs.profile.transparency_key_lifecycle(kid).copied();
     let registered = target
         .register(
             &attestation.statement,
             &inputs.issuer.public_key(),
             &inputs.pin,
+            &ts_key,
+            crate::clock::now_unix(),
         )
         .map_err(AuditError::Registration)?;
     let artifact = artifact

@@ -1124,7 +1124,14 @@ fn audit_profile_json() -> serde_json::Value {
             "key_id": ROOT_KID,
             "public_key": root_key().public_key().to_b64url(),
         },
+        "transparency_service_keys": [ts_key_lifecycle(TS_KID)],
     })
+}
+
+/// A transparency-service key lifecycle admitting the auditor's real clock: valid since
+/// before this suite was written, with no expiry and no revocation.
+fn ts_key_lifecycle(kid: &str) -> serde_json::Value {
+    serde_json::json!({ "kid": kid, "valid_from": 1_600_000_000 })
 }
 
 /// A legal transparency-service trust pin. Its key is never used in this half — the
@@ -1747,6 +1754,49 @@ fn audit_and_register(
     artifact
 }
 
+/// The binary judges the receipt's service key by the audit profile's stated lifecycle at
+/// the host's clock: a receipt that verifies against the pin, under a key the profile says
+/// was revoked before now, is not recorded.
+#[test]
+fn a_receipt_under_a_revoked_service_key_is_not_recorded() {
+    let (scratch, retention, token) = served_archive(
+        "auditor-register-revoked-key",
+        "nonce-transparency-auditor-revoked-key-1",
+    );
+    drop(retention);
+    let mut profile = audit_profile_json();
+    profile["transparency_service_keys"][0]["revoked_at"] = 1_600_000_001.into();
+    let fixtures = AuditFixtures::write(&scratch, profile, service_pin_json());
+    let (base, service) = spawn_transparency_service(ServiceMode::CapsuleAnchor);
+
+    let mut args = fixtures.args(&scratch.join("evidence"), &[token]);
+    args.extend([
+        "--register-to".to_owned(),
+        base,
+        "--registration-protocol".to_owned(),
+        "capsule-anchor".to_owned(),
+        "--registration-timeout-secs".to_owned(),
+        "20".to_owned(),
+    ]);
+    let output = run_auditor(&args);
+    let _ = service.join();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a receipt under a revoked key must not read as success"
+    );
+    assert!(stderr.contains("ts_key_revoked"), "{stderr}");
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
+        &std::fs::read(&fixtures.out).expect("the attestation is still written"),
+    )
+    .expect("the artifact parses");
+    assert!(
+        artifact.claimed_registration().is_none(),
+        "the refused receipt must not be recorded",
+    );
+}
+
 /// THE C2 property, synchronously: the shipped binary registers a real attestation with a
 /// service over a socket, and the artifact comes back carrying the receipt.
 ///
@@ -1861,7 +1911,13 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
     let live_pin: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&pin_path).expect("the live pin is readable"))
             .expect("the live pin parses");
-    let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), live_pin.clone());
+    let mut profile = audit_profile_json();
+    profile["transparency_service_keys"] = serde_json::json!([ts_key_lifecycle(
+        live_pin["kid"]
+            .as_str()
+            .expect("the live pin names its kid")
+    )]);
+    let fixtures = AuditFixtures::write(&scratch, profile, live_pin.clone());
 
     let mut args = fixtures.args(&scratch.join("evidence"), &[token]);
     args.extend([

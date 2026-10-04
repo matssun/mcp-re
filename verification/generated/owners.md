@@ -96,6 +96,7 @@ not an omission to hide.
 | http_profile.scitt_algorithm_agreement | V0 | _none_ | 1 |
 | http_profile.scitt_derived_root | V0 | THM-0041 | 1 |
 | http_profile.scitt_inclusion_fold | V0 | _none_ | 0 |
+| http_profile.scitt_key_lifecycle | V0 | _none_ | 0 |
 | http_profile.scitt_position_commitment | V0 | _none_ | 0 |
 | http_profile.scitt_receipt_shape | V0 | _none_ | 0 |
 | http_profile.scitt_retained_correspondence | V0 | THM-0042 | 0 |

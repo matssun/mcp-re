@@ -123,10 +123,21 @@ mod fixtures {
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::scitt::ScittServiceTrustPin;
     use mcp_re_http_profile::scitt::SignedStatement;
+    use mcp_re_http_profile::scitt::TransparencyKeyLifecycle;
     use mcp_re_http_profile::HttpProfileError;
 
     pub(super) const TS_KID: &str = "hermetic-ts-1";
     pub(super) const ISSUER_KID: &str = "auditor-1";
+
+    /// The auditor's current time in every lane that judges a receipt's service key.
+    pub(super) const NOW: i64 = 1_800_000_000;
+
+    /// The lifecycle the audit profile states for the log key: valid from before [`NOW`],
+    /// with no expiry and no revocation. Every other key has none.
+    pub(super) fn ts_lifecycle(kid: &str) -> Option<TransparencyKeyLifecycle> {
+        (kid == TS_KID)
+            .then(|| TransparencyKeyLifecycle::new(1_600_000_000, None, None).expect("legal"))
+    }
 
     pub(super) fn issuer() -> SigningKey {
         SigningKey::from_seed_bytes(&[77_u8; 32])

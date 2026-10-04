@@ -66,13 +66,33 @@ values nobody wrote down would not be reproducible. So it is a document:
     "subject": "did:example:server",
     "key_id": "root-kid",
     "public_key": "<base64url Ed25519 public key>"
-  }
+  },
+  "transparency_service_keys": [
+    { "kid": "ts-key-1", "valid_from": 1767225600, "valid_until": 1798761600 }
+  ]
 }
 ```
 
 `revoked_key_ids` is optional and defaults to none. The set it names is applied in **both**
 places one audit consults revocation — the actor seam and the delegated-credential check —
 so a key cannot be refused in one and honoured in the other.
+
+`transparency_service_keys` states the lifecycle of each key a transparency service signs
+receipts with: `kid`, `valid_from`, and optionally `valid_until` and `revoked_at`, all Unix
+seconds. It is separate from `revoked_key_ids`, which names chain keys. Registration accepts a
+receipt only if the profile names its key and the key is acceptable at the auditor host's
+**current time** — `valid_from <= now`, `now < valid_until`, `now < revoked_at`. Neither `--at`
+nor any time the receipt or the statement carries is consulted: `--at` dates the statement,
+and a time signed by the key under judgment is that key's own assertion. Keeping
+`valid_until` and `revoked_at` current with the service's actual key status is yours.
+
+**Limitation.** Nothing establishes that a receipt existed while its key was acceptable. Once
+the current time reaches a key's `revoked_at` or `valid_until`, every receipt under it is
+refused, whatever its own or its statement's times say: revocation distrusts the key's history
+as well as its future, and expiry is given no stronger archival meaning than can be proved.
+Accepting such a receipt would need independent evidence of its existence inside the window —
+a separately trusted timestamp or an independently signed archival record — and no such
+mechanism exists.
 
 Two lines carry different weight, and it is worth knowing which:
 
@@ -84,7 +104,9 @@ Two lines carry different weight, and it is worth knowing which:
 
 A document is refused outright — before anything is read from the archive — when its schema
 is wrong, its expected audience is incomplete, its verifier-audience list or epoch set is
-empty, its clock skew is outside `0..=3600`, or its anchor key does not decode. An empty
+empty, its clock skew is outside `0..=3600`, its anchor key does not decode, or a
+`transparency_service_keys` entry has an empty or repeated `kid`, a `valid_until` not after
+its `valid_from`, or a `revoked_at` before it. An empty
 epoch set does not audit more strictly; it audits nothing.
 
 ## Running it
@@ -229,7 +251,8 @@ read its absence as evidence: a green run that skipped it says nothing about int
 
 Before reporting success the receipt is verified with the **offline** verifier against two
 things: the exact statement that was submitted, and the `ScittServiceTrustPin` you passed at
-the start of the run. No key is fetched or refreshed during that check — the pin was loaded
+the start of the run. Its service key must also be acceptable at the current time under the
+lifecycle your audit profile states for it (see `transparency_service_keys` above). No key is fetched or refreshed during that check — the pin was loaded
 before the audit began, and a verifier that reached out for a key while checking a receipt
 would be verifying against whatever the network offered at that moment.
 
@@ -250,7 +273,7 @@ confused:
 | *the transparency service refused the statement* | Definitively **not** registered. The service read the submission and declined it. |
 | *the transparency service is not accepting registrations* | Definitively not registered — rate limiting or over capacity. Retry later. |
 | *the outcome is UNKNOWN — it may be registered* | The statement went out and what happened next is not knowable from here: a transport failure, an unreadable answer, a `202` whose polling budget ran out. **Do not treat this as a negative.** Re-submitting may put a second copy of the record in the log. |
-| *a receipt came back and does not verify* | The service answered and its answer is unusable — either it is not the service your pin names, or the receipt is not about the statement you sent. This is a trust problem, not an availability one. |
+| *a receipt came back and does not verify* | The service answered and its answer is unusable — either it is not the service your pin names, the receipt is not about the statement you sent, or its key has no stated lifecycle or is not acceptable now (`ts_key_not_yet_valid`, `ts_key_expired`, `ts_key_revoked`). This is a trust problem, not an availability one. |
 
 ## What this tool does not do
 

@@ -4847,3 +4847,15 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Root relationship.** A premise of `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`: both take the read document as the deployment's trust decision.
 **Severity:** `high`.
 **Recorded:** 2026-10-04, owner Ruling 13.2 for 73d78a4c78f58c86.
+
+## NP-273 — a transparency-service receipt is accepted only under a key the audit profile states is acceptable at the auditor's trusted current time
+
+**Controls:** `mcp-re-proxy` `lib#transparency::auditor::registration::capability::tests::a_receipt_under_a_key_with_no_stated_lifecycle_is_refused`, `lib#transparency::auditor::registration::capability::tests::a_receipt_under_a_revoked_key_is_refused`, `lib#transparency::auditor::registration::capability::tests::a_receipt_under_an_expired_key_is_refused`, `lib#transparency::auditor::registration::capability::tests::a_receipt_under_a_not_yet_valid_key_is_refused`, `lib#transparency::auditor::registration::capability::tests::a_receipt_under_a_key_admitted_at_now_is_accepted`, `lib#transparency::auditor::profile::tests::a_transparency_key_lifecycle_is_projected_by_its_kid`, `lib#transparency::auditor::profile::tests::an_incoherent_transparency_key_lifecycle_never_becomes_a_profile`, `integration_async#transparency_e2e_test::a_receipt_under_a_revoked_service_key_is_not_recorded`.
+**Carrier:** `mcp-re-http-profile/src/scitt/key_lifecycle.rs` (`TransparencyKeyLifecycle::admits_at`), `mcp-re-proxy/src/transparency/auditor/registration/capability.rs` (`register_and_verify`), `mcp-re-proxy/src/transparency/auditor/profile` (`transparency_service_keys`).
+**Statement.** *Registration produces a `RegisteredStatement` only if the audit profile states a lifecycle for the receipt's transparency-service `kid` and that lifecycle admits the auditor's trusted current time: `valid_from <= now`, `now < valid_until` when stated, `now < revoked_at` when stated. No time the receipt or the statement carries, and not `--at`, is an input. A lifecycle with `valid_until <= valid_from`, a `revoked_at` before `valid_from`, an empty or a repeated `kid` never becomes a profile.*
+**If false.** A receipt under a revoked or expired transparency-service key is accepted, so a compromised key can manufacture registrations.
+**Limitation.** Past `revoked_at` or `valid_until` every receipt under the key is refused, archived ones included: no independent evidence that a receipt existed inside the window exists, so revocation and expiry distrust history unless independently anchored.
+**Likely owner:** none. `http_profile.scitt_key_lifecycle` owns the judgment `admits_at` makes and claims its own tests; this proposition is that registration consults it, from the audit profile, at the auditor's clock. NP-042 is the auditor's registration proposition and is unratified.
+**Root relationship.** The auditor product claim the graph does not hold. Rests on ASM-0067 (the operator keeps the stated lifecycle current) and `boundary.clock`.
+**Severity:** `high`.
+**Recorded:** 2026-10-04, owner Ruling 14.1 for 89aa1a1a453cf723.

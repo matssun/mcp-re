@@ -92,6 +92,7 @@
 //!   ├─ merkle        D   this path folds this leaf to this root at this position
 //!   ├─ cose_key      E   valid under a key whose algorithm the header agrees with
 //!   ├─ service           the key + profiles that go together for ONE service
+//!   ├─ key_lifecycle     whether a service key may vouch for a receipt at a trusted instant
 //!   ├─ offline           the composition: verified offline, contacting nobody
 //!   ├─ retained      F   these bytes are the ones that statement was made about
 //!   ├─ trust_pin     G   the key an interop run verified against, and its provenance
@@ -114,6 +115,7 @@
 
 mod commitment;
 mod cose_key;
+mod key_lifecycle;
 mod merkle;
 mod offline;
 mod prototype;
@@ -128,6 +130,9 @@ pub use commitment::EvidenceCommitment;
 pub use commitment::RetainedCorrespondence;
 pub use cose_key::CoseVerificationKey;
 pub use cose_key::P256Point;
+pub use key_lifecycle::KeyLifecycleError;
+pub use key_lifecycle::KeyLifecycleRefusal;
+pub use key_lifecycle::TransparencyKeyLifecycle;
 pub use merkle::StatementLeafProfile;
 pub use offline::verify_receipt_offline;
 /// The in-process prototype log. Its contract is on the type: using it successfully is

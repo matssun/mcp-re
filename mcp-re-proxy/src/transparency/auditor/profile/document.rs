@@ -9,10 +9,13 @@
 //! NOT been checked. [`coherent`] is the check, and [`super::AuditProfile`]'s `TryFrom` is
 //! its only caller — which is what makes the profile's projections infallible.
 
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 use serde::Serialize;
 
 use mcp_re_core::VerificationKey;
+use mcp_re_http_profile::scitt::TransparencyKeyLifecycle;
 use mcp_re_http_profile::AudienceTuple;
 
 /// The schema token a profile must carry.
@@ -45,6 +48,26 @@ pub(super) struct AuditProfileDocument {
     /// Key identifiers this audit treats as revoked. Absent means none.
     #[serde(default)]
     pub(super) revoked_key_ids: Vec<String>,
+    /// The lifecycle of each transparency-service key a receipt may be verified under.
+    /// Absent means none, and a receipt under a key named nowhere here is refused.
+    #[serde(default)]
+    pub(super) transparency_service_keys: Vec<TransparencyServiceKeyRecord>,
+}
+
+/// One transparency-service key's lifecycle, as written. Times are Unix seconds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TransparencyServiceKeyRecord {
+    /// The key identifier a receipt names.
+    pub(super) kid: String,
+    /// The first instant the key may vouch for a receipt.
+    pub(super) valid_from: i64,
+    /// The first instant it may no longer. Absent means no expiry.
+    #[serde(default)]
+    pub(super) valid_until: Option<i64>,
+    /// The instant it was revoked. Absent means not revoked.
+    #[serde(default)]
+    pub(super) revoked_at: Option<i64>,
 }
 
 /// The delegated-credential expectations, as written.
@@ -119,4 +142,35 @@ pub(super) fn coherent(document: &AuditProfileDocument) -> Result<VerificationKe
     }
     VerificationKey::from_b64url(&document.response_anchor.public_key)
         .map_err(|_| "audit profile: response_anchor.public_key is not a key".to_owned())
+}
+
+/// The transparency-service key lifecycles a document states, keyed by `kid`, or the first
+/// record that cannot be one.
+///
+/// A duplicate `kid` is refused rather than resolved: two lifecycles for one key would let
+/// the order of the document decide whether a revocation applies.
+pub(super) fn transparency_key_lifecycles(
+    document: &AuditProfileDocument,
+) -> Result<BTreeMap<String, TransparencyKeyLifecycle>, String> {
+    let mut lifecycles = BTreeMap::new();
+    for record in &document.transparency_service_keys {
+        if record.kid.is_empty() {
+            return Err("audit profile: transparency_service_keys names an empty kid".to_owned());
+        }
+        let lifecycle =
+            TransparencyKeyLifecycle::new(record.valid_from, record.valid_until, record.revoked_at)
+                .map_err(|e| {
+                    format!(
+                        "audit profile: transparency_service_keys {:?}: {e}",
+                        record.kid
+                    )
+                })?;
+        if lifecycles.insert(record.kid.clone(), lifecycle).is_some() {
+            return Err(format!(
+                "audit profile: transparency_service_keys names {:?} more than once",
+                record.kid,
+            ));
+        }
+    }
+    Ok(lifecycles)
 }

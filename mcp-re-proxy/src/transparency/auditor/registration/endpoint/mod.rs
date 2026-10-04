@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use mcp_re_http_profile::scitt::ScittServiceTrustPin;
 use mcp_re_http_profile::scitt::SignedStatement;
+use mcp_re_http_profile::scitt::TransparencyKeyLifecycle;
 
 use super::policy::RegistrationPolicy;
 use super::RegisteredStatement;
@@ -148,6 +149,8 @@ impl RegistrationTarget {
         statement: &SignedStatement,
         issuer_key: &mcp_re_core::VerificationKey,
         pin: &ScittServiceTrustPin,
+        ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
+        now: i64,
     ) -> Result<RegisteredStatement, RegistrationError> {
         let exchange = super::ureq_exchange::UreqExchange::operator_configured(&self.base_url)
             .ok_or_else(|| {
@@ -172,6 +175,8 @@ impl RegistrationTarget {
                 statement,
                 issuer_key,
                 pin,
+                ts_key,
+                now,
             ),
             RegistrationProtocol::CapsuleAnchor => super::capability::register_and_verify(
                 &super::capsule_anchor::CapsuleAnchorRegistrationClient::new(
@@ -182,6 +187,8 @@ impl RegistrationTarget {
                 statement,
                 issuer_key,
                 pin,
+                ts_key,
+                now,
             ),
         }
     }
@@ -200,6 +207,8 @@ impl RegistrationTarget {
         _statement: &SignedStatement,
         _issuer_key: &mcp_re_core::VerificationKey,
         _pin: &ScittServiceTrustPin,
+        _ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
+        _now: i64,
     ) -> Result<RegisteredStatement, RegistrationError> {
         Err(RegistrationError::Refused(
             "this build has no registration transport (feature `scitt_registration` is \

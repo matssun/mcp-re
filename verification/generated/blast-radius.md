@@ -100,6 +100,7 @@ attestations this view cannot see.
 | unit://http_profile.scitt_algorithm_agreement | source, contracts or evidence | THM-0041 | _no consumer_ |
 | unit://http_profile.scitt_derived_root | source, contracts or evidence | THM-0041 | _no consumer_ |
 | unit://http_profile.scitt_inclusion_fold | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.scitt_key_lifecycle | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.scitt_position_commitment | source, contracts or evidence | THM-0041 | _no consumer_ |
 | unit://http_profile.scitt_receipt_shape | source, contracts or evidence | THM-0041 | _no consumer_ |
 | unit://http_profile.scitt_retained_correspondence | source, contracts or evidence | THM-0042 | _no consumer_ |
@@ -497,3 +498,4 @@ attestations this view cannot see.
 | ASM-0064 | description, justification, scope or mechanism | http_profile.continuation_binding | assumption review |
 | ASM-0065 | description, justification, scope or mechanism | http_profile.scitt_algorithm_agreement, http_profile.scitt_derived_root | assumption review |
 | ASM-0066 | description, justification, scope or mechanism | client.trust_manifest_lifecycle | assumption review |
+| ASM-0067 | description, justification, scope or mechanism | _no unit_ | assumption review |

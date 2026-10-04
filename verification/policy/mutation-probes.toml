@@ -11230,3 +11230,76 @@ expect_red = [
 note = """
 A poisoned lock kills the slot forever.
 """
+
+[[probe]]
+id = "M441-http-profile-a-key-is-refused-from-its-revoked-at"
+unit = "http_profile.scitt_key_lifecycle"
+conjunct = "the instant revoked_at takes effect, and every later one, refuses the key"
+path = "mcp-re-http-profile/src/scitt/key_lifecycle.rs"
+anchor = """
+        if self.revoked_at.is_some_and(|revoked| now >= revoked) {
+"""
+weakening = """
+        if self.revoked_at.is_some_and(|revoked| now > revoked) {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::revoked_at_itself_is_revoked",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::a_key_revoked_at_its_first_instant_admits_nothing",
+]
+note = """
+A key is honoured at the very instant it was revoked.
+"""
+
+[[probe]]
+id = "M442-http-profile-a-key-is-refused-from-its-valid-until"
+unit = "http_profile.scitt_key_lifecycle"
+conjunct = "the instant valid_until takes effect, and every later one, refuses the key"
+path = "mcp-re-http-profile/src/scitt/key_lifecycle.rs"
+anchor = """
+        if self.valid_until.is_some_and(|until| now >= until) {
+"""
+weakening = """
+        if self.valid_until.is_some_and(|until| now > until) {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::valid_until_itself_is_expired",
+]
+note = """
+A key is honoured at the instant it expired.
+"""
+
+[[probe]]
+id = "M443-http-profile-a-key-is-refused-before-its-valid-from"
+unit = "http_profile.scitt_key_lifecycle"
+conjunct = "an instant before valid_from refuses the key"
+path = "mcp-re-http-profile/src/scitt/key_lifecycle.rs"
+anchor = """
+        if now < self.valid_from {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::valid_from_itself_is_admitted_and_the_instant_before_is_not",
+]
+note = """
+A key vouches for receipts before its window opens.
+"""
+
+[[probe]]
+id = "M444-http-profile-an-inverted-lifecycle-is-never-constructed"
+unit = "http_profile.scitt_key_lifecycle"
+conjunct = "a lifecycle whose valid_until is not after its valid_from is never constructed"
+path = "mcp-re-http-profile/src/scitt/key_lifecycle.rs"
+anchor = """
+        if valid_until.is_some_and(|until| until <= valid_from) {
+"""
+weakening = """
+        if valid_until.is_some_and(|until| until < valid_from) {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::key_lifecycle::tests::contradictory_bounds_are_refused",
+]
+note = """
+A window that admits no instant is constructed and held.
+"""

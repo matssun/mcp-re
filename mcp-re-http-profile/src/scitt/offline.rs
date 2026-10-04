@@ -34,6 +34,10 @@ use super::wire::VDS_RFC9162_SHA256;
 ///
 /// Any failure is fail-closed. On success the caller holds a verified, portable
 /// record of the call — including whether it was a complete or incomplete chain.
+///
+/// It does not judge the TS key's lifecycle: a resolved key is used whatever its validity
+/// window or revocation status, so a caller judges `receipt.ts_kid()` with
+/// [`super::TransparencyKeyLifecycle::admits_at`] at its own trusted current time.
 pub fn verify_receipt_offline(
     statement: &SignedStatement,
     receipt: &Receipt,

@@ -209,6 +209,7 @@ pub use scitt::Receipt;
 pub use scitt::RetainedEvidenceStore;
 pub use scitt::ScittServiceTrustPin;
 pub use scitt::SignedStatement;
+pub use scitt::TransparencyKeyLifecycle;
 pub use sigbase::CoveredComponent;
 pub use sigbase::SignatureParams;
 pub use sign::sign_request;
