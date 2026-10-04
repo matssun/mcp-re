@@ -151,7 +151,7 @@ fn issuer_validity_refusal(chain: &[&[u8]], now: i64) -> Option<CredentialCurren
         .iter()
         .find_map(|der| match read_currency_facts(der) {
             None => Some(CredentialCurrencyRefusal::IssuerUnreadable),
-            Some(facts) if facts.self_issued || facts.contains(now) => None,
+            Some(facts) if facts.self_signed || facts.contains(now) => None,
             Some(_) => Some(CredentialCurrencyRefusal::IssuerOutsideValidityWindow),
         })
 }
@@ -428,13 +428,13 @@ mod tests {
     fn a_self_issued_certificate_in_the_chain_is_exempt_from_the_window() {
         // A peer may send its root. Path building matches that against the CONFIGURED anchor
         // set rather than against its own window, so holding it to one here would refuse
-        // chains a full handshake admits. `mint` is self-signed, hence self-issued.
+        // chains a full handshake admits. `mint` is self-signed.
         let leaf = mint((2020, 1, 1), (2020, 1, 2));
         let expired_root = mint((2019, 1, 1), (2019, 6, 1));
         assert_eq!(
             evaluate(&[&leaf, &expired_root], &two_days(), IN_2020),
             Ok(Some(CurrencyControls::Lifetime)),
-            "a self-issued certificate is exempt, so this chain is admitted"
+            "a self-signed certificate is exempt, so this chain is admitted"
         );
     }
 
@@ -573,7 +573,7 @@ mod chain_validity_tests {
         );
     }
 
-    /// A peer that redundantly sends its (self-issued) root is NOT refused on that
+    /// A peer that redundantly sends its (self-signed) root is NOT refused on that
     /// root's window. Path building matches a root against the configured anchor set
     /// rather than against its own validity, so refusing it here would refuse chains a
     /// full handshake admits.
@@ -587,6 +587,20 @@ mod chain_validity_tests {
             ica.der.as_ref(),
             root.der.as_ref()
         ]));
+    }
+
+    /// A certificate whose Name equals its subject's but which a DIFFERENT key signed (a
+    /// key-rollover intermediate) is still held to its window: only a certificate signed
+    /// under its own key can be an anchor-equivalent.
+    #[test]
+    fn a_self_issued_intermediate_not_signed_by_its_own_key_is_held_to_its_window() {
+        let root = root("chain-root");
+        let rollover = intermediate(&root, "chain-root", (2021, 1, 1));
+        let peer = leaf(&rollover);
+        assert_eq!(
+            refusal(&[peer.as_ref(), rollover.der.as_ref()]),
+            Some(CredentialCurrencyRefusal::IssuerOutsideValidityWindow)
+        );
     }
 
     /// An unparseable certificate above the leaf fails closed, matching the leaf.
@@ -895,7 +909,7 @@ mod per_request_revocation_tests {
         );
     }
 
-    /// A self-issued certificate with no orderable window is exempt from the validity pass,
+    /// A self-signed certificate with no orderable window is exempt from the validity pass,
     /// and the revocation pass reads only its coordinate, so it is exempt there too.
     #[test]
     fn a_self_issued_root_with_no_orderable_window_is_exempt_under_revocation_too() {

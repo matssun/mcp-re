@@ -27,13 +27,18 @@ pub(super) struct CertificateCurrencyFacts<'a> {
     /// The certificate itself, DER: read by the CRL index only when several configured CA
     /// keys share this certificate's issuer name, to find the one that signed it.
     pub(super) certificate_der: &'a [u8],
-    /// Issuer `Name` == subject `Name`.
+    /// Issuer `Name` == subject `Name` AND the signature verifies under this
+    /// certificate's own public key.
     ///
     /// A peer may send its root. Path building matches that against the CONFIGURED
     /// anchor set rather than against its own validity window, so holding it to a window
-    /// would refuse chains a full handshake admits. The exemption is the caller's to
-    /// apply; this only reports the shape.
-    pub(super) self_issued: bool,
+    /// would refuse chains a full handshake admits. A self-signed certificate can only sit
+    /// on an accepted path as an anchor-equivalent (same name and key), whereas a
+    /// self-issued certificate signed by another key (a key-rollover intermediate) is
+    /// window-checked by path building and must stay window-checked. A signature that
+    /// does not verify, for any reason, reads `false`. The exemption is the caller's to
+    /// apply; this only reports the fact.
+    pub(super) self_signed: bool,
 }
 
 impl CertificateCurrencyFacts<'_> {
@@ -82,7 +87,8 @@ pub(super) fn read_currency_facts(der: &[u8]) -> Option<CertificateCurrencyFacts
         issuer_der,
         serial: cert.tbs_certificate.raw_serial(),
         certificate_der: der,
-        self_issued: issuer_der == cert.tbs_certificate.subject.as_raw(),
+        self_signed: issuer_der == cert.tbs_certificate.subject.as_raw()
+            && cert.verify_signature(None).is_ok(),
     })
 }
 
@@ -100,14 +106,14 @@ mod tests {
     fn an_orderable_window_is_not_the_same_question_as_containing_now() {
         // The two are separate because production applies them to different certificates:
         // a leaf must have an orderable window, an issuer's window is skipped entirely
-        // when it is self-issued.
+        // when it is self-signed.
         let facts = CertificateCurrencyFacts {
             not_before: 100,
             not_after: 200,
             issuer_der: &[],
             serial: &[],
             certificate_der: &[],
-            self_issued: false,
+            self_signed: false,
         };
         assert!(facts.window_is_orderable());
         assert!(!facts.contains(99));
@@ -128,11 +134,53 @@ mod tests {
             issuer_der: &[],
             serial: &[],
             certificate_der: &[],
-            self_issued: false,
+            self_signed: false,
         };
         assert!(!inverted.window_is_orderable());
         for now in [99, 100, 150, 200, 201] {
             assert!(!inverted.contains(now));
         }
+    }
+
+    #[test]
+    fn a_self_issued_certificate_is_self_signed_only_under_its_own_key() {
+        use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair};
+
+        fn ca_params() -> CertificateParams {
+            let mut params = CertificateParams::new(Vec::new()).expect("ca params");
+            params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+            params
+                .distinguished_name
+                .push(DnType::CommonName, "same-name");
+            params
+        }
+
+        let root_key = KeyPair::generate().expect("root key");
+        let root_params = ca_params();
+        let root = root_params.self_signed(&root_key).expect("root");
+        let root_der = root.der().clone();
+        let facts = read_currency_facts(root_der.as_ref()).expect("root parses");
+        assert!(
+            facts.self_signed,
+            "a root signed by its own key is self-signed"
+        );
+
+        let rollover_key = KeyPair::generate().expect("rollover key");
+        let issuer = rcgen::Issuer::from_params(&root_params, &root_key);
+        let rollover = ca_params()
+            .signed_by(&rollover_key, &issuer)
+            .expect("rollover");
+        let rollover_der = rollover.der().clone();
+        let facts = read_currency_facts(rollover_der.as_ref()).expect("rollover parses");
+        assert_eq!(
+            facts.issuer_der,
+            read_currency_facts(root_der.as_ref())
+                .expect("root")
+                .issuer_der
+        );
+        assert!(
+            !facts.self_signed,
+            "same Name under a different key is self-issued, not self-signed"
+        );
     }
 }

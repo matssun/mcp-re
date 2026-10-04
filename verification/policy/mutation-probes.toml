@@ -1655,7 +1655,7 @@ conjunct = "every certificate above the leaf is inside its own validity window"
 # it, because it digests the configured anchor set and an intermediate is not in it.
 path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
 anchor = """
-        Some(facts) if facts.self_issued || facts.contains(now) => None,
+        Some(facts) if facts.self_signed || facts.contains(now) => None,
 """
 weakening = """
         Some(_facts) => None,

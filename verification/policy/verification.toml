@@ -2780,6 +2780,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::tests::the_validity_window_runs_in_a_revocation_only_deployment",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::tests::an_unreadable_issuer_is_refused_as_an_issuer_and_not_as_the_credential",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::chain_validity_tests::a_chain_whose_intermediate_has_expired_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::x509_adapter::tests::a_self_issued_certificate_is_self_signed_only_under_its_own_key",
+  "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::chain_validity_tests::a_self_issued_intermediate_not_signed_by_its_own_key_is_held_to_its_window",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::chain_validity_tests::a_self_issued_root_in_the_presented_chain_is_not_held_to_a_window",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::chain_validity_tests::an_unparseable_intermediate_is_refused",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_leaf_on_a_current_crl_is_refused",
