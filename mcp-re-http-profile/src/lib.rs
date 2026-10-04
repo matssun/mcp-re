@@ -197,7 +197,6 @@ pub use rejection::ExecutionDisposition;
 pub use rejection::RejectionReason;
 pub use rejection::JSON_RPC_ERROR_CODE;
 pub use replay::HttpReplayKey;
-pub use result_class::input_required_state;
 pub use result_class::INPUT_REQUIRED_RESULT_TYPE;
 pub use scitt::issue_signed_statement;
 pub use scitt::verify_receipt_offline;
