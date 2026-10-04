@@ -84,7 +84,7 @@ impl RegistrationTarget {
         base_url: &str,
         protocol: RegistrationProtocol,
         timeout: Duration,
-        interval: Duration,
+        interval: Option<Duration>,
     ) -> Result<Self, String> {
         // Owner Ruling 6: `--register-to` is operator-supplied and BOTH refusals below fire
         // on a WELL-FORMED URL — the scheme verdict and the plaintext rule each admit a
@@ -102,7 +102,28 @@ impl RegistrationTarget {
                  only to the loopback interface, where there is no network to observe it",
             ));
         }
-        let policy = RegistrationPolicy::new(timeout, interval)?;
+        let policy = match (protocol, interval) {
+            (RegistrationProtocol::Scrapi11, Some(interval)) => {
+                RegistrationPolicy::new(timeout, interval)?
+            }
+            (RegistrationProtocol::CapsuleAnchor, None) => {
+                RegistrationPolicy::single_exchange(timeout)?
+            }
+            (RegistrationProtocol::CapsuleAnchor, Some(_)) => {
+                return Err(
+                    "--registration-poll-interval-secs does not apply to --registration-protocol \
+                     capsule-anchor: that contract has no polling, so the term would select \
+                     nothing"
+                        .to_owned(),
+                );
+            }
+            (RegistrationProtocol::Scrapi11, None) => {
+                return Err(
+                    "--registration-protocol scrapi-11 polls, so its budget needs a poll interval"
+                        .to_owned(),
+                );
+            }
+        };
         Ok(RegistrationTarget {
             base_url: base_url.trim_end_matches('/').to_owned(),
             policy,
@@ -197,7 +218,7 @@ mod tests {
             url,
             RegistrationProtocol::default(),
             Duration::from_secs(60),
-            Duration::from_secs(1),
+            Some(Duration::from_secs(1)),
         )
     }
 
@@ -256,16 +277,43 @@ mod tests {
             "https://ts.example.test",
             RegistrationProtocol::default(),
             Duration::from_secs(60),
-            Duration::ZERO,
+            Some(Duration::ZERO),
         )
         .is_err());
         assert!(RegistrationTarget::new(
             "https://ts.example.test",
             RegistrationProtocol::default(),
             Duration::from_secs(7_200),
-            Duration::from_secs(1),
+            Some(Duration::from_secs(1)),
         )
         .is_err());
+    }
+
+    #[test]
+    fn a_budget_shape_the_protocol_does_not_use_is_not_a_target() {
+        let url = "https://ts.example.test";
+        let second = Duration::from_secs(1);
+        let refused = RegistrationTarget::new(
+            url,
+            RegistrationProtocol::CapsuleAnchor,
+            second,
+            Some(second),
+        )
+        .expect_err("capsule-anchor has no polling");
+        assert!(
+            refused.contains("--registration-poll-interval-secs"),
+            "{refused}"
+        );
+        assert!(RegistrationTarget::new(
+            url,
+            RegistrationProtocol::Scrapi11,
+            Duration::from_secs(60),
+            None,
+        )
+        .is_err());
+        assert!(
+            RegistrationTarget::new(url, RegistrationProtocol::CapsuleAnchor, second, None).is_ok()
+        );
     }
 
     /// LOAD-BEARING (Owner Ruling 6): `--register-to` is operator-supplied, and BOTH
@@ -285,7 +333,7 @@ mod tests {
                 configured,
                 RegistrationProtocol::default(),
                 Duration::from_secs(1),
-                Duration::from_secs(1),
+                Some(Duration::from_secs(1)),
             )
             .expect_err("a credential-bearing endpoint on a refused branch");
             assert!(!why.contains("hunter2"), "credential echoed: {why}");

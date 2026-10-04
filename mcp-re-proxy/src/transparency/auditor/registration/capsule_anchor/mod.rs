@@ -92,13 +92,7 @@ impl<E: HttpExchange> CapsuleAnchorRegistrationClient<E> {
         signed_statement: &[u8],
         deadline: Instant,
     ) -> Result<Vec<u8>, CapsuleAnchorFault> {
-        let body = serde_json::to_vec(&wire::RegisterStatementRequest {
-            signed_statement_b64: base64::engine::general_purpose::STANDARD
-                .encode(signed_statement),
-        })
-        .map_err(|_| CapsuleAnchorFault::Transport {
-            detail: "the submission could not be encoded".to_owned(),
-        })?;
+        let body = wire::register_statement_body(signed_statement);
         let response = self
             .exchange
             .send(HttpRequest {

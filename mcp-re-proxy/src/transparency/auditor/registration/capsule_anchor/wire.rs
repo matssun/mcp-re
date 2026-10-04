@@ -10,8 +10,8 @@
 //! inferred from a family resemblance to SCRAPI. That is the point of the second leaf: the
 //! two protocols agree on nothing this module names.
 
+use base64::Engine;
 use serde::Deserialize;
-use serde::Serialize;
 
 /// How this leaf names the protocol it speaks, in refusals and in the artifact.
 ///
@@ -35,11 +35,17 @@ pub(super) fn register_statement_url(base_url: &str) -> String {
     format!("{base_url}{REGISTER_STATEMENT_PATH}")
 }
 
-/// What goes up: the Signed Statement's exact octets, base64.
-#[derive(Debug, Serialize)]
-pub(super) struct RegisterStatementRequest {
-    /// Standard base64 (with padding) of the COSE_Sign1 Signed Statement.
-    pub(super) signed_statement_b64: String,
+/// What goes up: the Signed Statement's exact octets, standard base64 with padding, in the
+/// field `signed_statement_b64`.
+///
+/// Building it cannot fail (a JSON object of one string field always renders), so an unsent
+/// submission is not expressible as a fault.
+pub(super) fn register_statement_body(signed_statement: &[u8]) -> Vec<u8> {
+    serde_json::json!({
+        "signed_statement_b64": base64::engine::general_purpose::STANDARD.encode(signed_statement),
+    })
+    .to_string()
+    .into_bytes()
 }
 
 /// What comes back on a `200`.

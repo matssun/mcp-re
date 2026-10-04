@@ -58,11 +58,14 @@ impl RegistrationTarget {
             timeout,
             DEFAULT_REGISTRATION_TIMEOUT_SECS,
         )?;
-        let interval = seconds(
-            "--registration-poll-interval-secs",
-            interval,
-            DEFAULT_POLL_INTERVAL_SECS,
-        )?;
+        let interval = match protocol {
+            RegistrationProtocol::Scrapi11 => Some(seconds(
+                "--registration-poll-interval-secs",
+                interval,
+                DEFAULT_POLL_INTERVAL_SECS,
+            )?),
+            RegistrationProtocol::CapsuleAnchor => None,
+        };
         RegistrationTarget::new(&url, protocol, timeout, interval).map(Some)
     }
 }
@@ -206,6 +209,18 @@ mod tests {
                 "{protocol}",
             );
         }
+    }
+
+    #[test]
+    fn a_non_polling_contract_is_not_held_to_a_poll_interval() {
+        let url = Some("https://ts.example.test");
+        assert!(from(url, Some("capsule-anchor"), Some("1"), None)
+            .expect("legal")
+            .is_some());
+        assert!(from(url, Some("scrapi-11"), Some("1"), None).is_err());
+        let refused = from(url, Some("capsule-anchor"), Some("0"), None)
+            .expect_err("a zero budget completes no exchange");
+        assert!(!refused.contains("poll interval"), "{refused}");
     }
 
     /// A budget that is not a whole number of seconds names the flag it came from.
