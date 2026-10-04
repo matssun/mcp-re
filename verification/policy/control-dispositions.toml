@@ -15083,3 +15083,19 @@ control = "src/lib.rs#response::delegated_tests::a_verified_success_carries_the_
 decision = "new-proposition"
 proposition = "NP-092"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20300"
+project = "mcp-re-proxy"
+control = "src/lib.rs#config_state::validation::residue::tests::a_drain_window_shorter_than_the_request_deadline_is_refused"
+decision = "new-proposition"
+proposition = "NP-167"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20301"
+project = "mcp-re-proxy"
+control = "src/lib.rs#config_state::validation::residue::tests::an_unrepresentable_drain_window_is_refused"
+decision = "new-proposition"
+proposition = "NP-167"
+recorded = "2026-10-04"

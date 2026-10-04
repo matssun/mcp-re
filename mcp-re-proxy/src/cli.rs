@@ -2271,7 +2271,15 @@ mod tests {
         // is accepted; cap+1 is rejected.
         let cap = super::runtime_flags::MAX_INNER_READ_TIMEOUT_SECS;
         let mut at_cap = minimal_durable();
-        at_cap.splice(0..0, args(&["--request-deadline-secs", &cap.to_string()]));
+        at_cap.splice(
+            0..0,
+            args(&[
+                "--request-deadline-secs",
+                &cap.to_string(),
+                "--drain-grace-secs",
+                &cap.to_string(),
+            ]),
+        );
         let config = parse_args(&at_cap).expect("the cap value itself is accepted");
         assert_eq!(
             config.limits.request_deadline,
