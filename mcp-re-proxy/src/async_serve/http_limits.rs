@@ -135,13 +135,19 @@ mod tests {
             request_deadline: Some(Duration::from_secs(7)),
             ..ServerLimits::default()
         });
-        assert!(out.contains("h1_header_read_timeout: Configured(Some(7s))"), "{out}");
+        assert!(
+            out.contains("h1_header_read_timeout: Configured(Some(7s))"),
+            "{out}"
+        );
         let out = rendered(ServerLimits {
             request_deadline: None,
             read_timeout: Some(Duration::from_secs(9)),
             ..ServerLimits::default()
         });
-        assert!(out.contains("h1_header_read_timeout: Configured(Some(9s))"), "{out}");
+        assert!(
+            out.contains("h1_header_read_timeout: Configured(Some(9s))"),
+            "{out}"
+        );
     }
 
     #[test]

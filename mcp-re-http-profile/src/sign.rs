@@ -30,12 +30,12 @@ use crate::sigbase::SignatureParams;
 use crate::sigbase::SourceMessage;
 
 mod request;
+pub(crate) use request::conditional_request_components;
 pub use request::sign_request;
 pub use request::sign_request_as_given;
 pub use request::sign_request_full;
 pub use request::sign_request_full_with_signer;
 pub use request::sign_request_with_signer;
-pub(crate) use request::conditional_request_components;
 
 fn set_header(headers: &mut Vec<(String, String)>, name: &str, value: String) {
     headers.retain(|(k, _)| !k.eq_ignore_ascii_case(name));

@@ -415,7 +415,9 @@ mod tests {
             .expect("a 32-byte seed");
         assert_eq!(
             ok.public_key().to_b64url(),
-            SigningKey::from_seed_bytes(&[7u8; 32]).public_key().to_b64url()
+            SigningKey::from_seed_bytes(&[7u8; 32])
+                .public_key()
+                .to_b64url()
         );
     }
 }

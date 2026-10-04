@@ -15,8 +15,8 @@
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::Verifier;
 
-use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key;
+use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::verify_delegated_accepted_202;
 use mcp_re_http_profile::ActorIdentity;

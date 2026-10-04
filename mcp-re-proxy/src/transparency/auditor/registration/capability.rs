@@ -263,7 +263,10 @@ mod tests {
             .with_verified_receipt(&registered)
             .expect("the artifact carries the registered statement");
         assert_eq!(
-            artifact.receipt().expect("a receipt is present").expect("decodes"),
+            artifact
+                .receipt()
+                .expect("a receipt is present")
+                .expect("decodes"),
             registered.receipt_bytes(),
         );
         assert_eq!(artifact.registration_protocol(), Some("canned"));

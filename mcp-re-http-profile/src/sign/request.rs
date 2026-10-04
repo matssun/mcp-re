@@ -193,4 +193,3 @@ pub fn sign_request_full_with_signer(
     request.body = insert_meta_block(&request.body, REQUEST_EVIDENCE_BLOCK_KEY, block)?;
     sign_request_with_signer(request, sign_base, key_id, created, expires, nonce)
 }
-

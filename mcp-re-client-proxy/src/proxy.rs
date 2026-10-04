@@ -285,7 +285,8 @@ impl ClientProxy {
                 // Two genuinely different systems, composed into ONE trust authority
                 // before the verifier sees them (MCPRE-172). The route's resolver is
                 // consulted at this request's `now`.
-                let trust = CompositeResponseTrust::new(resolve_actor.as_ref(), revocation.as_ref());
+                let trust =
+                    CompositeResponseTrust::new(resolve_actor.as_ref(), revocation.as_ref());
                 verify_delegated_response(response, &trust, &expectation, policy, params.now_unix)?
             }
             // Trust-anchor lifecycle: the set is BOTH the root resolver and the
@@ -327,7 +328,8 @@ impl ClientProxy {
         let pin = route.expected_server_keyid.as_deref();
         match &route.verification {
             ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
-                let trust = CompositeResponseTrust::new(resolve_actor.as_ref(), revocation.as_ref());
+                let trust =
+                    CompositeResponseTrust::new(resolve_actor.as_ref(), revocation.as_ref());
                 verify_delegated_accepted_202_pinned(
                     response,
                     signed.request(),
@@ -1241,7 +1243,8 @@ mod tests {
     fn non_object_params_are_refused_before_anything_is_signed() {
         for params in [json!([1, 2]), json!("x")] {
             let (proxy, calls) = proxy_over(required_verification(), None, None);
-            let plain = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params});
+            let plain =
+                json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params});
             let err = proxy
                 .handle(ROUTE_ID, &plain, &call_params(NOW))
                 .expect_err("non-object params are refused");

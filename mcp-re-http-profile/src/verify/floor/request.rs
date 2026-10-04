@@ -182,7 +182,8 @@ mod tests {
             method: "POST".into(),
             target_uri: "https://mcp.example.com/mcp".into(),
             headers,
-            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+                .to_vec(),
         };
         sign_request(&mut r, &key(), KEY_ID, CREATED, EXPIRES, "n-floor")
             .expect("signing succeeds");

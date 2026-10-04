@@ -74,7 +74,9 @@ fn env_key_error_does_not_leak_seed() {
         tls_key_var: "x".to_string(),
         client_ca_var: "x".to_string(),
     };
-    let err = source.response_public_key().expect_err("malformed seed must error");
+    let err = source
+        .response_public_key()
+        .expect_err("malformed seed must error");
     assert!(matches!(err, KeyError::Malformed(_)));
     let rendered = format!("{err} | {err:?}");
     assert!(
