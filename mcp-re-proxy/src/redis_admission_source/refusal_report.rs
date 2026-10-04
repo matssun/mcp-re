@@ -9,9 +9,8 @@
 //!
 //! The path that produces a refusal is reachable on every request: a caller that presents a
 //! workload id with no record drives it forever. An unconditional line is therefore an
-//! attacker-paced write to a shared file descriptor — and `eprintln!` PANICS when the write
-//! fails, on a closed pipe or a full buffer with a dead reader, which on a serving future is
-//! a connection reset where a designed refusal belongs.
+//! attacker-paced write to a shared file descriptor. The write here is non-panicking: a failed
+//! write is dropped, so the diagnostic cannot turn a designed refusal into a fault.
 //!
 //! Pacing by CLASS rather than by request bounds the writing by the size of a closed
 //! taxonomy. The operator still learns every class that has fired; what they stop getting is
@@ -32,11 +31,15 @@ pub(super) struct ReportedClasses {
 }
 
 impl ReportedClasses {
-    /// Report `refusal` if this process has not reported its class before.
+    /// Report `refusal` if this source has not reported its class before.
     ///
     /// Neither the workload id nor the stored bytes appear: both are attacker-influenced,
     /// and this is a line-oriented record.
     pub(super) fn report_once(&self, refusal: AdmissionRecordRefusal) {
+        self.report_once_into(refusal, &mut std::io::stderr());
+    }
+
+    fn report_once_into(&self, refusal: AdmissionRecordRefusal, sink: &mut impl std::io::Write) {
         // Class C: `discriminant_index` is `0..COUNT` by construction — a match over the
         // closed enum with one arm per variant and no catch-all, pinned by
         // `every_class_has_a_distinct_index_inside_the_published_count`.
@@ -45,7 +48,10 @@ impl ReportedClasses {
         if slot.swap(true, Ordering::Relaxed) {
             return;
         }
-        eprintln!(
+        // A failed diagnostic write is dropped: the diagnostic must not be able to fail the
+        // refusal it describes.
+        let _ = writeln!(
+            sink,
             "mcp-re-proxy: an admission record in the shared store is not the configured \
              authority's current statement ({refusal}); the workload is treated as NOT \
              ADMITTED. A reachable store that answered is not an outage. Reported once per \
@@ -58,20 +64,15 @@ impl ReportedClasses {
 mod tests {
     use super::*;
 
-    /// The latch is per CLASS: the first of each is new, every repeat is suppressed.
-    ///
-    /// Asserted on the latch rather than on stderr, because what the property is about is
-    /// how many times the write can be REACHED — capturing the output would measure the
-    /// harness's ability to redirect a file descriptor instead.
+    /// The latch is per CLASS: the first of each is written, every repeat is suppressed.
     #[test]
     fn a_class_is_reported_once_and_then_suppressed() {
         let reported = ReportedClasses::default();
-        let first = reported.seen[AdmissionRecordRefusal::SignatureInvalid.discriminant_index()]
-            .swap(true, Ordering::Relaxed);
-        assert!(!first, "the first observation of a class is new");
-        let again = reported.seen[AdmissionRecordRefusal::SignatureInvalid.discriminant_index()]
-            .swap(true, Ordering::Relaxed);
-        assert!(again, "a repeat of the same class is suppressed");
+        let mut buf = Vec::new();
+        for _ in 0..3 {
+            reported.report_once_into(AdmissionRecordRefusal::SignatureInvalid, &mut buf);
+        }
+        assert_eq!(buf.iter().filter(|b| **b == b'\n').count(), 1);
     }
 
     /// Classes do not share a latch, so one noisy class cannot silence another — which is
@@ -79,10 +80,11 @@ mod tests {
     #[test]
     fn one_class_being_reported_does_not_suppress_another() {
         let reported = ReportedClasses::default();
-        reported.report_once(AdmissionRecordRefusal::SignatureInvalid);
-        let other = reported.seen[AdmissionRecordRefusal::SubjectMismatch.discriminant_index()]
-            .load(Ordering::Relaxed);
-        assert!(!other, "a different class has not been reported yet");
+        let mut buf = Vec::new();
+        reported.report_once_into(AdmissionRecordRefusal::SignatureInvalid, &mut buf);
+        reported.report_once_into(AdmissionRecordRefusal::SignatureInvalid, &mut buf);
+        reported.report_once_into(AdmissionRecordRefusal::SubjectMismatch, &mut buf);
+        assert_eq!(buf.iter().filter(|b| **b == b'\n').count(), 2);
     }
 
     /// Every class has its own latch, so the array `COUNT` sizes is exactly covered.
