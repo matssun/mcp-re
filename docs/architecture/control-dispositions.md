@@ -4770,4 +4770,4 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **If false.** A request names an authority the client never configured, and a vhost or route decision at the peer is made against it.
 **Likely owner:** none. `client.transport_server_identity` states the handshake identity, not the Host header.
 **Root relationship.** A premise of `client.transport_message_hygiene` beside `client.transport_server_identity`.
-**Severity:** `low`.
+**Severity:** `medium`.

@@ -1715,9 +1715,14 @@ fn audit_and_register(
         mode.protocol().to_owned(),
         "--registration-timeout-secs".to_owned(),
         "20".to_owned(),
-        "--registration-poll-interval-secs".to_owned(),
-        "1".to_owned(),
     ]);
+    // Only a polling contract takes a poll interval; naming one for capsule-anchor is refused.
+    if mode.protocol() == "scrapi-11" {
+        args.extend([
+            "--registration-poll-interval-secs".to_owned(),
+            "1".to_owned(),
+        ]);
+    }
     let output = run_auditor(&args);
     assert!(
         output.status.success(),

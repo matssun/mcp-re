@@ -680,7 +680,7 @@ id = "NP-265"
 title = "The client transport's Host header is derived from the expected server name, never invented"
 carrier = "mcp-re-transport/src/client.rs (MtlsClient::with_limits, host_header_value)"
 likely_owner = ""
-consequence = "low"
+consequence = "medium"
 root_relationship = "a premise of client.transport_message_hygiene beside client.transport_server_identity"
 record = "docs/architecture/control-dispositions.md#np-265"
 
