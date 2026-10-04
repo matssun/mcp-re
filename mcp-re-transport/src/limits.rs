@@ -9,9 +9,9 @@
 //! **A per-socket timeout is not an aggregate one**, and the difference is the whole reason
 //! [`DeadlineStream`] exists. `set_read_timeout` bounds each INDIVIDUAL read, so a peer
 //! trickling one byte just under it resets the inactivity timer on every byte and can
-//! extend a phase — the TLS handshake, or the response read — without bound. That is
-//! slow-loris below the per-read threshold, and it evades the zero-byte-stall guard
-//! entirely. Both phases are therefore driven through a wall-clock deadline as well.
+//! extend a phase — the TLS handshake, the request write, or the response read — without
+//! bound. That is slow-loris below the per-read threshold, and it evades the zero-byte-stall
+//! guard entirely. All three phases are therefore driven through a wall-clock deadline as well.
 
 use std::io;
 use std::io::Read;
@@ -98,7 +98,7 @@ impl<S> DeadlineStream<S> {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     format!(
-                        "aggregate handshake deadline exceeded {:?} (slow-loris trickle)",
+                        "aggregate deadline exceeded {:?} (slow-loris trickle)",
                         self.timeout
                     ),
                 ));

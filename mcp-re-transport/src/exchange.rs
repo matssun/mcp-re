@@ -8,11 +8,13 @@
 //! * the handshake is driven EXPLICITLY through its own aggregate deadline, so a server
 //!   authentication failure is distinguishable from a later IO error and the body is never
 //!   sent to an unauthenticated peer;
-//! * the bare socket is reclaimed afterwards, because the request/response phase carries
-//!   its OWN aggregate deadline rather than sharing the handshake's;
-//! * the response is read under a size cap and that second deadline, then parsed.
+//! * the request write runs under its OWN aggregate deadline, and the bare socket is
+//!   reclaimed afterwards, because the response read carries its OWN aggregate deadline
+//!   rather than sharing the handshake's or the write's;
+//! * the response is read under a size cap and that read deadline, then parsed.
 //!
-//! Both deadlines exist because a per-socket read timeout bounds each individual read, and
+//! The handshake, the request write and the response read each have an aggregate deadline
+//! because a per-socket read timeout bounds each individual read, and
 //! a peer trickling one byte just under it can extend a phase without bound.
 
 use std::io::Write;
@@ -79,11 +81,25 @@ impl MtlsClient {
         // The handshake is complete; reclaim the bare socket for the request/
         // response phase (which has its OWN aggregate deadline below).
         let tcp = handshake_io.into_inner();
-        let mut stream = StreamOwned::new(conn, tcp);
 
-        stream.write_all(request_head).map_err(write_error)?;
-        stream.write_all(request_body).map_err(write_error)?;
-        stream.flush().map_err(write_error)?;
+        // The request write runs under its OWN aggregate deadline: a peer draining the
+        // upload one byte at a time just under the per-socket write timeout would
+        // otherwise extend the write without bound. `None` disables it, as on the read side.
+        let write_deadline = self
+            .limits
+            .write_timeout
+            .and_then(|t| std::time::Instant::now().checked_add(t));
+        let mut write_stream = StreamOwned::new(
+            conn,
+            DeadlineStream::new(tcp, write_deadline, self.limits.write_timeout),
+        );
+        write_stream.write_all(request_head).map_err(write_error)?;
+        write_stream.write_all(request_body).map_err(write_error)?;
+        write_stream.flush().map_err(write_error)?;
+
+        // Reclaim the bare socket so the response read keeps its own deadline.
+        let StreamOwned { conn, sock } = write_stream;
+        let mut stream = StreamOwned::new(conn, sock.into_inner());
 
         // MCPS-093 (audit M-3 residual): a single Instant-based AGGREGATE read
         // deadline over the WHOLE response-read phase, mirroring the proxy's

@@ -9316,7 +9316,7 @@ tested_symbols = [
 [[unit]]
 id = "client.transport_message_hygiene"
 class = "V0"
-description = "What the client transport is willing to put on the wire and read back off it: a request whose header values carry CR or LF is refused rather than sanitised, transport-owned headers cannot be supplied by a caller, and a response is rejected rather than silently repaired when its framing is ambiguous — obs-fold, a bare LF in the header block, transfer-encoding, a duplicated content-length, a missing terminator, or a body shorter than the length it declared. Reads are bounded by a byte ceiling and by an aggregate deadline, so neither a stalled peer nor a trickling one is unbounded."
+description = "What the client transport is willing to put on the wire and read back off it: a request whose header values carry CR or LF is refused rather than sanitised, transport-owned headers cannot be supplied by a caller, and a response is rejected rather than silently repaired when its framing is ambiguous — obs-fold, a bare LF in the header block, transfer-encoding, a duplicated content-length, a missing terminator, or a body shorter than the length it declared. Reads are bounded by a byte ceiling and by an aggregate deadline, and the request write by its own aggregate deadline, so neither a stalled peer nor a trickling one is unbounded."
 paths = [
   "mcp-re-transport/src/request.rs",
   "mcp-re-transport/src/response.rs",
@@ -9363,6 +9363,7 @@ tested_symbols = [
   "//mcp-re-transport:dos_hardening_test#handshake_stall_times_out_not_hangs",
   "//mcp-re-transport:dos_hardening_test#oversized_response_is_rejected_not_oom",
   "//mcp-re-transport:dos_hardening_test#slow_trickle_response_aborts_at_aggregate_deadline",
+  "//mcp-re-transport:dos_hardening_test#slow_drain_request_write_aborts_at_aggregate_deadline",
 ]
 
 # v0.17 policy-authority slice. `mcp-re-policy` was wholly unowned — 0/6 files — and the

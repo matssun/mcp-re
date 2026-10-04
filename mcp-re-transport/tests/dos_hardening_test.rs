@@ -398,3 +398,66 @@ fn handshake_byte_trickle_aborts_at_aggregate_deadline() {
         "round_trip must abort near the aggregate handshake deadline, not run for the full trickle (took {elapsed:?})"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 5. A peer that completes the handshake and then drains the request upload
+//    slowly forever must be cut off by the AGGREGATE write deadline.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn slow_drain_request_write_aborts_at_aggregate_deadline() {
+    use std::sync::mpsc;
+
+    let server_ca = make_ca();
+    let client_ca = make_ca();
+    let (server_cert, server_key) =
+        make_leaf(&server_ca, vec![dns(SERVER_NAME)], Some(SERVER_NAME), false);
+    let server_cfg = server_config(vec![server_cert], server_key, &client_ca);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    // Detached: drains plaintext ~20 KB/s and never replies.
+    let _server = thread::spawn(move || {
+        let (sock, _) = listener.accept().expect("accept");
+        let conn = rustls::ServerConnection::new(server_cfg).expect("server conn");
+        let mut tls = rustls::StreamOwned::new(conn, sock);
+        let _ = tls.conn.complete_io(&mut tls.sock);
+        let mut scratch = [0u8; 1024];
+        while tls.read(&mut scratch).is_ok() {
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+
+    let client_config = client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
+    let limits = ClientLimits {
+        connect_timeout: Some(Duration::from_secs(2)),
+        read_timeout: Some(Duration::from_millis(1000)),
+        write_timeout: Some(Duration::from_millis(1000)),
+        max_response_bytes: 16 * 1024 * 1024,
+    };
+    let client = MtlsClient::with_limits(client_config, SERVER_NAME, limits).expect("client");
+
+    let (tx, rx) = mpsc::channel();
+    let start = Instant::now();
+    thread::spawn(move || {
+        let result = client.round_trip(addr, &vec![b'x'; 64 * 1024 * 1024]);
+        let _ = tx.send(result);
+    });
+    let result = rx
+        .recv_timeout(Duration::from_secs(6))
+        .expect("round_trip must abort at the aggregate write deadline, not drain unbounded");
+    let elapsed = start.elapsed();
+
+    match result {
+        Err(TransportError::Timeout(msg)) => assert!(
+            !msg.contains("handshake"),
+            "a write-phase timeout must not be labelled a handshake one: {msg}"
+        ),
+        other => panic!("a slow-drain upload must surface as a Timeout, got {other:?}"),
+    }
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "round_trip must abort near the aggregate write deadline (took {elapsed:?})"
+    );
+}
