@@ -7005,6 +7005,9 @@ tested_symbols = [
   # The two readings of "where the authority ends" agree, which is what lets the join be
   # stated in terms of the first `/` at all.
   "//mcp-re-proxy:proxy_ext_unit_test#outbound_fetch::url::tests::the_host_read_back_is_the_one_the_base_named",
+  # The guard reads the authority the client reads: a backslash ends it, and a spelling two readers could read differently has no host.
+  "//mcp-re-proxy:proxy_ext_unit_test#outbound_fetch::url::tests::a_backslash_ends_the_authority_where_the_client_ends_it",
+  "//mcp-re-proxy:proxy_ext_unit_test#outbound_fetch::url::tests::an_authority_two_readers_could_read_differently_has_no_host",
   # THE REDIRECT. A `302 Location:` names an authority nothing here vetted, chosen by
   # whoever answered, and on a credential path that is the whole attack: the guard saw the
   # first URL and no other. The control drives a real responder that answers `302` at a
@@ -8633,6 +8636,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#trust_plane::trust_cache::tests::an_eviction_cannot_lengthen_the_evicted_bindings_deadline",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::trust_cache::tests::evict_drops_an_in_window_entry_forcing_re_resolution",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::trust_cache::tests::a_pre_epoch_clock_reading_closes_every_window_instead_of_freezing_it",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::trust_cache::tests::a_backward_wall_step_cannot_lengthen_the_window",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::trust_cache::tests::a_suspend_the_monotonic_clock_misses_still_advances_the_window",
   # --- Tier 2 ---
   "//mcp-re-proxy:proxy_unit_test#trust_plane::live_trust::tests::store_revocation_is_visible_on_the_next_request_with_no_t_wait",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::live_trust::tests::store_outage_fails_closed_never_active",
