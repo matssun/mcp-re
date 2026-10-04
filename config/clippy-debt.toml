@@ -190,7 +190,7 @@ count = 33
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 86
+count = 85
 
 # 0 -> 4: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]
