@@ -62,8 +62,13 @@ pub(super) struct PinDocument {
     pub(super) algorithm: String,
     /// The public key: `x`/`y` base64url for `ES256`, `x` alone for `EdDSA`.
     pub(super) public_key: PinnedPublicKey,
-    /// SHA-256 over the canonical COSE_Key (RFC 9679 thumbprint), base64url. A short
-    /// value a human can compare across a corpus, a report and a log.
+    /// SHA-256 thumbprint of the key beside it, base64url, as computed by the tool that
+    /// cut the pin: RFC 9679 over the canonical COSE_Key for
+    /// `tools/scitt_fetch_service_key.py`, while two archived interop pins
+    /// (`interop/service-key-pin.json`, `interop/capsule-anchor/service-key-pin.json`)
+    /// carry SHA-256 over the raw key bytes. Descriptive only: `pinned_key` never checks it
+    /// against `public_key`, and the verification key is always the one decoded from
+    /// `public_key`.
     pub(super) public_key_thumbprint: String,
     /// SHA-256 over the discovery document's exact bytes, base64url — so a later reader
     /// can tell whether the document it fetches is the one the pin was cut from.
@@ -103,10 +108,10 @@ pub(super) fn pinned_key(document: &PinDocument) -> Result<CoseVerificationKey, 
             "scitt trust pin schema",
         ));
     }
-    let x = b64url_decode(&document.public_key.x)
-        .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin key encoding"))?;
     match document.algorithm.as_str() {
         "ES256" => {
+            let x = b64url_decode(&document.public_key.x)
+                .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin key encoding"))?;
             let y = document
                 .public_key
                 .y
@@ -128,7 +133,6 @@ pub(super) fn pinned_key(document: &PinDocument) -> Result<CoseVerificationKey, 
             }
             let key = VerificationKey::from_b64url(&document.public_key.x)
                 .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin ed25519"))?;
-            let _ = &x;
             Ok(CoseVerificationKey::Ed25519(key))
         }
         _ => Err(HttpProfileError::MalformedEvidence(
