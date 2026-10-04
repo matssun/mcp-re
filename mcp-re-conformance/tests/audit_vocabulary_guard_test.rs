@@ -70,10 +70,8 @@ fn read(env_key: &str) -> String {
 /// `wire_code()` match arms in `error.rs`. We scan the `=> "mcp-re...."` string
 /// literals so a newly added `McpReError` variant (with its new wire_code) is
 /// picked up automatically — exactly the frozen-taxonomy process ADR-MCPS-035
-/// relies on. We start the scan at the `fn wire_code` token so the enum
-/// `#[error("...")]` attributes are not double-counted (they carry the same
-/// strings, so the set would be identical, but scoping to `wire_code` keeps the
-/// guard reading the authority it claims to read).
+/// relies on. We start the scan at the `fn wire_code` token so the guard reads
+/// the authority it claims to read.
 fn frozen_wire_codes(error_rs: &str) -> BTreeSet<String> {
     let body = error_rs
         .split_once("fn wire_code")

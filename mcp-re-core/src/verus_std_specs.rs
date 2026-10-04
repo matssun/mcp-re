@@ -16,7 +16,7 @@ use vstd::prelude::*;
 verus! {
 
 /// Makes the frozen error taxonomy nameable in a specification without verifying the
-/// `thiserror`-derived `Display` impl that travels with it.
+/// hand-written `Display` impl (rendered from `wire_code`) that travels with it.
 ///
 /// Trusted only in the sense that the verifier treats `McpReError` as an opaque datatype
 /// with the variants declared here; no behavioural claim rides on it.
