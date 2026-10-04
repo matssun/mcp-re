@@ -222,12 +222,12 @@ theorem = "THM-0021"
 conjunct = "the covered Content-Digest agreed with the body"
 path = "mcp-re-http-profile/src/verify/floor/response.rs"
 anchor = """
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?
+        .ok_or(HttpProfileError::MissingEvidence("response signature-input"))?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(
         &parsed.components,
@@ -236,12 +236,12 @@ anchor = """
     )?;
 """
 weakening = """
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     let _ = verify_content_digest_sha256(digest_header, &response.body);
 
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?
+        .ok_or(HttpProfileError::MissingEvidence("response signature-input"))?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(
         &parsed.components,
@@ -353,12 +353,12 @@ theorem = "THM-0022"
 conjunct = "the covered Content-Digest agreed with the body"
 path = "mcp-re-http-profile/src/verify/floor/response.rs"
 anchor = """
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?
+        .ok_or(HttpProfileError::MissingEvidence("response signature-input"))?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {
@@ -372,12 +372,12 @@ anchor = """
     let resolved_server_actor =
 """
 weakening = """
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     let _ = verify_content_digest_sha256(digest_header, &response.body);
 
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?
+        .ok_or(HttpProfileError::MissingEvidence("response signature-input"))?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {
@@ -3890,10 +3890,10 @@ theorem = "THM-0110"
 conjunct = "a body shorter than the content-length it declared is an ERROR, never a shorter body the caller believes is complete"
 path = "mcp-re-transport/src/response.rs"
 anchor = """
-        if declared_len != body_len {
+    if declared_len != body_len {
 """
 weakening = """
-        if false {
+    if false {
 """
 expect_red = [
   "//mcp-re-transport:mcp_re_transport_test#response::framing_tests::a_truncated_body_is_rejected_not_silently_shortened",
