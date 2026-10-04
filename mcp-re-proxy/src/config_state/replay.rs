@@ -341,12 +341,15 @@ fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
 /// `Err` means the request names no state at all — a rejected input form, or a tier this
 /// posture does not accept. There is nothing to put in `DeploymentConfigState` for those,
 /// which is the point: they are not deployments.
+///
+/// The state is `None` exactly when a violation was produced.
 pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<ReplayState>, Vec<String>) {
     match classify(config) {
         Err(refusal) => (None, vec![refusal]),
         Ok(requested) => {
             let violations = locator_violations(requested, config);
-            (build(requested, config), violations)
+            let state = build(requested, config).filter(|_| violations.is_empty());
+            (state, violations)
         }
     }
 }
@@ -489,11 +492,12 @@ mod tests {
             }),
         ];
         for (flag, mutate) in cases {
-            let (_, violations) = run(mutate);
+            let (state, violations) = run(mutate);
             assert!(
                 violations.iter().any(|v| v.contains(flag)),
                 "{flag}: not refused — {violations:?}"
             );
+            assert!(state.is_none(), "{flag}: a refused locator still became a validated state");
         }
     }
 
