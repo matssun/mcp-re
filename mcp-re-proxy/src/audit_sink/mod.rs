@@ -242,7 +242,7 @@ mod tests {
     fn one_record_writes_exactly_one_line_for_any_actor_id() {
         let record = AuditRecord {
             subject: AuditSubject::request_accepted(
-                AuthorizationFacet::NotConfigured,
+                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                 AdmissionFacet::NotConfigured,
             ),
             actor_id: Some("client:example.com:a\nmcp-re-proxy: audit seq=8 status=200".into()),
@@ -265,7 +265,7 @@ mod tests {
         let sink = CollectingAuditSink::new();
         let record = AuditRecord {
             subject: AuditSubject::request_accepted(
-                AuthorizationFacet::NotConfigured,
+                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                 AdmissionFacet::NotConfigured,
             ),
             actor_id: None,
@@ -291,7 +291,7 @@ mod tests {
         let sink = CollectingAuditSink::new();
         sink.record(&AuditRecord {
             subject: AuditSubject::request_accepted(
-                AuthorizationFacet::NotConfigured,
+                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                 AdmissionFacet::NotConfigured,
             ),
             actor_id: Some("actor-a".into()),
@@ -331,7 +331,7 @@ mod tests {
     fn the_ceiling_a_record_is_admitted_at_is_chosen_by_its_attribution() {
         let attributed = AuditRecord {
             subject: AuditSubject::request_accepted(
-                AuthorizationFacet::NotConfigured,
+                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                 AdmissionFacet::NotConfigured,
             ),
             actor_id: Some("client:example.com:a".into()),
@@ -483,7 +483,7 @@ mod tests {
         let first = STDERR_AUDIT_SEQ.load(std::sync::atomic::Ordering::SeqCst);
         StderrAuditSink.record(&AuditRecord {
             subject: AuditSubject::request_accepted(
-                AuthorizationFacet::NotConfigured,
+                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                 AdmissionFacet::NotConfigured,
             ),
             actor_id: Some("actor-a".into()),

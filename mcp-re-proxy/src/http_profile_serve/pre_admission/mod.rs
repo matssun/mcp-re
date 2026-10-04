@@ -162,7 +162,7 @@ impl HttpProfileProxy {
             // authorization fact, and an unconfigured deployment says so rather than reading
             // as an allow (ADR-MCPRE-066 §1.1, invariant 5).
             crate::audit_record::AuditSubject::request_accepted(
-                admitted.authorized.audit_facet(),
+                &admitted.authorized,
                 // Read back from the exchange, never re-derived from the fact that nothing
                 // refused. `None` cannot occur on this path — an accepted request reached
                 // the gate — and `NotReached` is the honest reading if it ever did.

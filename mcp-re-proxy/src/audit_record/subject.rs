@@ -36,7 +36,7 @@ use crate::admission_enforcer::AdmissionRefusalClass;
 use crate::admission_enforcer::AdmissionStatement;
 
 use crate::audit_record::text::AuditField;
-use crate::authorization::AuthorizationFacet;
+use crate::authorization::{AuthorizationFacet, AuthorizationPosture};
 
 /// Which half of the exchange a record is about — and therefore which authorities may speak.
 ///
@@ -72,11 +72,11 @@ enum Subject {
 }
 
 impl AuditSubject {
-    /// A record for an ACCEPTED request. The facet is required, not defaulted.
-    pub fn request_accepted(authorization: AuthorizationFacet, admission: AdmissionFacet) -> Self {
+    /// A record for an ACCEPTED request, under the posture it was admitted with — a refusal cannot be named.
+    pub fn request_accepted(posture: &AuthorizationPosture, admission: AdmissionFacet) -> Self {
         AuditSubject(Subject::Request {
             event: AuditEvent::request_accepted(),
-            authorization,
+            authorization: posture.audit_facet(),
             admission: AdmissionStatement::of(admission),
         })
     }
@@ -214,7 +214,8 @@ mod tests {
             AuthorizationFacet::Refused(crate::authorization::AuthorizationRefusalFacet::ByPolicy(
                 mcp_re_policy::PolicyError::AuthorizationScopeDenied,
             ));
-        let subject = AuditSubject::request_accepted(facet.clone(), AdmissionFacet::NotConfigured);
+        let subject =
+            AuditSubject::request_rejected(None, facet.clone(), AdmissionFacet::NotConfigured);
         let own = facet.audit_fields();
         assert!(
             !own.is_empty(),
@@ -309,7 +310,7 @@ mod tests {
         let err = mcp_re_core::McpReError::ReplayDetected;
         let request_side = [
             AuditSubject::request_accepted(
-                AuthorizationFacet::NotConfigured,
+                &AuthorizationPosture::NoPolicyConfigured,
                 AdmissionFacet::LiveConfirmed,
             ),
             AuditSubject::request_rejected(
@@ -356,7 +357,7 @@ mod tests {
     #[test]
     fn the_admission_and_authorization_coordinates_are_both_present_and_distinct() {
         let subject = AuditSubject::request_accepted(
-            AuthorizationFacet::NotConfigured,
+            &AuthorizationPosture::NoPolicyConfigured,
             AdmissionFacet::Degraded,
         );
         let names: Vec<_> = subject.audit_fields().iter().map(|f| f.name).collect();

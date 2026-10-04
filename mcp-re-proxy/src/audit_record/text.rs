@@ -446,7 +446,10 @@ mod tests {
             for admission in admissions {
                 for authorization in &authorizations {
                     for subject in [
-                        AuditSubject::request_accepted(authorization.clone(), admission),
+                        AuditSubject::request_accepted(
+                            &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
+                            admission,
+                        ),
                         AuditSubject::request_rejected(
                             Some(&mcp_re_core::McpReError::DigestMismatch),
                             authorization.clone(),

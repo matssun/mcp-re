@@ -185,7 +185,7 @@ mod tests {
     fn a_whole_record_renders_its_own_six_fields_in_order_with_the_minted_decision_spellings() {
         let accepted = AuditRecord {
             subject: AuditSubject::request_accepted(
-                AuthorizationFacet::NotConfigured,
+                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                 AdmissionFacet::NotConfigured,
             ),
             actor_id: Some("did:example:agent-1".to_owned()),
@@ -247,7 +247,7 @@ mod tests {
         for admission in admissions {
             for authorization in &authorizations {
                 subjects.push(AuditSubject::request_accepted(
-                    authorization.clone(),
+                    &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                     admission,
                 ));
                 subjects.push(AuditSubject::request_rejected(

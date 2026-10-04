@@ -490,17 +490,17 @@ mod tests {
     #[test]
     fn the_audit_record_answers_which_decision_and_which_evidence_separately() {
         let d = decision(PdpDecisionOutcome::Permit, "read");
-        let facet = authorize(
+        let posture = authorize(
             Some(installed().as_ref()),
             &request_carrying(Some(&d)),
             CALL,
             None,
         )
-        .expect("permit")
-        .audit_facet();
+        .expect("permit");
+        let facet = posture.audit_facet();
         let record = crate::audit_record::AuditRecord {
             subject: crate::audit_record::AuditSubject::request_accepted(
-                facet.clone(),
+                &posture,
                 crate::admission_enforcer::AdmissionFacet::LiveConfirmed,
             ),
             actor_id: None,

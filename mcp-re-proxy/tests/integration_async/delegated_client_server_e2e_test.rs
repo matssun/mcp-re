@@ -773,7 +773,7 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
     assert_eq!(
         accepted.subject,
         mcp_re_proxy::AuditSubject::request_accepted(
-            mcp_re_proxy::authorization::AuthorizationFacet::NotConfigured,
+            &mcp_re_proxy::authorization::AuthorizationPosture::NoPolicyConfigured,
             mcp_re_proxy::admission_enforcer::AdmissionFacet::NotConfigured
         ),
         "no policy is deployed, and the record says exactly that — never `Authorized`"
