@@ -112,9 +112,14 @@ pub(super) fn render_gateway_failure(
         ProxyError::Transport(_) => "remote leg unavailable",
         ProxyError::FailedClosed(_) => "response failed verification",
     };
-    // The frozen `mcp-re.*` reason, when there is one. The local client is
-    // inside the trust boundary, so naming why verification failed helps an
-    // operator and tells an attacker on the far side nothing it did not choose.
+    // The frozen `mcp-re.*` reason, when there is one, is returned to whoever
+    // reached this listener; nothing here authenticates that caller (see
+    // `accepted_authority.rs`: reachability, not identity). The reason is not
+    // sensitive relative to what reachability already grants: any caller that
+    // passes the head guards can have requests signed under this client's
+    // identity, which is strictly more than knowing why a reply failed
+    // verification, and it tells an attacker on the far side nothing it did
+    // not choose.
     //
     // Assembled BEFORE the body rather than written back into it through
     // `body["error"]["data"]`: that index panics unless `error` is an object,
