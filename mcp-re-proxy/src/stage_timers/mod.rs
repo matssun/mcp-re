@@ -70,7 +70,11 @@ pub struct InFlight(bool);
 
 impl InFlight {
     pub fn enter() -> Self {
-        if !enabled() {
+        Self::enter_when(enabled())
+    }
+
+    fn enter_when(on: bool) -> Self {
+        if !on {
             return InFlight(false);
         }
         let a = acc();
@@ -176,9 +180,13 @@ pub struct Timed {
 
 impl Timed {
     pub fn start(stage: Stage) -> Self {
+        Self::start_when(stage, enabled())
+    }
+
+    fn start_when(stage: Stage, on: bool) -> Self {
         Self {
             stage,
-            started: enabled().then(Instant::now),
+            started: on.then(Instant::now),
         }
     }
 }
@@ -349,10 +357,8 @@ mod tests {
     /// a duration, because a duration would measure the machine.
     #[test]
     fn a_timer_started_while_disabled_reads_no_clock() {
-        if enabled() {
-            return; // MCP_RE_STAGE_TIMERS is set in this process; the off path is not under test.
-        }
-        assert!(Timed::start(Stage::Total).started.is_none());
+        assert!(Timed::start_when(Stage::Total, false).started.is_none());
+        assert!(Timed::start_when(Stage::Sign, true).started.is_some());
     }
 
     /// With timing off, the in-flight counter is never entered — so `Drop` has nothing to
@@ -360,10 +366,8 @@ mod tests {
     /// pair. The guard carries the flag that makes its own drop a no-op.
     #[test]
     fn an_inflight_guard_taken_while_disabled_is_inert() {
-        if enabled() {
-            return;
-        }
-        assert!(!InFlight::enter().0);
+        assert!(!InFlight::enter_when(false).0);
+        assert!(InFlight::enter_when(true).0);
     }
 
     /// The rewrite period is non-zero, checked at COMPILE time.
