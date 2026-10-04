@@ -4688,3 +4688,13 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** `proxy.serving_drain` states the drain and its statement claims nothing about teardown duration.
 **Root relationship.** A premise of `proxy.serving_drain`.
 **Severity:** `high`.
+
+## NP-258 — a panic under the trust cache's lock does not latch the replica into refusing every lookup
+
+**Controls:** `mcp-re-proxy` `trust_plane::trust_cache::tests::a_poisoned_cache_lock_is_recovered_rather_than_latched_into_refusal`.
+**Carrier:** `mcp-re-proxy/src/trust_plane/trust_cache.rs`.
+**Statement.** *Every write under the trust cache's locks inserts, removes or flags one whole entry, so a lock poisoned by a panicking holder is recovered rather than latched: lookups are still answered from the surviving entries, each bounded by its own deadline, and a flush still reaches them.*
+**If false.** One panic under the lock refuses every trust lookup on the replica for the process lifetime, and nothing reports it.
+**Likely owner:** none. `proxy.trust_resolution_window` states the window `T`, and THM-0097 disclaims liveness.
+**Root relationship.** Beside NP-134: that proposition covers the cache stopping caching before it stops answering.
+**Severity:** `medium`.

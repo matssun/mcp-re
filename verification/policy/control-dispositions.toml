@@ -613,6 +613,14 @@ consequence = "high"
 root_relationship = "a premise of proxy.serving_drain"
 record = "docs/architecture/control-dispositions.md#np-257"
 
+[[proposition]]
+id = "NP-258"
+title = "A panic under the trust cache's lock does not latch the replica into refusing every lookup"
+carrier = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
+likely_owner = "none. proxy.trust_resolution_window states the window T, and THM-0097 disclaims liveness, so it does not state that a panicked lock holder leaves lookups answerable."
+consequence = "medium"
+root_relationship = "Beside NP-134: that proposition covers the cache stopping caching before it stops answering, and this one covers a poisoned lock not stopping it from answering."
+record = "docs/architecture/control-dispositions.md#np-258"
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14788,4 +14796,20 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#deployment_request::signing_source::channel_role::tests::the_default_channel_key_is_an_exported_file_naming_nothing"
 decision = "new-proposition"
 proposition = "NP-133"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20271"
+project = "mcp-re-proxy"
+control = "src/lib.rs#trust_plane::trust_cache::tests::a_negative_ttl_longer_than_t_is_cut_to_t"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20272"
+project = "mcp-re-proxy"
+control = "src/lib.rs#trust_plane::trust_cache::tests::a_poisoned_cache_lock_is_recovered_rather_than_latched_into_refusal"
+decision = "new-proposition"
+proposition = "NP-258"
 recorded = "2026-10-04"

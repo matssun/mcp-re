@@ -55,27 +55,49 @@ pub const DEFAULT_NEGATIVE_TTL_SECS: i64 = 5;
 /// controllable clock so the window arithmetic is deterministic.
 pub type UnixClock = Box<dyn Fn() -> i64 + Send + Sync>;
 
-/// The production [`UnixClock`]: reads the system clock. A pre-epoch reading has no
-/// representable Unix instant, so it yields [`i64::MAX`] rather than panicking —
-/// the fail-closed direction for an expiry comparison. Every cached window then
-/// reads as closed, every lookup re-resolves live against the inner store, and
-/// [`BoundedTrustCache`] declines to cache an expiry it cannot represent. The
-/// opposite clamp would place every entry written under a real clock permanently
-/// inside its window.
+/// The production [`UnixClock`]: wall-clock Unix seconds that never run backward
+/// and never advance slower than the monotonic clock, so a backward wall step
+/// cannot lengthen `T` and a suspend the monotonic clock misses is still counted.
+/// An unrepresentable wall reading yields [`i64::MAX`], which the ratchet holds, so
+/// every window reads closed and every lookup resolves live.
 pub fn system_clock() -> UnixClock {
     use std::time::SystemTime;
     use std::time::UNIX_EPOCH;
-    Box::new(|| unix_seconds(SystemTime::now().duration_since(UNIX_EPOCH).ok()))
+    let origin = std::time::Instant::now();
+    let floor = std::sync::atomic::AtomicI64::new(i64::MIN);
+    Box::new(move || {
+        let mono = whole_seconds(Some(origin.elapsed()));
+        let wall = whole_seconds(SystemTime::now().duration_since(UNIX_EPOCH).ok());
+        ratchet(&floor, wall, mono)
+    })
 }
 
-/// Map an elapsed-since-epoch reading to Unix seconds. `None` (the reading predates
-/// the epoch) and a count too large for `i64` both yield [`i64::MAX`]: an unusable
+/// The reading is `mono` plus the highest wall-minus-mono offset seen, so it never
+/// falls, advances at least as fast as `mono`, and a wall clock running ahead raises it.
+fn ratchet(floor: &std::sync::atomic::AtomicI64, wall: i64, mono: i64) -> i64 {
+    let offset = wall.saturating_sub(mono);
+    let prior = floor.fetch_max(offset, std::sync::atomic::Ordering::SeqCst);
+    prior.max(offset).saturating_add(mono)
+}
+
+/// Map an elapsed reading to whole seconds. `None` (a wall reading before the epoch)
+/// and a count too large for `i64` both yield [`i64::MAX`]: an unusable
 /// reading must close every cached window, not open one.
-fn unix_seconds(since_epoch: Option<std::time::Duration>) -> i64 {
+fn whole_seconds(since_epoch: Option<std::time::Duration>) -> i64 {
     match since_epoch {
         Some(d) => i64::try_from(d.as_secs()).unwrap_or(i64::MAX),
         None => i64::MAX,
     }
+}
+
+/// Take a guard whether or not a panicking holder poisoned the lock. Every write
+/// under these locks inserts, removes or flags one whole entry, so a recovered map
+/// holds no torn binding and each entry is still bounded by its own deadline;
+/// latching the poison would refuse every lookup for the process lifetime.
+fn recover<T>(
+    lock: std::sync::LockResult<std::sync::MutexGuard<'_, T>>,
+) -> std::sync::MutexGuard<'_, T> {
+    lock.unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// A cached resolution outcome. The full positive result (the key) is cached so a
@@ -146,18 +168,18 @@ pub struct BoundedTrustCache {
 
 /// How often (in cache writes) an expired-entry sweep runs.
 ///
-/// An expired entry is ignored on read but was never REMOVED there, and nothing in
-/// the tree called `prune`. The keyid gate precedes trust resolution, so every
-/// distinct `keyid` an unauthenticated peer presents produced one permanent entry:
-/// steady, remotely-driven growth for the process lifetime. Sweeping on every write
-/// would be O(n); a cadence amortises it.
+/// An expired entry is ignored on read, so only a sweep removes it. The serving seam
+/// resolves only a keyid the `--trust` signer directory names (`app.rs`
+/// `build_actor_resolver` gates on `signer_for(kid)`), so the key space is the
+/// enrolled set and the sweep reclaims entries a trust reload retired. Sweeping on
+/// every write would be O(n); a cadence amortises it.
 const PRUNE_EVERY_N_WRITES: u64 = 64;
 
 /// Ceiling on cached entries. Past it the cache stops CACHING (it never stops
 /// answering): the resolution still happens and the request still gets its answer,
 /// it is simply resolved live next time. That direction is always safe — more live
-/// resolution can only tighten trust, never widen it — which is why this is a skipped
-/// write rather than the fail-closed refusal a replay store must give.
+/// resolution can only tighten trust, never widen it — a skipped write, not a replay
+/// store's refusal. Defence in depth against the serving seam's key space changing.
 const MAX_CACHE_ENTRIES: usize = 100_000;
 
 impl BoundedTrustCache {
@@ -171,8 +193,8 @@ impl BoundedTrustCache {
     /// and `negative_ttl_secs` for not-found/malformed negatives.
     ///
     /// `t_secs` is the documented revocation exposure window. `negative_ttl_secs`
-    /// should be short (and `<= t_secs`) so rotation keys propagate promptly;
-    /// values are clamped to non-negative.
+    /// should be short so rotation keys propagate promptly; both are clamped to
+    /// non-negative, and the negative TTL to at most `T`.
     pub fn new(
         inner: Box<dyn TrustResolver + Send + Sync>,
         t_secs: i64,
@@ -182,7 +204,7 @@ impl BoundedTrustCache {
         BoundedTrustCache {
             inner,
             t_secs: t_secs.max(0),
-            negative_ttl_secs: negative_ttl_secs.max(0),
+            negative_ttl_secs: negative_ttl_secs.clamp(0, t_secs.max(0)),
             clock,
             cache: Mutex::new(HashMap::new()),
             writes_since_prune: Mutex::new(0),
@@ -201,7 +223,7 @@ impl BoundedTrustCache {
     /// (test/inspection aid).
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn len(&self) -> usize {
-        self.cache.lock().map(|c| c.len()).unwrap_or(0)
+        recover(self.cache.lock()).len()
     }
 
     /// Whether the cache holds no entries.
@@ -230,17 +252,9 @@ impl BoundedTrustCache {
 
     /// Look up a still-live cache entry. Returns the reconstructed result on a hit
     /// within the window, or `None` if the entry is absent, invalidated, or past its
-    /// window — all three take the live re-resolution path. A poisoned cache mutex is an
-    /// operational failure (fail closed): surfaced as `Some(Err(Unavailable))`.
+    /// window — all three take the live re-resolution path.
     fn cached(&self, key: &str, now: i64) -> Option<Result<VerificationKey, TrustResolverError>> {
-        let cache = match self.cache.lock() {
-            Ok(c) => c,
-            Err(e) => {
-                return Some(Err(TrustResolverError::Unavailable {
-                    details: format!("trust cache mutex poisoned: {e}"),
-                }))
-            }
-        };
+        let cache = recover(self.cache.lock());
         let entry = cache.get(key)?;
         if entry.invalidated {
             return None;
@@ -252,8 +266,7 @@ impl BoundedTrustCache {
         }
     }
 
-    /// Store `outcome` for `key` with `ttl` seconds from `now`. A poisoned mutex
-    /// drops the write (the request still gets its answer; only caching is lost).
+    /// Store `outcome` for `key` with `ttl` seconds from `now`.
     ///
     /// A write that replaces an INVALIDATED entry inherits that entry's expiry as a
     /// ceiling, so re-resolving a flushed or evicted binding can only shorten its
@@ -261,17 +274,14 @@ impl BoundedTrustCache {
     /// (`now + ttl` overflows) or that has already passed is not stored at all: the
     /// binding resolves live next time.
     fn store(&self, key: String, outcome: CachedOutcome, now: i64, ttl: i64) {
-        let Ok(mut cache) = self.cache.lock() else {
-            return;
-        };
+        let mut cache = recover(self.cache.lock());
         // Opportunistic sweep. Correctness never depended on eviction — an expired
         // entry is ignored on read — but memory did, and nothing called `prune`.
-        if let Ok(mut writes) = self.writes_since_prune.lock() {
-            *writes = writes.saturating_add(1);
-            if *writes >= PRUNE_EVERY_N_WRITES {
-                *writes = 0;
-                cache.retain(|_, e| e.expires_at > now);
-            }
+        let mut writes = recover(self.writes_since_prune.lock());
+        *writes = writes.saturating_add(1);
+        if *writes >= PRUNE_EVERY_N_WRITES {
+            *writes = 0;
+            cache.retain(|_, e| e.expires_at > now);
         }
         let ceiling = cache
             .get(&key)
@@ -309,9 +319,7 @@ impl BoundedTrustCache {
     /// on read), but it bounds memory for churny key sets.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn prune(&self, now: i64) {
-        if let Ok(mut cache) = self.cache.lock() {
-            cache.retain(|_, e| e.expires_at > now);
-        }
+        recover(self.cache.lock()).retain(|_, e| e.expires_at > now);
     }
 
     /// Immediately strip the cached entry for `(signer, key_id)` of its authority to
@@ -324,15 +332,10 @@ impl BoundedTrustCache {
     /// stale-but-within-`T` active entry. The entry's original expiry is kept as the
     /// ceiling for whatever replaces it, so an eviction cannot buy the binding a
     /// fresh window; an entry whose window has already closed is dropped outright.
-    /// A poisoned cache mutex is treated as "nothing to evict" (the entry, if any, is
-    /// unreachable anyway and the next read fails closed via
-    /// [`cached`](BoundedTrustCache::cached)).
     pub fn evict(&self, signer: &str, key_id: &str) -> bool {
         let key = Self::compose_key(signer, key_id);
         let now = (self.clock)();
-        let Ok(mut cache) = self.cache.lock() else {
-            return false;
-        };
+        let mut cache = recover(self.cache.lock());
         let state = cache.get(&key).map(|e| (e.invalidated, e.expires_at));
         let Some((invalidated, expires_at)) = state else {
             return false;
@@ -361,13 +364,10 @@ impl BoundedTrustCache {
     /// than widen it: the deadline by which a binding must be re-checked against the
     /// inner store is never pushed out by flushing. Bindings whose windows have
     /// already closed are dropped. Returns the number of serving entries
-    /// invalidated. A poisoned lock invalidates nothing and returns 0 — the
-    /// bounded-`T` fallback still caps the exposure window.
+    /// invalidated.
     pub fn clear(&self) -> usize {
         let now = (self.clock)();
-        let Ok(mut cache) = self.cache.lock() else {
-            return 0;
-        };
+        let mut cache = recover(self.cache.lock());
         cache.retain(|_, e| e.expires_at > now);
         let mut invalidated = 0usize;
         for entry in cache.values_mut() {
@@ -511,9 +511,9 @@ mod tests {
 
     #[test]
     fn expired_entries_are_swept_rather_than_merely_ignored() {
-        // An expired entry was ignored on read but never removed, and nothing called
-        // `prune`. The keyid gate runs BEFORE trust resolution, so every distinct keyid
-        // an unauthenticated peer presents left one permanent entry behind.
+        // An expired entry is ignored on read, so only a sweep removes it. The serving
+        // seam resolves only enrolled keyids (`build_actor_resolver`), so the sweep
+        // reclaims entries a trust reload retired.
         let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
         let (clock, now) = controllable_clock(1000);
         let cache = cache_over(inner.clone(), clock);
@@ -868,7 +868,7 @@ mod tests {
         // as instant 0 would place every entry written under a real clock inside its
         // window forever, so the cache would serve active trust indefinitely and never
         // re-consult the inner store.
-        let unusable = super::unix_seconds(None);
+        let unusable = super::whole_seconds(None);
         let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
         let (clock, _now) = controllable_clock(unusable);
         let cache = cache_over(inner.clone(), clock);
@@ -906,5 +906,59 @@ mod tests {
                 .to_bytes(),
             key_from(&SEED_A).to_bytes()
         );
+    }
+
+    #[test]
+    fn a_negative_ttl_longer_than_t_is_cut_to_t() {
+        let (clock, _now) = controllable_clock(1000);
+        let cache = BoundedTrustCache::new(
+            Box::new(ScriptedResolver::new(Err(TrustResolverError::NotFound))),
+            2,
+            5,
+            clock,
+        );
+        assert!(matches!(
+            cache.resolve("did:host", "key-1"),
+            Err(TrustResolverError::NotFound)
+        ));
+        let key = BoundedTrustCache::compose_key("did:host", "key-1");
+        assert!(cache.cached(&key, 1001).is_some());
+        assert!(cache.cached(&key, 1002).is_none());
+    }
+
+    #[test]
+    fn a_poisoned_cache_lock_is_recovered_rather_than_latched_into_refusal() {
+        let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
+        let (clock, _now) = controllable_clock(1000);
+        let cache = cache_over(inner.clone(), clock);
+        cache.resolve("did:host", "key-1").expect("first resolve");
+        std::thread::scope(|s| {
+            let _ = s
+                .spawn(|| {
+                    let _g = cache.cache.lock().unwrap();
+                    panic!("poison the cache lock");
+                })
+                .join();
+        });
+        assert!(cache.cache.is_poisoned());
+        cache
+            .resolve("did:host", "key-1")
+            .expect("served from the recovered cache");
+        assert_eq!(inner.calls(), 1);
+        assert_eq!(cache.clear(), 1);
+    }
+
+    #[test]
+    fn a_backward_wall_step_cannot_lengthen_the_window() {
+        let f = AtomicI64::new(i64::MIN);
+        assert_eq!(super::ratchet(&f, 1000, 0), 1000);
+        assert_eq!(super::ratchet(&f, 900, 10), 1010);
+    }
+
+    #[test]
+    fn a_suspend_the_monotonic_clock_misses_still_advances_the_window() {
+        let f = AtomicI64::new(i64::MIN);
+        assert_eq!(super::ratchet(&f, 1000, 0), 1000);
+        assert_eq!(super::ratchet(&f, 4600, 10), 4600);
     }
 }
