@@ -78,3 +78,18 @@ impl Default for SigningSourceRequest {
         Self::File(FileSigningSourceRequest::default())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_selection_is_a_file_naming_no_seed() {
+        assert_eq!(
+            SigningSourceRequest::default(),
+            SigningSourceRequest::File(FileSigningSourceRequest {
+                seed_path: String::new()
+            })
+        );
+    }
+}

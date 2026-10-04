@@ -14773,3 +14773,19 @@ control = "src/lib.rs#config_state::admission::tests::an_admission_state_and_its
 decision = "new-proposition"
 proposition = "NP-238"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20269"
+project = "mcp-re-proxy"
+control = "src/lib.rs#deployment_request::signing_source::tests::the_default_selection_is_a_file_naming_no_seed"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20270"
+project = "mcp-re-proxy"
+control = "src/lib.rs#deployment_request::signing_source::channel_role::tests::the_default_channel_key_is_an_exported_file_naming_nothing"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-10-04"
