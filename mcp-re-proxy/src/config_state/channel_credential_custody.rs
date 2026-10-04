@@ -126,67 +126,74 @@ impl ChannelCredentialCustodyState {
 /// Recognise the requested state.
 ///
 /// The request's own tagged [`ChannelKeyRequest`] IS the state; this reads it into the
-/// machine's representation. `None` only for `ExportedFile` with no key to export —
-/// exactly the case `classify_and_validate` refuses below. `Delegated` is never fallible:
-/// the key object whose presence names the state IS the material it needs.
+/// machine's representation. Fallible when the arm names nothing — an `ExportedFile` with
+/// no key path or a `Delegated` selector that is empty — so possessing a state means a
+/// non-empty key object was named.
 ///
 /// There is no order to pick from at either level. The request names ONE custody and, under
 /// `Delegated`, ONE key object, so a configuration that once named two at a time no longer
 /// has two places to name them.
-fn classify(config: &DeploymentRequest) -> Option<ChannelCredentialCustodyState> {
+fn classify(config: &DeploymentRequest) -> Result<ChannelCredentialCustodyState, String> {
     match &config.channel_credential.key {
-        ChannelKeyRequest::Delegated(delegated) => Some(ChannelCredentialCustodyState {
+        ChannelKeyRequest::Delegated(delegated) => Ok(ChannelCredentialCustodyState {
             kind: ChannelCredentialCustodyKind::Delegated {
-                selector: selector_of(delegated),
+                selector: selector_of(delegated)?,
             },
         }),
         ChannelKeyRequest::ExportedFile(exported) if !exported.key_path.is_empty() => {
-            Some(ChannelCredentialCustodyState {
+            Ok(ChannelCredentialCustodyState {
                 kind: ChannelCredentialCustodyKind::Exported {
                     key_path: exported.key_path.clone(),
                 },
             })
         }
-        ChannelKeyRequest::ExportedFile(_) => None,
+        ChannelKeyRequest::ExportedFile(_) => Err(
+            "--tls-key is required: no delegated TLS custody selector is set, so the \
+             handshake key has no source. Give --tls-key <path>, or select a delegated TLS \
+             signer for the configured --key-source"
+                .to_string(),
+        ),
     }
 }
 
 /// Read the requested channel key object into this machine's own representation.
-fn selector_of(request: &DelegatedChannelKeyRequest) -> DelegatedChannelKey {
-    match request {
+fn selector_of(request: &DelegatedChannelKeyRequest) -> Result<DelegatedChannelKey, String> {
+    Ok(match request {
         DelegatedChannelKeyRequest::Pkcs11(token) => DelegatedChannelKey::Pkcs11 {
-            key_label: token.key_label.clone(),
+            key_label: named("--pkcs11-tls-key-label", &token.key_label)?,
         },
         DelegatedChannelKeyRequest::AwsKms(kms) => DelegatedChannelKey::AwsKms {
-            key_id: kms.key_id.clone(),
+            key_id: named("--aws-kms-tls-key-id", &kms.key_id)?,
         },
         DelegatedChannelKeyRequest::GcpKms(kms) => DelegatedChannelKey::GcpKms {
-            key_version: kms.key_version.clone(),
+            key_version: named("--gcp-kms-tls-key-version", &kms.key_version)?,
         },
+    })
+}
+
+/// A delegated selector names a key object only when it is non-empty.
+fn named(flag: &str, value: &str) -> Result<String, String> {
+    if value.is_empty() {
+        return Err(format!(
+            "{flag} is empty: a delegated TLS signer needs its key object"
+        ));
     }
+    Ok(value.to_string())
 }
 
 /// Classify the requested channel-credential custody state and check its local columns.
 ///
-/// `Delegated`'s columns are both relations to other machines — which selector is legal
-/// (X2a, against `Custody`) and that no file copy exists (X2b, against `Tls`) — so they
-/// are checked in the cross-machine pass and deliberately not here. A local validator
+/// `Delegated`'s legal selector is a relation to another machine (X2a, against `Custody`),
+/// so it is checked in the cross-machine pass and deliberately not here. A local validator
 /// that reached into another machine's fields would break the layering even when its
 /// answer was right.
 pub fn classify_and_validate(
     config: &DeploymentRequest,
 ) -> (Option<ChannelCredentialCustodyState>, Vec<String>) {
-    let state = classify(config);
-    let mut violations = Vec::new();
-    if state.is_none() {
-        violations.push(
-            "--tls-key is required: no delegated TLS custody selector is set, so the \
-             handshake key has no source. Give --tls-key <path>, or select a delegated TLS \
-             signer for the configured --key-source"
-                .to_string(),
-        );
+    match classify(config) {
+        Ok(state) => (Some(state), Vec::new()),
+        Err(violation) => (None, vec![violation]),
     }
-    (state, violations)
 }
 
 #[cfg(test)]
@@ -289,8 +296,7 @@ mod tests {
         }
     }
 
-    /// The one fallible case, and it is `Exported`: no delegated selector and no file to
-    /// export means no state at all, not an `Exported` holding an empty path.
+    /// No file to export means no state at all, not an `Exported` holding an empty path.
     #[test]
     fn the_exported_state_cannot_start_without_the_key_it_exports() {
         let (state, violations) = run(|c| c.channel_credential.key = exported(""));
@@ -301,9 +307,7 @@ mod tests {
         );
     }
 
-    /// `Delegated` is never fallible: the key object whose presence names the state is the
-    /// material it needs. This is what makes X2b safe to ask of the state — the clause
-    /// fires only on `Delegated`, which always exists when it applies.
+    /// A delegated state naming its key object is `NonExporting` and needs no file key.
     #[test]
     fn the_delegated_state_does_not_want_that_key() {
         let (state, violations) = run(|c| delegate(c, pkcs11_channel_key("tls")));
@@ -312,6 +316,42 @@ mod tests {
             Some(PrivateKeyExposure::NonExporting)
         );
         assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
+    fn a_delegated_state_cannot_start_without_the_key_object_it_names() {
+        let cases = [
+            (
+                DelegatedChannelKeyRequest::Pkcs11(Pkcs11ChannelKeyRequest {
+                    key_label: String::new(),
+                }),
+                "--pkcs11-tls-key-label",
+            ),
+            (
+                DelegatedChannelKeyRequest::AwsKms(AwsKmsChannelKeyRequest {
+                    key_id: String::new(),
+                }),
+                "--aws-kms-tls-key-id",
+            ),
+            (
+                DelegatedChannelKeyRequest::GcpKms(GcpKmsChannelKeyRequest {
+                    key_version: String::new(),
+                }),
+                "--gcp-kms-tls-key-version",
+            ),
+        ];
+        for (key, flag) in cases {
+            let (state, violations) = run(|c| delegate(c, key));
+            assert!(state.is_none(), "{flag}: a delegated state was built over no key");
+            assert!(
+                violations.iter().any(|v| v.contains(flag)),
+                "{flag}: {violations:?}"
+            );
+            assert!(
+                violations.iter().all(|v| !v.contains("--tls-key is required")),
+                "{flag}: {violations:?}"
+            );
+        }
     }
 
     /// The generic projection control (ADR-MCPRE-067 §21): the two ROLES answer the custody

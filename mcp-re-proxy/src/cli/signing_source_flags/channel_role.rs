@@ -26,7 +26,7 @@ impl SigningSourceFlags {
     /// The wording is unchanged, so an operator who hit the old boundary refusal reads the
     /// same sentence.
     pub(super) fn channel_key_request(&self) -> Result<ChannelKeyRequest, String> {
-        match (self.tls_key.as_ref(), self.channel_key()) {
+        match (self.tls_key.as_ref(), self.channel_key()?) {
             (Some(_), Some(_)) => Err(
                 "TLS signing is delegated XOR exported (ADR-MCPS-028 §G): a delegated-TLS \
                  key source must not also be given an exported --tls-key. Remove --tls-key \
@@ -58,23 +58,35 @@ impl SigningSourceFlags {
     /// instead of cutting the parse short. A programmatically built request can state the
     /// same mismatch, and it passes through the same boundary.
     ///
-    /// Two key objects at once picks the first in this fixed order, and that choice is
-    /// never observed: such a command line has at least one that does not match its
-    /// response-signing mechanism, so X2a refuses it.
-    fn channel_key(&self) -> Option<DelegatedChannelKeyRequest> {
+    /// Two key objects at once is refused — the request is a tagged union, so only a flat
+    /// command line can state more than one, and keeping the first would leave the other
+    /// flag silently without effect.
+    fn channel_key(&self) -> Result<Option<DelegatedChannelKeyRequest>, String> {
+        let named = [
+            self.pkcs11_channel_key_label.is_some(),
+            self.aws_channel_key_id.is_some(),
+            self.gcp_channel_key_version.is_some(),
+        ];
+        if named.into_iter().filter(|set| *set).count() > 1 {
+            return Err(
+                "a channel key names ONE key object: give only one of --pkcs11-tls-key-label, \
+                 --aws-kms-tls-key-id, --gcp-kms-tls-key-version"
+                    .to_string(),
+            );
+        }
         if let Some(key_label) = self.pkcs11_channel_key_label.clone() {
-            return Some(DelegatedChannelKeyRequest::Pkcs11(
+            return Ok(Some(DelegatedChannelKeyRequest::Pkcs11(
                 Pkcs11ChannelKeyRequest { key_label },
-            ));
+            )));
         }
         if let Some(key_id) = self.aws_channel_key_id.clone() {
-            return Some(DelegatedChannelKeyRequest::AwsKms(
+            return Ok(Some(DelegatedChannelKeyRequest::AwsKms(
                 AwsKmsChannelKeyRequest { key_id },
-            ));
+            )));
         }
-        self.gcp_channel_key_version.clone().map(|key_version| {
+        Ok(self.gcp_channel_key_version.clone().map(|key_version| {
             DelegatedChannelKeyRequest::GcpKms(GcpKmsChannelKeyRequest { key_version })
-        })
+        }))
     }
 }
 
@@ -95,6 +107,24 @@ mod tests {
             .channel_key_request()
             .expect_err("both arms at once is a contradiction");
         assert!(err.contains("delegated XOR exported"), "{err}");
+    }
+
+    #[test]
+    fn naming_two_key_objects_for_one_channel_key_is_refused_by_the_adapter() {
+        let mut flags = SigningSourceFlags::default();
+        flags
+            .take("--pkcs11-tls-key-label", "a")
+            .expect("a value flag");
+        flags
+            .take("--aws-kms-tls-key-id", "b")
+            .expect("a value flag");
+        let err = flags
+            .channel_key_request()
+            .expect_err("two key objects is a contradiction");
+        assert!(
+            err.contains("--pkcs11-tls-key-label") && err.contains("--aws-kms-tls-key-id"),
+            "{err}"
+        );
     }
 
     /// The negative controls: EITHER arm alone is coherent, and so is neither. Without

@@ -14821,3 +14821,11 @@ control = "doc#verified_response::facts::UnboundResponseSignatureFacts"
 decision = "not-evidence"
 reason_family = "ND-010"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20275"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::signing_source_flags::channel_role::tests::naming_two_key_objects_for_one_channel_key_is_refused_by_the_adapter"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-10-04"
