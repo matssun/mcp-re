@@ -4088,6 +4088,7 @@ paths = [
   # prints. The glob still owns the subtree — this entry owns the CITATION.
   "mcp-re-proxy/src/http_profile_serve/retention/mod.rs",
   "mcp-re-proxy/src/http_profile_serve/retention/nothing_retained.rs",
+  "mcp-re-proxy/src/http_profile_serve/mod.rs",
   "mcp-re-proxy/src/http_profile_serve/retention/outcome.rs",
   "mcp-re-proxy/src/http_profile_serve/retention/refusal.rs",
   "mcp-re-proxy/src/async_serve/request.rs",
@@ -4127,6 +4128,8 @@ tested_symbols = [
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::the_answers_outside_the_exchange_are_exactly_the_transport_frames",
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::the_one_post_exchange_frame_exit_advertises_no_retry",
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::the_retry_contract_is_derived_from_the_exchange_machine",
+  # Each retry verdict the exchange machine can reach maps to exactly one wire disposition.
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::tests::every_retry_verdict_maps_to_its_one_wire_disposition",
   "//mcp-re-proxy:integration_test#refusal_site_totality_test::the_rules_would_catch_each_regression",
   # R11-461. A completion that did NOT land is its own answer: `NotConfigured` and
   # `Retained` both mean the store owes nothing further, `Failed` is neither, and the success
@@ -9898,7 +9901,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.aws_sts_credentials"
 class = "V0"
-description = "Acquiring AWS credentials by web-identity AssumeRole: an expiry that cannot be read is already-expired rather than unlimited, a stated expiry is never extended, a far-future one is truncated to the real session ceiling, concurrent callers perform one exchange between them, and a failed exchange is not repeated by every waiter."
+description = "Acquiring AWS credentials by web-identity AssumeRole: an expiry that cannot be read is already-expired rather than unlimited, a stated expiry is never extended, a far-future one is truncated to the real session ceiling, concurrent callers perform one exchange between them, and a failed exchange is not repeated by every waiter, and a credential response past its read cap is refused rather than truncated."
 paths = ["mcp-re-proxy/src/aws_sts.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -9916,6 +9919,10 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_missing_expiration_element_reads_as_already_expired",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_stated_expiry_is_never_extended_by_the_reuse_floor",
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_stated_expiry_already_past_is_not_extended_by_the_reuse_floor",
+  # A credential response over its read cap is refused whole, never truncated into a
+  # parseable prefix.
+  "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_credential_read_past_its_cap_is_refused_not_truncated",
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::an_unreadable_expiration_is_reused_briefly_rather_than_re_exchanged_every_call",
   # A field that is absent, empty, or echoed outside `Credentials` is not a credential.
   "//mcp-re-proxy:proxy_ext_unit_test#aws_sts::tests::a_response_without_credentials_is_refused",
