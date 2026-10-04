@@ -9342,6 +9342,7 @@ tested_symbols = [
   "//mcp-re-transport:mcp_re_transport_test#remote::tests::origin_form_of_a_bare_authority_is_root",
   "//mcp-re-transport:mcp_re_transport_test#request::tests::a_bare_lf_in_a_header_value_is_rejected",
   "//mcp-re-transport:mcp_re_transport_test#request::tests::a_crlf_in_a_header_value_is_rejected_not_sanitised",
+  "//mcp-re-transport:mcp_re_transport_test#request::tests::a_host_that_is_not_visible_ascii_is_rejected",
   "//mcp-re-transport:mcp_re_transport_test#request::tests::a_non_token_method_or_header_name_is_rejected",
   "//mcp-re-transport:mcp_re_transport_test#request::tests::a_request_target_with_a_space_is_rejected",
   "//mcp-re-transport:mcp_re_transport_test#request::tests::caller_headers_are_emitted_verbatim",

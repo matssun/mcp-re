@@ -46,9 +46,10 @@ pub(super) fn is_token_byte(b: u8) -> bool {
         )
 }
 
-/// Serialize the request line + header block, validating everything the caller
-/// supplied. `Host`, `Content-Length` and `Connection` are set here (single
-/// request per connection, matching the proxy's framing).
+/// Serialize the request line + header block, validating every value written
+/// into the head, including the transport-supplied `Host`. `Host`,
+/// `Content-Length` and `Connection` are set here (single request per
+/// connection, matching the proxy's framing).
 pub(super) fn build_request_head(
     method: &str,
     path: &str,
@@ -66,6 +67,14 @@ pub(super) fn build_request_head(
     if !path.starts_with('/') || path.bytes().any(|b| !(0x21..=0x7E).contains(&b)) {
         return Err(TransportError::InvalidRequest(format!(
             "request target is not origin-form visible ASCII: {path:?}"
+        )));
+    }
+
+    // The transport emits Host itself; a CR/LF or control byte here is request
+    // splitting and is refused like any caller-supplied value.
+    if host.is_empty() || host.bytes().any(|b| !(0x21..=0x7E).contains(&b)) {
+        return Err(TransportError::InvalidRequest(format!(
+            "Host is not non-empty visible ASCII: {host:?}"
         )));
     }
 
@@ -153,6 +162,27 @@ mod tests {
             0,
         );
         assert!(matches!(split, Err(TransportError::InvalidRequest(_))));
+    }
+
+    #[test]
+    fn a_host_that_is_not_visible_ascii_is_rejected() {
+        for h in [
+            "proxy.internal\r\nX-Injected: yes",
+            "proxy.internal\nX",
+            "proxy internal",
+            "",
+        ] {
+            assert!(
+                matches!(
+                    build_request_head("POST", "/", h, &[], 0),
+                    Err(TransportError::InvalidRequest(_))
+                ),
+                "{h:?} must be refused"
+            );
+        }
+        for h in ["proxy.internal:8443", "::1"] {
+            assert!(build_request_head("POST", "/", h, &[], 0).is_ok());
+        }
     }
 
     #[test]
