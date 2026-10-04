@@ -451,6 +451,15 @@ consequence = "high"
 root_relationship = "THM-0077: shedding stays at the admission gate an operator configured, not at an unselected core-count cliff"
 record = "docs/architecture/control-dispositions.md#np-239"
 
+[[proposition]]
+id = "NP-240"
+title = "An environment AWS credential is complete or it is refused"
+carrier = "mcp-re-proxy/src/aws_sts.rs (EnvCredentialSource)"
+likely_owner = "none. proxy.aws_sts_credentials and proxy.aws_web_identity_credential_exchange hold aws_sts.rs but state the web-identity exchange; proxy.remote_signer_egress_bound states the network bound."
+consequence = "medium"
+root_relationship = "Beside THM-0117: credential completeness of the env source, which that theorem's web-identity scope does not reach."
+record = "docs/architecture/control-dispositions.md#np-240"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14146,4 +14155,12 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#inner_plane_bound::tests::a_fleet_ceiling_below_the_default_never_lowers_the_pool"
 decision = "new-proposition"
 proposition = "NP-239"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20219"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_sts::tests::an_empty_environment_credential_is_refused_like_an_absent_one"
+decision = "new-proposition"
+proposition = "NP-240"
 recorded = "2026-10-04"

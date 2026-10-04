@@ -2791,3 +2791,43 @@ hazard: nine of its `bodyless_202_test` controls drive the pre-052 pair and the 
 `delegated_202_test` and the bodyless-REQUEST half, and its claim is about the **named
 component sets**, which both modes share. Its `paths` gained the fixture file; nothing else
 about it moved.
+
+## EX-016 — `mcp-re-proxy/src/aws_sts.rs` — **census complete, disposition: ACTION REQUIRED, no exception sought**
+
+The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit.
+
+1. **Owns.** Acquiring the AWS credential the KMS adapter signs with from the
+   operator-selected source AND holding it no longer than its stated life. The "and" marks a
+   shallow boundary.
+2. **Authorities.** Four: (a) the env credential read (`EnvCredentialSource`); (b) STS
+   destination admission and request-field grammars (`validate_region`,
+   `validate_session_name`, `WebIdentityConfig::from_env`, `WebIdentityCredentialSource::new`);
+   (c) the exchange lifecycle — cache, single flight, unknown-expiry floor, failure cool-off,
+   poison recovery (`cached_or_exchange` and helpers); (d) the STS wire codec over peer
+   bytes — `read_capped`, `form_encode`, `parse_assume_role_response(_at)`, `element_text`,
+   `decode_xml_entities`.
+3. **Decides.** Which credential is current, whether an exchange runs, whether a response
+   is a credential, whether an endpoint, region or session name is admissible.
+4. **Executes.** The `AssumeRoleWithWebIdentity` POST via `CredentialEgress`, and the
+   projected-token file read.
+5. **Transports.** `AwsCredentials` to `aws_kms_keysource`; `KeyError` text.
+6. **Reconstructs.** Nothing: both endpoint doors call `kms_endpoint_authority` (`new` via
+   `KmsEndpoint::parse`), `from_env` deliberately earlier.
+7. **Ordering-only relationships.** Single flight re-reads state after taking `exchanging`,
+   and the failure stamp is read after the exchange — pinned by the staggered_callers tests.
+8. **Test-only interface.** None; the injected clock and instant seams are private.
+9. **Unreachable.** `SystemTime` overflow in `parse_assume_role_response_at`, under
+   THM-0002's bound.
+10. **Represented twice.** The `UNIX_EPOCH` sentinel is one constant: the parser writes it,
+    the cache reads it by equality. The endpoint check runs at `from_env` and `new`.
+11. **Constructible inconsistency.** `WebIdentityConfig` has pub fields, refused at `new`;
+    `AwsCredentials` has pub fields (`aws_sigv4.rs`).
+12. **Lanes.** `proxy_ext_unit_test` (aws_kms_keysource feature) for `tests::`,
+    `aws_irsa_web_identity_test` for the composition; the default lane compiles neither.
+
+### Disposition
+
+Action required: move authority (d) into a child module
+`mcp-re-proxy/src/aws_sts/sts_protocol.rs` declared from `aws_sts.rs` (no `lib.rs` line),
+its tests with it, retargeting mutation probe M265's path and the moved `tested_symbols`.
+Authority (c)'s revocation gap waits on ruling `aws-credential-revocation-recovery`.

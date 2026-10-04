@@ -318,7 +318,8 @@ growth_ref = "EX-001 growth authorization in docs/architecture/review-dispositio
 path = "mcp-re-proxy/src/aws_sts.rs"
 baseline_prod_loc = 783
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-016 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/pkcs11_native.rs"

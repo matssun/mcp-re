@@ -4494,3 +4494,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** THM-0077: shedding stays at the admission gate an operator configured, not at an unselected core-count cliff.
 **Recorded:** 2026-10-04, round-12 remediation of 057f17b9088815a4.
+
+## NP-240 — an environment AWS credential is complete or it is refused
+
+**Controls:** `mcp-re-proxy` `lib#aws_sts::tests::an_empty_environment_credential_is_refused_like_an_absent_one`.
+**Carrier:** `mcp-re-proxy/src/aws_sts.rs` (EnvCredentialSource).
+**Statement.** *EnvCredentialSource yields a credential only when AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are both present and non-empty; an empty value is refused at the source exactly as an absent one is, and an empty AWS_SESSION_TOKEN is no session token.*
+**If false.** A blank secret signs a syntactically valid SigV4 request and fails as an opaque InvalidSignatureException at KMS, far from the empty variable, while the custody banner reports env custody configured.
+**Likely owner:** none. proxy.aws_sts_credentials and proxy.aws_web_identity_credential_exchange hold aws_sts.rs but state the web-identity exchange; proxy.remote_signer_egress_bound states the network bound.
+**Severity:** `medium`.
+**Root relationship.** Beside THM-0117: credential completeness of the env source, which that theorem's web-identity scope does not reach.
+**Recorded:** 2026-10-04, round-12 remediation of aws_sts.rs.
