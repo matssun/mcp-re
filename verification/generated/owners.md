@@ -219,6 +219,7 @@ not an omission to hide.
 | proxy.refusal_audit_emission | V0 | THM-0085 | 0 |
 | proxy.refusal_provenance | V0 | THM-0046 | 0 |
 | proxy.refusal_site_totality | V0 | THM-0081 | 0 |
+| proxy.registration_receipt_acceptance | V0 | _none_ | 0 |
 | proxy.remote_signer_call_aws | V0 | THM-0115 | 0 |
 | proxy.remote_signer_call_gcp | V0 | _none_ | 0 |
 | proxy.remote_signer_egress_bound | V0 | _none_ | 0 |

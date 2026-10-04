@@ -223,6 +223,7 @@ attestations this view cannot see.
 | unit://proxy.refusal_audit_emission | source, contracts or evidence | THM-0085 | _no consumer_ |
 | unit://proxy.refusal_provenance | source, contracts or evidence | THM-0046, THM-0069, THM-0071, THM-0078 | _no consumer_ |
 | unit://proxy.refusal_site_totality | source, contracts or evidence | THM-0081 | _no consumer_ |
+| unit://proxy.registration_receipt_acceptance | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.remote_signer_call_aws | source, contracts or evidence | THM-0115 | _no consumer_ |
 | unit://proxy.remote_signer_call_gcp | source, contracts or evidence | THM-0115 | _no consumer_ |
 | unit://proxy.remote_signer_egress_bound | source, contracts or evidence | _no theorem_ | _no consumer_ |

@@ -3478,7 +3478,7 @@ record = "docs/architecture/control-dispositions.md#np-041"
 id = "NP-042"
 title = "A statement is registered only against a receipt about itself"
 carrier = "mcp-re-proxy/src/transparency/auditor/registration capability and exchange"
-likely_owner = ""
+likely_owner = "registered in part as proxy.registration_receipt_acceptance (owner sign-off np-042-registration-receipt-acceptance-unit) over capability.rs, exchange.rs and ureq_exchange.rs; the two controls left are attaching a receipt to an artifact, which auditor/artifact/mod.rs decides"
 consequence = "critical"
 root_relationship = "the auditor product claim the graph does not hold" 
 record = "docs/architecture/control-dispositions.md#np-042"
@@ -3769,46 +3769,6 @@ proposition = "NP-040"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-7031"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_mechanism_refusal_is_carried_through_with_its_certainty"
-decision = "new-proposition"
-proposition = "NP-042"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7032"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_about_another_statement_is_refused"
-decision = "new-proposition"
-proposition = "NP-042"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7033"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_from_an_unpinned_log_is_refused"
-decision = "new-proposition"
-proposition = "NP-042"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7034"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_verifying_receipt_produces_a_registered_statement"
-decision = "new-proposition"
-proposition = "NP-042"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7035"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::an_answer_that_is_not_a_receipt_is_refused"
-decision = "new-proposition"
-proposition = "NP-042"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-7036"
 project = "mcp-re-proxy"
 control = "src/lib.rs#transparency::auditor::registration::endpoint::flags::tests::a_budget_that_is_not_a_number_names_its_flag"
@@ -3881,14 +3841,6 @@ proposition = "NP-041"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-7045"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::exchange::tests::a_header_lookup_ignores_case_and_takes_the_first"
-decision = "new-proposition"
-proposition = "NP-042"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-7046"
 project = "mcp-re-proxy"
 control = "src/lib.rs#transparency::auditor::registration::policy::tests::a_bounded_budget_is_a_policy"
@@ -3934,30 +3886,6 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#transparency::auditor::registration::protocol::tests::the_default_is_the_protocol_that_was_the_only_one"
 decision = "new-proposition"
 proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7052"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::ureq_exchange::tests::a_body_survives_the_socket_verbatim"
-decision = "new-proposition"
-proposition = "NP-042"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7053"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::ureq_exchange::tests::a_disallowed_scheme_yields_no_transport"
-decision = "new-proposition"
-proposition = "NP-042"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7054"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::ureq_exchange::tests::a_status_answer_survives_the_socket_as_a_response"
-decision = "new-proposition"
-proposition = "NP-042"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -14640,22 +14568,6 @@ proposition = "NP-136"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20236"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::ureq_exchange::tests::a_request_outside_the_vetted_destination_never_leaves"
-decision = "new-proposition"
-proposition = "NP-042"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20237"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::ureq_exchange::tests::an_answer_over_the_bound_is_refused_not_buffered"
-decision = "new-proposition"
-proposition = "NP-042"
-recorded = "2026-10-04"
-
-[[disposition]]
 id = "CD-20238"
 project = "mcp-re-core"
 control = "src/lib.rs#wire::tests::every_variant_renders_its_frozen_token_in_message_mcp_re_error_and_details"
@@ -15432,50 +15344,10 @@ recorded = "2026-10-04"
 id = "NP-273"
 title = "A transparency-service receipt is accepted only under a key the audit profile states is acceptable at the auditor's trusted current time"
 carrier = "mcp-re-http-profile/src/scitt/key_lifecycle.rs (TransparencyKeyLifecycle::admits_at), mcp-re-proxy/src/transparency/auditor/registration/capability.rs (register_and_verify) and auditor/profile (transparency_service_keys)"
-likely_owner = "none. http_profile.scitt_key_lifecycle owns the judgment admits_at makes and claims its own tests; this proposition is that registration consults it, from the audit profile, at the auditor's clock. NP-042 is the auditor's registration proposition and is unratified."
+likely_owner = "none. http_profile.scitt_key_lifecycle owns the judgment admits_at makes and claims its own tests; this proposition is that registration consults it, from the audit profile, at the auditor's clock. Its six capability controls are proxy.registration_receipt_acceptance's, because register_and_verify decides when the key is judged; the profile and end-to-end controls remain."
 consequence = "high"
 root_relationship = "the auditor product claim the graph does not hold; rests on ASM-0067 (the operator keeps the stated lifecycle current) and boundary.clock (the host clock)"
 record = "docs/architecture/control-dispositions.md#np-273"
-
-[[disposition]]
-id = "CD-20339"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_under_a_key_with_no_stated_lifecycle_is_refused"
-decision = "new-proposition"
-proposition = "NP-273"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20340"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_under_a_revoked_key_is_refused"
-decision = "new-proposition"
-proposition = "NP-273"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20341"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_under_an_expired_key_is_refused"
-decision = "new-proposition"
-proposition = "NP-273"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20342"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_under_a_not_yet_valid_key_is_refused"
-decision = "new-proposition"
-proposition = "NP-273"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20343"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_receipt_under_a_key_admitted_at_now_is_accepted"
-decision = "new-proposition"
-proposition = "NP-273"
-recorded = "2026-10-04"
 
 [[disposition]]
 id = "CD-20344"
@@ -15497,14 +15369,6 @@ recorded = "2026-10-04"
 id = "CD-20346"
 project = "mcp-re-proxy"
 control = "tests/integration_async/main.rs#transparency_e2e_test::a_receipt_under_a_revoked_service_key_is_not_recorded"
-decision = "new-proposition"
-proposition = "NP-273"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20347"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_registration_begun_before_the_cutoff_whose_receipt_arrives_after_it_is_refused"
 decision = "new-proposition"
 proposition = "NP-273"
 recorded = "2026-10-04"

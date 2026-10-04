@@ -11378,3 +11378,81 @@ note = """
 A store reset or a failover to a stale instance is adopted as the new epoch, and the plane
 re-mints under a label the verifiers already stopped accepting.
 """
+
+[[probe]]
+id = "M449-proxy-a-receipt-that-does-not-verify-is-accepted"
+unit = "proxy.registration_receipt_acceptance"
+conjunct = "a RegisteredStatement is produced only when the receipt verifies offline against the exact statement submitted and the pinned service"
+path = "mcp-re-proxy/src/transparency/auditor/registration/capability.rs"
+anchor = """
+    mcp_re_http_profile::scitt::verify_receipt_offline(
+        statement,
+        &receipt,
+        |kid| (kid == issuer_kid).then(|| issuer.clone()),
+        |kid| pin.resolve(kid),
+    )
+    .map_err(|e| RegistrationError::ReceiptUnverified(e.wire_code().to_owned()))?;
+"""
+weakening = """
+    let _ = mcp_re_http_profile::scitt::verify_receipt_offline(
+        statement,
+        &receipt,
+        |kid| (kid == issuer_kid).then(|| issuer.clone()),
+        |kid| pin.resolve(kid),
+    );
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_receipt_about_another_statement_is_refused",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_receipt_from_an_unpinned_log_is_refused",
+]
+note = """
+Any well-formed receipt under a key the profile admits is recorded as a registration — one about
+another statement, or from a log the operator never pinned — because a `201` and a parseable body
+are all that is left between the mechanism's bytes and the accepted product.
+"""
+
+[[probe]]
+id = "M450-proxy-the-service-key-is-judged-before-the-receipt-arrives"
+unit = "proxy.registration_receipt_acceptance"
+conjunct = "the service key's lifecycle is judged at the auditor's clock read after the registration exchange has answered, never at a time captured when registration began"
+path = "mcp-re-proxy/src/transparency/auditor/registration/capability.rs"
+anchor = """
+    let response = mechanism.register(statement.to_cose())?;
+    let receipt = Receipt::from_cose(response.bytes()).map_err(|e| {
+        RegistrationError::ReceiptUnverified(format!(
+            "the answer is not a well-formed receipt ({})",
+            e.wire_code()
+        ))
+    })?;
+    let ts_kid = receipt.ts_kid();
+    let lifecycle = ts_key(ts_kid).ok_or_else(|| {
+        RegistrationError::ReceiptUnverified(format!(
+            "the audit profile states no lifecycle for transparency-service key {ts_kid:?}"
+        ))
+    })?;
+    let now = clock();
+"""
+weakening = """
+    let now = clock();
+    let response = mechanism.register(statement.to_cose())?;
+    let receipt = Receipt::from_cose(response.bytes()).map_err(|e| {
+        RegistrationError::ReceiptUnverified(format!(
+            "the answer is not a well-formed receipt ({})",
+            e.wire_code()
+        ))
+    })?;
+    let ts_kid = receipt.ts_kid();
+    let lifecycle = ts_key(ts_kid).ok_or_else(|| {
+        RegistrationError::ReceiptUnverified(format!(
+            "the audit profile states no lifecycle for transparency-service key {ts_kid:?}"
+        ))
+    })?;
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_registration_begun_before_the_cutoff_whose_receipt_arrives_after_it_is_refused",
+]
+note = """
+The clock is read when registration begins. A registration that polls for an hour is judged at
+its start, so a receipt that arrives after the key's `revoked_at` — the D3 acceptance-time case,
+owner Ruling 15 — is accepted under a key the operator had already revoked.
+"""

@@ -7070,6 +7070,60 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::wire::tests::the_cose_type_is_matched_past_its_parameters",
 ]
 
+# NP-042 (ADR-MCPRE-069), ratified by owner sign-off np-042-registration-receipt-acceptance-unit as
+# its own unit over the proposition's carrier — the capability that decides whether a receipt is
+# accepted, the exchange seam beneath it, and the socket — rather than as an addition to either
+# mechanism leaf (owner ruling 12 items 25 and 26: own unit, never widen another unit's paths).
+# The leaves decide what a protocol's answers MEAN; this unit decides whether the bytes a leaf
+# brings back become a `RegisteredStatement`.
+#
+# THE LANE IS `//mcp-re-proxy:proxy_auditor_unit_test`. `exchange`, `ureq_exchange` and the
+# capability's verifying half are compiled only under `scitt_registration`, and the default
+# `:proxy_unit_test` holds none of these controls: a selector naming it would measure nothing.
+#
+# Two of NP-042's controls stay in the census: attaching a receipt to an artifact is decided in
+# `auditor/artifact/mod.rs`, which is not in these paths. NP-273's profile and end-to-end controls
+# stay too; its six capability controls are this unit's, because WHEN the key is judged is decided
+# in `register_and_verify`.
+[[unit]]
+id = "proxy.registration_receipt_acceptance"
+class = "V0"
+description = "A REGISTRATION IS ACCEPTED ONLY AS A RECEIPT THAT VERIFIES AGAINST THE STATEMENT SUBMITTED, THE PINNED SERVICE, AND A SERVICE KEY ACCEPTABLE WHEN THE RECEIPT ARRIVES: `register_and_verify` is the only producer of a `RegisteredStatement`, and it produces one only when the mechanism's answer parses as a receipt, the audit profile states a lifecycle for the receipt's transparency-service `kid`, that lifecycle admits the auditor's clock read AFTER the registration exchange has answered — `valid_from <= now < min(valid_until, revoked_at)` over the bounds that exist, judged by `TransparencyKeyLifecycle::admits_at` — and the receipt verifies offline against the exact statement octets submitted, the auditor's issuer key and the already-loaded pin, with nothing fetched. An answer that is not a receipt, a receipt about another statement, a receipt from a log the pin does not name, and a receipt under a key with no stated or a non-admitting lifecycle are each `ReceiptUnverified`; a mechanism's own refusal is carried through with its certainty unchanged; the accepted value records which protocol established it. Beneath it, the exchange seam reads a header case-insensitively taking the first, and the `ureq` transport carries a body verbatim across the socket, returns a non-2xx status as a response rather than a failure, refuses a disallowed scheme with no transport at all, refuses a request not addressed under the vetted destination before connecting, and refuses an answer over its byte bound. It says nothing about the lifecycle algebra itself (`http_profile.scitt_key_lifecycle`), how the audit profile states a lifecycle (NP-273), how an artifact attaches the receipt (NP-042), the registration deadline (NP-255), or what a protocol's answers mean (the mechanism leaves)."
+paths = [
+  "mcp-re-proxy/src/transparency/auditor/registration/capability.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/exchange.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/ureq_exchange.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/transparency/registration_receipt_acceptance",
+  "mutation://proxy/transparency/registration_receipt_acceptance",
+]
+tested_symbols = [
+  # --- what becomes a RegisteredStatement ---
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_verifying_receipt_produces_a_registered_statement",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::an_answer_that_is_not_a_receipt_is_refused",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_receipt_about_another_statement_is_refused",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_receipt_from_an_unpinned_log_is_refused",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_mechanism_refusal_is_carried_through_with_its_certainty",
+  # --- the service key, judged when the receipt is accepted ---
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_receipt_under_a_key_with_no_stated_lifecycle_is_refused",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_receipt_under_a_revoked_key_is_refused",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_receipt_under_an_expired_key_is_refused",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_receipt_under_a_not_yet_valid_key_is_refused",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_receipt_under_a_key_admitted_at_now_is_accepted",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capability::tests::a_registration_begun_before_the_cutoff_whose_receipt_arrives_after_it_is_refused",
+  # --- the exchange seam and the socket ---
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::exchange::tests::a_header_lookup_ignores_case_and_takes_the_first",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::ureq_exchange::tests::a_body_survives_the_socket_verbatim",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::ureq_exchange::tests::a_status_answer_survives_the_socket_as_a_response",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::ureq_exchange::tests::a_disallowed_scheme_yields_no_transport",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::ureq_exchange::tests::a_request_outside_the_vetted_destination_never_leaves",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::ureq_exchange::tests::an_answer_over_the_bound_is_refused_not_buffered",
+]
+
 [[unit]]
 id = "proxy.outbound_destination"
 class = "V0"

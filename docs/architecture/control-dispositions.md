@@ -1536,8 +1536,8 @@ a KMS endpoint (NP-027), one product step out.
 
 ## NP-042 — a statement is registered only against a receipt about itself
 
-**Controls:** `auditor/registration/capability.rs` (7),
-`registration/ureq_exchange.rs` (5), `registration/exchange.rs` (1).
+**Controls:** `auditor/registration/capability.rs` (2) — the artifact-attachment pair. The other
+eleven are registered, below.
 **Statement.** *A verifying receipt about THIS statement, from a pinned log, produces a
 registered statement; an answer that is not a receipt, a receipt about another statement,
 and a receipt from an unpinned log are each refused, and an artifact carrying another statement refuses the receipt; an attached receipt carries the protocol that established it; a mechanism refusal is carried through
@@ -1554,6 +1554,21 @@ whether it ran* are different facts.
 commitment a Signed Statement carries, not about what the auditor will accept as a receipt
 for it.
 **Severity:** `critical`.
+
+**Registered in part, owner sign-off `np-042-registration-receipt-acceptance-unit`.** NP-042 is
+`unit://proxy.registration_receipt_acceptance`, its own unit over the proposition's carrier —
+`registration/capability.rs`, `registration/exchange.rs` and `registration/ureq_exchange.rs` —
+rather than an addition to either mechanism leaf, whose `paths` are not widened (owner ruling 12
+items 25 and 26). Its battery is the five capability controls, the exchange control and the five
+socket controls named above, measured in `//mcp-re-proxy:proxy_auditor_unit_test`, the lane that
+compiles them; it also takes NP-273's six capability controls, because WHEN the service key is
+judged is decided in `register_and_verify`. It is falsified by
+`M449-proxy-a-receipt-that-does-not-verify-is-accepted` and
+`M450-proxy-the-service-key-is-judged-before-the-receipt-arrives`. What stays is
+`an_attached_receipt_carries_the_protocol_that_established_it` and
+`a_receipt_is_refused_by_an_artifact_carrying_another_statement`: both live in `capability.rs`, but
+whether an artifact takes the receipt is decided by `with_verified_receipt` in
+`auditor/artifact/mod.rs`, which is not in the unit's closure.
 
 ## NP-043 — the auditor's artifact is its own schema and round-trips its verdicts
 
@@ -4850,12 +4865,12 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-273 — a transparency-service receipt is accepted only under a key the audit profile states is acceptable at the auditor's trusted current time
 
-**Controls:** `mcp-re-proxy` `lib#transparency::auditor::registration::capability::tests::a_receipt_under_a_key_with_no_stated_lifecycle_is_refused`, `lib#transparency::auditor::registration::capability::tests::a_receipt_under_a_revoked_key_is_refused`, `lib#transparency::auditor::registration::capability::tests::a_receipt_under_an_expired_key_is_refused`, `lib#transparency::auditor::registration::capability::tests::a_receipt_under_a_not_yet_valid_key_is_refused`, `lib#transparency::auditor::registration::capability::tests::a_receipt_under_a_key_admitted_at_now_is_accepted`, `lib#transparency::auditor::profile::tests::a_transparency_key_lifecycle_is_projected_by_its_kid`, `lib#transparency::auditor::profile::tests::an_incoherent_transparency_key_lifecycle_never_becomes_a_profile`, `integration_async#transparency_e2e_test::a_receipt_under_a_revoked_service_key_is_not_recorded`, `lib#transparency::auditor::registration::capability::tests::a_registration_begun_before_the_cutoff_whose_receipt_arrives_after_it_is_refused`.
+**Controls:** `mcp-re-proxy` `lib#transparency::auditor::profile::tests::a_transparency_key_lifecycle_is_projected_by_its_kid`, `lib#transparency::auditor::profile::tests::an_incoherent_transparency_key_lifecycle_never_becomes_a_profile`, `integration_async#transparency_e2e_test::a_receipt_under_a_revoked_service_key_is_not_recorded`. The six `registration::capability` lifecycle controls, the acceptance-time regression `a_registration_begun_before_the_cutoff_whose_receipt_arrives_after_it_is_refused` among them, are registered under `unit://proxy.registration_receipt_acceptance` (NP-042's unit) and falsified by `M450-proxy-the-service-key-is-judged-before-the-receipt-arrives`.
 **Carrier:** `mcp-re-http-profile/src/scitt/key_lifecycle.rs` (`TransparencyKeyLifecycle::admits_at`), `mcp-re-proxy/src/transparency/auditor/registration/capability.rs` (`register_and_verify`), `mcp-re-proxy/src/transparency/auditor/profile` (`transparency_service_keys`).
 **Statement.** *Registration produces a `RegisteredStatement` only if the audit profile states a lifecycle for the receipt's transparency-service `kid` and that lifecycle admits the auditor's trusted current time read when the receipt is accepted, after the registration exchange has answered: `valid_from <= now < min(valid_until, revoked_at)` over the stated bounds. No time the receipt or the statement carries, and not `--at`, is an input. A lifecycle with `valid_until <= valid_from`, a `revoked_at` before `valid_from`, an empty or a repeated `kid` never becomes a profile.*
 **If false.** A receipt under a revoked or expired transparency-service key is accepted, so a compromised key can manufacture registrations.
 **Limitation.** Past `revoked_at` or `valid_until` every receipt under the key is refused, archived ones included: no independent evidence that a receipt existed inside the window exists, so revocation and expiry distrust history unless independently anchored.
-**Likely owner:** none. `http_profile.scitt_key_lifecycle` owns the judgment `admits_at` makes and claims its own tests; this proposition is that registration consults it, from the audit profile, at the auditor's clock. NP-042 is the auditor's registration proposition and is unratified.
+**Likely owner:** none. `http_profile.scitt_key_lifecycle` owns the judgment `admits_at` makes and claims its own tests; this proposition is that registration consults it, from the audit profile, at the auditor's clock. `proxy.registration_receipt_acceptance` owns the capability half — when the key is judged — and the profile and end-to-end controls above remain.
 **Root relationship.** The auditor product claim the graph does not hold. Rests on ASM-0067 (the operator keeps the stated lifecycle current) and `boundary.clock`.
 **Severity:** `high`.
 **Recorded:** 2026-10-04, owner Ruling 14.1 for 89aa1a1a453cf723.
