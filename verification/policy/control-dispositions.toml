@@ -15164,3 +15164,11 @@ control = "src/lib.rs#encoding::tests::decode_rejects_non_canonical_trailing_bit
 decision = "new-proposition"
 proposition = "NP-107"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20309"
+project = "mcp-re-proxy"
+control = "src/lib.rs#http_profile_serve::inner_plane::tests::an_unusable_answer_to_a_request_still_says_the_backend_was_reached"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-10-04"
