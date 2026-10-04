@@ -24,22 +24,27 @@ pub(super) struct DeploymentIdentity {
 }
 
 impl IdentityFlags {
-    /// Whether this value-taking flag belongs to the family.
-    pub(super) fn owns(flag: &str) -> bool {
-        matches!(
-            flag,
-            "--audience" | "--server-signer" | "--server-key-id" | "--trust-domain"
-        )
+    /// The coordinate a flag of the family writes, or `None` for any other flag.
+    fn slot(&mut self, flag: &str) -> Option<&mut Option<String>> {
+        match flag {
+            "--audience" => Some(&mut self.audience),
+            "--server-signer" => Some(&mut self.server_signer),
+            "--server-key-id" => Some(&mut self.server_key_id),
+            "--trust-domain" => Some(&mut self.trust_domain),
+            _ => None,
+        }
     }
 
-    /// Read one flag of the family. [`Self::owns`] decided it is one.
+    /// Whether this value-taking flag belongs to the family.
+    pub(super) fn owns(flag: &str) -> bool {
+        Self::default().slot(flag).is_some()
+    }
+
+    /// Read one flag of the family. Ownership and routing are the same table, so a flag
+    /// outside the family writes no coordinate.
     pub(super) fn take(&mut self, flag: &str, value: &str) {
-        let held = || Some(value.to_string());
-        match flag {
-            "--audience" => self.audience = held(),
-            "--server-signer" => self.server_signer = held(),
-            "--server-key-id" => self.server_key_id = held(),
-            _ => self.trust_domain = held(),
+        if let Some(held) = self.slot(flag) {
+            *held = Some(value.to_string());
         }
     }
 
@@ -110,5 +115,33 @@ mod tests {
         let identity = complete().finish().expect("a complete set");
         assert_eq!(identity.trust_domain, "mcp.example.com");
         assert_eq!(identity.server_key_id, "server-key-1");
+    }
+
+    /// Each flag lands on the coordinate named after it, and a flag outside the family
+    /// lands on none.
+    #[test]
+    fn each_flag_reaches_the_coordinate_named_after_it_and_no_other() {
+        let mut flags = IdentityFlags::default();
+        for (flag, value) in [
+            ("--audience", "aud"),
+            ("--server-signer", "signer"),
+            ("--server-key-id", "kid"),
+            ("--trust-domain", "domain"),
+        ] {
+            flags.take(flag, value);
+        }
+        let identity = flags.finish().expect("all four given");
+        assert_eq!(identity.audience, "aud");
+        assert_eq!(identity.server_signer, "signer");
+        assert_eq!(identity.server_key_id, "kid");
+        assert_eq!(identity.trust_domain, "domain");
+
+        let mut flags = complete();
+        flags.take("--trust", "elsewhere");
+        assert!(!IdentityFlags::owns("--trust"));
+        assert_eq!(
+            flags.finish().expect("complete").trust_domain,
+            "mcp.example.com"
+        );
     }
 }

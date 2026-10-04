@@ -4499,6 +4499,14 @@ proposition = "NP-055"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20216"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::identity_flags::tests::each_flag_reaches_the_coordinate_named_after_it_and_no_other"
+decision = "new-proposition"
+proposition = "NP-055"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-11033"
 project = "mcp-re-proxy"
 control = "src/lib.rs#cli::peer_identity_flags::tests::a_value_belonging_to_another_form_is_refused_by_the_adapter"
@@ -9000,8 +9008,8 @@ recorded = "2026-09-19"
 id = "CD-18103"
 project = "mcp-re-proxy"
 control = "src/lib.rs#deployment_request::storage::shared_store::tests::a_store_that_does_not_exist_drives_the_same_consumer"
-decision = "new-proposition"
-proposition = "NP-133"
+decision = "not-evidence"
+reason_family = "ND-007"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -13593,6 +13601,15 @@ consequence = "medium"
 root_relationship = "Beside NP-229: the listener's own availability when the process fd budget is exhausted"
 record = "docs/architecture/control-dispositions.md#np-237"
 
+[[proposition]]
+id = "NP-238"
+title = "A store request payload's Debug rendering never carries its locator's credential or the configured string"
+carrier = "mcp-re-proxy/src/deployment_request/storage/shared_store.rs"
+likely_owner = "none. proxy.operator_facing_redaction's paths are secret_string.rs and inner_backend_display.rs only, and NP-215 states refusal sites, not the Debug rendering of a request value."
+consequence = "high"
+root_relationship = "Beside NP-215: that proposition covers what a refusal says, and this one covers what a printed request value says."
+record = "docs/architecture/control-dispositions.md#np-238"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -14104,4 +14121,12 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#async_serve::accept::tests::a_persistent_accept_error_waits_before_the_next_accept"
 decision = "new-proposition"
 proposition = "NP-237"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20217"
+project = "mcp-re-proxy"
+control = "src/lib.rs#deployment_request::storage::shared_store::tests::a_store_payload_debug_print_carries_no_credential"
+decision = "new-proposition"
+proposition = "NP-238"
 recorded = "2026-10-04"
