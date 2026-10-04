@@ -79,9 +79,9 @@ mod tests {
             freshness: Arc::clone(&freshness),
         };
         assert!(
-            !matches!(
+            matches!(
                 resolver.resolve(SIGNER, "kid-1"),
-                Err(mcp_re_core::TrustResolverError::Unavailable { .. })
+                Err(mcp_re_core::TrustResolverError::NotFound)
             ),
             "a maintained store answers about the key, not about itself"
         );
