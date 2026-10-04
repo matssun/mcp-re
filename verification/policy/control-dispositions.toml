@@ -15156,3 +15156,11 @@ control = "src/lib.rs#client::tests::the_host_header_is_derived_from_the_expecte
 decision = "new-proposition"
 proposition = "NP-265"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20308"
+project = "mcp-re-core"
+control = "src/lib.rs#encoding::tests::decode_rejects_non_canonical_trailing_bits"
+decision = "new-proposition"
+proposition = "NP-107"
+recorded = "2026-10-04"

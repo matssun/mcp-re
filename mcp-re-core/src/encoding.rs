@@ -93,6 +93,24 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_non_canonical_trailing_bits() {
+        // A 32-byte digest and a 64-byte signature each have exactly one accepted spelling.
+        for len in [32usize, 64] {
+            let canonical = b64url_encode(&vec![0u8; len]);
+            assert_eq!(canonical.len(), if len == 32 { 43 } else { 86 });
+            assert!(canonical.ends_with('A'));
+            let mut variant = canonical.clone();
+            variant.pop();
+            variant.push('B');
+            assert_eq!(
+                b64url_decode(&variant).unwrap_err(),
+                McpReError::SerializationFailed
+            );
+            assert_eq!(b64url_decode(&canonical).unwrap(), vec![0u8; len]);
+        }
+    }
+
+    #[test]
     fn decode_empty_is_empty() {
         assert_eq!(b64url_decode("").expect("decode"), Vec::<u8>::new());
     }
