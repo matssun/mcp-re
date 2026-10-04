@@ -192,10 +192,18 @@ impl CorePool {
 mod tests {
     use super::*;
 
+    fn window() -> crate::config_state::ClientCredentialWindow {
+        crate::config_state::ClientCredentialWindow::new(
+            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_secs(300),
+        )
+        .expect("a legal credential window")
+    }
+
     fn options(tls_signing_may_block: bool) -> ServerOptions {
         ServerOptions {
             tls_signing_may_block,
-            ..Default::default()
+            ..ServerOptions::new(window())
         }
     }
 

@@ -28,6 +28,7 @@ use std::time::Duration;
 
 use mcp_re_proxy::async_serve;
 use mcp_re_proxy::config_snapshot::ServerConfigSnapshot;
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 
 use mcp_re_proxy::ServerLimits;
@@ -58,6 +59,19 @@ use rustls_pki_types::ServerName;
 use rustls_pki_types::UnixTime;
 
 const CLIENT_URI_SAN: &str = "spiffe://example.org/agent-1";
+
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(Duration::from_secs(3600), Duration::from_secs(300))
+        .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + Duration::from_secs(1800)).into();
+}
 
 struct Ca {
     cert: rcgen::Certificate,
@@ -95,6 +109,9 @@ fn make_leaf(ca: &Ca, sans: Vec<SanType>, client_auth: bool) -> (rcgen::Certific
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    if client_auth {
+        short_lived(&mut params);
+    }
     let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     (cert, key)
 }
@@ -251,7 +268,7 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>) -> Server {
                 };
             let options = ServerOptions {
                 limits: ServerLimits::default(),
-                ..Default::default()
+                ..ServerOptions::new(window())
             };
             // The handshake bound comes from the pool that built this runtime (4 workers),
             // never from a constant that never saw the depth.

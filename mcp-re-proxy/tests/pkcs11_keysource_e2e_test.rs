@@ -37,6 +37,7 @@ use std::thread;
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
 
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::FileKeySource;
@@ -363,6 +364,22 @@ impl Ca {
     }
 }
 
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(
+        std::time::Duration::from_secs(3600),
+        std::time::Duration::from_secs(300),
+    )
+    .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - std::time::Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + std::time::Duration::from_secs(1800)).into();
+}
+
 fn make_ca() -> Ca {
     let key = KeyPair::generate().expect("ca key");
     let mut params =
@@ -399,6 +416,7 @@ fn make_client_leaf(ca: &Ca, uri: &str) -> (Vec<CertificateDer<'static>>, Privat
     let mut params = CertificateParams::new(Vec::new()).expect("client params");
     params.subject_alt_names = vec![SanType::URI(uri.try_into().expect("uri"))];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    short_lived(&mut params);
     let cert = params
         .signed_by(&key, &ca.issuer())
         .expect("client leaf signed");
@@ -660,7 +678,7 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
         serve_once(
             &listener,
             server_config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, _identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()

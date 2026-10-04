@@ -448,7 +448,13 @@ mod admission_bound_tests {
         for (depth, tls_signing_may_block) in cases {
             let options = ServerOptions {
                 tls_signing_may_block,
-                ..Default::default()
+                ..ServerOptions::new(
+                    crate::config_state::ClientCredentialWindow::new(
+                        std::time::Duration::from_secs(3600),
+                        std::time::Duration::from_secs(300),
+                    )
+                    .expect("a legal credential window"),
+                )
             };
             let Ok(pool) = crate::async_fleet::CorePool::for_core(depth, &options) else {
                 assert!(

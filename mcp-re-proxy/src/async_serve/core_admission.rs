@@ -126,6 +126,14 @@ impl CoreAdmission {
 mod tests {
     use super::*;
 
+    fn window() -> crate::config_state::ClientCredentialWindow {
+        crate::config_state::ClientCredentialWindow::new(
+            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_secs(300),
+        )
+        .expect("a legal credential window")
+    }
+
     /// The enforcement point of the bound: the number the pool decided is the number of
     /// permits this core's handshake semaphore actually carries.
     ///
@@ -141,7 +149,7 @@ mod tests {
         // its accept loop, its established connections and its in-flight requests.
         let delegated = ServerOptions {
             tls_signing_may_block: true,
-            ..Default::default()
+            ..ServerOptions::new(window())
         };
         let pool = crate::async_fleet::CorePool::for_core(
             crate::async_fleet::ShardDepth::stated(2),
@@ -162,7 +170,7 @@ mod tests {
         // carries NO handshake bound. A control satisfied by bounding everything would be
         // no control, and the bound is not free — it costs a handshake round of
         // concurrency wherever it applies.
-        let exported = ServerOptions::default();
+        let exported = ServerOptions::new(window());
         let pool = crate::async_fleet::CorePool::for_core(
             crate::async_fleet::ShardDepth::stated(2),
             &exported,

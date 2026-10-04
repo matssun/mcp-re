@@ -54,8 +54,16 @@ mod tests {
     use super::*;
     use crate::tls::ServerOptions;
 
+    fn window() -> crate::config_state::ClientCredentialWindow {
+        crate::config_state::ClientCredentialWindow::new(
+            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_secs(300),
+        )
+        .expect("a legal credential window")
+    }
+
     fn admission() -> CoreAdmission {
-        let options = ServerOptions::default();
+        let options = ServerOptions::new(window());
         let pool = crate::async_fleet::CorePool::for_core(
             crate::async_fleet::ShardDepth::stated(2),
             &options,

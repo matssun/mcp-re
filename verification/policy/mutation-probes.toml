@@ -9613,12 +9613,10 @@ theorem = "THM-0032"
 conjunct = "The policy is a TOTAL classification of deployment state with no `Option` and four variants, so *evaluating with nothing configured* cannot be written"
 path = "mcp-re-proxy/src/tls.rs"
 anchor = """
-        (Some(ceiling), Some(index)) => {
-            CredentialCurrencyPolicy::CeilingAndRevocation(ceiling, index)
-        }
+        Some(index) => CredentialCurrencyPolicy::CeilingAndRevocation(ceiling, index),
 """
 weakening = """
-        (Some(ceiling), Some(_index)) => CredentialCurrencyPolicy::Ceiling(ceiling),
+        Some(_index) => CredentialCurrencyPolicy::Ceiling(ceiling),
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#tls::currency_policy_tests::every_deployment_classifies_to_exactly_one_policy",

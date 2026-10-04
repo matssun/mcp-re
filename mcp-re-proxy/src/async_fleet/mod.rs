@@ -540,7 +540,13 @@ mod refusal_order_tests {
     fn start(workers_per_shard: usize, tls_signing_may_block: bool) -> std::io::Error {
         let options = Arc::new(ServerOptions {
             tls_signing_may_block,
-            ..Default::default()
+            ..ServerOptions::new(
+                crate::config_state::ClientCredentialWindow::new(
+                    std::time::Duration::from_secs(3600),
+                    std::time::Duration::from_secs(300),
+                )
+                .expect("a legal credential window"),
+            )
         });
         serve_fleet(
             FleetConfig {

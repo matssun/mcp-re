@@ -27,6 +27,7 @@ use mcp_re_proxy::async_serve;
 use mcp_re_proxy::client_revocation::ClientRevocationIndex;
 use mcp_re_proxy::client_revocation::SharedClientRevocation;
 use mcp_re_proxy::config_snapshot::ServerConfigSnapshot;
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerLimits;
 use mcp_re_proxy::ServerOptions;
@@ -88,6 +89,19 @@ fn make_ca(cn: &str) -> Ca {
     Ca { cert, key, params }
 }
 
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(Duration::from_secs(3600), Duration::from_secs(300))
+        .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + Duration::from_secs(1800)).into();
+}
+
 fn dns(value: &str) -> SanType {
     SanType::DnsName(value.try_into().expect("ia5 dns"))
 }
@@ -97,8 +111,7 @@ fn make_client_leaf(ca: &Ca, serial: u64) -> (rcgen::Certificate, KeyPair) {
     let key = KeyPair::generate().expect("leaf key");
     let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
     params.serial_number = Some(SerialNumber::from(serial));
-    params.not_before = rcgen::date_time_ymd(2020, 1, 1);
-    params.not_after = rcgen::date_time_ymd(2035, 1, 1);
+    short_lived(&mut params);
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
     let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     (cert, key)
@@ -329,7 +342,7 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>, revocation: Arc<SharedClientRevoca
             let options = ServerOptions {
                 limits: ServerLimits::default(),
                 client_revocation: Some(revocation),
-                ..Default::default()
+                ..ServerOptions::new(window())
             };
             // The handshake bound comes from the pool that built this runtime (4 workers),
             // never from a constant that never saw the depth.

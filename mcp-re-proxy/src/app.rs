@@ -567,24 +567,12 @@ fn run_validated(
     let in_flight_limit = config.state().in_flight_limit();
     let mut limits = values.limits.clone();
     limits.max_in_flight_requests = in_flight_limit.per_core();
-    // BOTH halves of the relation now come from the owner (r12 R12-625). The comment below
-    // said they were one fact while only the lifetime was: the socket-level bound reached
-    // enforcement as the raw request's copy, agreeing with the adjudicated one only because
-    // layer A had read the same field. `connection_age()` is `Duration` rather than
-    // `Option` because a deployment that disabled the bound is already refused.
-    //
-    // The WEAKER of the two forms the finding names, stated so it is not mistaken for the
-    // stronger: the serving path still reads through `ServerLimits`, so this makes the
-    // value the owner's rather than making `ServerLimits` stop being the source.
-    limits.max_connection_age = Some(config.state().client_credential_window().connection_age());
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
         limits,
-        // From the owner, not the request: the lifetime and the connection age are one
-        // fact, and reading either raw here would be the relation split back into its
-        // terms one layer further on.
-        max_client_cert_lifetime: Some(config.state().client_credential_window().cert_lifetime()),
+        // The owner's sealed window; serving reads both bounds from it, not from the request.
+        client_credential_window: config.state().client_credential_window(),
         client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,

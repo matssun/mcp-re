@@ -2010,9 +2010,14 @@ mod tests {
     fn the_connection_hook_rejects_what_the_checker_cannot_establish() {
         use crate::tls::ocsp_rejection_for_chain;
         use crate::tls::ServerOptions;
+        let window = crate::config_state::ClientCredentialWindow::new(
+            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_secs(300),
+        )
+        .expect("a legal credential window");
         let options = ServerOptions {
             ocsp_checker: Some(OcspChecker::new(None)),
-            ..Default::default()
+            ..ServerOptions::new(window)
         };
         let request = b"{\"id\":1}";
         let leaf: &[u8] = b"leaf";
@@ -2027,7 +2032,7 @@ mod tests {
             "a check that establishes nothing is rejected"
         );
         assert!(
-            ocsp_rejection_for_chain(&chain, &ServerOptions::default(), request).is_none(),
+            ocsp_rejection_for_chain(&chain, &ServerOptions::new(window), request).is_none(),
             "without a checker nothing is rejected"
         );
     }

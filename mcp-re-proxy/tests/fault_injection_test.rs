@@ -40,6 +40,7 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::thread;
 
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerOptions;
@@ -73,6 +74,22 @@ use rustls_pki_types::UnixTime;
 // differs. Fixtures are generated-but-deterministic-per-run via rcgen (no
 // committed key material); fresh CAs/leaves and an OS-assigned ephemeral port each
 // run.
+
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(
+        std::time::Duration::from_secs(3600),
+        std::time::Duration::from_secs(300),
+    )
+    .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - std::time::Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + std::time::Duration::from_secs(1800)).into();
+}
 
 struct Ca {
     cert: rcgen::Certificate,
@@ -119,6 +136,9 @@ fn make_leaf(
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    if client_auth {
+        short_lived(&mut params);
+    }
     let cert = params
         .signed_by(&key, &ca.issuer())
         .expect("leaf signed by ca");
@@ -242,13 +262,15 @@ fn server_config_for(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
 /// Negation of T1 (`missing_client_certificate_is_rejected`). With the
 /// `fault_accept_any_client` control break compiled in, a connection that presents
 /// NO client certificate — which the verifying proxy MUST reject at the handshake
-/// — instead COMPLETES the handshake, reaches the inner handler, and is served.
+/// — instead COMPLETES the handshake.
 ///
 /// The guard asserts: `serve_once` returns `Err` (handshake rejection).
-/// Here, under the fault, we assert the exact negation: `serve_once` returns `Ok`,
-/// the handler ran, and the served response came back. That negation is the proof
-/// that the guard is load-bearing — if this fault path ever shipped in the real
-/// proxy, the guard would fire.
+/// Here, under the fault, we assert the exact negation: `serve_once` returns `Ok`.
+/// That negation is the proof that the guard is load-bearing — if this fault path ever
+/// shipped in the real proxy, the guard would fire. What the request then meets is the
+/// second layer: every serving configuration states a client-credential window, and an
+/// absent credential cannot be shown current under it, so the inner handler is still not
+/// reached.
 #[test]
 fn fault_accept_any_client_makes_missing_client_cert_accepted() {
     let client_ca = make_ca();
@@ -258,9 +280,12 @@ fn fault_accept_any_client_makes_missing_client_cert_accepted() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     // Client presents NO certificate. The verifying proxy requires one (T1);
@@ -270,17 +295,19 @@ fn fault_accept_any_client_makes_missing_client_cert_accepted() {
     let served = server.join().expect("join");
 
     // THE CATCH DEMONSTRATION: with the control broken, the missing client cert is
-    // accepted, the handshake completes, `serve_once` returns Ok, and the inner
-    // handler served a response — the exact OPPOSITE of T1's `is_err()` assertion.
+    // accepted, the handshake completes, `serve_once` returns Ok — the exact OPPOSITE of
+    // T1's `is_err()` assertion.
     assert!(
         served.is_ok(),
         "with fault_accept_any_client, a connection with NO client certificate must \
          COMPLETE (serve_once Ok) — this is the broken control T1 catches; got {served:?}"
     );
-    assert_eq!(
-        body, b"{\"ok\":true}",
-        "the inner handler is reached and serves a response behind a MISSING client \
-         cert — the negation of T1's handshake-rejection assertion"
+    // The per-request currency layer still refuses it: no credential is current.
+    assert!(
+        String::from_utf8_lossy(&body).contains("mcp-re.transport_binding_failed"),
+        "behind a MISSING client cert the request must be refused at the transport \
+         binding, not served; got {}",
+        String::from_utf8_lossy(&body)
     );
 }
 
@@ -305,9 +332,12 @@ fn fault_accept_any_client_makes_untrusted_client_cert_accepted() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     let body = client_round_trip(

@@ -90,10 +90,18 @@ mod tests {
     use crate::tls::ServerLimits;
     use std::time::Duration;
 
+    fn window() -> crate::config_state::ClientCredentialWindow {
+        crate::config_state::ClientCredentialWindow::new(
+            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_secs(300),
+        )
+        .expect("a legal credential window")
+    }
+
     fn rendered(limits: ServerLimits) -> String {
         let options = ServerOptions {
             limits,
-            ..Default::default()
+            ..ServerOptions::new(window())
         };
         format!("{:?}", http_builder(&options))
     }

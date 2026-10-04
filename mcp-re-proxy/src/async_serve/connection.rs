@@ -76,7 +76,7 @@ where
     H: AsyncRequestHandler,
 {
     // Read before `options` moves into the service closure below.
-    let max_connection_age = options.limits.max_connection_age;
+    let max_connection_age = options.client_credential_window.connection_age();
     let drain_grace = options.limits.drain_grace;
     let builder = http_builder(&options);
 
@@ -112,12 +112,7 @@ where
     // finishes it. The core's drain waits on this task, so it ends after the reply does.
     let conn = builder.serve_connection(io, service);
     tokio::pin!(conn);
-    let age = async {
-        match max_connection_age {
-            Some(age) => tokio::time::sleep(age).await,
-            None => std::future::pending().await,
-        }
-    };
+    let age = tokio::time::sleep(max_connection_age);
     tokio::pin!(age);
     tokio::select! {
         _ = conn.as_mut() => return Ok(()),
@@ -184,6 +179,7 @@ mod tests {
     use tokio::io::AsyncWriteExt;
 
     use super::*;
+    use crate::config_state::ClientCredentialWindow;
     use crate::tls::ServerLimits;
 
     fn admission(options: &ServerOptions) -> CoreAdmission {
@@ -206,11 +202,16 @@ mod tests {
         runtime.block_on(async {
             let options = Arc::new(ServerOptions {
                 limits: ServerLimits {
-                    max_connection_age: Some(Duration::from_millis(50)),
                     drain_grace: Duration::from_millis(200),
                     ..ServerLimits::default()
                 },
-                ..ServerOptions::default()
+                ..ServerOptions::new(
+                    ClientCredentialWindow::new(
+                        Duration::from_secs(3600),
+                        Duration::from_millis(50),
+                    )
+                    .expect("a legal credential window"),
+                )
             });
             let admission = admission(&options);
             let open = OpenConnection::accepted(&admission);

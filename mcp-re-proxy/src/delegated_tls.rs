@@ -490,10 +490,12 @@ mod tests {
     /// The budget refills, so a bounded rate is a RATE and not a one-shot quota.
     #[test]
     fn handshake_signature_budget_refills_over_time() {
-        let budget = TlsHandshakeSignBudget::new(1000, 1);
+        // 4/s refills one token per 250ms, so the immediate second acquire cannot race a
+        // refill on a loaded machine; at 1000/s a 1ms scheduling gap made it pass.
+        let budget = TlsHandshakeSignBudget::new(4, 1);
         assert!(budget.try_acquire());
         assert!(!budget.try_acquire());
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::thread::sleep(std::time::Duration::from_millis(300));
         assert!(budget.try_acquire(), "the bucket must refill with time");
     }
 

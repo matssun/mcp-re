@@ -44,6 +44,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve;
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ActorResolver;
@@ -110,6 +111,22 @@ fn audience() -> AudienceTuple {
 // rcgen CA + leaves (same idiom as mcp-re-transport/tests/mtls_client_test.rs).
 // ---------------------------------------------------------------------------
 
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(
+        std::time::Duration::from_secs(3600),
+        std::time::Duration::from_secs(300),
+    )
+    .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - std::time::Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + std::time::Duration::from_secs(1800)).into();
+}
+
 struct Ca {
     cert: rcgen::Certificate,
     key: KeyPair,
@@ -154,6 +171,9 @@ fn make_leaf(
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    if client_auth {
+        short_lived(&mut params);
+    }
     let cert = params
         .signed_by(&key, &ca.issuer())
         .expect("leaf signed by ca");
@@ -305,7 +325,7 @@ fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
 
     let options = ServerOptions {
         target_uri: TARGET.to_string(),
-        ..ServerOptions::default()
+        ..ServerOptions::new(window())
     };
 
     let shutdown = Arc::new(AtomicBool::new(false));

@@ -160,8 +160,9 @@ fn make_ca(common_name: &str) -> Ca {
 
 /// A leaf signed by `ca`, with the given SANs / CN and (client or server) EKU.
 /// Uses a bounded, currently-valid window (≈15y) matching the proxy test idiom so
-/// the cert passes the handshake date check and a generous `--max-client-cert-
-/// lifetime` ceiling.
+/// the cert passes the handshake date check. A client leaf this long-lived exceeds the
+/// lifetime ceiling a live proxy enforces; client leaves a proxy serves use
+/// [`make_leaf_windowed`].
 fn make_leaf(
     ca: &Ca,
     sans: Vec<SanType>,
@@ -278,18 +279,29 @@ impl DemoFixtures {
         // valid from ~1min ago to +50min so it is currently valid AND its lifetime
         // (window duration) is ≤ 3600s. `now`-relative — expires ~50min out.
         let now = OffsetDateTime::now_utc();
+        let not_before = now
+            .checked_sub(time::Duration::seconds(60))
+            .expect("not_before in range");
+        let not_after = now
+            .checked_add(time::Duration::seconds(SHORT_LIVED_CLIENT_CERT_SECS))
+            .expect("not_after in range");
         let (short_client_leaf, short_client_leaf_key) = make_leaf_windowed(
             &client_ca,
             vec![uri(&client_subject)],
             None,
             true,
-            now.checked_sub(time::Duration::seconds(60))
-                .expect("not_before in range"),
-            now.checked_add(time::Duration::seconds(SHORT_LIVED_CLIENT_CERT_SECS))
-                .expect("not_after in range"),
+            not_before,
+            not_after,
         );
-        let (mismatched_leaf, mismatched_leaf_key) =
-            make_leaf(&client_ca, vec![uri(&spec.mismatched_identity)], None, true);
+        // The same window, so the identity binding refuses T3 and not the lifetime ceiling.
+        let (mismatched_leaf, mismatched_leaf_key) = make_leaf_windowed(
+            &client_ca,
+            vec![uri(&spec.mismatched_identity)],
+            None,
+            true,
+            not_before,
+            not_after,
+        );
 
         // trust.json: the request signer the proxy trusts at the OBJECT layer.
         // The server signs responses with the server seed; the client trusts that

@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::extract_identity;
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
@@ -57,6 +58,19 @@ use rustls_pki_types::UnixTime;
 // ---------------------------------------------------------------------------
 // Test certificate authority + leaves (rcgen).
 // ---------------------------------------------------------------------------
+
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(Duration::from_secs(3600), Duration::from_secs(300))
+        .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + Duration::from_secs(1800)).into();
+}
 
 struct Ca {
     cert: rcgen::Certificate,
@@ -103,6 +117,9 @@ fn make_leaf(
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    if client_auth {
+        short_lived(&mut params);
+    }
     let cert = params
         .signed_by(&key, &ca.issuer())
         .expect("leaf signed by ca");
@@ -148,6 +165,7 @@ fn make_client_leaf_with_serial(
     params.subject_alt_names = vec![uri(san)];
     params.serial_number = Some(SerialNumber::from(serial));
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    short_lived(&mut params);
     let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     let der = cert.der().clone();
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
@@ -636,7 +654,7 @@ fn mtls_round_trip_extracts_client_identity_and_serves_request() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, identity| {
                 // Echo the request body back; the identity is asserted via the join.
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
@@ -782,7 +800,7 @@ fn delegated_ed25519_tls_handshake_round_trip() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 let _ = identity;
@@ -887,7 +905,7 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, _identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()
@@ -951,7 +969,7 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
         serve_once(
             &listener2,
             config2,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });
@@ -1022,9 +1040,12 @@ fn missing_client_certificate_is_rejected() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     // Client presents NO certificate; the server requires one → fail closed.
@@ -1050,9 +1071,12 @@ fn untrusted_client_certificate_is_rejected() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     let _ = client_round_trip(
@@ -1090,10 +1114,7 @@ fn over_long_client_cert_is_rejected() {
     );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let options = ServerOptions {
-        max_client_cert_lifetime: Some(Duration::from_secs(3600)), // 1h
-        ..ServerOptions::default()
-    };
+    let options = ServerOptions::new(window());
 
     let server = thread::spawn(move || {
         serve_once(&listener, config, &options, |_req, _id| {
@@ -1118,20 +1139,16 @@ fn over_long_client_cert_is_rejected() {
 fn within_limit_client_cert_is_served() {
     let client_ca = make_ca();
     let config = server_config_for(&client_ca);
-    // Same 15y cert, but the configured max is generous (≈20y) → served.
-    let (client_cert, client_key) = make_leaf_with_validity(
+    // A now-relative 1860s cert, well inside the 1h ceiling → served.
+    let (client_cert, client_key) = make_leaf(
         &client_ca,
         vec![uri("spiffe://example.org/agent-1")],
+        None,
         true,
-        (2020, 1, 1),
-        (2035, 1, 1),
     );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let options = ServerOptions {
-        max_client_cert_lifetime: Some(Duration::from_secs(20 * 365 * 24 * 3600)),
-        ..ServerOptions::default()
-    };
+    let options = ServerOptions::new(window());
 
     let server = thread::spawn(move || {
         serve_once(&listener, config, &options, |_req, _id| {
@@ -1178,7 +1195,7 @@ fn non_revoked_client_cert_completes_handshake_with_crl_configured() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, _id| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()
@@ -1216,9 +1233,12 @@ fn revoked_client_cert_handshake_is_rejected() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     // The handshake must fail closed: a revoked client cert is rejected by the
@@ -1255,9 +1275,12 @@ fn stale_crl_fails_client_handshake_closed() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     let _ = client_round_trip(
@@ -1315,9 +1338,12 @@ fn a_client_whose_revocation_status_cannot_be_determined_is_denied() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     let _ = client_round_trip(
