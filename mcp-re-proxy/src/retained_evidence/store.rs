@@ -75,9 +75,16 @@ impl FsRetainedEvidenceStore {
     /// directory `fsync` has no per-entry granularity, so N renames followed by one
     /// `fsync` are exactly as durable as N `fsync`-per-rename pairs).
     ///
-    /// `path` MUST be directly under the archive root, or the barrier the caller takes is
-    /// over the wrong directory.
+    /// `path` is refused unless it names an entry directly under the archive root: the
+    /// barrier the caller takes is over that one directory, and this store writes nowhere
+    /// else.
     pub fn stage_at(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        if path.parent() != Some(self.archive.root()) || path.file_name().is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "staged path is not directly under the archive root",
+            ));
+        }
         // Unique PER WRITE. A name that is only unique per process is not: the pid is
         // constant for the process lifetime and is 1 in a container, so crash residue
         // under that name makes every future write of the same object fail
@@ -158,6 +165,21 @@ mod tests {
         let dir = TempDir::new();
         let store = FsRetainedEvidenceStore::open(dir.path()).expect("open");
         (dir, store)
+    }
+
+    #[test]
+    fn stage_at_refuses_a_path_outside_the_archive_root() {
+        let (dir, store) = store();
+        std::fs::create_dir_all(dir.path().join("nested")).expect("mkdir");
+        let outside = TempDir::new();
+        for target in [
+            dir.path().join("nested").join("x"),
+            outside.path().join("x"),
+        ] {
+            let err = store.stage_at(&target, b"bytes").expect_err("refused");
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+            assert!(!target.exists());
+        }
     }
 
     #[test]
