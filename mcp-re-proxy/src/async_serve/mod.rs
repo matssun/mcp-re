@@ -74,6 +74,9 @@ mod request;
 /// Reading the inbound message: what it says about itself, then what it carries.
 mod inbound;
 
+/// Taking the next connection off the listener, and what an accept error costs the loop.
+mod accept;
+
 use body_budget::BUFFERED_BODY_BUDGET_MULTIPLE;
 use connection::serve_connection;
 use core_admission::CoreAdmission;
@@ -196,8 +199,11 @@ pub async fn serve<H: AsyncRequestHandler>(
         let accepted = tokio::time::timeout(ACCEPT_POLL_INTERVAL, listener.accept()).await;
         let (tcp, _peer) = match accepted {
             Ok(Ok(pair)) => pair,
-            // A single rejected/aborted connection must not bring the server down.
-            Ok(Err(_)) => continue,
+            // What an accept error costs the loop is `accept`'s decision.
+            Ok(Err(error)) => {
+                accept::after_error(&error).await;
+                continue;
+            }
             // Idle poll elapsed: re-check the shutdown guard.
             Err(_) => continue,
         };
@@ -278,13 +284,6 @@ fn origin_form_of(absolute: &str) -> Option<String> {
     })
 }
 
-/// Terminate TLS on one accepted socket and serve HTTP/1.1 keep-alive + HTTP/2 over
-/// it. The handshake is bounded by the aggregate `request_deadline` (slow-loris on
-/// the handshake read); the peer leaf certificate is captured once (hyper then owns
-/// the stream) and drives per-request identity + cert-lifetime decisions.
-// Every argument is a distinct per-connection collaborator captured from the serve
-// loop; bundling them into a struct would only rename the same set.
-#[allow(clippy::too_many_arguments)]
 /// Translate the handler's [`ServedHttpResponse`] (status + headers + body) into a
 /// hyper response, PRESERVING every signed header (RFC 9421 `Signature`/
 /// `Signature-Input`, RFC 9530 `Content-Digest`, `Content-Type`).

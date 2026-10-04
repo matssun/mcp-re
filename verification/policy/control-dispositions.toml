@@ -13584,6 +13584,15 @@ consequence = "high"
 root_relationship = "secret-hygiene premise beside THM-0014: the covered Authorization header it proves covered never leaves through a format string"
 record = "docs/architecture/control-dispositions.md#np-236"
 
+[[proposition]]
+id = "NP-237"
+title = "A persistent accept error costs the async listener a bounded wait, never a hot retry"
+carrier = "mcp-re-proxy/src/async_serve/accept.rs (backoff_after, after_error)"
+likely_owner = "none. proxy.serving_identity_provenance holds accept.rs in paths but states identity derivation, which an accept-backoff test does not falsify; NP-229 and NP-141 state wire limits and body budgets."
+consequence = "medium"
+root_relationship = "Beside NP-229: the listener's own availability when the process fd budget is exhausted"
+record = "docs/architecture/control-dispositions.md#np-237"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -14063,4 +14072,36 @@ project = "mcp-re-proxy"
 control = "tests/integration_async/main.rs#transparency_e2e_test::a_success_whose_evidence_cannot_be_kept_after_execution_is_refused_on_both_exits"
 decision = "new-proposition"
 proposition = "NP-154"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20212"
+project = "mcp-re-proxy"
+control = "src/lib.rs#pkcs11_keysource::token::tests::two_present_tokens_under_the_configured_label_are_refused_not_first_matched"
+decision = "new-proposition"
+proposition = "NP-210"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20213"
+project = "mcp-re-proxy"
+control = "src/lib.rs#pkcs11_keysource::token::tests::exactly_one_present_token_under_the_label_is_selected"
+decision = "new-proposition"
+proposition = "NP-210"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20214"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_serve::accept::tests::a_connections_own_failure_is_retried_at_once"
+decision = "new-proposition"
+proposition = "NP-237"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20215"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_serve::accept::tests::a_persistent_accept_error_waits_before_the_next_accept"
+decision = "new-proposition"
+proposition = "NP-237"
 recorded = "2026-10-04"

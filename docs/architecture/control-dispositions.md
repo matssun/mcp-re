@@ -4221,9 +4221,9 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-210 — the token that receives the PIN, and the key object used, are exactly the ones the configuration names
 
-**Controls:** `mcp-re-proxy` `lib#pkcs11_native::tests::a_token_label_keeps_its_interior_bytes_and_loses_only_its_padding`; `mcp-re-proxy` `lib#pkcs11_native::tests::an_ordinary_utf8_label_still_matches_its_configured_form`; `mcp-re-proxy` `lib#pkcs11_native::tests::byte_distinct_token_labels_do_not_compare_equal`; `mcp-re-proxy` `lib#pkcs11_native::tests::the_lookup_template_constrains_class_key_type_and_label`.
+**Controls:** `mcp-re-proxy` `lib#pkcs11_native::tests::a_token_label_keeps_its_interior_bytes_and_loses_only_its_padding`; `mcp-re-proxy` `lib#pkcs11_native::tests::an_ordinary_utf8_label_still_matches_its_configured_form`; `mcp-re-proxy` `lib#pkcs11_native::tests::byte_distinct_token_labels_do_not_compare_equal`; `mcp-re-proxy` `lib#pkcs11_native::tests::the_lookup_template_constrains_class_key_type_and_label`; `mcp-re-proxy` `lib#pkcs11_keysource::token::tests::two_present_tokens_under_the_configured_label_are_refused_not_first_matched`; `mcp-re-proxy` `lib#pkcs11_keysource::token::tests::exactly_one_present_token_under_the_label_is_selected`.
 **Carrier:** `mcp-re-proxy/src/pkcs11_native.rs`.
-**Statement.** *A token's reported CK_TOKEN_INFO label is compared as bytes, with only trailing 0x20/NUL padding removed. Byte-distinct labels, including ones that differ only in invalid UTF-8, never compare equal, and an ordinary UTF-8 label still matches its configured form. The key object is looked up with exactly CKA_CLASS (the requested class), CKA_KEY_TYPE=CKK_EC_EDWARDS and CKA_LABEL as the exact configured bytes, with no NUL terminator and no padding.*
+**Statement.** *A token's reported CK_TOKEN_INFO label is compared as bytes, with only trailing 0x20/NUL padding removed. Byte-distinct labels, including ones that differ only in invalid UTF-8, never compare equal, and an ordinary UTF-8 label still matches its configured form. The key object is looked up with exactly CKA_CLASS (the requested class), CKA_KEY_TYPE=CKK_EC_EDWARDS and CKA_LABEL as the exact configured bytes, with no NUL terminator and no padding. More than one present token reporting the configured label is a refusal, never a first match.*
 **If false.** The User PIN is sent to a device other than the configured one (for example an inserted token whose label aliases the real one under a lossy comparison), or a key object of the wrong class or key type is selected.
 **Likely owner:** proxy.pkcs11_adapter has the carrier in its paths but cannot take this. Its description and THM-0116 state what is established about the key once found, and THM-0108/THM-0116 scopes explicitly leave 'selects the right key' unestablished. Taking it would widen the unit's statement.
 **Severity:** `high`.
@@ -4460,3 +4460,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** Secret-hygiene premise beside THM-0014: the covered Authorization header it proves covered never leaves through a format string.
 **Recorded:** 2026-10-04, round-12 remediation of 39a19630561cc617.
+
+## NP-237 — a persistent accept error costs the async listener a bounded wait, never a hot retry
+
+**Controls:** `mcp-re-proxy` `lib#async_serve::accept::tests::a_connections_own_failure_is_retried_at_once`, `lib#async_serve::accept::tests::a_persistent_accept_error_waits_before_the_next_accept`.
+**Carrier:** `mcp-re-proxy/src/async_serve/accept.rs` (`backoff_after`, `after_error`).
+**Statement.** *An accept error that belongs to one peer is retried at once; every other kind waits a bounded interval before the next `accept`.*
+**If false.** A peer or the inner pool exhausting the fd budget turns the accept loop into a busy-spin that consumes its core.
+**Likely owner:** none. proxy.serving_identity_provenance holds accept.rs in paths but states identity derivation, which an accept-backoff test does not falsify; NP-229 and NP-141 state wire limits and body budgets.
+**Severity:** `medium`.
+**Root relationship.** Beside NP-229: the listener's own availability when the process fd budget is exhausted.
+**Recorded:** 2026-10-04, round-12 remediation of 44aa89bb2b7c864d.
