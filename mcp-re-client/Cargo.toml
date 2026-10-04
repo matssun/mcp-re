@@ -34,6 +34,7 @@ zeroize = { workspace = true }
 [dev-dependencies]
 mcp-re-proxy = { path = "../mcp-re-proxy" }
 mcp-re-http-profile = { path = "../mcp-re-http-profile" }
+rcgen = { workspace = true }
 tokio = { workspace = true }
 
 [lib]

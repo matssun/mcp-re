@@ -980,6 +980,7 @@ dependencies = [
  "mcp-re-http-profile",
  "mcp-re-proxy",
  "mcp-re-transport",
+ "rcgen",
  "serde",
  "serde_json",
  "tokio",
