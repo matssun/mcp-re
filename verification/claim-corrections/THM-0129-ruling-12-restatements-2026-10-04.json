@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "A non-degraded Ok verdict implies the authoritative admission state was reachable, that\nstate is ABOUT the workload the call is bound to — its `admission_id` equals the\nauthenticated admission's, which `authenticate_admission` has already equated with the\ncall's binding and with the verified assertion's — and at that workload its generation\nequals the authenticated generation (the binding's) and its status is Admitted.\n\nThe three conjuncts are ordered, and the order is the claim. Generation equality and\n`Admitted` are properties OF a subject; asserted about an unnamed record they are satisfied\nby any workload that happens to sit at the same number, and a generation is a per-workload\ncounter, so that is the ordinary case rather than a contrived one.\n",
+      "old": "A non-degraded Ok verdict implies the authoritative admission state was reachable, that\nstate is ABOUT the workload the call is bound to — its `admission_id` equals the binding's,\nwhich the earlier binding/assertion comparison has already equated with the verified\nassertion's — and at that workload its generation equals the binding's generation and its\nstatus is Admitted.\n\nThe three conjuncts are ordered, and the order is the claim. Generation equality and\n`Admitted` are properties OF a subject; asserted about an unnamed record they are satisfied\nby any workload that happens to sit at the same number, and a generation is a per-workload\ncounter, so that is the ordinary case rather than a contrived one.\n",
+      "reason": "THM-0004, in this theorem's dependency closure, field statement. Restated, not changed. The same conjuncts (state is about the bound workload, generation equals the binding's, status Admitted) are now named through authenticate_admission, which is where the binding/assertion equation is decided. Every conjunct of the old text is in the new text."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is unchanged. The dependency digest moved solely because the claim digests of THM-0004 propagated through the closure.",
+  "from_fingerprint": "sha256:22e6c2b059be8df1ec009a8a57e14bad7e068c7a6013635aff9d44c213228847",
+  "packet": "verification/reviews/packets/ruling-12-premise-restatements-2026-10-04.md",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION and, where listed, OWN-CLAIM RESTATEMENT from the Ruling 12 remediation run, WRITTEN UNDER THE OWNER'S STANDING INSTRUCTION TO FINISH THE RULING 12 RUN AND PENDING THE OWNER'S LATER FINGERPRINT REVIEW; the owner has not individually reviewed this fingerprint. THM-0129's own statement, security_consequence and scope are byte-identical to the reviewed text; every other component is identical to the reviewed state (cfdcd1ce, where the reviewed fingerprint equals the registry's). Each edit was read from the diff of verification/policy/theorems.toml (cfdcd1ce..HEAD) and classified in the packet as restated, strengthened or evidence-added; none removes or weakens a conjunct. This theorem is not edited as a published root; where its own claim gained a conjunct, that is an expansion the Phase-1 ruling's text would not cover by itself, and it is disclosed here and in the packet for the owner to confirm rather than asserted away. The two assertion flags below are made over the published roots' consequence and the product boundary. Items flagged for the owner: THM-0010's relocation of the minting-role clause to RetainedHandles::over; the newly named ASM-0059/ASM-0060/ASM-0061 under THM-0087/0106/0107.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5 (corrections that preserve the ratified promise are not owner escalations), applied to claim restatements the owner ordered in Ruling 12 (work/security-audit-2026-09-22-r12/OWNER-RULINGS.md). Recorded under the owner's standing instruction to finish that run with no handback. A correction record is not an approval: it does not make the specification-review axis fresh, and release-mode establishment still asks for the owner.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0129",
+  "to_fingerprint": "sha256:92eb0e91822ba17ef479ffe9039aceacf585985e5b63d404c0bb887e654fd50b"
+}

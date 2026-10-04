@@ -78,5 +78,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0062 | assumed | `ArtifactBinding::artifact_type` and `ArtifactBinding::binding_type` return the value's own private fields. | http_profile.artifact_typing | THM-0007 |
 | ASM-0063 | assumed | `artifact_type_of(binding)` and `binding_type_of(binding)` are the tags a binding carries, as functions of the binding. | http_profile.artifact_typing | THM-0007 |
 | ASM-0064 | review-obligation | `RequestEvidenceDigest::same_handle` returning true means the two handles carry the same digest value. | http_profile.continuation_binding | THM-0010 |
+| ASM-0065 | assumed | ECDSA P-256 / SHA-256 verification as implemented by the pinned `p256` 0.14 / `ecdsa` 0.17 accepts a signature only if it was produced under the private key of the supplied verifying key, and `p256::ecdsa::VerifyingKey::from_sec1_bytes` refuses every encoding that is not a point on the curve. | http_profile.scitt_algorithm_agreement, http_profile.scitt_derived_root | THM-0041 |
 
 22 assumption(s) are reached by more than one theorem.

@@ -491,3 +491,4 @@ attestations this view cannot see.
 | ASM-0062 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
 | ASM-0063 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
 | ASM-0064 | description, justification, scope or mechanism | http_profile.continuation_binding | assumption review |
+| ASM-0065 | description, justification, scope or mechanism | http_profile.scitt_algorithm_agreement, http_profile.scitt_derived_root | assumption review |

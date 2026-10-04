@@ -1,0 +1,40 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "An accepted continuation's previous-request and input-required-response handles ARE the two\nevidence handles the correlation store retained, compared each in its own slot, and its\nrequest-state handle is the labeled digest of the presented `requestState` under its own\nrole label.\n",
+      "old": "An accepted continuation's three handles are the labeled digests of the three presented\ninputs, each under its own role label.\n",
+      "reason": "this theorem's own claim, field statement. Restated over the retained-evidence representation (Ruling 12 item 16, commit ab761689). The role-binding obligation is kept: the request-state handle is still the labeled digest of the presented requestState under its own role label; the previous-request and input-required-response handles are now compared, each in its own slot, with the evidence handles the store retained. security_consequence gains a conjunct (the store retains handles, never a signature base). ONE RELOCATION the owner should look at: that each retained handle was minted under its own role label is no longer a clause of THM-0010's proof; its scope now assigns it to RetainedHandles::over, measured in proxy.continuation_correlation_store. THM-0074 reaches this premise for 'no other exchange's establishment succeeds'; slot-wise equality with the retained handles still carries that, with the minting-role half now evidenced in the proxy unit rather than proved here."
+    },
+    {
+      "field": "security_consequence",
+      "id": "C2",
+      "new": "A response-role evidence handle cannot be presented in the request slot, so the positions of\na continuation cannot be permuted. The store retains handles and never a signature base, so a\nread of the correlation tier yields no covered `authorization` or `dpop` credential.\n",
+      "old": "A response-role evidence handle cannot be presented in the request role, so the three\npositions of a continuation cannot be permuted.\n",
+      "reason": "this theorem's own claim, field security_consequence. Restated over the retained-evidence representation (Ruling 12 item 16, commit ab761689). The role-binding obligation is kept: the request-state handle is still the labeled digest of the presented requestState under its own role label; the previous-request and input-required-response handles are now compared, each in its own slot, with the evidence handles the store retained. security_consequence gains a conjunct (the store retains handles, never a signature base). ONE RELOCATION the owner should look at: that each retained handle was minted under its own role label is no longer a clause of THM-0010's proof; its scope now assigns it to RetainedHandles::over, measured in proxy.continuation_correlation_store. THM-0074 reaches this premise for 'no other exchange's establishment succeeds'; slot-wise equality with the retained handles still carries that, with the minting-role half now evidenced in the proxy unit rather than proved here."
+    },
+    {
+      "field": "scope",
+      "id": "C3",
+      "new": "Assumes only that the labeled digest IS A FUNCTION of (label, bytes) — ASM-0023. It does\nNOT establish collision-resistant separation between roles; that obligation stays at\nboundary.crypto_primitives and is not discharged here. That each retained handle was minted\nunder its own role label is `RetainedHandles::over`'s, measured in the proxy's\n`proxy.continuation_correlation_store`, and not a clause of the proof.\n",
+      "old": "Assumes only that the labeled digest IS A FUNCTION of (label, bytes) — ASM-0023. It does\nNOT establish collision-resistant separation between roles; that obligation stays at\nboundary.crypto_primitives and is not discharged here.\n",
+      "reason": "this theorem's own claim, field scope. Restated over the retained-evidence representation (Ruling 12 item 16, commit ab761689). The role-binding obligation is kept: the request-state handle is still the labeled digest of the presented requestState under its own role label; the previous-request and input-required-response handles are now compared, each in its own slot, with the evidence handles the store retained. security_consequence gains a conjunct (the store retains handles, never a signature base). ONE RELOCATION the owner should look at: that each retained handle was minted under its own role label is no longer a clause of THM-0010's proof; its scope now assigns it to RetainedHandles::over, measured in proxy.continuation_correlation_store. THM-0074 reaches this premise for 'no other exchange's establishment succeeds'; slot-wise equality with the retained handles still carries that, with the minting-role half now evidenced in the proxy unit rather than proved here."
+    }
+  ],
+  "dependency_correction": "No dependency digest moved.",
+  "from_fingerprint": "sha256:bf760d7a8c77d47410d25d737c12d2c5d14278968283addaea4eece40bb025ec",
+  "packet": "verification/reviews/packets/ruling-12-premise-restatements-2026-10-04.md",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION and, where listed, OWN-CLAIM RESTATEMENT from the Ruling 12 remediation run, WRITTEN UNDER THE OWNER'S STANDING INSTRUCTION TO FINISH THE RULING 12 RUN AND PENDING THE OWNER'S LATER FINGERPRINT REVIEW; the owner has not individually reviewed this fingerprint. THM-0010's OWN claim moved (see corrections; the owner's Ruling 12 item restated it) and every other component is identical to the reviewed state (cfdcd1ce, where the reviewed fingerprint equals the registry's). Each edit was read from the diff of verification/policy/theorems.toml (cfdcd1ce..HEAD) and classified in the packet as restated, strengthened or evidence-added; none removes or weakens a conjunct. This theorem is not edited as a published root; where its own claim gained a conjunct, that is an expansion the Phase-1 ruling's text would not cover by itself, and it is disclosed here and in the packet for the owner to confirm rather than asserted away. The two assertion flags below are made over the published roots' consequence and the product boundary. Items flagged for the owner: THM-0010's relocation of the minting-role clause to RetainedHandles::over; the newly named ASM-0059/ASM-0060/ASM-0061 under THM-0087/0106/0107.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5 (corrections that preserve the ratified promise are not owner escalations), applied to claim restatements the owner ordered in Ruling 12 (work/security-audit-2026-09-22-r12/OWNER-RULINGS.md). Recorded under the owner's standing instruction to finish that run with no handback. A correction record is not an approval: it does not make the specification-review axis fresh, and release-mode establishment still asks for the owner.",
+  "severity_after": "high",
+  "severity_before": "high",
+  "subject": "THM-0010",
+  "to_fingerprint": "sha256:0dafbe2132a2bc02cbc3b0a55649b2ea697c4b53fdb17add793f89bbd09fb986"
+}

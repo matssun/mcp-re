@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "`SigningWindow` (in `mcp-re-http-profile`) keeps `expires` private and no constructor accepts\none: every window is derived as the earlier of the configured TTL from `now` and the\ncredential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap\npast it. A credential already past its bound yields a window claiming no future validity\nrather than one running backwards. The delegated signing key is crate-private to its\n`ActiveDelegatedKey`, and the emitters that read it take a window, so a signature under a\ndelegated credential cannot advertise any other validity. The proxy's one opener opens every\nwindow this deployment signs under, reply and refusal alike, and a refusal signs under the\nsnapshot its own exchange took.\n",
+      "old": "`SigningWindow` keeps `expires` private and no constructor accepts one: every window is\nderived as the earlier of the configured TTL from `now` and the credential's own `exp`, with\nsaturating arithmetic so an absurd configured TTL cannot wrap past it. A credential already\npast its bound yields a window claiming no future validity rather than one running backwards.\nThe same owner opens every window this deployment signs under, reply and refusal alike, and\na refusal signs under the snapshot its own exchange took.\n",
+      "reason": "THM-0063, in this theorem's dependency closure, field statement. Strengthened (Ruling 12 item 8, commit d6afcd01). The SigningWindow derivation is unchanged; added: the delegated key is crate-private to ActiveDelegatedKey and the emitters that read it take a window, so a delegated signature cannot advertise another validity. 'The same owner' became 'the proxy's one opener'. supported_by gained unit://http_profile.delegated_signing_custody."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is unchanged. The dependency digest moved solely because the claim digests of THM-0063 propagated through the closure.",
+  "from_fingerprint": "sha256:0f5695a8d2241f114f6ab5e2e71d2cfb1791af1a4dba6642a1f5a97b9e2dca1f",
+  "packet": "verification/reviews/packets/ruling-12-premise-restatements-2026-10-04.md",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION and, where listed, OWN-CLAIM RESTATEMENT from the Ruling 12 remediation run, WRITTEN UNDER THE OWNER'S STANDING INSTRUCTION TO FINISH THE RULING 12 RUN AND PENDING THE OWNER'S LATER FINGERPRINT REVIEW; the owner has not individually reviewed this fingerprint. THM-0078's own statement, security_consequence and scope are byte-identical to the reviewed text; every other component is identical to the reviewed state (cfdcd1ce, where the reviewed fingerprint equals the registry's). Each edit was read from the diff of verification/policy/theorems.toml (cfdcd1ce..HEAD) and classified in the packet as restated, strengthened or evidence-added; none removes or weakens a conjunct. This theorem is not edited as a published root; where its own claim gained a conjunct, that is an expansion the Phase-1 ruling's text would not cover by itself, and it is disclosed here and in the packet for the owner to confirm rather than asserted away. The two assertion flags below are made over the published roots' consequence and the product boundary. Items flagged for the owner: THM-0010's relocation of the minting-role clause to RetainedHandles::over; the newly named ASM-0059/ASM-0060/ASM-0061 under THM-0087/0106/0107.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5 (corrections that preserve the ratified promise are not owner escalations), applied to claim restatements the owner ordered in Ruling 12 (work/security-audit-2026-09-22-r12/OWNER-RULINGS.md). Recorded under the owner's standing instruction to finish that run with no handback. A correction record is not an approval: it does not make the specification-review axis fresh, and release-mode establishment still asks for the owner.",
+  "severity_after": "high",
+  "severity_before": "high",
+  "subject": "THM-0078",
+  "to_fingerprint": "sha256:44c755afd633fe9a5c9d3616f7f606b2963886b370a7fc2043d362d831be714e"
+}

@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "A successful authentication implies the admitted actor named by the assertion is the\npresenter of this call — the actor the verifier resolved from the request signature — and\nthe currency verdict built from it carries that same actor unchanged.\n",
+      "old": "A successful admission implies the admitted actor named by the assertion is the presenter\nof this call — the actor the verifier resolved from the request signature.\n",
+      "reason": "this theorem's own claim, field statement. Strengthened. The old conjunct (the admitted actor named by the assertion is the presenter) is kept verbatim in substance; a second conjunct is added (the currency verdict built from it carries that actor unchanged). 'admission' became 'authentication' to name the owner, authenticate_admission."
+    }
+  ],
+  "dependency_correction": "No dependency digest moved.",
+  "from_fingerprint": "sha256:a4fdf6b0db8b959e5546b2e8931c56337b1bb3802005fc6c08f70dbeefbccb74",
+  "packet": "verification/reviews/packets/ruling-12-premise-restatements-2026-10-04.md",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION and, where listed, OWN-CLAIM RESTATEMENT from the Ruling 12 remediation run, WRITTEN UNDER THE OWNER'S STANDING INSTRUCTION TO FINISH THE RULING 12 RUN AND PENDING THE OWNER'S LATER FINGERPRINT REVIEW; the owner has not individually reviewed this fingerprint. THM-0006's OWN claim moved (see corrections; the owner's Ruling 12 item restated it) and every other component is identical to the reviewed state (cfdcd1ce, where the reviewed fingerprint equals the registry's). Each edit was read from the diff of verification/policy/theorems.toml (cfdcd1ce..HEAD) and classified in the packet as restated, strengthened or evidence-added; none removes or weakens a conjunct. This theorem is not edited as a published root; where its own claim gained a conjunct, that is an expansion the Phase-1 ruling's text would not cover by itself, and it is disclosed here and in the packet for the owner to confirm rather than asserted away. The two assertion flags below are made over the published roots' consequence and the product boundary. Items flagged for the owner: THM-0010's relocation of the minting-role clause to RetainedHandles::over; the newly named ASM-0059/ASM-0060/ASM-0061 under THM-0087/0106/0107.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5 (corrections that preserve the ratified promise are not owner escalations), applied to claim restatements the owner ordered in Ruling 12 (work/security-audit-2026-09-22-r12/OWNER-RULINGS.md). Recorded under the owner's standing instruction to finish that run with no handback. A correction record is not an approval: it does not make the specification-review axis fresh, and release-mode establishment still asks for the owner.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0006",
+  "to_fingerprint": "sha256:858b9d7be9c726e564e1c11f99d89bf345a32573333a4fd838ab164b7e30906d"
+}
