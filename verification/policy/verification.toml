@@ -643,6 +643,9 @@ tested_symbols = [
   "//mcp-re-http-profile:full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
   "//mcp-re-http-profile:full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
   "//mcp-re-http-profile:full_profile_test#two_requests_differing_only_in_a_signed_parameter_have_different_handles",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::bound_request::tests::a_derived_handle_agrees_with_the_signers_handle",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::bound_request::tests::a_request_differing_in_a_covered_component_derives_a_different_handle",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::bound_request::tests::a_thin_covered_set_cannot_reproduce_a_signed_handle",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_foreign_profile_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_unknown_field_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::response_block_round_trips_and_validates",
@@ -3581,6 +3584,8 @@ evidence = [
 tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::offline::tests::a_receipt_restated_at_another_position_is_refused_only_when_the_position_is_bound",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::offline::tests::a_bound_service_refuses_a_receipt_that_carries_no_position_commitment",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::wire::tests::the_position_commitment_is_the_digest_of_the_spelled_out_length_framed_preimage",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::wire::tests::a_byte_moved_across_the_log_identity_boundary_changes_the_commitment",
 ]
 
 # THE PAIR IS THE CHECK, and the module's own doc says `(protected alg, resolved key)` is

@@ -153,3 +153,61 @@ pub enum ReceiptPositionProfile {
     /// profile would buy nothing, since an attacker would simply strip the parameter.
     Bound,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_position_commitment_is_the_digest_of_the_spelled_out_length_framed_preimage() {
+        let root = [0x5a_u8; 32];
+        let mut preimage: Vec<u8> = Vec::new();
+        preimage.extend_from_slice(b"\0\0\0\0\0\0\0\x15mcp-re-scitt-position");
+        preimage.extend_from_slice(b"\0\0\0\0\0\0\0\x12mcp-re-evidence/v2");
+        preimage.extend_from_slice(b"\0\0\0\0\0\0\0\x03kid");
+        preimage.extend_from_slice(b"\0\0\0\0\0\0\0\x08");
+        preimage.extend_from_slice(&1_i64.to_be_bytes());
+        preimage.extend_from_slice(b"\0\0\0\0\0\0\0\x08");
+        preimage.extend_from_slice(&7_u64.to_be_bytes());
+        preimage.extend_from_slice(b"\0\0\0\0\0\0\0\x08");
+        preimage.extend_from_slice(&3_u64.to_be_bytes());
+        preimage.extend_from_slice(b"\0\0\0\0\0\0\0\x20");
+        preimage.extend_from_slice(&root);
+
+        let expected = Sha256::digest(&preimage).to_vec();
+        assert_eq!(position_commitment("kid", 1, 7, 3, &root), expected);
+    }
+
+    #[test]
+    fn a_byte_moved_across_the_log_identity_boundary_changes_the_commitment() {
+        let tree_size = 0x0102_0304_0506_0708_u64;
+        let leaf_index = 9_u64;
+        let root = [0x41_u8; 32];
+
+        let identity_b = "kid\0\0\0\0\0\0\0\u{1}";
+        let vds_b = i64::from_be_bytes(tree_size.to_be_bytes());
+        let tree_size_b = leaf_index;
+        let mut leaf_bytes = [0_u8; 8];
+        leaf_bytes.copy_from_slice(&root[..8]);
+        let leaf_index_b = u64::from_be_bytes(leaf_bytes);
+        let root_b = &root[8..];
+
+        let mut unframed_a = b"kid".to_vec();
+        unframed_a.extend_from_slice(&1_i64.to_be_bytes());
+        unframed_a.extend_from_slice(&tree_size.to_be_bytes());
+        unframed_a.extend_from_slice(&leaf_index.to_be_bytes());
+        unframed_a.extend_from_slice(&root);
+
+        let mut unframed_b = identity_b.as_bytes().to_vec();
+        unframed_b.extend_from_slice(&vds_b.to_be_bytes());
+        unframed_b.extend_from_slice(&tree_size_b.to_be_bytes());
+        unframed_b.extend_from_slice(&leaf_index_b.to_be_bytes());
+        unframed_b.extend_from_slice(root_b);
+        assert_eq!(unframed_a, unframed_b);
+
+        assert_ne!(
+            position_commitment("kid", 1, tree_size, leaf_index, &root),
+            position_commitment(identity_b, vds_b, tree_size_b, leaf_index_b, root_b),
+        );
+    }
+}
