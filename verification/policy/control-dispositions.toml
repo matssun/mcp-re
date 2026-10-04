@@ -15525,3 +15525,20 @@ control = "src/lib.rs#delegated_wiring::tests::a_root_that_does_not_answer_fails
 decision = "new-proposition"
 proposition = "NP-274"
 recorded = "2026-10-04"
+
+[[proposition]]
+id = "NP-275"
+title = "Once maintenance of a delegated signing key has stopped, no new signature is made under it"
+carrier = "mcp-re-proxy/src/signing_plane/rotation.rs (supervise_delegated_rotation) and mcp-re-proxy/src/signing_plane/mod.rs (SigningPlane::materialize_over, Drop)"
+likely_owner = "proxy.delegated_signing_credential measures both files and is an owner-approved surface, so this control is dispositioned here rather than cited there; the panic arm stays that unit's (M136)."
+consequence = "high"
+root_relationship = "ADR-MCPRE-052 §6/§7 and owner Ruling 14.3 (ad1846dc6f40fe17): the rotation worker is the only minter and the only trust-epoch poller, so a signer it no longer maintains is unrevocable"
+record = "docs/architecture/control-dispositions.md#np-275"
+
+[[disposition]]
+id = "CD-20349"
+project = "mcp-re-proxy"
+control = "src/lib.rs#signing_plane::rotation::tests::a_rotor_that_stops_cleanly_retires_the_snapshot"
+decision = "new-proposition"
+proposition = "NP-275"
+recorded = "2026-10-04"

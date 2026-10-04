@@ -599,7 +599,6 @@ fn run_validated(
         &signing_plan,
         roots,
         startup_now_unix,
-        Arc::clone(&shutdown),
     )?)?;
     // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner plane,
     // the authoritative replay tier, and the optional Mode-A channel binding.

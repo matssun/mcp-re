@@ -19,16 +19,17 @@
 //!
 //! The rotation worker is the ONLY thing that mints successors, and it is also the only
 //! thing that polls the shared trust epoch — the operator's cross-fleet kill switch
-//! (ADR-MCPRE-052 §7). Its panic path already retires the snapshot. Its CLEAN-STOP path
-//! did not, because before v0.16 a clean stop could not happen: the worker ran until the
-//! process exited. `WorkerSet`'s structural halt made one reachable, and a signer that
-//! outlived this plane would then go on signing off the last delegated key until its
-//! `exp`, with nobody left to observe an `INCR` — a frozen signing authority whose
-//! revocation channel is dead.
+//! (ADR-MCPRE-052 §7). A signer whose worker has stopped would go on signing off the last
+//! delegated key until its `exp`, with nobody left to observe an `INCR` — a frozen signing
+//! authority whose revocation channel is dead. So the invariant is: **once maintenance of a
+//! signing key has stopped, no new signature is made under it.** Two things hold it:
 //!
-//! So [`Drop`] retires the snapshot BEFORE halting the worker. After this plane is gone
-//! the hot path fails closed (`delegated_signing_unavailable`) immediately rather than at
-//! `exp`, which is the honest posture: nothing is maintaining that key any more.
+//! * The worker follows THIS PLANE's lifetime, not the deployment's shutdown flag. A
+//!   shutdown drains the fleet first, and the drain still signs responses; the key stays
+//!   maintained, and the epoch poll alive, until the plane is dropped after the drain.
+//! * [`Drop`] retires the snapshot BEFORE halting the worker, and the worker's supervisor
+//!   retires it whenever the worker ends, so the hot path fails closed
+//!   (`delegated_signing_unavailable`) the moment nothing is maintaining the key.
 //!
 //! Note the asymmetry with `reloading_trust::SignerDirectory`, which deliberately keeps
 //! answering from its last snapshot after its plane is gone. A directory yields an
@@ -128,15 +129,14 @@ impl SigningPlane {
     /// read, this refuses to start.
     ///
     /// `roots` is MOVED in (borrowed earlier for TLS material); taking the witness rather
-    /// than a signer is what makes a plane over uncompared roles unconstructible. `deployment` is the caller's shutdown flag; the worker started
-    /// here stops on it, and also when this plane is dropped.
+    /// than a signer is what makes a plane over uncompared roles unconstructible. It takes
+    /// no shutdown flag: the worker started here stops only when this plane is dropped.
     pub fn materialize(
         plan: &crate::startup_plan::SigningPlan,
         roots: crate::capability_materialization::MaterializedSigningRoles,
         startup_now_unix: i64,
-        deployment: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<SigningPlane, String> {
-        Self::materialize_over(plan, roots, startup_now_unix, deployment)
+        Self::materialize_over(plan, roots, startup_now_unix)
     }
 
     /// The materialization over any root signer; reachable outside this module only through
@@ -145,7 +145,6 @@ impl SigningPlane {
         plan: &crate::startup_plan::SigningPlan,
         root_signer: impl crate::key_source::ResponseSigner + Send + 'static,
         startup_now_unix: i64,
-        deployment: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<SigningPlane, String> {
         let crate::delegated_wiring::DelegatedSigningWiring {
             signer,
@@ -192,8 +191,9 @@ impl SigningPlane {
         );
         // Cold-path rotation worker: rotates within each key's overlap window, off the
         // per-core runtimes, and re-issues on a trust-epoch advance so an operator `INCR`
-        // revokes outstanding delegated keys fleet-wide (ADR-MCPRE-052 §7).
-        let mut workers = WorkerSet::new(deployment);
+        // revokes outstanding delegated keys fleet-wide (ADR-MCPRE-052 §7). Its halt is
+        // this plane's alone, so it keeps the key maintained through the fleet drain.
+        let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         spawn_delegated_rotation_task(
             &mut workers,
             rotor,
@@ -844,7 +844,6 @@ mod rotation_owner_tests {
             &plan(TrustEpochPlan::NoNetworkChannel),
             root(&offline, &calls),
             now_unix(),
-            Arc::new(AtomicBool::new(false)),
         )
         .err()
         .expect("a proxy must not begin serving without an active delegated key");
@@ -868,7 +867,6 @@ mod rotation_owner_tests {
             &plan(TrustEpochPlan::NoNetworkChannel),
             root(&offline, &calls),
             now_unix(),
-            Arc::new(AtomicBool::new(false)),
         )
         .expect("a healthy root must establish signing custody");
         assert_eq!(plane.worker_count(), 1);
@@ -898,7 +896,6 @@ mod rotation_owner_tests {
             )),
             root(&offline, &calls),
             now_unix(),
-            Arc::new(AtomicBool::new(false)),
         )
         .err()
         .expect("a kill switch that cannot be read must refuse the plane");

@@ -4870,3 +4870,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Root relationship.** ADR-MCPRE-052 §6/§7. `proxy.delegated_signing_credential` measures the wiring file but is an owner-approved surface (F3), so the control is dispositioned here rather than added to that unit.
 **Severity:** `high`.
 **Recorded:** 2026-10-04, READJUDICATION-2026-10-04 §A for 566557fe105d0c66.
+
+## NP-275 — once maintenance of a delegated signing key has stopped, no new signature is made under it
+
+**Controls:** `mcp-re-proxy` `lib#signing_plane::rotation::tests::a_rotor_that_stops_cleanly_retires_the_snapshot`.
+**Carrier:** `mcp-re-proxy/src/signing_plane/rotation.rs` (`supervise_delegated_rotation`), `mcp-re-proxy/src/signing_plane/mod.rs` (`SigningPlane::materialize_over`, `Drop`).
+**Statement.** *The delegated rotation worker's halt belongs to its signing plane alone — `materialize` takes no shutdown flag — so the key stays maintained, and the trust-epoch poll alive, through the fleet drain until the plane is dropped. The plane retires the snapshot before halting the worker, and the worker's supervisor retires it whenever the worker ends, cleanly or by panic, so the hot path fails closed the moment nothing maintains the key.*
+**If false.** A draining replica signs responses under a key nothing rotates and nothing can revoke: the operator's `INCR` is not observed for the rest of the drain.
+**Likely owner:** `proxy.delegated_signing_credential` measures both files but is an owner-approved surface (F3), so the clean-stop control is dispositioned here; the panic arm stays that unit's, falsified by M136.
+**Root relationship.** ADR-MCPRE-052 §6/§7; owner Ruling 14.3 for ad1846dc6f40fe17.
+**Severity:** `high`.
+**Recorded:** 2026-10-04, owner Ruling 14.3 for ad1846dc6f40fe17.

@@ -4011,9 +4011,11 @@ conjunct = "every transition out of a valid delegated key fails closed rather th
 path = "mcp-re-proxy/src/signing_plane/rotation.rs"
 anchor = """
         signer.retire_permanently();
+        signer.metrics().record_failure();
 """
 weakening = """
         // the rotor died; the current snapshot keeps signing until its own exp
+        signer.metrics().record_failure();
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::rotation::tests::a_panicking_rotor_retires_the_snapshot_immediately_not_at_exp",
@@ -7131,7 +7133,6 @@ anchor = """
         &signing_plan,
         roots,
         startup_now_unix,
-        Arc::clone(&shutdown),
     )?)?;
 """
 weakening = """
@@ -7140,7 +7141,6 @@ weakening = """
         &signing_plan,
         rival,
         startup_now_unix,
-        Arc::clone(&shutdown),
     )?)?;
 """
 expect_red = [
