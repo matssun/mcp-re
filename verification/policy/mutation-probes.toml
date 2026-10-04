@@ -9564,13 +9564,13 @@ theorem = "THM-0061"
 conjunct = "a spent elicitation is reported as requiring a new one rather than as an ordinary failure, and A FAILED RETENTION OBLIGATION SURVIVES beside whatever the execution status says — which requires the contract to be lifted from the receipt body onto the outcome the verifier returns"
 path = "mcp-re-client-core/src/response.rs"
 anchor = """            let (wire_code, execution) = rejection_receipt(&response.body);
-            Ok(VerifiedDelegatedResponse {
-                verified: DelegatedResponseEvidence::Bound(verified),
+            Ok(VerifiedDelegatedResponse::new(
+                DelegatedResponseEvidence::Bound(verified),
 """
 weakening = """            let (wire_code, _stated) = rejection_receipt(&response.body);
             let execution = ExecutionContract::default();
-            Ok(VerifiedDelegatedResponse {
-                verified: DelegatedResponseEvidence::Bound(verified),
+            Ok(VerifiedDelegatedResponse::new(
+                DelegatedResponseEvidence::Bound(verified),
 """
 expect_red = [
   "//mcp-re-client-core:mcp_re_client_core_test#response::delegated_tests::a_post_dispatch_rejection_carries_its_execution_and_retry_contract",

@@ -677,6 +677,14 @@ pub fn verify_response(
     let trust = CompositeResponseTrust::new(&resolve, &revocation);
     let verified = verify_delegated_response(&response, &trust, &expectation, &policy, now)
         .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+    // `result.requestState` only if this is an InputRequiredResult — a terminal reply
+    // has none. The verified product derives it from the body verification covered and
+    // REFUSES, rather than reporting as terminal, both a reply that declares itself
+    // non-terminal without a usable state and one whose `resultType` is outside the set
+    // MCP 2026-07-28 defines (MCPRE-495).
+    let request_state = verified
+        .continuation_state()
+        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     // A verified rejection receipt is genuine evidence but NOT an acceptance — surface
     // the outcome so the caller does not read a signed replay/trust rejection as a
     // success. (An unsigned / direct-root / forged answer never reaches here: it fails
@@ -697,13 +705,6 @@ pub fn verify_response(
     // The response evidence handle (D_irr): the answer leg binds to it. Read from the
     // VERIFIED response evidence, never from unverified bytes.
     let resp_digest = ev.response_signature_base_digest().clone();
-    // `result.requestState` only if this is an InputRequiredResult — a terminal reply
-    // has none. Read after verification: content-digest covered the body. Classified
-    // by the audited core, which REFUSES rather than reporting as terminal both a reply
-    // that declares itself non-terminal without a usable state and one whose
-    // `resultType` is outside the set MCP 2026-07-28 defines (MCPRE-495).
-    let request_state = mcp_re_client_core::continuation_state(&response.body)
-        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     Ok(VerifyResultJs {
         ok: true,
         server_keyid: ev.accepted_signer().identity.keyid.clone(),

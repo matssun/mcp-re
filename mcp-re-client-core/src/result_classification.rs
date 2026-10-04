@@ -19,7 +19,8 @@
 //!
 //! [`classify_result`] REPORTS what a verified body says, including
 //! [`ResultClass::Unrecognized`] — a caller inspecting a record may legitimately want to
-//! see it. [`continuation_state`] REFUSES it, because a caller acting on a LIVE exchange
+//! see it. [`continuation_state_of`] and `VerifiedDelegatedResponse::continuation_state`
+//! REFUSE it, because a caller acting on a LIVE exchange
 //! must not treat a reply whose meaning it cannot determine as terminal. Each SDK binding
 //! used to open-code the JSON walk and collapse the malformed case to `None`, which their
 //! transports read as terminal: the open leg's correlation entry was consumed, the
@@ -64,30 +65,16 @@ pub fn classify_result(result: Option<&Value>) -> ResultClass {
     }
 }
 
-/// The continuation state a VERIFIED response carries, for callers that must act
-/// on a live exchange rather than reconstruct a record: `Some(state)` for an
-/// `InputRequiredResult`, `None` for a terminal reply, and an ERROR for a reply
-/// that announces itself non-terminal without a usable `requestState`.
-///
-/// This is what the SDK bindings call. Each of them used to open-code the JSON walk
-/// and collapse the malformed case to `None`, which their transports read as
-/// terminal: the open leg's correlation entry was consumed, the input-required
-/// callback never fired, no answer leg was ever signed, and an elicitation was
-/// handed to the application as a completed tool result. See
-/// [`mcp_re_http_profile::result_class::input_required_state`] for the three-way
-/// contract.
-pub fn continuation_state(body: &[u8]) -> Result<Option<String>, HttpProfileError> {
-    mcp_re_http_profile::result_class::input_required_state(body)
-}
-
-/// The same three-way contract, over a `result` member the caller has ALREADY parsed.
+/// The three-way continuation contract (`Some(state)` for an `InputRequiredResult`, `None`
+/// for a terminal reply, an ERROR for a non-terminal reply without a usable
+/// `requestState`), over a `result` member the caller has ALREADY parsed.
 ///
 /// A caller that has derived the plain JSON-RPC reply from the verified bytes holds the
-/// `result` already. Handing those bytes back to [`continuation_state`] parses the same
-/// message a second time and classifies it a second time, which is how two readers of one
-/// message end up disagreeing about what it says — the defect
-/// [`mcp_re_http_profile::result_class::input_required_state_of`] exists to remove. Such a
-/// caller asks the question here, once.
+/// `result` already. Classifying the bytes again parses the same message a second time,
+/// which is how two readers of one message end up disagreeing about what it says — the
+/// defect [`mcp_re_http_profile::result_class::input_required_state_of`] exists to remove.
+/// Such a caller asks the question here, once. The live byte-level face is
+/// `VerifiedDelegatedResponse::continuation_state`.
 pub fn continuation_state_of(result: Option<&Value>) -> Result<Option<String>, HttpProfileError> {
     mcp_re_http_profile::result_class::input_required_state_of(result)
 }
@@ -130,10 +117,11 @@ mod tests {
             },
         })
         .to_string();
-        assert!(continuation_state(body.as_bytes()).is_err());
-        let terminal = br#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
+        let parsed: Value = serde_json::from_str(&body).expect("json");
+        assert!(continuation_state_of(parsed.get("result")).is_err());
+        let terminal: Value = serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {}});
         assert_eq!(
-            continuation_state(terminal).expect("terminal is legal"),
+            continuation_state_of(terminal.get("result")).expect("terminal is legal"),
             None
         );
     }
@@ -159,7 +147,7 @@ mod tests {
             let bytes = body.to_string();
             assert_eq!(
                 continuation_state_of(body.get("result")),
-                continuation_state(bytes.as_bytes()),
+                mcp_re_http_profile::result_class::input_required_state(bytes.as_bytes()),
                 "the two faces disagree about {bytes}"
             );
         }

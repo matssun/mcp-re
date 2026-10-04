@@ -30,6 +30,7 @@ use mcp_re_http_profile::Verifier;
 use serde_json::Value;
 
 use crate::response_expectation::ResponseExpectation;
+use crate::verified_delegated_response::VerifiedDelegatedResponse;
 
 use crate::execution_contract::rejection_receipt;
 use crate::execution_contract::ExecutionContract;
@@ -83,15 +84,6 @@ pub enum DelegatedOutcome {
         wire_code: Option<String>,
         execution: ExecutionContract,
     },
-}
-
-/// A verified delegated response: the verification evidence plus the outcome.
-#[derive(Debug, Clone)]
-pub struct VerifiedDelegatedResponse {
-    /// The verified response evidence, bound or unbound.
-    pub verified: DelegatedResponseEvidence,
-    /// Success vs delegated rejection receipt.
-    pub outcome: DelegatedOutcome,
 }
 
 /// Verify a DELEGATED-required response on the client (ADR-MCPRE-052 §3, MCPRE-122).
@@ -165,10 +157,11 @@ fn verify_delegated_response_under(
             now,
         )?;
         check_expected_issuer(pinned, verified.delegation_issuer_kid())?;
-        return Ok(VerifiedDelegatedResponse {
-            verified: DelegatedResponseEvidence::Bound(verified),
-            outcome: DelegatedOutcome::Success,
-        });
+        return Ok(VerifiedDelegatedResponse::new(
+            DelegatedResponseEvidence::Bound(verified),
+            DelegatedOutcome::Success,
+            &response.body,
+        ));
     }
 
     // A REJECTION receipt: verify request-bound first, then preflight-unbound. Both
@@ -184,13 +177,14 @@ fn verify_delegated_response_under(
         Ok(verified) => {
             check_expected_issuer(pinned, verified.delegation_issuer_kid())?;
             let (wire_code, execution) = rejection_receipt(&response.body);
-            Ok(VerifiedDelegatedResponse {
-                verified: DelegatedResponseEvidence::Bound(verified),
-                outcome: DelegatedOutcome::Rejection {
+            Ok(VerifiedDelegatedResponse::new(
+                DelegatedResponseEvidence::Bound(verified),
+                DelegatedOutcome::Rejection {
                     wire_code,
                     execution,
                 },
-            })
+                &response.body,
+            ))
         }
         Err(bound_err) => {
             match verifier.verify_delegated_unbound_response(response, expect, is_revoked, now) {
@@ -202,13 +196,14 @@ fn verify_delegated_response_under(
                     // refusal at all.
                     check_unbound_receipt_is_about_this_request(response, expectation.request())?;
                     let (wire_code, execution) = rejection_receipt(&response.body);
-                    Ok(VerifiedDelegatedResponse {
-                        verified: DelegatedResponseEvidence::Unbound(verified),
-                        outcome: DelegatedOutcome::Rejection {
+                    Ok(VerifiedDelegatedResponse::new(
+                        DelegatedResponseEvidence::Unbound(verified),
+                        DelegatedOutcome::Rejection {
                             wire_code,
                             execution,
                         },
-                    })
+                        &response.body,
+                    ))
                 }
                 // Neither path verified — fail closed. Surface the bound error (the more
                 // specific of the two for a receipt claiming to be about this request).
@@ -527,6 +522,52 @@ mod delegated_tests {
     }
     fn success_body() -> Vec<u8> {
         br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+    }
+
+    #[test]
+    fn a_verified_success_carries_the_continuation_state_its_verified_body_states() {
+        let input_required = mcp_re_http_profile::result_class::INPUT_REQUIRED_RESULT_TYPE;
+        let with_state = json!({"jsonrpc": "2.0", "id": 1, "result": {
+            "resultType": input_required,
+            "requestState": "s-1",
+        }});
+        let without_state = json!({"jsonrpc": "2.0", "id": 1, "result": {
+            "resultType": input_required,
+        }});
+        let cases = [
+            (
+                with_state.to_string().into_bytes(),
+                Ok(Some("s-1".to_owned())),
+            ),
+            (
+                without_state.to_string().into_bytes(),
+                Err(HttpProfileError::MalformedEvidence(
+                    "input_required requestState",
+                )),
+            ),
+            (success_body(), Ok(None)),
+        ];
+        for (body, expected) in cases {
+            let signed = signed();
+            let mut custody = custody();
+            let mut resp = HttpResponse {
+                status: 200,
+                headers: vec![("content-type".into(), "application/json".into())],
+                body,
+            };
+            custody
+                .sign_response(NOW, &mut resp, signed.request())
+                .expect("server delegated-signs the success response");
+            let out = verify_delegated_response(
+                &resp,
+                &trust_with(StaticRevocationList::new()),
+                &expectation(&signed),
+                &policy(),
+                NOW,
+            )
+            .expect("client verifies delegated success");
+            assert_eq!(out.continuation_state(), expected);
+        }
     }
 
     #[test]

@@ -15075,3 +15075,11 @@ control = "src/lib.rs#async_inner::in_process::tests::an_in_process_inner_states
 decision = "new-proposition"
 proposition = "NP-264"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20299"
+project = "mcp-re-client-core"
+control = "src/lib.rs#response::delegated_tests::a_verified_success_carries_the_continuation_state_its_verified_body_states"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-10-04"

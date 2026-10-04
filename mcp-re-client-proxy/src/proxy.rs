@@ -530,7 +530,7 @@ pub(crate) fn plain_response_from_verified(
 mod tests {
     use super::*;
     use mcp_re_client_core::classify_result;
-    use mcp_re_client_core::continuation_state;
+    use mcp_re_client_core::continuation_state_of;
     use mcp_re_client_core::ResultClass;
 
     /// A JSON-RPC error rides in the same HTTP 200 body an ordinary result does, so
@@ -621,7 +621,7 @@ mod tests {
             ResultClass::InputRequired
         );
         assert_eq!(
-            continuation_state(body).expect("state"),
+            continuation_state_of(plain.get("result")).expect("state"),
             Some("st-1".to_owned())
         );
 

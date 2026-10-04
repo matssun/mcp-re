@@ -111,8 +111,10 @@ pub fn classify_result_type(result: Option<&Value>) -> ResultTypeClass {
 /// - a body that is not one JSON-RPC response object (a batch array or a scalar),
 ///   which has no `result` member to classify and must not read as terminal.
 ///
-/// Call ONLY on bytes whose signature and `content-digest` have already verified:
-/// this reads protected content, it does not establish it.
+/// This reads content and establishes nothing about who produced it: a signer classifies
+/// the reply it is about to sign, and a client acting on a live exchange reads the answer
+/// from `mcp_re_client_core::VerifiedDelegatedResponse::continuation_state`, which only
+/// verification constructs.
 pub fn input_required_state(body: &[u8]) -> Result<Option<String>, HttpProfileError> {
     let parsed: Value = serde_json::from_slice(body)
         .map_err(|_| HttpProfileError::MalformedEvidence("response body"))?;
