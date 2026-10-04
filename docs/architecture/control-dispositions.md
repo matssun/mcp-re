@@ -666,7 +666,7 @@ nowhere.
 
 ## NP-003 — every long-lived worker's lifetime is an owned value
 
-**Controls:** `mcp-re-proxy/src/managed_worker` (8).
+**Controls:** `mcp-re-proxy` `lib#managed_worker::halt::tests` (2) — `a_raised_halt_never_becomes_unraised`, `either_source_alone_raises_the_halt`; `mcp-re-proxy` `lib#managed_worker::tests` (7) — `a_worker_also_stops_when_the_deployment_stops`, `a_worker_that_ignores_the_halt_is_bounded_and_named`, `an_interrupted_sleep_reports_that_it_was_cut_short`, `dropping_an_empty_set_raises_the_halt_it_handed_out`, `dropping_the_set_stops_a_worker_the_deployment_flag_never_stopped`, `reclaiming_twice_is_harmless`, `the_halt_stays_raised_after_the_set_is_gone`.
 **Carrier:** `managed_worker/mod.rs` and `managed_worker/halt.rs`.
 **Statement.** *A long-lived worker's lifetime is represented by an owned value: a structural
 halt is raised for every worker the set owns and by either source alone, it stays raised
@@ -1256,7 +1256,7 @@ follows the estate's own seams rather than the file's headings.
 
 ## NP-025 — the parser is total and diagnoses completely
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (11), `mcp-re-proxy/src/cli/protocol_flags` (1).
+**Controls:** `mcp-re-proxy` `lib#cli::argv::tests` (4) — `a_flag_spelling_in_a_value_position_is_a_missing_value`, `a_repeatable_flag_stated_twice_accumulates`, `a_single_valued_flag_stated_twice_is_refused_naming_both`, `a_value_that_is_not_a_flag_spelling_is_read_as_a_value`; `mcp-re-proxy` `lib#cli::protocol_flags::tests` (1) — `each_protocol_version_adds_to_the_accepted_set`; `mcp-re-proxy` `lib#cli::tests` (11) — `a_command_line_wrong_three_ways_is_answered_about_all_three`, `cores_defaults_to_auto_zero`, `mcp_protocol_version_is_repeatable_and_required`, `missing_required_flag_errors`, `non_numeric_cores_fails_closed`, `parse_rejects_bad_values_and_names_each_missing_required_flag`, `parses_a_minimal_config_with_defaults`, `parses_configurable_limits`, `parses_explicit_cores`, `the_audit_sink_defaults_to_on`, `unknown_flag_errors`.
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1270,8 +1270,7 @@ misspelling reads as an absent declaration rather than as an error.
 
 ## NP-026 — a key source is admitted only in a build that carries it
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (30), `mcp-re-proxy/src/cli/channel_flags` (2),
-`mcp-re-proxy/src/cli/signing_source_flags` (5).
+**Controls:** `mcp-re-proxy` `lib#cli::channel_flags::tests` (2) — `an_omitted_lifetime_takes_the_default_and_a_given_one_wins`, `the_chain_and_the_anchors_are_required`; `mcp-re-proxy` `lib#cli::signing_source_flags::channel_role::tests` (3) — `either_arm_alone_and_neither_are_coherent_command_lines`, `naming_both_custodies_for_one_channel_key_is_refused_by_the_adapter`, `naming_two_key_objects_for_one_channel_key_is_refused_by_the_adapter`; `mcp-re-proxy` `lib#cli::signing_source_flags::stray_value::tests` (3) — `a_channel_key_for_another_mechanism_is_carried_not_refused_here`, `a_value_belonging_to_an_unselected_mechanism_is_refused`, `a_value_under_the_mechanism_that_owns_it_is_accepted`; `mcp-re-proxy` `lib#cli::tests` (30) — `a_non_exporting_custody_does_not_require_a_signing_key_seed`, `argv_pkcs11_pin_is_refused_with_the_replacement_named`, `aws_kms_requires_region_and_key_id`, `aws_kms_tls_key_id_plus_exported_tls_key_fails_closed`, `aws_kms_tls_key_id_without_aws_kms_fails_closed`, `aws_kms_use_web_identity_without_aws_kms_fails_closed`, `aws_kms_web_identity_is_off_by_default_and_on_when_named`, `aws_sts_endpoint_without_web_identity_fails_closed`, `default_build_rejects_aws_kms_key_source`, `default_build_rejects_gcp_kms_key_source`, `default_build_rejects_pkcs11_key_source`, `env_is_an_unknown_key_source`, `file_custody_still_requires_a_signing_key_seed`, `file_key_source_is_always_constructible`, `gcp_kms_requires_key_version`, `gcp_kms_tls_key_version_plus_exported_tls_key_fails_closed`, `gcp_kms_tls_key_version_without_gcp_kms_fails_closed`, `gcp_use_metadata_only_with_gcp_kms`, `parses_aws_kms_key_source_flags`, `parses_aws_kms_tls_key_id_flag`, `parses_gcp_kms_key_source_flags`, `parses_gcp_kms_tls_key_version_flag`, `parses_pkcs11_key_source_flags`, `pkcs11_key_source_requires_each_flag`, `pkcs11_tls_label_makes_tls_key_optional`, `pkcs11_tls_label_with_exported_tls_key_is_rejected`, `pkcs11_tls_label_without_pkcs11_source_is_rejected`, `pkcs11_without_tls_label_still_requires_tls_key`, `unknown_key_source_lists_cloud_kms`, `unknown_key_source_lists_pkcs11`.
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1369,7 +1368,7 @@ says it was configured to check.
 
 ## NP-031 — a replay tier is named exactly once and carries what it cannot run without
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (11), `mcp-re-proxy/src/cli/storage_flags` (4).
+**Controls:** `mcp-re-proxy` `lib#cli::storage_flags::tests` (5) — `a_declared_replica_clock_divergence_keeps_its_provenance`, `a_replay_store_flag_is_the_spelling_the_parser_reads_it_from`, `a_trust_epoch_key_needs_the_store_it_names_a_place_in`, `either_replay_store_alone_and_neither_are_coherent`, `naming_two_replay_stores_is_refused_by_the_adapter`; `mcp-re-proxy` `lib#cli::tests` (11) — `cpstore_endpoint_without_linearizable_fails_closed`, `linearizable_tier_with_cpstore_endpoint_parses`, `linearizable_tier_without_cpstore_endpoint_fails_closed`, `naming_both_replay_stores_on_the_command_line_fails_closed`, `omitting_replay_configuration_is_refused`, `parses_shared_replay_selection`, `parses_wait_quorum_durability_tier`, `rejects_unknown_durability_tier`, `shared_replay_requires_durability_tier`, `shared_replay_requires_url`, `single_node_accepts_file_replay_cache`.
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1384,8 +1383,7 @@ deployment the shipped Helm chart's own guard refuses (NP-007).
 
 ## NP-032 — the trust-refresh posture holds its cadence to its window
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (16), `mcp-re-proxy/src/cli/currency_flags` (4),
-`mcp-re-proxy/src/cli/delegated_signing_flags` (2).
+**Controls:** `mcp-re-proxy` `lib#cli::currency_flags::tests` (5) — `a_later_zero_cadence_restores_the_read_once_posture`, `a_near_zero_tier_without_a_cadence_is_refused`, `an_epoch_source_under_a_tier_that_reads_none_is_refused`, `the_bounded_cache_tier_keeps_both_cadence_postures`, `the_pushing_tier_carries_the_epoch_source_it_reads`; `mcp-re-proxy` `lib#cli::delegated_signing_flags::tests` (2) — `a_window_that_is_not_a_number_is_refused_by_name`, `the_window_defaults_and_the_coordinates_stay_unnamed`; `mcp-re-proxy` `lib#cli::tests` (16) — `a_cadence_longer_than_the_declared_window_is_refused`, `a_declared_replay_clock_divergence_reaches_the_resolved_window`, `an_out_of_bounds_replay_clock_divergence_is_refused_at_parse`, `degraded_mode_requires_a_positive_bound`, `delegated_overlap_not_less_than_ttl_is_rejected`, `delegated_signing_parses_with_defaults`, `live_and_push_tiers_require_a_trust_reload_cadence`, `max_clock_skew_is_accepted_across_the_whole_bound`, `missing_trust_epoch_is_rejected`, `out_of_bounds_max_clock_skew_is_refused_at_parse`, `parses_each_revocation_tier`, `rejects_unknown_or_malformed_revocation_tier`, `revocation_tier_defaults_to_bounded_cache_tier_1`, `the_degraded_window_refusal_names_the_clock_skew_term`, `trust_epoch_url_with_push_tier_parses`, `trust_epoch_url_without_push_tier_is_rejected`.
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1430,8 +1428,7 @@ class of denial of service, and the default configuration is the one that exerci
 
 ## NP-035 — the serving target an argv names binds something
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (6), `mcp-re-proxy/src/cli/protocol_flags` (1),
-`mcp-re-proxy/src/cli/serving_flags` (3).
+**Controls:** `mcp-re-proxy` `lib#cli::protocol_flags::tests` (1) — `the_target_uri_and_a_version_are_required_and_the_skew_defaults`; `mcp-re-proxy` `lib#cli::serving_flags::tests` (4) — `backends_accumulate_however_they_were_spelled`, `each_flag_reaches_the_locator_named_after_it_and_no_other`, `the_address_and_the_trust_document_are_required`, `the_switches_are_recognised_and_only_those`; `mcp-re-proxy` `lib#cli::tests` (6) — `a_fleet_wide_target_survives_without_erasing_the_per_core_default`, `empty_inner_http_url_segment_fails_closed`, `empty_or_missing_target_uri_is_refused`, `missing_inner_http_url_fails_closed`, `parses_repeated_and_comma_separated_inner_http_urls`, `the_validation_boundary_refuses_a_target_uri_that_binds_nothing`.
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1485,8 +1482,7 @@ seams here, and they were drawn by the implementation rather than by this campai
 
 ## NP-039 — the auditor's invocation is total
 
-**Controls:** `auditor/invocation/mod.rs` (14), `invocation/flag.rs` (3),
-`invocation/instant.rs` (4).
+**Controls:** `mcp-re-proxy` `lib#transparency::auditor::invocation::flag::tests` (3) — `a_value_given_once_is_the_value`, `a_value_given_twice_is_refused_rather_than_resolved`, `a_value_never_given_is_refused_by_name`; `mcp-re-proxy` `lib#transparency::auditor::invocation::instant::tests` (4) — `a_stated_instant_is_the_instant`, `a_value_that_is_not_a_timestamp_is_refused`, `an_instant_at_or_before_the_epoch_is_refused`, `the_default_is_the_system_clock`; `mcp-re-proxy` `lib#transparency::auditor::invocation::tests` (16) — `a_complete_invocation_parses_and_keeps_the_hop_order`, `a_flag_where_a_value_belongs_is_refused`, `a_flag_with_no_value_is_refused`, `a_help_flag_in_value_position_is_not_a_help_request`, `a_hop_that_is_not_a_digest_is_refused`, `a_non_positive_audit_instant_is_refused`, `a_registration_budget_without_a_target_is_refused`, `a_registration_target_carries_the_service_and_its_budget`, `a_repeated_single_valued_flag_is_refused`, `an_inadmissible_registration_target_is_refused_at_parse_time`, `an_invocation_without_a_registration_target_registers_nowhere`, `an_unknown_flag_is_refused_with_the_usage`, `every_required_flag_is_required`, `help_and_a_bare_invocation_are_the_same_question`, `no_hop_at_all_is_refused`, `the_default_audit_instant_is_the_system_clock`.
 **Statement.** *Every auditor invocation is answered: a single-valued flag given twice is
 refused rather than resolved, a value never given is refused BY NAME, an unknown flag is
 refused with the usage, a flag with no value is refused, every required flag is required, a
@@ -1519,8 +1515,7 @@ trust; this is the auditor's, and the two are deliberately different pictures.
 
 ## NP-041 — a registration target is admissible before anything is submitted
 
-**Controls:** `auditor/registration/endpoint/mod.rs` (4), `endpoint/flags.rs` (5),
-`registration/policy.rs` (4), `registration/protocol.rs` (2).
+**Controls:** `mcp-re-proxy` `lib#transparency::auditor::registration::endpoint::flags::tests` (7) — `a_budget_that_is_not_a_number_names_its_flag`, `a_non_polling_contract_is_not_held_to_a_poll_interval`, `a_poll_interval_for_a_contract_that_does_not_poll_is_refused`, `a_term_without_a_service_is_refused_rather_than_ignored`, `an_invocation_that_names_no_service_registers_nothing`, `an_unknown_protocol_refuses_before_anything_is_submitted`, `each_named_protocol_produces_a_target_and_the_default_is_scrapi`; `mcp-re-proxy` `lib#transparency::auditor::registration::endpoint::tests` (5) — `a_budget_shape_the_protocol_does_not_use_is_not_a_target`, `a_scheme_the_network_policy_refuses_is_not_a_target`, `an_https_endpoint_is_a_target_and_loses_its_trailing_separator`, `an_unterminating_budget_is_not_a_target`, `plaintext_is_refused_off_the_loopback_interface`; `mcp-re-proxy` `lib#transparency::auditor::registration::policy::tests` (5) — `a_bounded_budget_is_a_policy`, `a_budget_that_cannot_poll_is_refused`, `a_single_exchange_budget_is_bounded_but_needs_no_interval`, `a_sub_second_interval_is_legal`, `an_unbounded_wait_is_refused`; `mcp-re-proxy` `lib#transparency::auditor::registration::protocol::tests` (2) — `each_token_names_its_mechanism_and_nothing_else_parses`, `the_default_is_the_protocol_that_was_the_only_one`.
 **Statement.** *A registration target is an endpoint the network policy admits — plaintext
 only off no interface but loopback — carrying a bounded, pollable budget and a named
 protocol; an unknown protocol refuses BEFORE anything is submitted; a term without a
@@ -1968,8 +1963,7 @@ that authority's only evidence, sitting in the file the census says should not k
 
 ## NP-067 — every plane transitions and the substrate is reclaimed, on every path
 
-**Controls:** `mcp-re-proxy/src/materialized_runtime.rs` (11),
-`mcp-re-proxy/src/materializing_runtime` (6).
+**Controls:** `mcp-re-proxy` `lib#materialized_runtime::tests` (12) — `a_panicked_worker_still_leaves_its_plane_transitioned_and_the_substrate_reclaimable`, `a_populated_runtime_transitions_every_plane_and_then_reclaims_the_substrate`, `a_runtime_dropped_without_serving_reclaims_its_substrate`, `a_runtime_that_reaches_stopped_leaves_no_plane_holding_authority`, `a_serve_that_never_bound_justifies_no_lifecycle_event`, `a_served_shutdown_records_serving_and_the_drain`, `a_worker_that_never_stops_bounds_teardown_without_skipping_the_other_planes`, `phase_three_releases_the_consumer_before_the_substrate_it_is_bound_to`, `shutdown_is_idempotent`, `the_post_drain_sequence_is_refused_before_the_drain_is_proven`, `the_post_drain_sequence_is_unreachable_from_a_serve_that_never_started`, `the_transition_phase_leaves_the_substrate_intact`; `mcp-re-proxy` `lib#materializing_runtime::completeness::tests` (1) — `the_first_missing_resource_is_the_one_named`; `mcp-re-proxy` `lib#materializing_runtime::tests` (6) — `a_failure_after_partial_acquisition_reaches_neither_materialized_nor_a_leak`, `a_refused_finish_yields_no_lifecycle_at_all`, `a_second_install_is_refused_and_the_installed_plane_stays_owned`, `dropping_an_unfinished_builder_reclaims_and_records_the_failure`, `finish_reports_the_incomplete_graph_and_names_a_resource`, `partial_reclaim_follows_the_documented_order_not_installation_order`.
 **Statement.** *A populated runtime transitions every plane and then reclaims the substrate;
 a runtime dropped without serving reclaims it; one that reaches Stopped leaves no plane
 holding authority; a PANICKED worker still leaves its plane transitioned and the substrate
@@ -2060,8 +2054,7 @@ about what the deployment may say.
 
 ## NP-073 — an ingress assertion binds to the request in hand
 
-**Controls:** `transport/ingress/v2.rs` (14), `transport/ingress/mod.rs` (1), over the one
-frozen format.
+**Controls:** `mcp-re-proxy` `lib#tls::routing_header_tests` (1) — `the_ingress_assertion_header_is_read_only_when_exactly_one_is_present`; `mcp-re-proxy` `lib#transport::ingress::tests` (1) — `the_frozen_format_is_domain_separated_by_its_version_tag`; `mcp-re-proxy` `lib#transport::ingress::v2::tests` (14) — `v2_audience_mismatch_is_rejected`, `v2_bad_signature_is_rejected`, `v2_cross_request_is_rejected`, `v2_expiry_is_enforced_but_future_expiry_is_accepted`, `v2_malformed_enum_discriminant_is_rejected`, `v2_malformed_framing_is_rejected`, `v2_recorded_facts_admission_fails_closed`, `v2_signing_preimage_is_length_prefixed_and_unambiguous`, `v2_stale_and_future_are_rejected`, `v2_tampered_field_breaks_signature`, `v2_to_wire_round_trips_through_parse`, `v2_unknown_key_id_is_rejected`, `v2_untrusted_ingress_identity_is_rejected`, `v2_valid_assertion_is_accepted_and_records_facts` — over the one frozen format.
 **Statement.** *An accepted ingress assertion carries a signature that verifies under a
 KNOWN key id, over a length-prefixed and unambiguous preimage, binds to the hash of the
 request in hand, is inside its window — stale and implausibly-future rejected, a future
@@ -2453,7 +2446,7 @@ record's other thirty-one rows are unpacketed.
 
 ## NP-094 — a refusal is a document, and its wire code is read only after the signature verifies
 
-**Controls:** `mcp-re-http-profile/src/rejection/mod.rs` (5).
+**Controls:** `mcp-re-http-profile` `lib#rejection::pre_052_direct_root::tests` (2) — `bound_rejection_verifies_and_exposes_the_wire_code`, `wire_code_is_read_only_after_signature_verifies`; `mcp-re-http-profile` `lib#rejection::retry_contract::tests` (1) — `a_post_dispatch_wire_code_outranks_a_pre_dispatch_disposition`; `mcp-re-http-profile` `lib#rejection::tests` (3) — `an_ordinary_rejection_body_gains_no_new_fields`, `the_indeterminate_rejection_states_that_a_retry_is_unsafe`, `unsigned_rejection_is_untrusted`.
 **Statement.** *A wire code is read ONLY AFTER the signature verifies, an unsigned rejection is untrusted, a bound rejection verifies and exposes its code, an ordinary rejection body gains no new fields, and the indeterminate rejection states that a retry is unsafe.*
 **If false.** A refusal an attacker wrote is read as one the peer signed — the refusal path becomes the one place in the profile where content is believed before its signature is.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
@@ -2946,9 +2939,7 @@ THM-0031, falsifier `M341`.
 
 ## NP-126 — a configured client CRL is loaded or the listener fails closed
 
-**Controls:** `mcp-re-proxy/src/client_crl_publication.rs` (2) —
-`client_crl_loading_tests::missing_client_crl_file_fails_closed`,
-`client_crl_loading_tests::no_crl_paths_loads_empty_vec`.
+**Controls:** `mcp-re-proxy` `lib#client_crl_publication::client_crl_loading_tests` (5) — `a_malformed_pem_client_crl_fails_closed`, `a_non_pem_client_crl_is_passed_through_as_one_der`, `an_empty_client_crl_file_fails_closed`, `missing_client_crl_file_fails_closed`, `no_crl_paths_loads_empty_vec`.
 **Statement.** *A configured-but-unreadable client-CRL path is a HARD ERROR naming the path, never a silently skipped revocation check; and an empty CRL list loads as an empty list rather than as a failure, because configuring no CRL is a posture and not a mistake.*
 **If false.** A listener starts with a revocation list it could not read and believes it is enforcing revocation — the fail-open an operator cannot see, because every later line about the CRL posture is then about a list that was never loaded.
 **Likely owner:** none.
@@ -3064,10 +3055,7 @@ request-signer seam).
 
 ## NP-134 — the trust cache stops caching before it stops answering
 
-**Controls:** `mcp-re-proxy/src/trust_plane` (4) —
-`trust_cache::tests::{expired_entries_are_swept_rather_than_merely_ignored,
-not_found_uses_short_ttl_so_a_new_key_propagates, past_the_ceiling_the_cache_stops_caching_but_keeps_answering,
-prune_evicts_closed_windows}`.
+**Controls:** `mcp-re-proxy` `lib#trust_plane::trust_cache::tests` (5) — `a_negative_ttl_longer_than_t_is_cut_to_t`, `expired_entries_are_swept_rather_than_merely_ignored`, `not_found_uses_short_ttl_so_a_new_key_propagates`, `past_the_ceiling_the_cache_stops_caching_but_keeps_answering`, `prune_evicts_closed_windows`.
 **Statement.** *Past its entry ceiling the cache STOPS CACHING BUT KEEPS ANSWERING, so a memory bound does not become an outage; an expired entry is SWEPT rather than merely ignored on read, and `prune` evicts closed windows, so a distinct keyid from an unauthenticated peer does not leave a permanent entry behind; and a not-found answer is cached under a SHORT TTL so a freshly published key propagates well before the full `T` would elapse.*
 **If false.** Two opposite failures, both real. A cache that stopped answering when it stopped caching turns a memory bound into a load-triggered self-inflicted outage; a cache that never sweeps grows one entry per keyid an unauthenticated peer presents, because the keyid gate runs before trust resolution.
 **Likely owner:** none.
@@ -3141,7 +3129,7 @@ without_a_cadence_the_bound_is_the_crls_own_expiry, without_a_crl_the_bound_is_t
 
 ## NP-143 — the retained Mode-C ingress verifier refuses rather than defaulting
 
-**Controls:** `mcp-re-proxy/src/capability_materialization/ingress.rs` (4).
+**Controls:** `mcp-re-proxy` `lib#capability_materialization::ingress::tests` (5) — `a_mode_c_verifier_missing_its_audience_fails_closed_rather_than_defaulting`, `a_mode_c_verifier_refuses_an_audience_it_would_not_use_verbatim`, `a_mode_c_verifier_rejects_an_unusable_attestor_key_rather_than_dropping_it`, `the_mode_c_verifier_is_built_only_for_the_attested_ingress_binding`, `the_retained_mode_c_verifier_still_admits_an_assertion_from_its_configured_attestor`.
 **Carrier:** `build_attested_ingress_binding`.
 **Statement.** *A Mode-C verifier missing its audience FAILS CLOSED RATHER THAN DEFAULTING and rejects an unusable attestor key rather than DROPPING IT; it is built only for the attested-ingress binding; and the retained verifier still admits an assertion minted by its configured attestor.*
 **If false.** A verifier is built with a defaulted audience, so it admits assertions minted for another node's route — or with an unusable attestor key silently dropped, so it trusts fewer attestors than configured and fails closed later, far from the configuration that caused it.
@@ -3439,7 +3427,7 @@ not reach.
 
 ## NP-159 — which roots a verifier admits, at each instant of a rotation
 
-**Controls:** `mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs` (9).
+**Controls:** `mcp-re-client-core` `lib#delegated_trust::anchors::tests` (1) — `retirement_wins_over_a_contradicting_current_entry`; `mcp-re-proxy` `integration_async#root_key_lifecycle_test` (9) — `a_revoked_root_fails_closed_and_the_split_seam_is_gone`, `after_overlap_old_root_rejected_new_root_accepted`, `during_overlap_both_roots_are_accepted`, `empty_trust_anchor_set_trusts_no_root`, `retirement_window_boundary_is_inclusive_then_closes`, `revoked_issuer_invalidates_all_descendants_before_exp`, `revoking_one_root_does_not_disturb_the_other`, `root_a_credential_accepted_while_a_is_current`, `unknown_issuer_is_rejected`.
 **Statement.** *Across a root rotation driven through the same issuer seam a KMS root plugs into: a credential under the current root is accepted; during the overlap BOTH roots are accepted and after it the old root is rejected while the new one is accepted; the retirement window's boundary is inclusive and then closes; an unknown issuer is rejected and an EMPTY trust-anchor set trusts no root at all; revoking one root leaves the other undisturbed, a revoked root fails closed with its split seam gone, and a revoked issuer invalidates every descendant before that descendant's own `exp`.*
 **If false.** A rotation leaves a window in which nothing verifies, or the old root stays acceptable after it was meant to be withdrawn — the two failure directions of every key rotation. The revocation half is the sharper one: a descendant that outlives its revoked issuer is a credential the ceremony believes it withdrew.
 **Likely owner:** none — a composition's source is every unit under it.
@@ -3732,9 +3720,7 @@ twelve-questions sense, and filing them together was hiding that.
 
 ## NP-179 — the trust window in force is the strictest applicable one, and a long one is flagged
 
-**Controls:** `mcp-re-proxy/src/trust_plane` (2) —
-`window_policy::tests::{strictest_applicable_t_picks_the_tightest_window,
-t_exceeds_recommended_max_flags_long_windows}`.
+**Controls:** `mcp-re-proxy` `lib#trust_plane::window_policy::tests` (3) — `long_window_advisory_flags_a_window_past_the_recommended_maximum`, `strictest_applicable_t_picks_the_tightest_window`, `t_exceeds_recommended_max_flags_long_windows`.
 **Carrier:** `mcp-re-proxy/src/trust_plane/window_policy.rs` — in no unit's `paths`, and listed
 in `config/unit-closure-exclusions.toml`.
 **Statement.** *Where several window rules apply, the one in force is the TIGHTEST of them; and
@@ -3993,7 +3979,7 @@ different question from every refusal token NP-132 enumerates.
 
 ## NP-197 — the dormant L1 fast reject is never fresh and evicts FIFO
 
-**Control:** `mcp-re-proxy/src/async_replay/l1_fast_reject.rs::l1_fast_reject_never_fresh_and_evicts_fifo`.
+**Controls:** `mcp-re-proxy` `lib#async_replay::l1_fast_reject::tests` (3) — `an_l1_hit_ends_at_the_retain_until_it_mirrors`, `an_l2_replay_is_not_cached_by_the_l1`, `l1_fast_reject_never_fresh_and_evicts_fifo`.
 **Statement.** *`L1FastRejectStore` never answers `Fresh` — it refuses or defers, never
 admits — and it evicts in FIFO order.*
 **If false.** A tier fronted by an L1 that could answer `Fresh` would admit a nonce the
