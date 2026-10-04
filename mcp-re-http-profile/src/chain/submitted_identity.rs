@@ -197,4 +197,46 @@ mod tests {
         assert!(!empty.is_empty());
         assert_ne!(empty, submitted_commitment(&[hop(200, "{}")]));
     }
+
+    /// Two submissions of the SAME JSON under different signatures are different
+    /// submissions. Without this the commitment would identify the content rather than
+    /// the act of submitting it.
+    #[test]
+    fn the_signature_is_part_of_the_submitted_identity() {
+        let mut other = hop(200, "{}");
+        other.response.headers = vec![("signature".to_string(), "sig=:CCCC:".to_string())];
+        assert_ne!(
+            submitted_commitment(&[hop(200, "{}")]),
+            submitted_commitment(&[other])
+        );
+    }
+
+    /// The length prefixes are load-bearing: moving a byte across a field boundary must
+    /// change the digest. Without them `("ab", "")` and `("a", "b")` would hash the same
+    /// concatenation and two distinct submissions would share one identity.
+    #[test]
+    fn field_boundaries_cannot_be_shifted_without_changing_the_commitment() {
+        let mut left = hop(200, "{}");
+        left.request.method = "POSTX".to_string();
+        left.request.target_uri = "https://mcp.example.com/mcp".to_string();
+
+        let mut right = hop(200, "{}");
+        right.request.method = "POST".to_string();
+        right.request.target_uri = "Xhttps://mcp.example.com/mcp".to_string();
+
+        assert_ne!(
+            submitted_commitment(&[left]),
+            submitted_commitment(&[right])
+        );
+    }
+
+    /// The hop COUNT is committed, so a chain is not confusable with a prefix of a longer
+    /// one carrying the same hops.
+    #[test]
+    fn the_hop_count_is_part_of_the_submitted_identity() {
+        assert_ne!(
+            submitted_commitment(&[hop(200, "{}")]),
+            submitted_commitment(&[hop(200, "{}"), hop(200, "{}")])
+        );
+    }
 }

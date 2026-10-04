@@ -3706,14 +3706,9 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::an_absent_result_type_is_terminal",
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::an_explicit_complete_result_type_is_terminal",
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::an_input_required_result_expects_a_continuation",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::a_body_that_is_not_a_json_object_is_not_terminal",
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::an_unrecognized_result_type_is_not_terminal",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::every_retained_header_is_inside_the_submitted_identity",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::field_boundaries_cannot_be_shifted_without_changing_the_commitment",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::header_order_is_part_of_the_submission_identity",
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::only_the_complete_label_reports_complete",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::the_hop_count_is_part_of_the_submitted_identity",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::the_response_status_is_part_of_the_submitted_identity",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#chain::tests::the_signature_is_part_of_the_submitted_identity",
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::record::tests::a_later_hop_links_only_to_its_own_predecessor",
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::record::tests::an_unrecognized_result_type_breaks_the_chain_at_either_end",
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::record::tests::hop_zero_may_not_name_a_predecessor",
@@ -3741,6 +3736,9 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::submitted_identity::tests::header_order_is_part_of_the_submission_identity",
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::submitted_identity::tests::every_retained_header_is_inside_the_submitted_identity",
   "//mcp-re-http-profile:mcp_re_http_profile_test#chain::submitted_identity::tests::the_empty_submission_has_an_identity_of_its_own",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#chain::submitted_identity::tests::the_signature_is_part_of_the_submitted_identity",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#chain::submitted_identity::tests::field_boundaries_cannot_be_shifted_without_changing_the_commitment",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#chain::submitted_identity::tests::the_hop_count_is_part_of_the_submitted_identity",
 ]
 pilot = "verus-candidate"
 

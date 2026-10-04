@@ -235,11 +235,15 @@ pub enum HopOutcome {
 /// better served by "hop 2 declares a result type I cannot classify" than by a
 /// confident answer derived from a value nobody read.
 ///
-/// A body that will not parse is terminal: an unparseable body cannot have
-/// verified in step 2, so this is never reached with one.
+/// A body that is not a JSON object is [`HopOutcome::Unrecognized`]: whether that turn
+/// ended was not read, the same fact as an unrecognized `resultType`. A JSON object with
+/// no `result` member (a JSON-RPC error) is terminal, as [`crate::result_class::classify_result_type`] defines.
 fn classify_verified_response(body: &[u8]) -> HopOutcome {
-    let parsed: Option<serde_json::Value> = serde_json::from_slice(body).ok();
-    match crate::result_class::classify_result_type(parsed.as_ref().and_then(|v| v.get("result"))) {
+    let Ok(serde_json::Value::Object(object)) = serde_json::from_slice::<serde_json::Value>(body)
+    else {
+        return HopOutcome::Unrecognized;
+    };
+    match crate::result_class::classify_result_type(object.get("result")) {
         crate::result_class::ResultTypeClass::InputRequired => HopOutcome::InputRequired,
         crate::result_class::ResultTypeClass::Complete => HopOutcome::Terminal,
         crate::result_class::ResultTypeClass::Unrecognized => HopOutcome::Unrecognized,
@@ -398,126 +402,6 @@ mod tests {
     // ratchet only turns one way.
     use super::*;
 
-    fn hop(status: u16, body: &str) -> RetainedHop {
-        RetainedHop {
-            request: HttpRequest {
-                method: "POST".to_string(),
-                target_uri: "https://mcp.example.com/mcp".to_string(),
-                headers: vec![("signature".to_string(), "sig=:AAAA:".to_string())],
-                body: br#"{"jsonrpc":"2.0","id":1}"#.to_vec(),
-            },
-            response: HttpResponse {
-                status,
-                headers: vec![("signature".to_string(), "sig=:BBBB:".to_string())],
-                body: body.as_bytes().to_vec(),
-            },
-        }
-    }
-
-    /// Two submissions that differ only in the response STATUS are different submissions.
-    ///
-    /// The commitment is what a Layer 5 receipt binds to, so a refusal and a success over
-    /// identical bodies must not share an identity.
-    #[test]
-    fn the_response_status_is_part_of_the_submitted_identity() {
-        assert_ne!(
-            submitted_commitment(&[hop(200, "{}")]),
-            submitted_commitment(&[hop(400, "{}")])
-        );
-    }
-
-    /// Two submissions of the SAME JSON under different signatures are different
-    /// submissions. Without this the commitment would identify the content rather than
-    /// the act of submitting it.
-    #[test]
-    fn the_signature_is_part_of_the_submitted_identity() {
-        let mut other = hop(200, "{}");
-        other.response.headers = vec![("signature".to_string(), "sig=:CCCC:".to_string())];
-        assert_ne!(
-            submitted_commitment(&[hop(200, "{}")]),
-            submitted_commitment(&[other])
-        );
-    }
-
-    /// The length prefixes are load-bearing: moving a byte across a field boundary must
-    /// change the digest. Without them `("ab", "")` and `("a", "b")` would hash the same
-    /// concatenation and two distinct submissions would share one identity.
-    #[test]
-    fn field_boundaries_cannot_be_shifted_without_changing_the_commitment() {
-        let mut left = hop(200, "{}");
-        left.request.method = "POSTX".to_string();
-        left.request.target_uri = "https://mcp.example.com/mcp".to_string();
-
-        let mut right = hop(200, "{}");
-        right.request.method = "POST".to_string();
-        right.request.target_uri = "Xhttps://mcp.example.com/mcp".to_string();
-
-        assert_ne!(
-            submitted_commitment(&[left]),
-            submitted_commitment(&[right])
-        );
-    }
-
-    /// Header ORDER is part of the submission identity, and that is a decision rather than an
-    /// accident of the fold.
-    ///
-    /// The earlier curated digest SORTED the `signature` headers, so two retained hops
-    /// carrying the same signatures in a different order shared an identity. Under the
-    /// closed representation the identity is of the RETAINED BYTES, and two retained
-    /// artefacts whose bytes differ are two artefacts.
-    ///
-    /// This cannot produce a false match. It could in principle produce a false MISMATCH —
-    /// an honest record failing to verify because something reordered its headers — except
-    /// that both sides of the comparison are computed from the same stored artefact: the
-    /// issuer digests what it retained, and the verifier digests what it presents. Nothing
-    /// reorders in between.
-    #[test]
-    fn header_order_is_part_of_the_submission_identity() {
-        let mut a = hop(200, "{}");
-        a.request.headers = vec![
-            ("signature".to_string(), "sig1=:AA:".to_string()),
-            ("signature".to_string(), "sig2=:BB:".to_string()),
-        ];
-        let mut b = hop(200, "{}");
-        b.request.headers = vec![
-            ("signature".to_string(), "sig2=:BB:".to_string()),
-            ("signature".to_string(), "sig1=:AA:".to_string()),
-        ];
-        assert_ne!(submitted_commitment(&[a]), submitted_commitment(&[b]));
-    }
-
-    /// EVERY retained header is inside the submitted identity — the claim this file used to
-    /// state in reverse.
-    ///
-    /// The old test asserted that a non-`signature` header was outside it, which is exactly
-    /// the property that left `signature-input` — the header naming what was signed — out of
-    /// the identity, so two unverified tail hops declaring different covered components
-    /// could be substituted for one another. The claim was not stale; it was wrong, and it
-    /// is inverted here rather than deleted so the reversal is visible in the file that made
-    /// it.
-    #[test]
-    fn every_retained_header_is_inside_the_submitted_identity() {
-        let mut with_extra = hop(200, "{}");
-        with_extra
-            .request
-            .headers
-            .push(("x-forwarded-for".to_string(), "10.0.0.1".to_string()));
-        assert_ne!(
-            submitted_commitment(&[hop(200, "{}")]),
-            submitted_commitment(&[with_extra])
-        );
-    }
-
-    /// The hop COUNT is committed, so a chain is not confusable with a prefix of a longer
-    /// one carrying the same hops.
-    #[test]
-    fn the_hop_count_is_part_of_the_submitted_identity() {
-        assert_ne!(
-            submitted_commitment(&[hop(200, "{}")]),
-            submitted_commitment(&[hop(200, "{}"), hop(200, "{}")])
-        );
-    }
-
     /// An unrecognized `resultType` is NEVER folded into terminal. Doing so would label a
     /// truncated chain COMPLETE when its last hop carried an extension's non-terminal
     /// type — the laundering §9.3 forbids.
@@ -556,6 +440,19 @@ mod tests {
         assert_eq!(
             classify_verified_response(body.as_bytes()),
             HopOutcome::Terminal
+        );
+    }
+
+    /// A body that is not a JSON object was not read, so it never ends the turn.
+    #[test]
+    fn a_body_that_is_not_a_json_object_is_not_terminal() {
+        assert_eq!(
+            classify_verified_response(b"not json"),
+            HopOutcome::Unrecognized
+        );
+        assert_eq!(
+            classify_verified_response(br#"[{"result":{}}]"#),
+            HopOutcome::Unrecognized
         );
     }
 
