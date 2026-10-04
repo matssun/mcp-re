@@ -10,8 +10,10 @@ use std::num::NonZeroU64;
 /// width — and each had a boundary clause. Neither can be written now: the bound belongs to
 /// the arm that opens a window, and it is a [`NonZeroU64`].
 ///
-/// The bound is P, a FLOOR on the window rather than the whole of it: the PEP serves for
-/// `P + max_clock_skew` seconds, which is why zero was never a disabled window.
+/// The bound is P, the replica-wide degraded window itself: the enforcer's monotonic window
+/// serves on last-known state for at most P seconds of measured unreachability.
+/// `max_clock_skew` widens only the per-assertion age bound, `P + max_clock_skew`, which
+/// `AdmissionPolicy` computes from both terms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AdmissionAvailabilityRequest {
     /// An unreachable authority refuses the call. No window.
