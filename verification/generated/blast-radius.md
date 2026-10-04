@@ -118,7 +118,7 @@ attestations this view cannot see.
 | unit://proxy.admission_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_configuration_state_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_currency_gate | source, contracts or evidence | THM-0132 | _no consumer_ |
-| unit://proxy.admission_gate_unskippable | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.admission_gate_unskippable | source, contracts or evidence | THM-0132 | _no consumer_ |
 | unit://proxy.admission_record_addressing | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://proxy.admission_record_retention | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_state_source | source, contracts or evidence | THM-0129 | _no consumer_ |

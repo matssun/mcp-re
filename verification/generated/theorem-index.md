@@ -169,7 +169,7 @@ any of them is closed.
 | THM-0129 | Authoritative admission state is authenticated and bounded-current | http_profile.admission_state_provenance | unit://http_profile.admission_state_provenance, unit://proxy.admission_record_addressing, unit://proxy.admission_state_source | live |
 | THM-0130 | One logical audit record renders to exactly one physical record, recoverably | proxy.audit_text_rendering | unit://proxy.audit_text_rendering | live |
 | THM-0131 | The client-revocation posture states what this replica is enforcing now | proxy.client_revocation_currency | unit://proxy.client_crl_next_update_gate, unit://proxy.client_crl_reload_republish, unit://proxy.client_revocation_currency, unit://proxy.retired_plane_cadence_retraction | live |
-| THM-0132 | A replica serves on last-known admission state for at most P after the authority last answered | proxy.admission_currency_gate | unit://proxy.admission_currency_gate | live |
+| THM-0132 | A replica serves on last-known admission state for at most P after the authority last answered | proxy.admission_currency_gate | unit://proxy.admission_currency_gate, unit://proxy.admission_gate_unskippable | live |
 | THM-0133 | The delegated-signing plane mints only under the trust-epoch label its own read names, and never under a regressed one | proxy.delegated_epoch_label | unit://proxy.delegated_epoch_label | live |
 
 ## Claims in full

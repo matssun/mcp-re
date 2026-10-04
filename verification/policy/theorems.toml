@@ -7502,7 +7502,7 @@ again once it recovers.
 """
 owner = "proxy.admission_currency_gate"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.admission_currency_gate"]
+supported_by = ["unit://proxy.admission_currency_gate", "unit://proxy.admission_gate_unskippable"]
 depends_on = ["THM-0005"]
 
 [[theorem]]

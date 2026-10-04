@@ -7799,8 +7799,10 @@ evidence = [
 ]
 # TWO TARGETS, and the split is the point. The in-file controls measure the window's
 # arithmetic, which no request can reach; the integration battery drives `decide` through the
-# production `HttpProfileProxy`, which is the only thing that can say the gate is CONSULTED.
-# A unit citing either alone would be evidence for half a claim.
+# production `HttpProfileProxy`, so the window is measured where a served request meets it.
+# That the serving path cannot skip the gate is NOT this unit's fact: its paths exclude the
+# serving path, so an edit there moves no fingerprint here. It is
+# `proxy.admission_gate_unskippable`'s, established structurally, and THM-0132 cites both.
 #
 # Both controls are in `//mcp-re-proxy:integration_async_test`, the default-lane target.
 tested_symbols = [
