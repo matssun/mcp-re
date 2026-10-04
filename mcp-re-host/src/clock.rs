@@ -32,7 +32,7 @@ impl SystemClock {
 impl Clock for SystemClock {
     fn now_unix(&self) -> i64 {
         match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-            Ok(delta) => delta.as_secs() as i64,
+            Ok(delta) => post_epoch_seconds(delta.as_secs()),
             // Clock set before the epoch: report the (negative) offset faithfully
             // rather than fabricate a value. The verifier's freshness window then
             // rejects it — fail closed at the boundary, not by inventing time.
@@ -70,6 +70,17 @@ impl Clock for FixedClock {
         self.now_unix
     }
 }
+/// The seconds an instant AT OR AFTER the epoch reports, as a signed count.
+///
+/// The forward magnitude is converted with `try_from`, never `as`: a magnitude `i64` cannot
+/// hold is not a time and reads as `i64::MIN`, the same answer [`pre_epoch_seconds`] gives for
+/// every unrepresentable magnitude, which every freshness window rejects. An `as` cast would
+/// instead wrap to an arbitrary value (`u64::MAX as i64 == -1`). On unix the bound is
+/// unreachable because `SystemTime` is a timespec with an `i64` seconds field.
+fn post_epoch_seconds(secs: u64) -> i64 {
+    i64::try_from(secs).unwrap_or(i64::MIN)
+}
+
 /// The seconds an instant BEFORE the epoch reports, as a signed count.
 ///
 /// Extracted from [`SystemClock::now_unix`] because it is the security-bearing arithmetic
@@ -94,6 +105,7 @@ fn pre_epoch_seconds(secs: u64) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use super::post_epoch_seconds;
     use super::pre_epoch_seconds;
     use super::Clock;
     use super::FixedClock;
@@ -141,6 +153,21 @@ mod tests {
             assert!(
                 reported < 0,
                 "a magnitude that cannot be represented must never wrap into a future time"
+            );
+        }
+    }
+
+    /// The forward arm refuses an unrepresentable magnitude instead of wrapping it: an `as`
+    /// cast reads `u64::MAX` as -1, a fabricated time; the answer must be `i64::MIN`.
+    #[test]
+    fn a_magnitude_past_the_i64_boundary_after_the_epoch_is_never_read_as_a_time() {
+        assert_eq!(post_epoch_seconds(1_700_000_000), 1_700_000_000);
+        assert_eq!(post_epoch_seconds((1u64 << 63) - 1), i64::MAX);
+        for magnitude in [1u64 << 63, (1u64 << 63) + 1, u64::MAX - 1, u64::MAX] {
+            assert_eq!(
+                post_epoch_seconds(magnitude),
+                i64::MIN,
+                "magnitude {magnitude} must not read as a time"
             );
         }
     }
