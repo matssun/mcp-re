@@ -125,14 +125,14 @@ impl HttpProfileProxy {
         };
         // The gate's verdict, recorded where it is obtained — the same rule the
         // authorization line below follows, and for the same reason.
-        ex.verdicts.admission = Some(admission);
+        ex.verdicts.record_admission(admission);
         let authorized = self
             .authorization_stage(ex, &decided_over)
             .map_err(|refusal| self.refuse(ex, refusal, progress))?;
         // The verdict this exchange was permitted under, recorded where it is obtained. A
         // refusal named by a later stage then reports what the policy decided, instead of
         // deriving "no policy decided" from the kind of verdict that refused it.
-        ex.verdicts.authorization = Some(authorized.audit_facet());
+        ex.verdicts.record_authorization(authorized.audit_facet());
         Ok(AdmittedRequest {
             outstanding,
             authorized,

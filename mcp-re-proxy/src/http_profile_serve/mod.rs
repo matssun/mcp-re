@@ -468,7 +468,7 @@ impl HttpProfileProxy {
             Ok(window) => window,
             Err(rejection) => return rejection,
         };
-        self.record_request_accepted(&admitted, ex.verdicts.admission, &actor_id, now);
+        self.record_request_accepted(&admitted, ex.verdicts.admission(), &actor_id, now);
         let commitment = self.commit_to_dispatch(&ex, admitted.authorized, &window, &mut progress);
         let (prepared, retention) = match commitment.await {
             Ok(committed) => committed,

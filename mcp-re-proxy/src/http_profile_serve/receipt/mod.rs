@@ -150,9 +150,9 @@ impl ResponseSigning {
             actor,
             execution,
             ex.key.clone(),
-            ex.verdicts.authorization.as_ref(),
+            ex.verdicts.authorization(),
             ex.verdicts.admission_facet(),
-            ex.verdicts.admission_refusal,
+            ex.verdicts.admission_refusal(),
         )
     }
 }

@@ -4273,6 +4273,8 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::expired_manifest_fails_closed",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_manifests_deadline_travels_with_the_anchors_it_published",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::overlap_and_revocation_round_trip_through_the_manifest",
+  "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::anchors::tests::a_revoked_issuer_resolves_nothing_even_while_listed_current",
+  "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::anchors::tests::a_current_unrevoked_issuer_resolves_for_the_response_slot_only",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_signer_kid_is_covered_by_the_signature",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::preimage::tests::the_signer_kid_manifest_boundary_cannot_be_moved",
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::manifest_validity::tests::the_deadline_is_inclusive_of_the_instant_it_names",
@@ -6690,6 +6692,7 @@ tested_symbols = [
   # the gate refused, set together with the `Refused` facet, and never moving the facet's token.
   "//mcp-re-proxy:proxy_unit_test#audit_record::subject::tests::a_gate_refusal_names_its_cause_beside_an_unchanged_admission_coordinate",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::authority_verdicts::tests::a_gate_refusal_records_the_facet_and_its_class_together",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::authority_verdicts::tests::a_recorded_verdict_is_not_restated_or_cleared_by_a_later_write",
   "//mcp-re-proxy:proxy_unit_test#audit_record::tests::the_two_coordinates_stay_separate_on_one_record",
   # ADR-MCPRE-069 NP-163 — the coordinate algebra read off a record the PRODUCTION PEP
   # emitted, rather than off a record the battery above constructs. Each is the serving-path
@@ -8605,6 +8608,7 @@ tested_symbols = [
   # --- the two ways the reload STOPS, both of which close this resolver ---
   "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::a_halted_reloader_marks_the_trust_store_stale",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::the_reload_loop_carries_the_failure_budget_until_the_resolver_refuses",
   # The OTHER way, and the one nothing measured: the body panics. Asserted on
   # `StaleFailsClosed::resolve` — what a request meets — because the flag and the surface
   # agreeing is one claim, and only the surface is the deployment's answer. Deleting the
@@ -8660,6 +8664,7 @@ evidence = [
 tested_symbols = [
   # --- the cycle: the sleep, and the swap both products see ---
   "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::the_reload_loop_reads_on_its_cadence_until_halted",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::the_loop_sleeps_exactly_the_cadence_before_each_read",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::a_reload_cycle_replaces_the_map_the_resolver_answers_from",
   # --- the bound the operator is told ---
   "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::a_caching_tier_states_the_cache_lifetime_on_top_of_the_store_cadence",
@@ -10282,7 +10287,7 @@ tested_symbols = [
 [[unit]]
 id = "client.request_construction"
 class = "V0"
-description = "What a client puts on the wire: the caller's own `params._meta` survives signing, the evidence block lands at the body root, a request with no artifact binding or a structurally invalid one is refused LOCALLY rather than sent, a signed notification carries no `id` key at all rather than a null one, a continuation on a notification is refused, and both custody classes emit identical notification bytes."
+description = "What a client puts on the wire: the caller's own `params._meta` survives signing, the evidence block lands at the body root, a request with no artifact binding or a structurally invalid one is refused LOCALLY rather than sent, a @target-uri the audience tuple does not name or a signature window that expires at or before it is created is refused locally, a signed notification carries no `id` key at all rather than a null one, a continuation on a notification is refused, and both custody classes emit identical notification bytes."
 paths = [
   "mcp-re-client-core/src/request.rs",
   "mcp-re-client-core/src/request_signing_inputs.rs",
@@ -10312,10 +10317,13 @@ tested_symbols = [
   # Two custody classes emitting different bytes for the same notification would make the
   # signing mechanism observable on the wire.
   "//mcp-re-client-core:mcp_re_client_core_test#request::notification_tests::both_custody_classes_emit_identical_notification_bytes",
+  "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::a_target_uri_the_audience_does_not_name_is_refused_locally",
+  "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::a_non_positive_signature_window_is_refused_locally",
   # The decision binding is minted over the EXACT bytes presented, and a caller presenting
   # none authors a block without one rather than an empty or placeholder binding.
   "//mcp-re-client-core:mcp_re_client_core_test#request_signing_inputs::tests::a_decision_mints_its_own_binding_over_the_exact_bytes",
   "//mcp-re-client-core:mcp_re_client_core_test#request_signing_inputs::tests::a_caller_that_presents_no_decision_authors_a_block_without_one",
+  "//mcp-re-client-core:mcp_re_client_core_test#request_signing_inputs::tests::a_second_decision_replaces_the_first_rather_than_leaving_a_binding_over_it",
 ]
 
 # ---------------------------------------------------------------------------
