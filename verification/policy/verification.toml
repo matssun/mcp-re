@@ -6954,6 +6954,9 @@ tested_symbols = [
   # one address. A guard over the text would pass every control above and still admit
   # `http://0x7f.1/`.
   "//mcp-re-proxy:proxy_ext_unit_test#outbound_fetch::address::tests::inet_aton_parser_canonicalizes_each_encoding",
+  # The ranges a certificate may not name are the ones not globally reachable, in both
+  # families and through NAT64/6to4 embeddings.
+  "//mcp-re-proxy:proxy_ext_unit_test#outbound_fetch::address::tests::non_global_special_purpose_space_is_never_public",
   # ADDRESSING (#742 slice 2): no path a caller names can move the authority it is joined
   # onto. This is the property every credential-bearing request rests on, because naming a
   # path is the entire addressing surface `CredentialEgress` offers.
