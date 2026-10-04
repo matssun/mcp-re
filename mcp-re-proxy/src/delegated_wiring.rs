@@ -23,6 +23,7 @@ use std::sync::Arc;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::verify_ed25519;
 use mcp_re_core::SigningKey;
+use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential_with_signer;
 use mcp_re_http_profile::DelegatedSigningCustody;
@@ -68,6 +69,28 @@ pub struct DelegatedSigningWiring {
     pub window: DelegatedKeyWindow,
 }
 
+/// The root issuer's signature over a credential signing input, checked under the key it
+/// advertises. The `Err` names the refusing check, so an unavailable root (an outage) and
+/// a root breaching its contract (a permanent misconfiguration) are told apart.
+fn root_signature(
+    root: &impl ResponseSigner,
+    advertised: Option<&VerificationKey>,
+    input: &[u8],
+) -> Result<Vec<u8>, String> {
+    let b64 = root
+        .sign_response(input)
+        .map_err(|e| format!("root issuer unavailable: {e}"))?;
+    let public_key = advertised.ok_or_else(|| {
+        "root issuer advertises no public key, so its signature cannot be checked".to_string()
+    })?;
+    verify_ed25519(input, &b64, public_key).map_err(|_| {
+        "root issuer CONTRACT VIOLATION: its signature does not verify under the key it advertises"
+            .to_string()
+    })?;
+    b64url_decode(&b64)
+        .map_err(|_| "root issuer CONTRACT VIOLATION: its signature is not base64url".to_string())
+}
+
 /// Build the delegated-signing wiring from a [`SigningPlan`](crate::startup_plan::SigningPlan)
 /// and a `root_signer` (the ROOT issuer). Does NOT issue the first key or start any thread
 /// — the caller drives the initial [`DelegatedRotor::rotate`] (so a startup issuance
@@ -109,15 +132,10 @@ pub fn build_delegated_signing(
     // custody state machine already guarantees.
     let issue: BoxedIssuer = Box::new(move |h, c| {
         issue_delegation_credential_with_signer(h, c, |input| {
-            let b64 = root_signer
-                .sign_response(input)
-                .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
-            let public_key = root_public_key
-                .as_ref()
-                .ok_or(HttpProfileError::DelegationCredentialInvalid)?;
-            verify_ed25519(input, &b64, public_key)
-                .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
-            b64url_decode(&b64).map_err(|_| HttpProfileError::DelegationCredentialInvalid)
+            root_signature(&root_signer, root_public_key.as_ref(), input).map_err(|class| {
+                eprintln!("mcp-re-proxy: delegated credential issuance refused: {class}");
+                HttpProfileError::DelegationCredentialInvalid
+            })
         })
         .ok()
     });
@@ -317,6 +335,21 @@ mod tests {
         let mut wiring = build_delegated_signing(&delegated_plan(), matched);
         wiring.rotor.rotate(NOW).expect("issuance");
         assert!(wiring.signer.current(NOW).is_some());
+    }
+
+    #[test]
+    fn issuance_refusals_name_their_class() {
+        let unavailable = root_signature(&FailingRoot, None, b"input").expect_err("root is down");
+        assert!(unavailable.contains("unavailable"), "{unavailable}");
+
+        let m = RootSigningUnderAnotherKey {
+            signing: SigningKey::from_seed_bytes(&ROOT_SEED),
+            advertised: SigningKey::from_seed_bytes(&[34u8; 32]).public_key(),
+        };
+        let violation =
+            root_signature(&m, Some(&m.advertised), b"input").expect_err("off-key signature");
+        assert!(violation.contains("CONTRACT VIOLATION"), "{violation}");
+        assert_ne!(unavailable, violation);
     }
 
     #[test]

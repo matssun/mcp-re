@@ -6151,6 +6151,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#delegated_wiring::tests::builds_and_first_rotate_publishes_a_snapshot",
   "//mcp-re-proxy:proxy_unit_test#delegated_wiring::tests::ttl_bounds_the_published_snapshot",
   "//mcp-re-proxy:proxy_unit_test#delegated_wiring::tests::failing_root_fails_closed_at_first_issuance",
+  "//mcp-re-proxy:proxy_unit_test#delegated_wiring::tests::issuance_refusals_name_their_class",
   # r11 R11-353. `delegated_response_signer.rs` has been in this unit's `paths` all along and
   # its four controls appeared in no `tested_symbols`, so the file could be rewritten under a
   # standing attestation. They are the RESPONSE seam's half of the same property this slice
