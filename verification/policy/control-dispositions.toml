@@ -595,6 +595,24 @@ consequence = "medium"
 root_relationship = "a premise of proxy.scrapi_registration_leaf"
 record = "docs/architecture/control-dispositions.md#np-255"
 
+[[proposition]]
+id = "NP-256"
+title = "The HTTP profile's frozen wire vocabulary holds exactly its published values"
+carrier = "mcp-re-http-profile/src/ids.rs"
+likely_owner = "none. ids.rs is in twelve units' paths but every statement takes these values as given; NP-108 is mcp-re-core's profile-agnostic constants only"
+consequence = "high"
+root_relationship = "a premise of the http_profile units that hold ids.rs in paths"
+record = "docs/architecture/control-dispositions.md#np-256"
+
+[[proposition]]
+id = "NP-257"
+title = "An established async connection is cut no later than max_connection_age plus drain_grace, even while a response write is stalled"
+carrier = "mcp-re-proxy/src/async_serve/connection.rs"
+likely_owner = "proxy.serving_drain states the drain and claims nothing about teardown duration; the age bound is not its statement"
+consequence = "high"
+root_relationship = "a premise of proxy.serving_drain"
+record = "docs/architecture/control-dispositions.md#np-257"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14658,4 +14676,92 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#transparency::auditor::registration::ureq_exchange::tests::an_exchange_past_its_deadline_is_refused_before_any_connection"
 decision = "new-proposition"
 proposition = "NP-255"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20257"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#ids::tests::the_signature_vocabulary_holds_its_published_values"
+decision = "new-proposition"
+proposition = "NP-256"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20258"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#ids::tests::the_evidence_role_labels_are_published_distinct_and_nul_free"
+decision = "new-proposition"
+proposition = "NP-256"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20259"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#ids::tests::the_meta_block_keys_are_published_and_distinct"
+decision = "new-proposition"
+proposition = "NP-256"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20260"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#ids::tests::the_covered_component_sets_hold_their_published_members"
+decision = "new-proposition"
+proposition = "NP-256"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20261"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#ids::tests::the_header_names_bounds_and_status_hold_their_published_values"
+decision = "new-proposition"
+proposition = "NP-256"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20262"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::signature_parameters::tests::reordered_and_duplicated_parameters_are_refused"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20263"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::signature_parameters::tests::an_unknown_signature_parameter_is_refused"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20264"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::signature_parameters::tests::plus_signed_and_leading_zero_integers_are_refused"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20265"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::signature_parameters::tests::escaped_quoted_parameter_values_are_refused"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20266"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::signature_parameters::tests::a_tab_outside_quotes_is_refused"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20267"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_serve::connection::tests::a_stalled_response_write_is_cut_after_the_age_bound_and_the_grace"
+decision = "new-proposition"
+proposition = "NP-257"
 recorded = "2026-10-04"

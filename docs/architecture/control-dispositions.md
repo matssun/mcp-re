@@ -4668,3 +4668,23 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** `proxy.scrapi_registration_leaf` measures the certainty of an exhausted budget, not that one clock bounds every exchange.
 **Root relationship.** A premise of `proxy.scrapi_registration_leaf`.
 **Severity:** `medium`.
+
+## NP-256 — the HTTP profile's frozen wire vocabulary holds exactly its published values
+
+**Controls:** `mcp-re-http-profile` `ids::tests::the_signature_vocabulary_holds_its_published_values`, `ids::tests::the_evidence_role_labels_are_published_distinct_and_nul_free`, `ids::tests::the_meta_block_keys_are_published_and_distinct`, `ids::tests::the_covered_component_sets_hold_their_published_members`, `ids::tests::the_header_names_bounds_and_status_hold_their_published_values`.
+**Carrier:** `mcp-re-http-profile/src/ids.rs`.
+**Statement.** *Every protected identifier, role label, `_meta` key, component set, header name, size bound and status in `ids.rs` equals its published literal, and the role labels and `_meta` keys are pairwise distinct.*
+**If false.** A peer or the inner server reads a key, label or covered set this side no longer emits; for the reserved verified-context key, caller-authored context is forwarded unstripped.
+**Likely owner:** none. `ids.rs` is in twelve units' paths but every statement takes these values as given; NP-108 is mcp-re-core's profile-agnostic constants only.
+**Root relationship.** A premise of the http_profile units that hold `ids.rs` in paths.
+**Severity:** `high`.
+
+## NP-257 — an established async connection is cut no later than max_connection_age plus drain_grace, even while a response write is stalled
+
+**Controls:** `mcp-re-proxy` `async_serve::connection::tests::a_stalled_response_write_is_cut_after_the_age_bound_and_the_grace`.
+**Carrier:** `mcp-re-proxy/src/async_serve/connection.rs`.
+**Statement.** *`serve_established` asks the connection to close gracefully at the age bound or the drain, and drops it once `drain_grace` has passed, so a peer that stops reading cannot hold the connection past the age bound plus the grace.*
+**If false.** A peer that stops reading holds its connection permit and its admission decision indefinitely, defeating the age bound's revocation-latency purpose and stalling the core's drain.
+**Likely owner:** `proxy.serving_drain` states the drain and its statement claims nothing about teardown duration.
+**Root relationship.** A premise of `proxy.serving_drain`.
+**Severity:** `high`.
