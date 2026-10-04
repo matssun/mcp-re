@@ -5,12 +5,13 @@
 //! machines to each other — that is the cross-machine pass, and it is asked of the
 //! RECOGNISED states rather than of the fields again.
 //!
-//! **A `None` state is not an absence, it is a refusal already made.** Seven owners can
+//! **A `None` state is not an absence, it is a refusal already made.** Eight owners can
 //! name nothing: `Replay` (`memory` and `file` are input forms, not deployments),
 //! `ChannelBinding` (three undeployable binding kinds, one deprecated identity source),
 //! `DelegatedSigning` (the §7 epoch has no default, so without it there is no posture to
 //! resolve), `TrustRevocation` (three of its four states require a reload cadence),
 //! `Admission` (its two enforcing states require an authority and a record locator),
+//! `ContinuationControl` (its `Redis` state requires a scheme-bearing locator),
 //! `Custody` (every state requires the material it signs with) and `TlsCustody` (its
 //! exported state requires the key it exports) — a state cannot be built without the
 //! witnesses that make it inhabitable. Each has already pushed its refusal when that
@@ -80,7 +81,9 @@ impl MachineStates {
             client_credential_window: r
                 .client_credential_window
                 .ok_or_else(|| unrecognised("client-credential-window"))?,
-            continuation_control: r.continuation_control,
+            continuation_control: r
+                .continuation_control
+                .ok_or_else(|| unrecognised("continuation-control"))?,
             crl_revocation: r.crl_revocation,
             custody: r.custody.ok_or_else(|| unrecognised("custody"))?,
             delegated_signing: r

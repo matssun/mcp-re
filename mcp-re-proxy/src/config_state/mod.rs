@@ -736,7 +736,8 @@ mod tests {
             continuation_control: continuation_control::classify_and_validate(
                 &test_support::shared_continuation_config(),
             )
-            .0,
+            .0
+            .expect("a legal locator names a state"),
             crl_revocation: test_support::crl_posture(&["/crl.pem"], Some(300)),
             client_credential_window: client_credential_window::classify_and_validate(
                 &test_support::legal_config(),

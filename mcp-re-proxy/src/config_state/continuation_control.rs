@@ -19,7 +19,11 @@
 //! deployment asked for, and a runtime that cannot establish it refuses startup rather
 //! than serving `Disabled` — a selected security capability is never silently downgraded.
 //! In that respect this machine behaves exactly like `Admission`; only the meaning of the
-//! omitted flag differs.
+//! omitted flag differs. Where §C.7's "opportunistic" / `continuation_binding_failed`
+//! paragraph disagrees, the governing rule is THM-0093 (`verification/policy/theorems.toml`):
+//! a deployment holding no correlation store refuses a dependent leg before admission as a
+//! fact about the deployment, and a selected store that cannot establish refuses startup
+//! (`proxy.continuation_materialization`).
 //!
 //! **This machine has no relation to `Replay` (CF-12).** The apparent dependency was an
 //! alias: one field, `replay_redis_url`, carried two different facts — where admitted
@@ -33,9 +37,8 @@ use crate::deployment_request::{DeploymentRequest, RedactedLocator, SharedStoreR
 ///
 /// The representation is private to this module. [`classify_and_validate`] is the only
 /// producer, so possessing this state IS the statement that the locator it carries was
-/// checked for shape. As with the CRL machine, presence IS the classification — the
-/// locator's presence is what makes the state shared — so the state cannot exist without
-/// the value that selected it and no fallible build step is needed.
+/// checked for shape. Presence of the locator is what selects the shared state, and the
+/// classifier names no state at all for a locator that fails the shape guard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContinuationControlState {
     kind: ContinuationKind,
@@ -53,7 +56,7 @@ enum ContinuationKind {
     /// A shared store, so a flow opened on one replica can be answered on another.
     Shared {
         /// Where retained continuation bases live.
-        endpoint: String,
+        endpoint: SharedStoreRequest,
     },
 }
 
@@ -88,14 +91,15 @@ impl ContinuationControlState {
 /// an operator points both at the same Redis (CF-12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContinuationControlPlan {
-    store: Option<String>,
+    store: Option<SharedStoreRequest>,
 }
 
 impl ContinuationControlPlan {
-    /// The shared store to establish, or `None` when flows resolve on the replica that
-    /// opened them.
+    /// The shared store to establish, or `None` when none was selected — no correlation
+    /// store is installed and a continuation-dependent leg is refused as a fact about the
+    /// deployment (THM-0093).
     pub fn shared_store(&self) -> Option<&str> {
-        self.store.as_deref()
+        self.store.as_ref().map(SharedStoreRequest::locator)
     }
 
     /// Whether establishing this plan needs the shared control runtime.
@@ -106,43 +110,55 @@ impl ContinuationControlPlan {
     }
 }
 
-/// Recognise the requested state. Total: presence of the locator IS the request.
-fn classify(config: &DeploymentRequest) -> ContinuationControlState {
-    ContinuationControlState {
-        kind: match &config.continuation_control.shared {
-            Some(store) => ContinuationKind::Shared {
-                endpoint: store.locator().to_string(),
-            },
-            None => ContinuationKind::Disabled,
-        },
-    }
+/// Whether `locator` opens with an RFC 3986 scheme followed by `://`.
+fn is_scheme_bearing(locator: &str) -> bool {
+    let Some((scheme, _)) = locator.split_once("://") else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
 /// Classify the requested continuation-control state and check its columns.
+///
+/// Presence of the locator IS the request. `Some(Disabled)` when none is configured; `None`
+/// with the refusal when the locator fails the shape guard, so no shared state is ever built
+/// from an unchecked locator.
 ///
 /// Only the build-independent shape of the URL is checked. Whether this binary has a Redis
 /// client is layer B, and whether the store answers is layer C.
 pub fn classify_and_validate(
     config: &DeploymentRequest,
-) -> (ContinuationControlState, Vec<String>) {
-    let state = classify(config);
-    let mut violations = Vec::new();
-    if let Some(url) = config
-        .continuation_control
-        .shared
-        .as_ref()
-        .map(SharedStoreRequest::locator)
-    {
-        if !url.contains("://") {
-            violations.push(format!(
+) -> (Option<ContinuationControlState>, Vec<String>) {
+    let Some(store) = config.continuation_control.shared.as_ref() else {
+        return (
+            Some(ContinuationControlState {
+                kind: ContinuationKind::Disabled,
+            }),
+            Vec::new(),
+        );
+    };
+    let url = store.locator();
+    if !is_scheme_bearing(url) {
+        return (
+            None,
+            vec![format!(
                 "--continuation-control-redis-url {} is not a URL: give a \
                  scheme-bearing URL such as redis://host:6379, or omit the flag to run \
                  with MRTR continuation correlation OFF",
                 RedactedLocator::of(url)
-            ));
-        }
+            )],
+        );
     }
-    (state, violations)
+    (
+        Some(ContinuationControlState {
+            kind: ContinuationKind::Shared {
+                endpoint: store.clone(),
+            },
+        }),
+        Vec::new(),
+    )
 }
 
 #[cfg(test)]
@@ -150,7 +166,9 @@ mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
 
-    fn run(mutate: impl FnOnce(&mut DeploymentRequest)) -> (ContinuationControlState, Vec<String>) {
+    fn run(
+        mutate: impl FnOnce(&mut DeploymentRequest),
+    ) -> (Option<ContinuationControlState>, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate(&config)
@@ -159,6 +177,7 @@ mod tests {
     #[test]
     fn every_legal_state_form_is_classified_and_accepted() {
         let (state, violations) = run(|_| {});
+        let state = state.expect("a legal locator names a state");
         assert!(!state.is_shared());
         assert_eq!(state.continuation_plan().shared_store(), None);
         assert!(violations.is_empty(), "{violations:?}");
@@ -167,6 +186,7 @@ mod tests {
             c.continuation_control.shared =
                 Some(SharedStoreRequest::redis("redis://127.0.0.1:6379"));
         });
+        let state = state.expect("a legal locator names a state");
         assert_eq!(
             state.continuation_plan().shared_store(),
             Some("redis://127.0.0.1:6379")
@@ -180,6 +200,7 @@ mod tests {
     #[test]
     fn disabled_is_a_state_and_not_a_missing_value() {
         let (state, violations) = run(|c| c.continuation_control.shared = None);
+        let state = state.expect("absence names the Disabled state");
         assert!(!state.is_shared());
         assert_eq!(state.continuation_plan().shared_store(), None);
         assert!(
@@ -191,13 +212,52 @@ mod tests {
 
     #[test]
     fn a_locator_that_cannot_name_a_store_is_refused() {
-        let (_, violations) = run(|c| {
+        let (state, violations) = run(|c| {
             c.continuation_control.shared = Some(SharedStoreRequest::redis("127.0.0.1:6379"));
         });
+        assert!(state.is_none(), "a refused locator must name no state");
         assert!(
             violations.iter().any(|v| v.contains("is not a URL")),
             "{violations:?}"
         );
+    }
+
+    #[test]
+    fn a_locator_whose_scheme_is_not_at_its_start_is_refused() {
+        for bad in ["127.0.0.1:6379/?next=a://b", "://h:6379", " redis://h:6379"] {
+            let (state, violations) = run(|c| {
+                c.continuation_control.shared = Some(SharedStoreRequest::redis(bad));
+            });
+            assert!(state.is_none(), "{bad}: {state:?}");
+            assert!(
+                violations.iter().any(|v| v.contains("is not a URL")),
+                "{bad}: {violations:?}"
+            );
+        }
+        for good in ["rediss://h:6380", "redis+unix:///tmp/r.sock"] {
+            let (state, violations) = run(|c| {
+                c.continuation_control.shared = Some(SharedStoreRequest::redis(good));
+            });
+            assert!(state.is_some(), "{good}");
+            assert!(violations.is_empty(), "{good}: {violations:?}");
+        }
+    }
+
+    #[test]
+    fn a_state_and_its_plan_debug_print_carries_no_credential() {
+        let url = "redis://alice:hunter2@h:6379/0?token=s3cr3t";
+        let (state, violations) = run(|c| {
+            c.continuation_control.shared = Some(SharedStoreRequest::redis(url));
+        });
+        assert!(violations.is_empty(), "{violations:?}");
+        let state = state.expect("a legal locator names a state");
+        let plan = state.continuation_plan();
+        for printed in [format!("{state:?}"), format!("{plan:?}")] {
+            for secret in ["hunter2", "alice", "s3cr3t", url] {
+                assert!(!printed.contains(secret), "{secret} leaked: {printed}");
+            }
+        }
+        assert_eq!(plan.shared_store(), Some(url));
     }
 
     /// The clause fires exactly when the value has no `://`, which is the shape a
@@ -233,6 +293,7 @@ mod tests {
                 shared(c);
             })
             .0
+            .expect("a legal locator names a state")
             .continuation_plan()
             .shared_store(),
             Some("redis://127.0.0.1:6379")
@@ -244,6 +305,7 @@ mod tests {
                 ));
             })
             .0
+            .expect("absence names the Disabled state")
             .continuation_plan()
             .shared_store(),
             None,

@@ -3,7 +3,7 @@
 //!
 //! Each answers with the state it recognised, or with `None` and the refusal that explains
 //! it — so a `None` here is never an absence, it is a decision already made and already
-//! reported. Two of them always name a state and can still refuse a column of it; their
+//! reported. One of them always names a state and can still refuse a column of it; its
 //! refusals travel beside the value.
 //!
 //! Kept apart from [`super::total_machines`] because the two are different in kind, not
@@ -62,16 +62,16 @@ impl Refusals {
 
 /// What the machines that CAN refuse recognised.
 ///
-/// `None` is a refusal already made, never an absence. Two of these — the continuation
-/// control and the CRL revocation posture — always name a state and can still refuse a
-/// column of it, which is why they are values here and their refusals travel beside them.
+/// `None` is a refusal already made, never an absence. One of these — the CRL revocation
+/// posture — always names a state and can still refuse a column of it, which is why it is a
+/// value here and its refusals travel beside it.
 pub(super) struct RefusableStates {
     pub(super) admission: Option<crate::config_state::AdmissionState>,
     pub(super) authorization: Option<crate::config_state::AuthorizationState>,
     pub(super) channel_binding: Option<crate::config_state::ChannelBindingState>,
     pub(super) client_credential_window: Option<crate::config_state::ClientCredentialWindow>,
     pub(super) freshness: Option<crate::config_state::FreshnessWindow>,
-    pub(super) continuation_control: crate::config_state::ContinuationControlState,
+    pub(super) continuation_control: Option<crate::config_state::ContinuationControlState>,
     pub(super) crl_revocation: crate::config_state::CrlRevocationState,
     pub(super) custody: Option<crate::config_state::CustodyState>,
     pub(super) delegated_signing: Option<crate::config_state::DelegatedSigningFacts>,

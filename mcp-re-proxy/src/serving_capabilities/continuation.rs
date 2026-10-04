@@ -120,7 +120,9 @@ mod tests {
         let (state, violations) =
             crate::config_state::continuation_control::classify_and_validate(&config);
         assert!(violations.is_empty(), "{violations:?}");
-        state.continuation_plan()
+        state
+            .expect("a legal locator names a state")
+            .continuation_plan()
     }
 
     fn no_locator() -> crate::startup_plan::ContinuationControlPlan {
