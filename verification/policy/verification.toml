@@ -7191,6 +7191,7 @@ tested_symbols = [
   # so joining this battery costs it no coverage.
   "//mcp-re-proxy:integration_kms_test#app_startup_characterization_test::a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host",
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::a_legitimate_endpoint_is_still_admitted_after_the_substitution",
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::every_admitted_endpoint_is_read_identically_by_the_client_url_parser",
 ]
 # `endpoint.rs` is compiled by `proxy_ext_unit_test`'s named feature set, not by every feature.
 
