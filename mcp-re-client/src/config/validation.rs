@@ -8,10 +8,6 @@
 //! * **trust and delegation** — which documents this client will believe, and how far a
 //!   window may be widened before believing one stops meaning anything;
 //! * **the routes** — whether each binding digests something the request actually carries.
-//!
-//! The last is the subtle one. A binding that digests a value the request need not send is
-//! a binding to NOTHING: it commits to bytes the verifier will never see, so it passes
-//! locally and proves nothing at the far end. Every arm below refuses one shape of that.
 
 use super::bearer_token;
 use super::err;
@@ -25,6 +21,9 @@ use super::AUTHORIZATION;
 use super::MAX_CLOCK_SKEW_SECS;
 use super::MAX_MANIFEST_RELOAD_SECS;
 
+/// The profile's signature-validity ceiling, `VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY`.
+const MAX_REQUEST_LIFETIME_SECS: i64 = 3600;
+
 /// Where this client offers its signing key, and the bounds that keep one caller from
 /// holding the sidecar.
 pub(super) fn check_local(local: &LocalConfig) -> Result<(), ConfigError> {
@@ -32,8 +31,11 @@ pub(super) fn check_local(local: &LocalConfig) -> Result<(), ConfigError> {
     // first: a scope in hand means the bind was permitted, so there is no check at this
     // site that could be deleted to admit an off-host listener.
     BindScope::decide(local.bind, local.allow_non_loopback)?;
-    if local.request_lifetime_secs <= 0 {
-        return Err(err("local.request_lifetime_secs must be positive"));
+    if !(1..=MAX_REQUEST_LIFETIME_SECS).contains(&local.request_lifetime_secs) {
+        return Err(err(
+            "local.request_lifetime_secs is outside 1..=3600: no verifier accepts a wider \
+             expires - created",
+        ));
     }
     if local.max_in_flight == 0 {
         return Err(err("local.max_in_flight must be positive"));
@@ -51,6 +53,9 @@ pub(super) fn check_trust_and_delegation(config: &ClientConfig) -> Result<(), Co
     }
     if config.delegation.verifier_audiences.is_empty() {
         return Err(err("delegation.verifier_audiences is empty"));
+    }
+    if config.delegation.expected_audience_hash.is_empty() {
+        return Err(err("delegation.expected_audience_hash is empty"));
     }
     if config.delegation.accepted_epochs.is_empty() {
         return Err(err("delegation.accepted_epochs is empty"));
@@ -95,6 +100,13 @@ pub(super) fn check_routes(config: &ClientConfig) -> Result<(), ConfigError> {
             return Err(err(format!(
                 "duplicate route_id {:?}: a later route would silently replace an \
                  earlier one, including its bindings",
+                route.route_id
+            )));
+        }
+        if route.target_uri != route.audience.target_uri {
+            return Err(err(format!(
+                "route {:?}: target_uri differs from audience.target_uri, so every \
+                 request on it fails AudienceMismatch at signing",
                 route.route_id
             )));
         }
@@ -151,11 +163,6 @@ fn check_binding(
         }
     }
     match (binding.artifact_type, &binding.source) {
-        // The verifier takes the DPoP credential from the request's covered
-        // `Authorization` header, never from anything the caller restates, so
-        // that header is the only place a digest can commit to transmitted
-        // bytes. A literal or a file digests a value that only has to match
-        // by coincidence — the binding-to-nothing this type documents.
         (ArtifactType::OauthDpop, BindingSource::Header { name })
             if !name.eq_ignore_ascii_case(AUTHORIZATION) =>
         {
@@ -195,6 +202,7 @@ fn check_binding(
 mod tests {
     use super::super::ClientConfig;
     use super::MAX_MANIFEST_RELOAD_SECS;
+    use super::MAX_REQUEST_LIFETIME_SECS;
 
     /// A document valid in every respect except the one under test, so a refusal can only be
     /// about `trust.reload_secs`.
@@ -265,5 +273,64 @@ mod tests {
     #[test]
     fn the_documented_maximum_is_one_hour() {
         assert_eq!(MAX_MANIFEST_RELOAD_SECS, 3600);
+    }
+
+    #[test]
+    fn a_route_whose_target_uri_differs_from_its_audience_is_refused() {
+        let mut config = with_reload_secs(60).expect("the baseline document is valid");
+        config.routes[0].target_uri = "https://mcp.example.com/mcp/".to_owned();
+        let error = config
+            .validate()
+            .expect_err("a mismatched target_uri must be refused");
+        assert!(error.to_string().contains("target_uri"), "got {error}");
+    }
+
+    #[test]
+    fn an_empty_expected_audience_hash_is_refused() {
+        let mut config = with_reload_secs(60).expect("the baseline document is valid");
+        config.delegation.expected_audience_hash = String::new();
+        let error = config
+            .validate()
+            .expect_err("an empty audience hash must be refused");
+        assert!(
+            error
+                .to_string()
+                .contains("delegation.expected_audience_hash"),
+            "got {error}"
+        );
+    }
+
+    #[test]
+    fn the_request_lifetime_bound_is_exactly_one_to_the_profiles_signature_validity_ceiling() {
+        let just_above = MAX_REQUEST_LIFETIME_SECS
+            .checked_add(1)
+            .expect("the ceiling leaves room for one more");
+        for (secs, accepted) in [
+            (0, false),
+            (just_above, false),
+            (1, true),
+            (MAX_REQUEST_LIFETIME_SECS, true),
+        ] {
+            let mut config = with_reload_secs(60).expect("the baseline document is valid");
+            config.local.request_lifetime_secs = secs;
+            let result = config.validate();
+            if accepted {
+                result.unwrap_or_else(|e| panic!("lifetime {secs} is inside the bound: {e}"));
+            } else {
+                let error = result.expect_err("a lifetime outside the bound must be refused");
+                assert!(
+                    error.to_string().contains("local.request_lifetime_secs"),
+                    "lifetime {secs}: got {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_request_lifetime_ceiling_is_the_profiles() {
+        assert_eq!(
+            MAX_REQUEST_LIFETIME_SECS,
+            mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY
+        );
     }
 }

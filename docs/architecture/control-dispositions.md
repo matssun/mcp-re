@@ -4615,3 +4615,26 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none.
 **Severity:** `critical`, carried from NP-184 rather than reassessed.
 **Root relationship.** A premise of the proxy units above it. No unit's `paths` holds `key_source/mod.rs`, and `proxy.key_file_custody_admission` covers only `key_file_custody/mod.rs` and is not widened to reach it.
+
+## NP-251 — client config validation admits only a document every route can sign and verify as declared
+
+**Controls:** `mcp-re-client` `config::validation::tests::a_route_whose_target_uri_differs_from_its_audience_is_refused`,
+`config::validation::tests::an_empty_expected_audience_hash_is_refused`,
+`config::validation::tests::the_request_lifetime_bound_is_exactly_one_to_the_profiles_signature_validity_ceiling`,
+`config::validation::tests::the_request_lifetime_ceiling_is_the_profiles`.
+**Carrier:** `mcp-re-client/src/config/validation.rs`.
+**Statement.** *ClientConfig::validate refuses a route whose target_uri differs from its audience.target_uri, an empty delegation.expected_audience_hash, and a local.request_lifetime_secs outside 1..=the profile's signature-validity ceiling.*
+**If false.** A configuration passes `--check` while every request on a route fails AudienceMismatch at signing, a delegated credential with an empty audience-hash claim is accepted, or every call carries a validity window no verifier accepts.
+**Likely owner:** `client.deployment_config`. Its `paths` are `config/mod.rs` only, so `register` is not admissible; `client.local_leg_declaration` holds this file but its statement does not state these facts.
+**Root relationship.** A premise of the units above it.
+**Severity:** `medium`.
+
+## NP-252 — the deployable client never reads an unreadable host clock as a time
+
+**Controls:** `mcp-re-client` `startup::tests::a_pre_epoch_clock_is_not_a_time`.
+**Carrier:** `mcp-re-client/src/startup.rs` (`now_unix`, `unix_seconds`).
+**Statement.** *A host clock that does not read as a Unix time yields no reading — never 0 or a truncated value — so startup refuses and the refresher withdraws rather than evaluating expiry at a fabricated instant.*
+**If false.** The startup manifest load and the refresher's withdrawal compare `now > expires_at` at an early fabricated instant, read a lapsed trust picture as live, and accept or keep anchors whose governing document has expired.
+**Likely owner:** none. `client.serving_lifetime` states the refresher is started, not what clock it is given; NP-065 and NP-128 are the proxy's clock.
+**Root relationship.** A premise of `client.anchor_refresh` (THM-0120) and of the startup manifest load.
+**Severity:** `medium`.

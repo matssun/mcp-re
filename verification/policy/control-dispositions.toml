@@ -550,6 +550,24 @@ consequence = "critical"
 root_relationship = "a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-250"
 
+[[proposition]]
+id = "NP-251"
+title = "Client config validation admits only a document every route can sign and verify as declared"
+carrier = "mcp-re-client/src/config/validation.rs"
+likely_owner = "client.deployment_config"
+consequence = "medium"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-251"
+
+[[proposition]]
+id = "NP-252"
+title = "The deployable client never reads an unreadable host clock as a time"
+carrier = "mcp-re-client/src/startup.rs (now_unix, unix_seconds)"
+likely_owner = "none. client.serving_lifetime states the refresher is started, not what clock it is given; NP-065 and NP-128 are the proxy's clock."
+consequence = "medium"
+root_relationship = "a premise of client.anchor_refresh (THM-0120) and of the startup manifest load: both compare now > expires_at, which an early fabricated instant passes."
+record = "docs/architecture/control-dispositions.md#np-252"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14517,4 +14535,44 @@ project = "mcp-re-http-profile"
 control = "src/lib.rs#verify::floor::covered_components::tests::an_unquoted_identifier_is_refused"
 decision = "new-proposition"
 proposition = "NP-090"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20245"
+project = "mcp-re-client"
+control = "src/lib.rs#config::validation::tests::a_route_whose_target_uri_differs_from_its_audience_is_refused"
+decision = "new-proposition"
+proposition = "NP-251"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20246"
+project = "mcp-re-client"
+control = "src/lib.rs#config::validation::tests::an_empty_expected_audience_hash_is_refused"
+decision = "new-proposition"
+proposition = "NP-251"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20247"
+project = "mcp-re-client"
+control = "src/lib.rs#config::validation::tests::the_request_lifetime_bound_is_exactly_one_to_the_profiles_signature_validity_ceiling"
+decision = "new-proposition"
+proposition = "NP-251"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20248"
+project = "mcp-re-client"
+control = "src/lib.rs#config::validation::tests::the_request_lifetime_ceiling_is_the_profiles"
+decision = "new-proposition"
+proposition = "NP-251"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20250"
+project = "mcp-re-client"
+control = "src/main.rs#startup::tests::a_pre_epoch_clock_is_not_a_time"
+decision = "new-proposition"
+proposition = "NP-252"
 recorded = "2026-10-04"
