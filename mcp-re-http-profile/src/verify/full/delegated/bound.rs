@@ -79,14 +79,12 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     // JSON mode (§3.4): the delegated path gets the same gate — a credential
     // chain to the root does not make a stream evidenceable.
     require_json_media_type(&response.headers, "response content-type")?;
-    let digest_header = single_header(&response.headers, "content-digest")?
-        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
+    let headers = &response.headers;
+    let digest_header = required_header(headers, "content-digest", "response content-digest")?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
     // Signature-input parse + required components + params gate (keyid).
-    let input_header = single_header(&response.headers, "signature-input")?.ok_or(
-        HttpProfileError::MissingEvidence("response signature-input"),
-    )?;
+    let input_header = required_header(headers, "signature-input", "response signature-input")?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(
         &parsed.components,
@@ -164,4 +162,12 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
         // reachable through a verified chain.
         delegation_issuer_kid: verified.issuer_kid.clone(),
     })
+}
+/// The single value of header `name`, or the evidence refusal naming `what` when it is absent.
+fn required_header<'a>(
+    headers: &'a [(String, String)],
+    name: &'static str,
+    what: &'static str,
+) -> Result<&'a str, HttpProfileError> {
+    single_header(headers, name)?.ok_or(HttpProfileError::MissingEvidence(what))
 }
