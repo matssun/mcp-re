@@ -29,10 +29,9 @@ pub use availability::AdmissionAvailabilityRequest;
 pub use gate::AdmissionGateRequest;
 
 /// What a call carrying no admission evidence means here.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdmissionRequest {
     /// The gate is not applied. Admission evidence, if present, decides nothing.
-    #[default]
     NotEnforced,
     /// Evidence is verified when presented; its absence is not a refusal. For a rollout
     /// that has not reached every client.
@@ -88,7 +87,6 @@ mod tests {
     /// nothing to refuse: there is no place to put an authority beside `off`.
     #[test]
     fn the_unenforced_form_has_no_gate_inputs_to_dangle() {
-        assert_eq!(AdmissionRequest::default(), AdmissionRequest::NotEnforced);
         assert!(AdmissionRequest::NotEnforced.gate().is_none());
         assert!(!AdmissionRequest::NotEnforced.is_enforced());
     }
