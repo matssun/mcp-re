@@ -362,7 +362,7 @@ mod tests {
         );
         assert!(
             !lifecycle.state().admits_requests(),
-            "no window in which the lifecycle authorises admission over an unbound runtime"
+            "the record never classifies an unbound runtime as admitting; admission itself is confined by listener ownership, not by this value"
         );
         assert_ne!(
             lifecycle.state(),
