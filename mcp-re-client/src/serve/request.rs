@@ -2,11 +2,11 @@
 //! Reading one local request, and refusing everything this listener does not parse.
 //!
 //! `POST`, `Content-Length`, one exchange per connection, and nothing else. This socket is
-//! the trust boundary''s inner face: whatever reaches it gets requests signed under this
-//! client''s identity, so every byte of parser here is attack surface for no benefit.
+//! the trust boundary's inner face: whatever reaches it gets requests signed under this
+//! client's identity, so every byte of parser here is attack surface for no benefit.
 //!
 //! Chunked bodies are REFUSED rather than parsed — a framing bug on this leg would let one
-//! local caller''s body be read as another''s, and no local MCP client needs chunked to send
+//! local caller's body be read as another's, and no local MCP client needs chunked to send
 //! a JSON-RPC message. Keep-alive is not offered for the same reason: one request per
 //! connection means the reader never has to find a message boundary in a stream, which is
 //! where framing confusion lives.

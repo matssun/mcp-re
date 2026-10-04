@@ -292,7 +292,6 @@ fn bearer_token(authorization_header: &str) -> Option<&str> {
     }
 }
 
-/// The checks that cannot be expressed in the type.
 mod bind_scope;
 mod local;
 mod validation;
@@ -316,12 +315,6 @@ impl ClientConfig {
         ClientConfig::from_json(&bytes)
     }
 
-    /// The checks that cannot be expressed in the type: non-empty collections, unique
-    /// route ids, a resolvable binding source, and the loopback guard.
-    ///
-    /// Public because every field of this struct is public and the type derives
-    /// `Deserialize`: a consumer that builds or mutates a config rather than going
-    /// through [`ClientConfig::from_json`] must be able to re-establish the invariant,
     /// The checks that cannot be expressed in the type: non-empty collections, unique
     /// route ids, a resolvable binding source, and the loopback guard.
     ///

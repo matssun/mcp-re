@@ -40,6 +40,9 @@ pub enum RefreshOutcome {
     /// The manifest in force has expired and no newer one was accepted, so the anchors
     /// were WITHDRAWN. Every response now fails closed until a refresh succeeds.
     Withdrawn { expired_at: i64 },
+    /// The host clock could not be read, so whether the manifest in force has expired is
+    /// undetermined; the anchors were WITHDRAWN rather than held on a time nobody read.
+    ClockUnreadable,
 }
 
 /// Run one refresh cycle against `snapshot`.
@@ -78,6 +81,22 @@ pub fn refresh_once(
     }
 }
 
+/// One refresh cycle at a clock reading that may have failed. An unreadable clock is not a
+/// time: every expiry comparison here reads an early instant as live, so it withdraws
+/// instead of substituting one.
+pub fn refresh_at(
+    loader: &mut AnchorLoader,
+    snapshot: &AnchorSnapshot,
+    manifest_expires_at: &mut i64,
+    now: Option<i64>,
+) -> RefreshOutcome {
+    let Some(now) = now else {
+        snapshot.store(TrustedIssuerSet::new());
+        return RefreshOutcome::ClockUnreadable;
+    };
+    refresh_once(loader, snapshot, manifest_expires_at, now)
+}
+
 impl AnchorRefresher {
     /// Class A: the one assertion is the thread spawn, and it runs at startup on the main
     /// thread before a single local call is served, so failing IS the refusal to start.
@@ -94,7 +113,7 @@ impl AnchorRefresher {
         snapshot: Arc<AnchorSnapshot>,
         mut manifest_expires_at: i64,
         interval: Duration,
-        clock: impl Fn() -> i64 + Send + 'static,
+        clock: impl Fn() -> Option<i64> + Send + 'static,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = Arc::clone(&stop);
@@ -115,7 +134,7 @@ impl AnchorRefresher {
                         continue;
                     }
                     waited = Duration::ZERO;
-                    match refresh_once(&mut loader, &snapshot, &mut manifest_expires_at, clock()) {
+                    match refresh_at(&mut loader, &snapshot, &mut manifest_expires_at, clock()) {
                         RefreshOutcome::Published { version } => {
                             eprintln!("trust-anchor manifest v{version} accepted");
                         }
@@ -123,6 +142,12 @@ impl AnchorRefresher {
                             eprintln!(
                                 "trust-anchor refresh failed, keeping the anchors in force: \
                                  {reason}"
+                            );
+                        }
+                        RefreshOutcome::ClockUnreadable => {
+                            eprintln!(
+                                "the host clock does not read as a Unix time — ANCHORS WITHDRAWN, \
+                                 every response now fails closed"
                             );
                         }
                         RefreshOutcome::Withdrawn { expired_at } => {

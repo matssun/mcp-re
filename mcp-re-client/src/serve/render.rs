@@ -12,14 +12,14 @@
 //!   completed.
 //! * a verified `InputRequiredResult` is a PAUSE, not a reply. There is no continuation
 //!   support here, so the answer leg the server is waiting for can never be signed and the
-//!   variant''s `request_state` cannot be carried anywhere that would use it. Serving the
+//!   variant's `request_state` cannot be carried anywhere that would use it. Serving the
 //!   pause as 200 with its result body — distinguished only by a header the plain-MCP
 //!   contract does not cover — hands an embedder a finished tool result for an approval
 //!   nobody gave. Both SDKs fail closed on an unanswerable elicitation; so does this, at
-//!   501, because what is missing is this listener''s ability to continue the exchange.
-//! * a verified REJECTION rides in a 200 on purpose: it IS the server''s answer, and a
+//!   501, because what is missing is this listener's ability to continue the exchange.
+//! * a verified REJECTION rides in a 200 on purpose: it IS the server's answer, and a
 //!   JSON-RPC error is how a plain MCP client is told a call did not succeed. A 5xx would
-//!   read as a channel failure and invite the retry the receipt''s own `retry_safety` may be
+//!   read as a channel failure and invite the retry the receipt's own `retry_safety` may be
 //!   refusing.
 
 use mcp_re_client_proxy::ProxyError;

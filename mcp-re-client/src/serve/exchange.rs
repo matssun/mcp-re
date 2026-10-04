@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! One local exchange, from the accepted socket to the plain reply.
 //!
-//! The listener''s dispatch half: read, sign-forward-verify through [`ClientProxy`], and
+//! The listener's dispatch half: read, sign-forward-verify through [`ClientProxy`], and
 //! render what came back as something an ordinary MCP client can act on. The local client
 //! never sees an MCP-RE field — that transparency is the point.
 //!
@@ -9,9 +9,9 @@
 //!
 //! * an UNVERIFIABLE response is not a server verdict. The channel is compromised or
 //!   misconfigured, so it is reported as a gateway failure, never as a result.
-//! * a verified REJECTION rides in a 200 on purpose: it IS the server''s answer, and a
+//! * a verified REJECTION rides in a 200 on purpose: it IS the server's answer, and a
 //!   JSON-RPC error is how a plain MCP client is told a call did not succeed. A 5xx would
-//!   read as a channel failure and invite the retry the receipt''s own `retry_safety` may
+//!   read as a channel failure and invite the retry the receipt's own `retry_safety` may
 //!   be refusing.
 
 use std::net::TcpStream;

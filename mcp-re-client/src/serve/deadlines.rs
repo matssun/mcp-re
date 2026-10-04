@@ -8,7 +8,7 @@
 //! it cares to, and `max_in_flight` such connections take the sidecar out of service
 //! without sending a single request.
 //!
-//! Both constructions here are the same one: shrink the socket''s timeout to the REMAINING
+//! Both constructions here are the same one: shrink the socket's timeout to the REMAINING
 //! budget before every operation, so a set of per-syscall timers becomes one bound on the
 //! phase. A zero or elapsed budget is reported as a timeout rather than passed to the
 //! socket, where `Duration::ZERO` means *block forever* and would invert the guarantee.

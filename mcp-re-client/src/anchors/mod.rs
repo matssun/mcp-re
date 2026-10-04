@@ -37,6 +37,7 @@ use crate::config::FloorConfig;
 use crate::config::TrustConfig;
 
 mod refresher;
+pub use refresher::refresh_at;
 pub use refresher::refresh_once;
 pub use refresher::AnchorRefresher;
 pub use refresher::RefreshOutcome;
@@ -370,6 +371,33 @@ mod tests {
             snapshot.load().is_revoked(ROOT_KID),
             "the revocation is in force on the running client, with no restart"
         );
+    }
+
+    /// A clock that does not read as a Unix time withdraws the anchors: every expiry
+    /// comparison reads an early instant as live.
+    #[test]
+    fn an_unreadable_clock_withdraws_the_anchors_rather_than_holding_them() {
+        let scratch = Scratch::new("unreadable_clock");
+        let trust = trust_config(&scratch, true);
+        publish(&trust.manifest_path, 1, false, NOW + 10_000);
+
+        let mut loader = AnchorLoader::new(&trust).expect("loader");
+        let initial = loader.load(NOW).expect("v1 loads");
+        let snapshot = AnchorSnapshot::new(initial.issuers);
+        let mut expires_at = initial.expires_at;
+
+        assert_eq!(
+            refresh_at(&mut loader, &snapshot, &mut expires_at, None),
+            RefreshOutcome::ClockUnreadable
+        );
+        assert!(!snapshot.load().trusts(ROOT_KID, NOW));
+
+        publish(&trust.manifest_path, 2, false, NOW + 10_000);
+        assert_eq!(
+            refresh_at(&mut loader, &snapshot, &mut expires_at, Some(NOW)),
+            RefreshOutcome::Published { version: 2 }
+        );
+        assert!(snapshot.load().trusts(ROOT_KID, NOW));
     }
 
     /// A transient read failure must not withdraw trust — dropping the anchors would
