@@ -1494,11 +1494,13 @@ tested_symbols = [
   # a verification that succeeded.
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::verifier::tests::accepting_a_publication_raises_the_floor_for_that_workload",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::verifier::tests::one_workloads_floor_does_not_refuse_another_workloads_record",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::tests::publishing_a_record_does_not_raise_this_replicas_read_floor",
   # FAILURE CLASSIFICATION. A reachable store that answered is never an outage, so none of
   # these can reach the degraded fork.
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::a_record_this_store_cannot_authenticate_is_a_definitive_negative",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::a_record_filed_under_another_workload_is_refused",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::a_deleted_record_is_a_definitive_negative",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::tests::a_publish_refusal_is_a_verdict_and_not_an_outage",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::an_unknown_workload_is_a_definitive_negative_not_an_outage",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::restoring_an_older_publication_after_a_revocation_is_refused",
   # The mirror: a GENUINE outage still reads as one, so the clause above is a
@@ -6907,6 +6909,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_client_error_is_a_definitive_refusal",
   "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::every_post_submission_fault_is_indeterminate",
   "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::an_exhausted_budget_is_indeterminate",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_poll_that_never_completes_names_its_transport_failure",
   "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_lost_receipt_resource_is_indeterminate_and_not_a_refusal",
   "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_transport_failure_while_polling_is_retried_within_the_budget",
   "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_rate_limit_is_throttled_and_a_503_is_not",
@@ -8714,6 +8717,7 @@ tested_symbols = [
   # --- the bound the operator is told ---
   "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::a_caching_tier_states_the_cache_lifetime_on_top_of_the_store_cadence",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::delivered_window::tests::a_store_that_is_never_re_read_delivers_an_unbounded_window",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::delivered_window::tests::the_worst_case_composes_the_reload_failure_budget",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::store_cadence_tests::the_push_tier_bound_states_the_poll_interval_not_the_next_request",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::store_cadence_tests::a_push_tier_without_a_source_reports_the_fallback_only",
 ]

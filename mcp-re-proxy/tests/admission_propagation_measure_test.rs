@@ -420,6 +420,7 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
                 NOW,
             )
             .await
+            .expect("the store answers")
             .expect("publish admitted");
 
         let calls_a = Arc::new(AtomicUsize::new(0));
@@ -464,6 +465,7 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
                 NOW,
             )
             .await
+            .expect("the store answers")
             .expect("revoke");
 
         // Poll replica B — which performed no revocation and shares nothing with the

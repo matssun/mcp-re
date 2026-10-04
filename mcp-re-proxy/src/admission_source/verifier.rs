@@ -68,8 +68,24 @@ impl AdmissionRecordVerifier {
         raw: &str,
         now: i64,
     ) -> Result<CurrentAdmissionState, AdmissionRecordRefusal> {
+        let verified = self.verify_unobserved(admission_id, raw, now)?;
+        self.record_observed(admission_id, verified.state_revision());
+        Ok(verified)
+    }
+
+    /// Decide `raw` exactly as [`Self::verify`] does, without advancing the floor.
+    ///
+    /// For a caller about to WRITE the bytes: a record this process has not read from the
+    /// store is not one it observed. `pub(crate)` because the publish path lives in
+    /// `crate::redis_admission_source`, a crate-root sibling of this module.
+    pub(crate) fn verify_unobserved(
+        &self,
+        admission_id: &str,
+        raw: &str,
+        now: i64,
+    ) -> Result<CurrentAdmissionState, AdmissionRecordRefusal> {
         let resolve = &self.resolve_authority;
-        let verified = verify_admission_state_record(
+        verify_admission_state_record(
             raw,
             admission_id,
             self.profile,
@@ -77,9 +93,7 @@ impl AdmissionRecordVerifier {
             self.observed_floor(admission_id),
             now,
             |kid: &str| resolve(kid),
-        )?;
-        self.record_observed(admission_id, verified.state_revision());
-        Ok(verified)
+        )
     }
 
     /// The highest publication sequence already accepted for `admission_id`.

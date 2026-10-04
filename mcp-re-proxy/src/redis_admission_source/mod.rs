@@ -63,6 +63,7 @@ use crate::admission_source::AnsweredAs;
 use crate::admission_source::AsyncAdmissionSource;
 use crate::async_redis_store::retention_promise;
 use crate::deployment_request::RedactedLocator;
+use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal;
 
 /// A cross-process authoritative admission source backed by Redis.
 pub struct RedisAdmissionSource {
@@ -127,30 +128,31 @@ impl RedisAdmissionSource {
     /// a timer. The record's own `exp` is what bounds it, and the authority republishes.
     /// Setting no expiry is only half of that: an evicting instance drops the key anyway at
     /// `maxmemory`, so [`Self::connect`] refuses one that does not promise otherwise.
+    ///
+    /// The outer error is an outage: the store did not answer. The inner one is the record
+    /// refused, a verdict on the bytes. The decision does not raise this replica's read
+    /// floor, because a record this process has not read back is not one it observed.
     pub async fn publish(
         &self,
         signed_record: &str,
         subject: &str,
         now: i64,
-    ) -> Result<(), AdmissionSourceError> {
-        let verified = self
-            .verifier
-            .verify(subject, signed_record, now)
-            .map_err(|refusal| AdmissionSourceError::Unavailable {
-                details: format!(
-                    "refusing to publish an admission record this deployment would not \
-                     accept: {refusal}"
-                ),
-            })?;
+    ) -> Result<Result<(), AdmissionRecordRefusal>, AdmissionSourceError> {
+        let verified = match self.verifier.verify_unobserved(subject, signed_record, now) {
+            Ok(verified) => verified,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
         let mut conn = self.conn.clone();
         let result: Result<(), redis::RedisError> = redis::cmd("SET")
             .arg(admission_key(verified.state().admission_id()))
             .arg(signed_record)
             .query_async(&mut conn)
             .await;
-        result.map_err(|e| AdmissionSourceError::Unavailable {
-            details: format!("redis SET admission failed: {e}"),
-        })
+        result
+            .map(Ok)
+            .map_err(|e| AdmissionSourceError::Unavailable {
+                details: format!("redis SET admission failed: {e}"),
+            })
     }
 
     /// The inherent read, so `publish` need not go through the trait object.
@@ -341,6 +343,45 @@ mod tests {
             .await
             .map(|_| ())
             .expect("noeviction is the supported configuration");
+    }
+
+    /// A record this deployment would not accept is a verdict on the bytes, so it must not
+    /// inhabit the outage variant the serving path routes to the degraded fork.
+    #[tokio::test]
+    async fn a_publish_refusal_is_a_verdict_and_not_an_outage() {
+        let url = redis_reporting("noeviction").await;
+        let source = RedisAdmissionSource::connect(&url, verifier_for(&authority(), 60, 5))
+            .await
+            .expect("noeviction is the supported configuration");
+        let attacker = SigningKey::from_seed_bytes(&[4u8; 32]);
+        let outcome = source
+            .publish(&signed_admitted(&attacker, "wl", 9, 1, 1_000), "wl", 1_030)
+            .await;
+        assert!(
+            matches!(outcome, Ok(Err(AdmissionRecordRefusal::SignatureInvalid))),
+            "{outcome:?}"
+        );
+    }
+
+    /// The floor is this process's READ history: a publication whose SET may not have
+    /// landed is not one it observed, so a later read of an older record still passes.
+    #[tokio::test]
+    async fn publishing_a_record_does_not_raise_this_replicas_read_floor() {
+        let key = authority();
+        let url = redis_reporting("noeviction").await;
+        let source = RedisAdmissionSource::connect(&url, verifier_for(&key, 60, 5))
+            .await
+            .expect("noeviction is the supported configuration");
+        assert!(matches!(
+            source
+                .publish(&signed_admitted(&key, "wl", 7, 4, 1_000), "wl", 1_030)
+                .await,
+            Ok(Ok(()))
+        ));
+        assert!(source
+            .verifier
+            .verify("wl", &signed_admitted(&key, "wl", 7, 1, 1_000), 1_030)
+            .is_ok());
     }
 
     /// The key an operator reads in `redis-cli` is still the workload's own name.
