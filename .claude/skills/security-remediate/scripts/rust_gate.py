@@ -16,6 +16,7 @@ configurations it is compiled in.
           the rustfmt lane, scoped. A diff in a touched file is the writer's; a diff only in
           files nobody touched means the lane did not start on a formatted tree (`infra`).
   size    `scripts/module_size_gate.py` — seconds, whole tree.
+  registry  unit closure, verification-trigger filters, mutation anchors — seconds each.
   tests   the `rust_test` targets whose `crate` is a library that compiles the file (its
           own unit tests), filtered to the file's module path, plus every integration test
           target the package named (`--it`, Bazel labels).
@@ -45,6 +46,11 @@ from rust_resolver import RustResolver  # noqa: E402
 import size_debt  # noqa: E402
 
 SIZE_GATE = "scripts/module_size_gate.py"
+# Seconds each, whole tree, and attributable under the lane invariant: a new module that
+# joins no unit, a fingerprint input no CI filter triggers on, a mutation anchor the change
+# made stale. Writers kept leaving these for the batch gate.
+REGISTRY_GATES = ("scripts/unit_closure_gate.py", "scripts/verification_trigger_gate.py",
+                  "tools/verification/test_mutation_lane.py")
 RUST_RULES = "rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro"
 _DIAGNOSTIC = re.compile(r"^error(?:\[E\d+\])?: ", re.M)
 _RUNNING = re.compile(r"^running (\d+) tests?$", re.M)
@@ -201,6 +207,16 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
                   "verdict": "ok" if rc == 0 else "size-debt" if soft else "new-failures",
                   "exit": rc, **({} if rc == 0 else {"head": out.strip().splitlines()[-5:]}),
                   **({"debt": debt} if soft else {})})
+
+    for script in REGISTRY_GATES:
+        if not os.path.isfile(script):
+            continue
+        rc, out = _run([sys.executable, script],
+                       os.path.join(work_dir, "%s-%s.log" % (os.path.basename(script), tag)))
+        parts.append({"gate": "registry", "lane": os.path.basename(script),
+                      "verdict": "ok" if rc == 0 else "new-failures", "exit": rc,
+                      **({} if rc == 0 else {"head": [ln for ln in out.splitlines()
+                                                      if "FAIL" in ln or ln.startswith("  - ")][:5]})})
 
     if any(p["verdict"] == "new-failures" for p in parts):
         return parts          # a tree that does not compile has no test result to add

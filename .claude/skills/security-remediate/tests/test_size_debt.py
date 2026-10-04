@@ -53,7 +53,10 @@ def test_rust_gate_records_size_and_still_tests() -> None:
     rust_gate.unit_test_targets = lambda targets: ["//alpha:test"]  # type: ignore[assignment]
     rust_gate._lint = lambda t, log: {"verdict": "ok"}  # type: ignore[assignment]
     rust_gate._rustfmt = lambda t, e, log: {"verdict": "ok"}  # type: ignore[assignment]
-    rust_gate._run = lambda cmd, log: (1, "module-size gate: FAIL — 1 problem(s)\n" + GREW + "\n")  # type: ignore[assignment]
+    rust_gate._run = lambda cmd, log: ((1, "module-size gate: FAIL — 1 problem(s)\n" + GREW + "\n")  # type: ignore[assignment]
+                                       if cmd[-1] == rust_gate.SIZE_GATE else
+                                       (1, "unit-closure gate: FAIL — 1 problem(s)\n  - x.rs: UC-1")
+                                       if cmd[-1].endswith("unit_closure_gate.py") else (0, ""))
     rust_gate._test = lambda t, f, log: {"verdict": "ok", "ran": 3}  # type: ignore[assignment]
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -65,8 +68,32 @@ def test_rust_gate_records_size_and_still_tests() -> None:
     by = {p["gate"]: p for p in parts}
     assert by["module-size"]["verdict"] == "size-debt", by
     assert by["module-size"]["debt"][0]["measured"] == 606, by
-    assert by["test"]["verdict"] == "ok", "a size-only failure must not stop the tests"
-    print("  rust gate: a size-only module-size failure is size-debt and the tests still run  OK")
+    registry = [p for p in parts if p["gate"] == "registry"]
+    assert [p["verdict"] for p in registry] == ["new-failures", "ok", "ok"], registry
+    assert "test" not in by, "a registry failure is the writer's and stops the gate"
+    print("  rust gate: size-only is size-debt; a registry failure (unit closure) blames the writer  OK")
+
+
+def test_a_size_only_failure_still_runs_the_tests() -> None:
+    saved = (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+             rust_gate._rustfmt, rust_gate._run, rust_gate._test)
+    rust_gate.compiling_targets = lambda files: ["//alpha:lib"] if files else []  # type: ignore[assignment]
+    rust_gate.unit_test_targets = lambda targets: ["//alpha:test"]  # type: ignore[assignment]
+    rust_gate._lint = lambda t, log: {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._rustfmt = lambda t, e, log: {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._run = lambda cmd, log: ((1, "FAIL\n" + GREW + "\n")  # type: ignore[assignment]
+                                       if cmd[-1] == rust_gate.SIZE_GATE else (0, ""))
+    rust_gate._test = lambda t, f, log: {"verdict": "ok", "ran": 3}  # type: ignore[assignment]
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            open(os.path.join(td, "keys.rs"), "w").write("#[test]\nfn t() {}\n")
+            parts = rust_gate.gate(os.path.join(td, "keys.rs"), [], [], td, RustResolver(td))
+    finally:
+        (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+         rust_gate._rustfmt, rust_gate._run, rust_gate._test) = saved
+    by = {p["gate"]: p for p in parts}
+    assert by["module-size"]["verdict"] == "size-debt" and by["test"]["verdict"] == "ok", by
+    print("  rust gate: a size-only failure is size-debt and the tests still run  OK")
 
 
 def test_committed_rows_settle_and_reverted_rows_drop() -> None:

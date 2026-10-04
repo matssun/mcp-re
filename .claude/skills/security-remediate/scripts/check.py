@@ -306,7 +306,7 @@ def cmd_post(a) -> int:
 def gate_summary(p: dict) -> str:
     """One line per gate part for the journal. Every Rust part is named here; only the
     Python tree part carries `new_failures`."""
-    if p["gate"] in ("clippy", "rustfmt", "test", "module-size", "targets"):
+    if p["gate"] in ("clippy", "rustfmt", "test", "module-size", "registry", "targets"):
         what = p.get("lane") or p.get("target") or ""
         bad = (p.get("errors_head") or p.get("unformatted") or p.get("failed")
                or p.get("debt") or p.get("head") or p.get("why") or "")
