@@ -112,8 +112,14 @@ pub struct CustodyConfig {
 
 /// The delegated-signing custody state machine.
 ///
-/// `Issue` is the root issuer (KMS/HSM in production): given a header+claims it
-/// returns the compact JWS credential, or `None` when the root is unavailable.
+/// `Issue` is the root-issuance seam (KMS/HSM in production). Its contract: given a
+/// header and claims, a `Some` it returns MUST verify under the deployment's root key as
+/// a compact JWS over exactly that header and those claims; it returns `None` when the
+/// root is unavailable or its signature does not verify. This owner does not check the
+/// root signature: it checks only that the returned credential attests this issuance (see
+/// `ActiveDelegatedKey::issued`). A `Some` that does not verify is the seam implementer's
+/// bug, and every fleet verifier refuses it. The production implementer,
+/// `mcp_re_proxy::build_delegated_signing`, re-verifies the root signature before returning.
 /// `Factory` yields a fresh in-memory delegated signing key.
 pub struct DelegatedSigningCustody<Issue, Factory> {
     cfg: CustodyConfig,

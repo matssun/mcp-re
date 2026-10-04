@@ -16,13 +16,10 @@
 //! unconstructible, because there is no second representation left to disagree.
 //!
 //! **What this file does NOT establish.** That the credential verifies under the root. That
-//! is the issuance seam's obligation and it is discharged there: the production issuer
-//! (`delegated_wiring::build_delegated_signing`) re-verifies the root's own signature over
-//! the JWS signing input under the key the root advertises, and fails the issuance closed
-//! otherwise. This owner therefore treats the bytes `Issue` returns as coming from inside a
-//! ratified trusted-root boundary and adds no second signature check — what it establishes
-//! is the different claim that those bytes attest *this* issuance: this key, this identity,
-//! this deployment's delegation context, and a window that is a window.
+//! is the `Issue` contract on [`DelegatedSigningCustody`](super::DelegatedSigningCustody), and
+//! this owner adds no second signature check — what it establishes is the different claim
+//! that the bytes `Issue` returned attest *this* issuance: this key, this identity, this
+//! deployment's delegation context, and a window that is a window.
 
 use std::sync::Arc;
 
@@ -35,8 +32,8 @@ use crate::delegation::DelegationClaims;
 use crate::delegation::DelegationHeader;
 use crate::error::HttpProfileError;
 
-/// An owned, cheaply-cloned snapshot of the current delegated key and its root-signed
-/// credential (ADR-MCPRE-052 §4). A hot-path response signer publishes one and signs per
+/// An owned, cheaply-cloned snapshot of the current delegated key and the delegation
+/// credential the issuance seam returned (ADR-MCPRE-052 §4). A hot-path response signer publishes one and signs per
 /// request off it — the root is never touched on that path; issuance and rotation stay
 /// inside the custody state machine.
 ///
@@ -53,7 +50,7 @@ pub struct ActiveDelegatedKey {
     /// carry only their canonical escaped join, so inverting that join would be a third
     /// representation of one identity. It is checked against the claims instead.
     server_signer: ActorIdentity,
-    /// The inline root-signed delegation credential (compact JWS) — the published bytes.
+    /// The delegation credential the issuance seam returned (compact JWS) — the published bytes.
     credential: String,
     /// Read out of `credential`, never supplied.
     delegated_kid: String,
@@ -96,7 +93,7 @@ impl ActiveDelegatedKey {
             return Err(HttpProfileError::DelegationCredentialInvalid);
         }
 
-        // The identity the response block will carry is the one the root signed, and its
+        // The identity the response block will carry is the one the credential states, and its
         // `keyid` is the delegated key's own id, not merely whatever the join spells.
         if claims.mcp_re_server_signer != server_signer.actor_id()
             || server_signer.keyid != claims.delegated_kid
@@ -175,7 +172,7 @@ impl ActiveDelegatedKey {
         &self.server_signer
     }
 
-    /// The inline root-signed delegation credential (compact JWS).
+    /// The delegation credential the issuance seam returned (compact JWS).
     pub fn credential(&self) -> &str {
         &self.credential
     }
