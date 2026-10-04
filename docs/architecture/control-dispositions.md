@@ -4527,3 +4527,25 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `medium`.
 **Root relationship.** Beside proxy.trust_epoch_source: the latch is stated there, and this proposition covers that its edges are announced without a per-poll flood.
 **Recorded:** 2026-10-04, round-12 remediation of trust_epoch.rs.
+
+## NP-243 — an in-process Ed25519 signing key renders no key material
+
+**Controls:** `mcp-re-core` `lib#crypto::tests::signing_key_debug_renders_no_key_material`.
+**Carrier:** `mcp-re-core/src/crypto.rs` (Debug for SigningKey).
+**Statement.** *The Debug rendering of `SigningKey` is exactly `SigningKey { .. }`; neither the seed nor any encoding of it appears.*
+**If false.** A `{:?}` of a signing key, an error chain or a panic message prints key material, or the verifying key, into operator transcripts and logs.
+**Likely owner:** none. core.ed25519_primitive states the request-path refusal direction only; NP-241 is AWS credentials and NP-185 a PIN string.
+**Severity:** `high`.
+**Root relationship.** Beside NP-192: that proposition covers where credential bytes live, and this one covers what a printed key says.
+**Recorded:** 2026-10-04, round-12 remediation of crypto.rs.
+
+## NP-244 — an in-process Ed25519 signing key's secret scalar is scrubbed when the key drops
+
+**Controls:** `mcp-re-core` `lib#crypto::tests::dalek_signing_key_is_zeroize_on_drop`.
+**Carrier:** `mcp-re-core/src/crypto.rs` (SigningKey over ed25519_dalek::SigningKey with the zeroize feature).
+**Statement.** *The `ed25519_dalek::SigningKey` that `SigningKey` wraps implements `ZeroizeOnDrop` in the built crate. This measures the trait being present on the built dependency, not memory contents.*
+**If false.** The secret scalar of a dropped signing key stays in freed memory, readable by a later heap disclosure.
+**Likely owner:** none. core.ed25519_primitive states the request-path refusal direction only; NP-192 is GCP token residency.
+**Severity:** `medium`.
+**Root relationship.** Beside NP-243: that proposition covers what a printed key says, and this one covers scrubbing on drop.
+**Recorded:** 2026-10-04, round-12 remediation of crypto.rs.

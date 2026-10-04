@@ -36,7 +36,10 @@ nt_rust_test(
     name = "mcp_re_core_test",
     crate = ":mcp_re_core",
     edition = "2021",
-    deps = ["@crates_mcp_re//:hex"],
+    deps = [
+        "@crates_mcp_re//:hex",
+        "@crates_mcp_re//:zeroize",
+    ],
 )
 
 # ADR-MCPS-034: the Core source tree, exposed so the method-name drift guard in

@@ -96,15 +96,21 @@ impl VerificationKey {
 ///
 /// # Secret hygiene
 /// The secret scalar lives inside dalek's `DalekSigningKey`, which is
-/// `ZeroizeOnDrop` (the `zeroize` feature is enabled workspace-wide), so it is
-/// scrubbed on drop. There is deliberately NO seed/key EXPORT method (no
-/// `to_bytes` / `to_seed`) and no separate raw `[u8; 32]` copy is retained.
+/// `ZeroizeOnDrop` (pinned by `tests::dalek_signing_key_is_zeroize_on_drop`,
+/// which does not compile without it), so it is scrubbed on drop. There is
+/// deliberately NO seed/key EXPORT method (no `to_bytes` / `to_seed`) and no
+/// separate raw `[u8; 32]` copy is retained.
 /// `Clone` is intentionally NOT derived — a private key should not be silently
-/// duplicated. `Debug` is derived but dalek redacts the secret (prints just
-/// `"SigningKey"`), so it cannot leak the key into logs.
-#[derive(Debug)]
+/// duplicated. `Debug` is implemented here and renders only `SigningKey { .. }`,
+/// so it cannot leak the key into logs.
 pub struct SigningKey {
     inner: DalekSigningKey,
+}
+
+impl std::fmt::Debug for SigningKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SigningKey").finish_non_exhaustive()
+    }
 }
 
 impl SigningKey {
@@ -196,6 +202,22 @@ mod tests {
 
     // A fixed, documented test seed so signatures are reproducible.
     const SEED: [u8; 32] = [7u8; 32];
+
+    #[test]
+    fn signing_key_debug_renders_no_key_material() {
+        let sk = SigningKey::from_seed_bytes(&SEED);
+        let rendered = format!("{:?}", sk);
+        assert_eq!(rendered, "SigningKey { .. }");
+        assert!(!rendered.contains(&hex::encode(SEED)));
+        assert!(!rendered.contains(&crate::encoding::b64url_encode(&SEED)));
+        assert!(!rendered.contains(&format!("{:?}", SEED)));
+    }
+
+    #[test]
+    fn dalek_signing_key_is_zeroize_on_drop() {
+        fn requires_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        requires_zeroize_on_drop::<super::DalekSigningKey>();
+    }
 
     #[test]
     fn raw_primitive_verifies_without_any_alg_plumbing() {

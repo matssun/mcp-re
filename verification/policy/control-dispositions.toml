@@ -478,6 +478,24 @@ consequence = "medium"
 root_relationship = "Beside proxy.trust_epoch_source: the latch is stated there, and this one covers that its edges are announced without a per-poll flood."
 record = "docs/architecture/control-dispositions.md#np-242"
 
+[[proposition]]
+id = "NP-243"
+title = "An in-process Ed25519 signing key renders no key material"
+carrier = "mcp-re-core/src/crypto.rs (Debug for SigningKey)"
+likely_owner = "none. core.ed25519_primitive states the request-path refusal direction only; NP-241 is AWS credentials and NP-185 a PIN string."
+consequence = "high"
+root_relationship = "Beside NP-192: residency of key bytes, which says nothing about what a format string prints."
+record = "docs/architecture/control-dispositions.md#np-243"
+
+[[proposition]]
+id = "NP-244"
+title = "An in-process Ed25519 signing key's secret scalar is scrubbed when the key drops"
+carrier = "mcp-re-core/src/crypto.rs (SigningKey over ed25519_dalek::SigningKey with the zeroize feature)"
+likely_owner = "none. core.ed25519_primitive states the request-path refusal direction only; NP-192 is GCP token residency."
+consequence = "medium"
+root_relationship = "Beside NP-243: that proposition covers what a printed key says, and this one covers that the dropped key's scalar is scrubbed."
+record = "docs/architecture/control-dispositions.md#np-244"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -7313,6 +7331,22 @@ control = "src/lib.rs#crypto::tests::verification_key_round_trips_bytes_and_b64u
 decision = "new-proposition"
 proposition = "NP-172"
 recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-20228"
+project = "mcp-re-core"
+control = "src/lib.rs#crypto::tests::signing_key_debug_renders_no_key_material"
+decision = "new-proposition"
+proposition = "NP-243"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20229"
+project = "mcp-re-core"
+control = "src/lib.rs#crypto::tests::dalek_signing_key_is_zeroize_on_drop"
+decision = "new-proposition"
+proposition = "NP-244"
+recorded = "2026-10-04"
 
 [[disposition]]
 id = "CD-16016"
