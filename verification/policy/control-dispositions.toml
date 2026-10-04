@@ -4765,6 +4765,14 @@ proposition = "NP-032"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20314"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::currency_flags::tests::a_later_zero_cadence_restores_the_read_once_posture"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-11029"
 project = "mcp-re-proxy"
 control = "src/lib.rs#cli::delegated_signing_flags::tests::a_window_that_is_not_a_number_is_refused_by_name"

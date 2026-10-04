@@ -48,15 +48,14 @@ impl CurrencyFlags {
         // ADR-MCPS-021 Axis 2: re-read the trust store on a cadence, so removing a
         // compromised request-signer key from `--trust` takes effect without restarting
         // every replica. A zero cadence has always meant the read-once posture on the
-        // command line, so it is normalised away rather than carried into a tier that would
-        // spin on it. A programmatically built request can still say `Some(0)`, and the
-        // configuration boundary still refuses it there.
+        // command line, so a zero statement sets that posture (last statement wins) rather
+        // than being carried into a tier that would spin on it. A programmatically built
+        // request can still say `Some(0)`, and the configuration boundary still refuses it
+        // there.
         let secs: u64 = value
             .parse()
             .map_err(|_| "invalid --trust-reload-secs".to_string())?;
-        if secs > 0 {
-            self.take_reload_secs(secs);
-        }
+        self.take_reload_secs(secs);
         Ok(())
     }
 
@@ -68,7 +67,7 @@ impl CurrencyFlags {
 
     /// Read `--trust-reload-secs`.
     fn take_reload_secs(&mut self, secs: u64) {
-        self.reload_secs = Some(secs);
+        self.reload_secs = (secs > 0).then_some(secs);
     }
 
     /// Read the epoch source the storage adapter assembled.
@@ -184,5 +183,27 @@ mod tests {
             reloading.finish().expect("a cadence").reload_secs(),
             Some(300)
         );
+    }
+
+    /// Every occurrence of the cadence flag is last-wins, and a stated zero is the read-once
+    /// posture.
+    #[test]
+    fn a_later_zero_cadence_restores_the_read_once_posture() {
+        let mut flags = CurrencyFlags::default();
+        flags.take("--trust-reload-secs", "30").expect("a number");
+        flags.take("--trust-reload-secs", "0").expect("a number");
+        assert_eq!(flags.finish().expect("bounded").reload_secs(), None);
+
+        let mut flags = CurrencyFlags::default();
+        flags.take("--trust-reload-secs", "0").expect("a number");
+        flags.take("--trust-reload-secs", "30").expect("a number");
+        assert_eq!(flags.finish().expect("bounded").reload_secs(), Some(30));
+
+        let mut flags = CurrencyFlags::default();
+        flags.take("--revocation-tier", "live").expect("a tier");
+        flags.take("--trust-reload-secs", "30").expect("a number");
+        flags.take("--trust-reload-secs", "0").expect("a number");
+        let err = flags.finish().expect_err("no cadence");
+        assert!(err.contains("--trust-reload-secs"), "{err}");
     }
 }
