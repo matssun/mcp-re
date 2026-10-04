@@ -224,10 +224,7 @@ mod tests {
             full.request_evidence_agreement.bound_request_evidence,
             expected
         );
-        assert_eq!(
-            full.request_evidence_agreement.body_request_evidence,
-            other
-        );
+        assert_eq!(full.request_evidence_agreement.body_request_evidence, other);
         assert_ne!(
             full.request_evidence_agreement.body_request_evidence,
             expected

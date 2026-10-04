@@ -35,6 +35,29 @@ pub(super) enum EpochStep {
     Proceed,
 }
 
+/// Whether the shared trust epoch has moved off `last_label`. An unreadable or regressed
+/// epoch is recorded as a rotation failure the first time it is seen, and not again on later
+/// polls of the same wait.
+pub(super) fn epoch_moved(
+    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    watch: &DelegatedEpochWatch,
+    last_label: &str,
+    unreadable_seen: &mut bool,
+) -> bool {
+    match watch.current_label() {
+        Some(l) => l != last_label,
+        None => {
+            if !std::mem::replace(unreadable_seen, true) {
+                let n = signer.metrics().record_failure();
+                eprintln!(
+                    "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed during the steady-state wait; minting will be refused when the window opens unless it recovers; consecutive_failures {n}"
+                );
+            }
+            false
+        }
+    }
+}
+
 /// A trust-epoch advance takes PRIORITY over the scheduled rotation (ADR-MCPRE-052 §7).
 ///
 /// Swapping to the new epoch NOW is what makes verifiers pinned to the prior accepted-epoch

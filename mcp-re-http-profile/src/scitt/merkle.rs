@@ -259,10 +259,16 @@ mod tests {
                 .expect("every position is classed")
         };
         for pos in [(2, 3), (4, 5), (8, 9)] {
-            assert!(class_of((1, 2)).contains(&pos), "{pos:?} shares (1,2)'s class");
+            assert!(
+                class_of((1, 2)).contains(&pos),
+                "{pos:?} shares (1,2)'s class"
+            );
         }
         for pos in [(5, 6), (6, 7)] {
-            assert!(class_of((3, 4)).contains(&pos), "{pos:?} shares (3,4)'s class");
+            assert!(
+                class_of((3, 4)).contains(&pos),
+                "{pos:?} shares (3,4)'s class"
+            );
         }
 
         // And the exposure itself: ambiguity is the overwhelming norm, so refusing the

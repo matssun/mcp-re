@@ -28,6 +28,7 @@ use crate::clock::now_unix;
 
 use super::mint_successor::attempt_rotation;
 use super::mint_successor::RotationStep;
+use super::trust_epoch_advance::epoch_moved;
 use super::trust_epoch_advance::observe_trust_epoch;
 use super::trust_epoch_advance::EpochStep;
 use super::DelegatedEpochWatch;
@@ -147,29 +148,6 @@ pub(super) fn rotation_loop(
 /// An unreadable epoch is not an advance: the wait keeps polling, and records a failure
 /// once per wait when it first sees one so the metric stops reading healthy.
 ///
-/// Whether the shared trust epoch has moved off `last_label`. An unreadable or regressed
-/// epoch is recorded as a rotation failure the first time it is seen, and not again on later
-/// polls of the same wait.
-fn epoch_moved(
-    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
-    watch: &DelegatedEpochWatch,
-    last_label: &str,
-    unreadable_seen: &mut bool,
-) -> bool {
-    match watch.current_label() {
-        Some(l) => l != last_label,
-        None => {
-            if !std::mem::replace(unreadable_seen, true) {
-                let n = signer.metrics().record_failure();
-                eprintln!(
-                    "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed during the steady-state wait; minting will be refused when the window opens unless it recovers; consecutive_failures {n}"
-                );
-            }
-            false
-        }
-    }
-}
-
 /// Returns `true` when a halt was requested.
 fn wait_for_window(
     signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
@@ -311,7 +289,10 @@ mod tests {
         let halted = wait_for_window(&signer, 60, Some(&watch), "epoch-1#0", &halt);
         stopper.join().expect("stopper thread");
 
-        assert!(halted, "an unreadable epoch is not an advance; only the halt ends the wait");
+        assert!(
+            halted,
+            "an unreadable epoch is not an advance; only the halt ends the wait"
+        );
         assert_eq!(signer.metrics().consecutive_failures(), 1);
         assert_eq!(signer.metrics().rotation_failures(), 1);
     }

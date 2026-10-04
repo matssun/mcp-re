@@ -160,7 +160,11 @@ mod tests {
                 .expect("indeterminate code always projects");
             assert_eq!(field(&v, "execution_status"), "possibly_executed", "{d:?}");
             assert_eq!(field(&v, "retention_status"), "failed", "{d:?}");
-            assert_eq!(field(&v, "retry_safety"), "unsafe_without_reconciliation", "{d:?}");
+            assert_eq!(
+                field(&v, "retry_safety"),
+                "unsafe_without_reconciliation",
+                "{d:?}"
+            );
         }
 
         let v = retry_semantics(

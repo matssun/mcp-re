@@ -165,8 +165,9 @@ mod tests {
             }
         });
 
-        let destination = VettedDestination::operator_configured(format!("http://127.0.0.1:{port}/"))
-            .expect("a loopback http destination is one an operator may configure");
+        let destination =
+            VettedDestination::operator_configured(format!("http://127.0.0.1:{port}/"))
+                .expect("a loopback http destination is one an operator may configure");
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let outcome = destination
@@ -178,6 +179,9 @@ mod tests {
         let outcome = rx
             .recv_timeout(Duration::from_secs(10))
             .expect("the agent's own bound must end a request that sets none");
-        assert!(outcome.is_err(), "a listener that never answers must not yield a response");
+        assert!(
+            outcome.is_err(),
+            "a listener that never answers must not yield a response"
+        );
     }
 }
