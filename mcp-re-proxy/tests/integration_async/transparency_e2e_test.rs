@@ -209,10 +209,13 @@ fn build_server_counting(
             fleet_strict: false,
             tier: None,
         },
-        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-            dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-        }),
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            move |_forwarded: &[u8]| -> Vec<u8> {
+                dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        )),
         300,
         Arc::clone(&wiring.signer),
     );
@@ -243,9 +246,12 @@ fn build_server(retention: Option<Arc<EvidenceRetention>>) -> HttpProfileProxy {
             fleet_strict: false,
             tier: None,
         },
-        Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-        }),
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            |_forwarded: &[u8]| -> Vec<u8> {
+                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        )),
         300,
         Arc::clone(&wiring.signer),
     );
@@ -550,10 +556,13 @@ fn build_server_refusing(
             fleet_strict: false,
             tier: None,
         },
-        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-            dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"something_new"}}"#.to_vec()
-        }),
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            move |_forwarded: &[u8]| -> Vec<u8> {
+                dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"something_new"}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        )),
         300,
         Arc::clone(&wiring.signer),
     );
@@ -839,11 +848,14 @@ fn build_server_breaking_store_on_dispatch(
             fleet_strict: false,
             tier: None,
         },
-        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-            let _ = std::fs::remove_dir_all(&evidence);
-            let _ = std::fs::write(&evidence, b"not a directory");
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-        }),
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            move |_forwarded: &[u8]| -> Vec<u8> {
+                let _ = std::fs::remove_dir_all(&evidence);
+                let _ = std::fs::write(&evidence, b"not a directory");
+                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        )),
         300,
         Arc::clone(&wiring.signer),
     )

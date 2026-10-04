@@ -155,9 +155,12 @@ fn actor_resolver() -> ActorResolver {
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
-    Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        |_forwarded: &[u8]| -> Vec<u8> {
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// Build the serving proxy the SAME way `app::run` does in delegated-required mode:

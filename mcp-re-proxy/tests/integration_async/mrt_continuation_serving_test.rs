@@ -186,26 +186,29 @@ fn echoed_id(forwarded: &[u8]) -> String {
 /// `InputRequiredResult` carrying an opaque `requestState`; an answer call returns a
 /// terminal result. Mirrors `tools/fastmcp_inner_backend.py`'s `confirm_action`.
 fn eliciting_inner(request_state: &'static str) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        let v: serde_json::Value =
-            serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
-        let is_answer = v
-            .get("params")
-            .map(|p| p.get("inputResponses").is_some() || p.get("requestState").is_some())
-            .unwrap_or(false);
-        let id = echoed_id(forwarded);
-        if is_answer {
-            format!(
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            let v: serde_json::Value =
+                serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
+            let is_answer = v
+                .get("params")
+                .map(|p| p.get("inputResponses").is_some() || p.get("requestState").is_some())
+                .unwrap_or(false);
+            let id = echoed_id(forwarded);
+            if is_answer {
+                format!(
                 r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","confirmed":true}}}}"#
             )
             .into_bytes()
-        } else {
-            format!(
+            } else {
+                format!(
                 r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"input_required","requestState":"{request_state}"}}}}"#
             )
             .into_bytes()
-        }
-    })
+            }
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// A serving proxy (its own signer + replay tier) sharing `store` — one fleet replica.
@@ -652,10 +655,13 @@ fn replica_with_inner(
 /// An inner backend that announces a non-terminal turn and then withholds the state
 /// its continuation needs.
 fn malformed_eliciting_inner(result_json: &'static str) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        let id = echoed_id(forwarded);
-        format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{result_json}}}"#).into_bytes()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            let id = echoed_id(forwarded);
+            format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{result_json}}}"#).into_bytes()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// THE regression. The proxy's open-leg recorder used to read "declares itself
@@ -992,7 +998,13 @@ async fn an_unparseable_backend_body_is_refused_even_with_no_continuation_store(
         &b"{\"jsonrpc\":\"2.0\","[..],
         &b"<html>502 Bad Gateway</html>"[..],
     ] {
-        let proxy = replica_without_store(Box::new(move |_: &[u8]| garbage.to_vec()));
+        let proxy =
+            replica_without_store(Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+                move |_: &[u8]| garbage.to_vec(),
+                mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                    std::time::Duration::ZERO,
+                ),
+            )));
         let (req, _ev) = signed_request("nonce-garbage", OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
@@ -1046,7 +1058,13 @@ async fn an_illegal_json_rpc_envelope_is_refused_before_it_is_signed() {
         ),
     ] {
         let bytes = body.as_bytes().to_vec();
-        let proxy = replica_without_store(Box::new(move |_: &[u8]| bytes.clone()));
+        let proxy =
+            replica_without_store(Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+                move |_: &[u8]| bytes.clone(),
+                mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                    std::time::Duration::ZERO,
+                ),
+            )));
         let (req, _ev) = signed_request("nonce-envelope", OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
@@ -1082,7 +1100,13 @@ async fn a_legal_envelope_is_still_served_and_a_json_rpc_error_is_one() {
         ),
     ] {
         let bytes = body.as_bytes().to_vec();
-        let proxy = replica_without_store(Box::new(move |_: &[u8]| bytes.clone()));
+        let proxy =
+            replica_without_store(Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+                move |_: &[u8]| bytes.clone(),
+                mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                    std::time::Duration::ZERO,
+                ),
+            )));
         let (req, _ev) = signed_request("nonce-legal", OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
@@ -1499,16 +1523,17 @@ async fn the_same_retention_outage_without_a_spent_approval_stays_an_ordinary_re
 /// confirm a parameter of it — and it is the sequence that makes `Consumed -> Recorded`
 /// reachable rather than theoretical.
 fn twice_eliciting_inner(first: &'static str, second: &'static str) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        let v: serde_json::Value =
-            serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
-        let answered = v
-            .get("params")
-            .and_then(|p| p.get("requestState"))
-            .and_then(|s| s.as_str())
-            .map(|s| s.to_owned());
-        let id = echoed_id(forwarded);
-        match answered.as_deref() {
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            let v: serde_json::Value =
+                serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
+            let answered = v
+                .get("params")
+                .and_then(|p| p.get("requestState"))
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_owned());
+            let id = echoed_id(forwarded);
+            match answered.as_deref() {
             // The answer to leg 1 opens leg 2.
             Some(state) if state == first => format!(
                 r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"input_required","requestState":"{second}"}}}}"#
@@ -1525,7 +1550,9 @@ fn twice_eliciting_inner(first: &'static str, second: &'static str) -> Box<dyn A
             )
             .into_bytes(),
         }
-    })
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// ADR-MCPRE-057 §4 — the coexistence question, end to end.
@@ -1731,12 +1758,17 @@ async fn a_request_refused_on_the_continuation_binding_has_not_burned_its_nonce(
 
 /// An inner backend that counts how many times it was actually invoked.
 fn counting_inner(calls: Arc<std::sync::atomic::AtomicUsize>) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let id = echoed_id(forwarded);
-        format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","ok":true}}}}"#)
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let id = echoed_id(forwarded);
+            format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","ok":true}}}}"#
+            )
             .into_bytes()
-    })
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// **reserve_retention_stage** — the last refusal that is genuinely free.

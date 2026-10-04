@@ -648,9 +648,12 @@ mod http_profile_full_stack {
             Arc::clone(&signer),
         );
         rotor.rotate(now).expect("issue the first delegated key");
-        let inner = Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-        });
+        let inner = Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            |_forwarded: &[u8]| -> Vec<u8> {
+                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        ));
         HttpProfileProxy::new_delegated(
             actor_resolver(),
             audience(),

@@ -666,6 +666,15 @@ consequence = "high"
 root_relationship = "a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-263"
 
+[[proposition]]
+id = "NP-264"
+title = "An in-process inner states the completion bound its embedder gave it, never one of its own"
+carrier = "mcp-re-proxy/src/async_inner"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-264"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -15057,4 +15066,12 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#aws_kms_keysource::credential_refusal::tests::a_refusal_a_fresh_credential_does_not_fix_suspends_the_retry_for_the_cool_off"
 decision = "new-proposition"
 proposition = "NP-263"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20297"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_inner::in_process::tests::an_in_process_inner_states_the_bound_its_embedder_gave"
+decision = "new-proposition"
+proposition = "NP-264"
 recorded = "2026-10-04"

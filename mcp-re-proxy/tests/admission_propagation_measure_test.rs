@@ -292,10 +292,13 @@ fn signed_call(claims: &AdmissionClaims, nonce: &str) -> HttpRequest {
 }
 
 fn inner(calls: Arc<AtomicUsize>) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-        calls.fetch_add(1, Ordering::SeqCst);
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |_forwarded: &[u8]| -> Vec<u8> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 fn custody_cfg() -> CustodyConfig {

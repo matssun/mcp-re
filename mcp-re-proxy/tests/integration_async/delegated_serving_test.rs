@@ -170,9 +170,12 @@ fn make_rotor(
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
-    Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        |_forwarded: &[u8]| -> Vec<u8> {
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// The serving proxy (delegated-signing — the only mode) sharing `signer` with a
@@ -476,10 +479,13 @@ async fn a_request_that_cannot_be_answered_never_reaches_the_backend() {
     let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = Arc::clone(&dispatched);
     let counting_inner: Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> =
-        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-        });
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            move |_forwarded: &[u8]| -> Vec<u8> {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        ));
 
     // Rotor never rotated ⇒ no key published, so no reply can be signed.
     let signer = Arc::new(DelegatedServerSigner::new());

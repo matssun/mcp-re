@@ -4040,6 +4040,7 @@ paths = [
   # unit is about, which is why all three are in the closure and not just the one that moved.
   "mcp-re-proxy/src/async_inner/completion_bound.rs",
   "mcp-re-proxy/src/async_inner/outcome.rs",
+  "mcp-re-proxy/src/async_inner/in_process.rs",
   "mcp-re-proxy/src/authorization/dispatch.rs",
   "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
   # R11-481. The boundary now asks one more question, and this file is where the answer
@@ -4088,6 +4089,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#request_stages::tests::the_dispatch_boundary_consumes_the_ready_state",
   "//mcp-re-proxy:proxy_unit_test#async_inner::tests::preparing_transmits_nothing",
   "//mcp-re-proxy:proxy_unit_test#async_inner::tests::dropping_a_prepared_dispatch_transmits_nothing_and_releases_what_it_held",
+  # the boundary refuses a plane whose declared bound cannot be honoured only if a plane that cannot bound itself declares Unstated
+  "//mcp-re-proxy:proxy_unit_test#async_inner::tests::a_closure_inner_states_no_completion_bound",
   # the plane's declared completion instant, rounded up and saturating, so a signing window can only be shown to survive a bound that is not earlier than the dispatch's true worst completion
   "//mcp-re-proxy:proxy_unit_test#async_inner::completion_bound::tests::an_unstated_bound_has_no_completion_instant",
   "//mcp-re-proxy:proxy_unit_test#async_inner::completion_bound::tests::a_sub_second_remainder_is_counted_as_the_next_whole_second",

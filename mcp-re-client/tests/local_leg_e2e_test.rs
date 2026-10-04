@@ -201,7 +201,11 @@ fn build_server(backend_reply: &'static str) -> HttpProfileProxy {
             fleet_strict: false,
             tier: None,
         },
-        Box::new(move |_forwarded: &[u8]| -> Vec<u8> { backend_reply.as_bytes().to_vec() }),
+        // The fixture's backend answers synchronously from memory, and says so.
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            move |_forwarded: &[u8]| -> Vec<u8> { backend_reply.as_bytes().to_vec() },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        )),
         300,
         Arc::clone(&wiring.signer),
     )

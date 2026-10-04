@@ -4751,3 +4751,13 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 
 **Lanes.** Only the `aws_kms_keysource` lanes (`proxy_aws_kms_unit_test`, `proxy_ext_unit_test`) compile these controls; the default lane compiles them to zero tests.
+
+## NP-264 — an in-process inner states the completion bound its embedder gave it, never one of its own
+
+**Controls:** `mcp-re-proxy` `async_inner::in_process::tests::an_in_process_inner_states_the_bound_its_embedder_gave`.
+**Carrier:** `mcp-re-proxy/src/async_inner`.
+**Statement.** *An in-process inner reports the completion bound its embedder stated at construction; a bare closure states none.*
+**If false.** An inner that cannot bound its own running time is served as if it could, and a response is signed over a freshness window its dispatch may outlive.
+**Likely owner:** none. `proxy.dispatch_commitment` states the refusal of an `Unstated` plane; none states who may supply the bound.
+**Root relationship.** A premise of the proxy units above it.
+**Severity:** `medium`.

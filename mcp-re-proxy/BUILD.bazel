@@ -600,6 +600,7 @@ _PROXY_LIB_SRCS = [
     "src/async_inner/mod.rs",
     "src/async_inner/completion_bound.rs",
     "src/async_inner/outcome.rs",
+    "src/async_inner/in_process.rs",
     # ADR-MCPRE-051 §3: the production async inner plane — pooled hyper client to
     # stateless Streamable-HTTP inner backends.
     "src/http_inner/mod.rs",
