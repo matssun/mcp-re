@@ -4821,3 +4821,13 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** Beside NP-236: that states the floor product never renders a covered credential, this states the retained record does not either.
 **Recorded:** 2026-10-04, round-12 remediation of 37093dd77e367725.
+
+## NP-271 — a client transport failure is reported as a server-authentication rejection only when TLS rejected it
+
+**Controls:** `mcp-re-transport` `lib#io_errors::tests::a_handshake_io_failure_without_a_rustls_error_is_io_not_handshake`, `lib#io_errors::tests::a_handshake_io_failure_carrying_a_rustls_error_is_handshake`, `lib#io_errors::tests::a_stalled_handshake_is_a_timeout`.
+**Carrier:** `mcp-re-transport/src/io_errors.rs` (`handshake_error`, `io_or_handshake`).
+**Statement.** *An IO failure in the handshake phase surfaces as `Handshake` only when it carries a rustls error, as `Timeout` when the socket timed out, and as `Io` otherwise.*
+**If false.** An ordinary network failure reads to the operator as a certificate rejection, so a real rejection stops being a signal.
+**Likely owner:** none. `client.transport_server_identity` states what is rejected, not how other failures are named.
+**Root relationship.** A premise of `client.transport_server_identity`: its `Handshake` refusal is the signal the rejection tests read.
+**Severity:** `medium`.

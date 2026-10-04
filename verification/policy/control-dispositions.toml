@@ -15409,3 +15409,36 @@ control = "src/lib.rs#transparency::retained_record::tests::a_retained_record_ne
 decision = "new-proposition"
 proposition = "NP-270"
 recorded = "2026-10-04"
+
+[[proposition]]
+id = "NP-271"
+title = "A client transport failure is reported as a server-authentication rejection only when TLS rejected it"
+carrier = "mcp-re-transport/src/io_errors.rs (handshake_error, io_or_handshake)"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "a premise of client.transport_server_identity: its Handshake refusal is the signal the rejection tests read"
+record = "docs/architecture/control-dispositions.md#np-271"
+
+[[disposition]]
+id = "CD-20333"
+project = "mcp-re-transport"
+control = "src/lib.rs#io_errors::tests::a_handshake_io_failure_without_a_rustls_error_is_io_not_handshake"
+decision = "new-proposition"
+proposition = "NP-271"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20334"
+project = "mcp-re-transport"
+control = "src/lib.rs#io_errors::tests::a_handshake_io_failure_carrying_a_rustls_error_is_handshake"
+decision = "new-proposition"
+proposition = "NP-271"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20335"
+project = "mcp-re-transport"
+control = "src/lib.rs#io_errors::tests::a_stalled_handshake_is_a_timeout"
+decision = "new-proposition"
+proposition = "NP-271"
+recorded = "2026-10-04"
