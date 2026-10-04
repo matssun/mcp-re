@@ -444,6 +444,57 @@ fn a_delegated_202_refuses_a_retransmission_of_the_same_notification() {
     );
 }
 
+/// Owner ruling C019b: the `mcp-re-request-evidence` header an attacker derives from A′
+/// is spliced onto A's acknowledgement. The verifier's derived-value comparison passes by
+/// construction, so only signature coverage of that header can refuse it. This is the
+/// control that turns red if the header leaves the covered set.
+#[test]
+fn a_delegated_202_refuses_a_forged_request_evidence_header() {
+    const NAME: &str = "mcp-re-request-evidence";
+    let a = notification("n-forge-a");
+    let a_prime = notification("n-forge-a-prime");
+    let ack_a = sign_ack(&a);
+    let ack_a_prime = sign_ack(&a_prime);
+    verify_delegated_accepted_202(
+        &ack_a_prime,
+        &a_prime,
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
+        &expectations(&[EPOCH]),
+        &no_revocation(),
+        NOW,
+    )
+    .expect("positive control: A′'s own acknowledgement binds to A′");
+
+    let forged_value = ack_a_prime
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(NAME))
+        .map(|(_, v)| v.clone())
+        .expect("the acknowledgement carries the request-evidence header");
+    let mut forged = ack_a;
+    let slot = forged
+        .headers
+        .iter_mut()
+        .find(|(k, _)| k.eq_ignore_ascii_case(NAME))
+        .expect("A's acknowledgement carries the request-evidence header");
+    slot.1 = forged_value;
+
+    let err = verify_delegated_accepted_202(
+        &forged,
+        &a_prime,
+        &Verifier::new(&VerifierPolicy::default(), &resolver()),
+        &expectations(&[EPOCH]),
+        &no_revocation(),
+        NOW,
+    )
+    .expect_err("a header value derived from A′ must not verify under A's signature");
+    assert_ne!(
+        err,
+        HttpProfileError::ResponseBindingMismatch,
+        "only signature coverage can refuse the forged header"
+    );
+}
+
 /// A wrong trust epoch is refused (the credential's epoch must be accepted).
 #[test]
 fn a_stale_trust_epoch_is_rejected() {

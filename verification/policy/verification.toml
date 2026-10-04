@@ -4430,7 +4430,7 @@ evidence = ["structural://client/accepted_authority/sole_producer"]
 [[unit]]
 id = "client.caller_shape_admission"
 class = "V0"
-description = "Framing is settled before any header is believed, and the three caller-shape refusals — a present `Origin`, a `Host` that does not name this listener, a body that is not JSON — each answer with their own status and all run before a single byte is signed; a repeated `Content-Length` or `Host` is refused rather than resolved, and a chunked transfer is refused rather than parsed."
+description = "Framing is settled before any header is believed, and the three caller-shape refusals — a present `Origin`, a `Host` that does not name this listener, a body that is not JSON — each answer with their own status and all run before a single byte is signed; a declared body over the 1 MiB ceiling is refused with 413 before any caller-shape guard runs, a repeated `Content-Length`, `Host` or `Content-Type` is refused rather than resolved, and a `Transfer-Encoding` is refused with 411 rather than parsed, whether or not a `Content-Length` accompanies it."
 paths = [
   "mcp-re-client/src/serve/head_fields.rs",
   "mcp-re-client/src/serve/guards.rs",
@@ -4449,6 +4449,9 @@ tested_symbols = [
   "//mcp-re-client:mcp_re_client_test#serve::head_fields::tests::framing_is_refused_before_the_caller_shape_guards",
   "//mcp-re-client:mcp_re_client_test#serve::head_fields::tests::the_three_caller_shape_guards_each_refuse_with_their_own_status",
   "//mcp-re-client:mcp_re_client_test#serve::head_fields::tests::a_duplicate_length_or_host_is_refused_rather_than_resolved",
+  "//mcp-re-client:mcp_re_client_test#serve::head_fields::tests::a_transfer_encoding_is_refused_rather_than_parsed",
+  "//mcp-re-client:mcp_re_client_test#serve::head_fields::tests::the_body_ceiling_admits_its_own_size_and_refuses_one_byte_past_it",
+  "//mcp-re-client:mcp_re_client_test#serve::head_fields::tests::a_duplicate_content_type_is_refused_rather_than_resolved",
   # ADR-MCPRE-069 `reattribute`, from `client.local_serving_pipeline`: these two predicates
   # decide ADMISSION, and that unit's subject is a request already admitted.
   "//mcp-re-client:mcp_re_client_test#serve::guards::tests::only_loopback_literals_and_localhost_are_accepted_hosts",
@@ -8370,6 +8373,7 @@ tested_symbols = [
   "//mcp-re-http-profile:delegated_202_test#a_revoked_delegated_key_is_rejected",
   "//mcp-re-http-profile:delegated_202_test#a_delegated_202_refuses_a_content_distinct_notification",
   "//mcp-re-http-profile:delegated_202_test#a_delegated_202_refuses_a_retransmission_of_the_same_notification",
+  "//mcp-re-http-profile:delegated_202_test#a_delegated_202_refuses_a_forged_request_evidence_header",
   "//mcp-re-http-profile:delegated_202_test#a_stale_trust_epoch_is_rejected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#bodyless::acknowledged::tests::the_pinned_coordinate_is_the_root_anchor_and_not_the_rotating_delegated_kid",
   "//mcp-re-http-profile:mcp_re_http_profile_test#bodyless::acknowledged::tests::into_actor_yields_the_established_delegated_actor",

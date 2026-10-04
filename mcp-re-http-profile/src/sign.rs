@@ -37,7 +37,7 @@ pub use request::sign_request_full;
 pub use request::sign_request_full_with_signer;
 pub use request::sign_request_with_signer;
 
-fn set_header(headers: &mut Vec<(String, String)>, name: &str, value: String) {
+pub(crate) fn set_header(headers: &mut Vec<(String, String)>, name: &str, value: String) {
     headers.retain(|(k, _)| !k.eq_ignore_ascii_case(name));
     headers.push((name.to_owned(), value));
 }
@@ -52,8 +52,9 @@ const ED25519_SIGNATURE_LEN: usize = 64;
 /// enforce the Ed25519 length, then emit the `Signature-Input` and `Signature`
 /// headers under `label`. Every signer — the local-key path and the external
 /// KMS/HSM custody seam alike — routes through here, so base construction,
-/// signature encoding, and header assembly stay owned by the profile.
-fn emit_signature(
+/// signature encoding, and header assembly stay owned by the profile. The
+/// bodyless signers are its crate-wide consumers.
+pub(crate) fn emit_signature(
     headers: &mut Vec<(String, String)>,
     label: &str,
     components: &[CoveredComponent],
@@ -81,7 +82,7 @@ fn emit_signature(
 /// The local-key signer closure: sign `base` with `key` and return the RAW
 /// Ed25519 bytes. The core signer emits base64url; decode so the seam's contract
 /// (raw 64-byte signature) holds identically for local and external signers.
-fn local_sig(key: &SigningKey, base: &[u8]) -> Result<Vec<u8>, HttpProfileError> {
+pub(crate) fn local_sig(key: &SigningKey, base: &[u8]) -> Result<Vec<u8>, HttpProfileError> {
     mcp_re_core::b64url_decode(&key.sign(base)).map_err(|_| HttpProfileError::InvalidSignature)
 }
 

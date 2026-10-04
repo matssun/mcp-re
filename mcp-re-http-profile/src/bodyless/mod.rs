@@ -101,6 +101,7 @@ use crate::sigbase::signature_base;
 use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
 use crate::sigbase::SourceMessage;
+use crate::sign::set_header;
 pub use acknowledged::AcknowledgedDelegation;
 pub use delegated_ack::verify_delegated_accepted_202;
 
@@ -135,11 +136,6 @@ fn params_for(key_id: &str, created: i64, expires: i64, nonce: Option<&str>) -> 
     }
 }
 
-fn set_header(headers: &mut Vec<(String, String)>, name: &str, value: String) {
-    headers.retain(|(k, _)| !k.eq_ignore_ascii_case(name));
-    headers.push((name.to_owned(), value));
-}
-
 fn emit(
     headers: &mut Vec<(String, String)>,
     label: &str,
@@ -148,22 +144,9 @@ fn emit(
     base: &[u8],
     key: &mcp_re_core::SigningKey,
 ) -> Result<(), HttpProfileError> {
-    let sig = mcp_re_core::b64url_decode(&key.sign(base))
-        .map_err(|_| HttpProfileError::InvalidSignature)?;
-    if sig.len() != 64 {
-        return Err(HttpProfileError::InvalidSignature);
-    }
-    set_header(
-        headers,
-        "Signature-Input",
-        format!("{label}={}", params.serialize_with(components)?),
-    );
-    set_header(
-        headers,
-        "Signature",
-        format!("{label}=:{}:", crate::sign::base64_standard_encode(&sig)),
-    );
-    Ok(())
+    crate::sign::emit_signature(headers, label, components, params, base, |b| {
+        crate::sign::local_sig(key, b)
+    })
 }
 
 /// Derive the REQUEST-role evidence handle from the request itself.
