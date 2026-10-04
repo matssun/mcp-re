@@ -15180,3 +15180,27 @@ control = "src/lib.rs#trust_plane::window_policy::tests::long_window_advisory_fl
 decision = "new-proposition"
 proposition = "NP-179"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20311"
+project = "mcp-re-proxy"
+control = "src/lib.rs#blocking_mtls_harness::http1::read_bound_tests::header_block_past_max_header_bytes_is_refused"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20312"
+project = "mcp-re-proxy"
+control = "src/lib.rs#blocking_mtls_harness::http1::read_bound_tests::header_block_of_exactly_max_header_bytes_is_accepted"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20313"
+project = "mcp-re-proxy"
+control = "src/lib.rs#blocking_mtls_harness::http1::read_bound_tests::reads_stop_at_the_terminator_and_the_declared_length"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-10-04"

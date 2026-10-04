@@ -31,9 +31,11 @@ pub(super) struct HttpRequest {
 /// Read one HTTP/1.1 request and return its header block + body bytes (the
 /// JSON-RPC payload). Reads headers up to `\r\n\r\n`, honours `Content-Length`.
 /// Minimal by design — single request per connection, no chunked encoding, no
-/// SSE. Bounded by `limits`: the header block may not exceed `max_header_bytes`
-/// and the body may not exceed `max_body_bytes` (either overflow fails closed
-/// with an error rather than allocating without bound).
+/// SSE. Bounded by `limits`: the header block, terminator included, is at most
+/// `max_header_bytes` (a longer one fails closed), and a body whose
+/// `Content-Length` exceeds `max_body_bytes` is refused. No read goes past the
+/// header terminator plus the declared body length, so neither buffer can
+/// exceed its cap.
 pub(super) fn read_http_request<S: Read>(
     stream: &mut S,
     limits: &ServerLimits,
@@ -51,13 +53,20 @@ pub(super) fn read_http_request<S: Read>(
             let end = pos + terminator.len();
             break end;
         }
-        if buf.len() > limits.max_header_bytes {
+        let allowance = limits
+            .max_header_bytes
+            .saturating_sub(buf.len())
+            .min(chunk.len());
+        if allowance == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "HTTP header block exceeds max_header_bytes",
             ));
         }
-        let n = stream.read(&mut chunk)?;
+        let window = chunk.get_mut(..allowance).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "read window out of range")
+        })?;
+        let n = stream.read(window)?;
         if n == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -83,14 +92,11 @@ pub(super) fn read_http_request<S: Read>(
 
     let mut body = rest.to_vec();
     while body.len() < content_length {
-        // Defend against a Content-Length that under-states a flood of body bytes.
-        if body.len() > limits.max_body_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "request body exceeds max_body_bytes",
-            ));
-        }
-        let n = stream.read(&mut chunk)?;
+        let want = content_length.saturating_sub(body.len()).min(chunk.len());
+        let window = chunk.get_mut(..want).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "read window out of range")
+        })?;
+        let n = stream.read(window)?;
         if n == 0 {
             break;
         }
@@ -281,5 +287,62 @@ mod content_length_framing_tests {
         let raw = b"POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello";
         let req = read(raw).expect("a single valid Content-Length must parse");
         assert_eq!(req.body, b"hello");
+    }
+}
+
+#[cfg(test)]
+mod read_bound_tests {
+    //! The header block (terminator included) never exceeds `max_header_bytes`,
+    //! and no read goes past the declared body length.
+
+    use std::io;
+
+    use super::read_http_request;
+    use super::ServerLimits;
+
+    const HEADER: &[u8] = b"POST /mcp HTTP/1.1\r\nMcp-Name: good\r\nContent-Length: 5\r\n\r\n";
+
+    fn limits_for(max_header_bytes: usize) -> ServerLimits {
+        ServerLimits {
+            max_header_bytes,
+            ..ServerLimits::default()
+        }
+    }
+
+    #[test]
+    fn header_block_past_max_header_bytes_is_refused() {
+        let mut raw = b"POST /mcp HTTP/1.1\r\n".to_vec();
+        raw.extend_from_slice(b"X-Pad: ");
+        raw.extend_from_slice(&[b'a'; 80]);
+        raw.extend_from_slice(b"\r\n\r\n");
+        let mut stream = io::Cursor::new(raw);
+        match read_http_request(&mut stream, &limits_for(64)) {
+            Ok(_) => panic!("a header block past max_header_bytes must be refused"),
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::InvalidData),
+        }
+    }
+
+    #[test]
+    fn header_block_of_exactly_max_header_bytes_is_accepted() {
+        let mut raw = HEADER.to_vec();
+        raw.extend_from_slice(b"hello");
+        let mut stream = io::Cursor::new(raw);
+        match read_http_request(&mut stream, &limits_for(HEADER.len())) {
+            Ok(req) => assert_eq!(req.body, b"hello"),
+            Err(e) => panic!("an exact-size header block must be accepted: {e}"),
+        }
+    }
+
+    #[test]
+    fn reads_stop_at_the_terminator_and_the_declared_length() {
+        let mut raw = HEADER.to_vec();
+        raw.extend_from_slice(b"helloTRAILING-BYTES");
+        let mut stream = io::Cursor::new(raw);
+        match read_http_request(&mut stream, &limits_for(HEADER.len())) {
+            Ok(req) => assert_eq!(req.body, b"hello"),
+            Err(e) => panic!("request must parse: {e}"),
+        }
+        let expected = u64::try_from(HEADER.len()).expect("header length fits u64") + 5;
+        assert_eq!(stream.position(), expected);
     }
 }
