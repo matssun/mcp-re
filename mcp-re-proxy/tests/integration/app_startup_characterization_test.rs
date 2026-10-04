@@ -536,7 +536,7 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
     let trust = m.trust_path.to_string_lossy().into_owned();
 
     let mk = |case: &[&str]| -> Vec<String> {
-        let mut v: Vec<String> = [
+        let v: Vec<String> = [
             "--bind",
             "127.0.0.1:0",
             "--audience",
