@@ -13574,6 +13574,15 @@ consequence = "high"
 root_relationship = "Secret-hygiene premise beside THM-0109: the client mTLS key never leaves through error text."
 record = "docs/architecture/control-dispositions.md#np-234"
 
+[[proposition]]
+id = "NP-235"
+title = "Every MCP method that names a target in its body is mapped to the body key that carries it"
+carrier = "mcp-re-http-profile/src/mcp_name_source.rs"
+likely_owner = "none. No unit lists mcp_name_source.rs in its paths."
+consequence = "critical"
+root_relationship = "Law A-1 premise (ADR-MCPRE-065 s2.7): the authorization action coordinate reads the target from the signed body."
+record = "docs/architecture/control-dispositions.md#np-235"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -14029,4 +14038,12 @@ project = "mcp-re-client-core"
 control = "src/lib.rs#delegated_trust::anchors::tests::retirement_wins_over_a_contradicting_current_entry"
 decision = "new-proposition"
 proposition = "NP-159"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20209"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#mcp_name_source::tests::every_method_that_names_a_target_maps_to_the_key_carrying_it"
+decision = "new-proposition"
+proposition = "NP-235"
 recorded = "2026-10-04"

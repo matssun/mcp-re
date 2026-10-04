@@ -4438,3 +4438,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** Secret-hygiene premise beside THM-0109: the client mTLS key never leaves through error text.
 **Recorded:** 2026-10-04, round-12 remediation of d40d98119dc965f6.
+
+## NP-235 — every MCP method that names a target in its body is mapped to the body key that carries it
+
+**Controls:** `mcp-re-http-profile` `lib#mcp_name_source::tests::every_method_that_names_a_target_maps_to_the_key_carrying_it`.
+**Carrier:** `mcp-re-http-profile/src/mcp_name_source.rs` (`mcp_name_source`).
+**Statement.** *The authorization action coordinate and the `Mcp-Name` producer read one table, and for every method it lists the target is read from the key that method names it under.*
+**If false.** A target-less decision authorizes every prompt or resource of an unmapped method.
+**Likely owner:** none. No unit lists mcp_name_source.rs in its paths.
+**Severity:** `critical`.
+**Root relationship.** Law A-1 premise (ADR-MCPRE-065 s2.7): the target is read from the signed body.
+**Recorded:** 2026-10-04, round-12 remediation of 47930103f0358447.

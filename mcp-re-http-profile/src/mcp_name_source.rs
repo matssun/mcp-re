@@ -16,15 +16,16 @@ use serde_json::Value;
 
 /// The body field an `Mcp-Name` header must agree with, per method.
 ///
-/// `tools/call` names the tool in `params.name`; `resources/read` names the
-/// resource in `params.uri`. The mapping is explicit because the two methods put
-/// the same routing value under different keys, and a verifier comparing against
-/// the wrong key would either miss a mismatch or invent one.
+/// `tools/call` and `prompts/get` name their target in `params.name`; `resources/read`,
+/// `resources/subscribe` and `resources/unsubscribe` name it in `params.uri`. The mapping
+/// is explicit because the methods put the same routing value under different keys, and a
+/// verifier comparing against the wrong key would either miss a mismatch or invent one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpNameSource {
-    /// `params.name` — the `tools/call` shape.
+    /// `params.name` — the `tools/call` and `prompts/get` shape.
     ParamsName,
-    /// `params.uri` — the `resources/read` shape.
+    /// `params.uri` — the `resources/read`, `resources/subscribe` and `resources/unsubscribe`
+    /// shape.
     ParamsUri,
 }
 
@@ -47,13 +48,33 @@ impl McpNameSource {
 ///
 /// The protocol fact, stated once and read by both consumers: the transport contract
 /// (which compares the `Mcp-Name` header against it) and the authorization action
-/// coordinate (which reads the body and never the header). `None` for a method that names
-/// no target — `tools/list`, `initialize`, and everything else whose authority is the
-/// method alone.
+/// coordinate (which reads the body and never the header). `None` for `tools/list`,
+/// `initialize` and every method this table does not list; the table does not distinguish an
+/// unlisted method from one that names no target.
 pub fn mcp_name_source(method: &str) -> Option<McpNameSource> {
     match method {
-        "tools/call" => Some(McpNameSource::ParamsName),
-        "resources/read" => Some(McpNameSource::ParamsUri),
+        "tools/call" | "prompts/get" => Some(McpNameSource::ParamsName),
+        "resources/read" | "resources/subscribe" | "resources/unsubscribe" => {
+            Some(McpNameSource::ParamsUri)
+        }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_method_that_names_a_target_maps_to_the_key_carrying_it() {
+        for m in ["tools/call", "prompts/get"] {
+            assert_eq!(mcp_name_source(m), Some(McpNameSource::ParamsName), "{m}");
+        }
+        for m in ["resources/read", "resources/subscribe", "resources/unsubscribe"] {
+            assert_eq!(mcp_name_source(m), Some(McpNameSource::ParamsUri), "{m}");
+        }
+        for m in ["tools/list", "initialize", "prompts/list"] {
+            assert_eq!(mcp_name_source(m), None, "{m}");
+        }
     }
 }
