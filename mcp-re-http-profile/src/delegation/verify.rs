@@ -38,9 +38,9 @@ use super::KEY_USE_RESPONSE_SIGNING;
 /// Steps 2–3: the credential is internally consistent, and a trusted ROOT signed it.
 ///
 /// `typ` and `alg` are pinned before anything is decoded — any algorithm other than EdDSA,
-/// `none` included, is refused rather than dispatched on. The header `kid` must name the
-/// claims' `issuer_kid`, so the credential is consistent about which root signed it, and
-/// that issuer must resolve to a trusted root anchor.
+/// `none` included, is refused. The issuer must resolve to a trusted root anchor that the
+/// header `kid` also names; `cnf` must not attest that root's own key, since a credential
+/// delegating to its issuer is not a delegation and refuses as a bad signature does.
 fn check_root_signature(
     segments: (&str, &str, &str),
     header: &DelegationHeader,
@@ -51,11 +51,11 @@ fn check_root_signature(
     if header.typ != DELEGATION_TYP || header.alg != DELEGATION_ALG {
         return Err(HttpProfileError::DelegationCredentialInvalid);
     }
-    if header.kid != claims.issuer_kid {
-        return Err(HttpProfileError::DelegationCredentialInvalid);
-    }
     let root_key =
         resolve_root(&claims.issuer_kid).ok_or(HttpProfileError::DelegationIssuerUntrusted)?;
+    if header.kid != claims.issuer_kid || claims.cnf.jwk.x == root_key.to_b64url() {
+        return Err(HttpProfileError::DelegationCredentialInvalid);
+    }
     let signing_input = format!("{header_seg}.{payload_seg}");
     verify_ed25519_with(
         signing_input.as_bytes(),
@@ -200,6 +200,25 @@ pub fn verify_delegation_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mcp_re_core::SigningKey;
+
+    fn root_signer() -> SigningKey {
+        SigningKey::from_seed_bytes(&[1u8; 32])
+    }
+
+    fn signed(signer: &SigningKey, header_kid: &str, c: &DelegationClaims) -> String {
+        let header = DelegationHeader {
+            typ: DELEGATION_TYP.into(),
+            alg: DELEGATION_ALG.into(),
+            kid: header_kid.into(),
+        };
+        super::super::issue_delegation_credential(signer, &header, c)
+    }
+
+    fn trusting(root: &SigningKey) -> impl Fn(&str) -> Option<VerificationKey> {
+        let key = root.public_key();
+        move |kid| (kid == "root-kid").then(|| key.clone())
+    }
 
     fn claims() -> DelegationClaims {
         DelegationClaims {
@@ -319,6 +338,91 @@ mod tests {
         wrong_curve.cnf.jwk.crv = "P-256".into();
         assert!(matches!(
             delegated_key(&wrong_curve),
+            Err(HttpProfileError::DelegationCredentialInvalid)
+        ));
+    }
+
+    /// A credential whose `cnf` attests the issuing root's own key is not a delegation.
+    #[test]
+    fn a_credential_delegating_to_its_own_root_is_invalid() {
+        let root = root_signer();
+        let mut c = claims();
+        c.cnf.jwk.x = root.public_key().to_b64url();
+        let auds = ["https://example.org/mcp"];
+        let epochs = ["7"];
+        let jws = signed(&root, "root-kid", &c);
+        assert!(matches!(
+            verify_delegation_credential(
+                &jws,
+                &params(1_500, &auds, &epochs),
+                trusting(&root),
+                |_| false
+            ),
+            Err(HttpProfileError::DelegationCredentialInvalid)
+        ));
+    }
+
+    /// A header `kid` that names a different root than the claims' `issuer_kid` is invalid
+    /// even when the root signed it.
+    #[test]
+    fn a_header_kid_that_names_another_root_is_an_invalid_credential() {
+        let root = root_signer();
+        let mut c = claims();
+        c.cnf.jwk.x = SigningKey::from_seed_bytes(&[2u8; 32]).public_key().to_b64url();
+        let auds = ["https://example.org/mcp"];
+        let epochs = ["7"];
+        let p = params(1_500, &auds, &epochs);
+        let good = signed(&root, "root-kid", &c);
+        assert!(verify_delegation_credential(&good, &p, trusting(&root), |_| false).is_ok());
+        let other = signed(&root, "another-root", &c);
+        assert!(matches!(
+            verify_delegation_credential(&other, &p, trusting(&root), |_| false),
+            Err(HttpProfileError::DelegationCredentialInvalid)
+        ));
+    }
+
+    /// An audience set admits a verifier only when it names that verifier.
+    #[test]
+    fn an_audience_set_admits_only_a_verifier_it_names() {
+        let auds = ["https://example.org/mcp"];
+        let epochs = ["7"];
+        let p = params(1_500, &auds, &epochs);
+        let mut naming = claims();
+        naming.aud = crate::Audience::Many(vec![
+            "https://other.example".into(),
+            "https://example.org/mcp".into(),
+        ]);
+        assert!(check_scope(&naming, &p).is_ok());
+        let mut other = claims();
+        other.aud = crate::Audience::Many(vec!["https://other.example".into()]);
+        assert!(matches!(
+            check_scope(&other, &p),
+            Err(HttpProfileError::DelegationAudienceMismatch)
+        ));
+    }
+
+    /// The root signature verdict is reached before any claim is read: a credential that
+    /// fails every later step still reports the signature failure.
+    #[test]
+    fn the_root_signature_verdict_precedes_every_claim_check() {
+        let mut c = claims();
+        c.cnf.jwk.x = SigningKey::from_seed_bytes(&[2u8; 32]).public_key().to_b64url();
+        c.nbf = 5_000;
+        c.exp = 6_000;
+        c.aud = crate::Audience::One("https://elsewhere.example".into());
+        c.mcp_re_profile = "mcp-re/http-0".into();
+        c.trust_epoch = "0".into();
+        let forger = SigningKey::from_seed_bytes(&[9u8; 32]);
+        let jws = signed(&forger, "root-kid", &c);
+        let auds = ["https://example.org/mcp"];
+        let epochs = ["7"];
+        assert!(matches!(
+            verify_delegation_credential(
+                &jws,
+                &params(1_500, &auds, &epochs),
+                trusting(&root_signer()),
+                |_| true
+            ),
             Err(HttpProfileError::DelegationCredentialInvalid)
         ));
     }

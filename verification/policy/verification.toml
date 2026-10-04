@@ -836,6 +836,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::a_stale_trust_epoch_is_its_own_refusal",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::each_scope_failure_names_what_it_is",
   "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::revocation_is_consulted_with_every_identifier_the_credential_carries",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::a_header_kid_that_names_another_root_is_an_invalid_credential",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#delegation::verify::tests::an_audience_set_admits_only_a_verifier_it_names",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::a_definitive_not_trusted_root_stays_issuer_untrusted",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::a_root_cannot_issue_for_another_principals_server_signer",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::delegated::credential_chain::tests::a_response_slot_root_with_a_matching_credential_verifies",

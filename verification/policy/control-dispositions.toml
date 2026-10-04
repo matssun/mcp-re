@@ -6326,6 +6326,22 @@ proposition = "NP-095"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20226"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#delegation::verify::tests::the_root_signature_verdict_precedes_every_claim_check"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20227"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#delegation::verify::tests::a_credential_delegating_to_its_own_root_is_invalid"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-15035"
 project = "mcp-re-http-profile"
 control = "src/lib.rs#evidence::tests::different_base_different_handle"
