@@ -1099,7 +1099,7 @@ theorem = "THM-0023"
 conjunct = "every inhabitant is free of control characters"
 path = "mcp-re-proxy/src/communication_assurance/peer_identity_value.rs"
 anchor = """
-        if trimmed.chars().any(char::is_control) {
+        if trimmed.chars().any(is_refused_char) {
             return Err(PeerIdentityValueRefusal::ControlCharacter);
         }
 """
