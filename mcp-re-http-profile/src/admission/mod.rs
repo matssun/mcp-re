@@ -226,15 +226,13 @@ pub fn issue_admission_assertion(
         alg: ADMISSION_ALG.to_owned(),
         kid: claims.issuer_kid.clone(),
     };
-    let unformable = |_| HttpProfileError::MalformedEvidence("admission assertion");
+    let refuse = |what: &'static str| HttpProfileError::MalformedEvidence(what);
+    let unformable = |_| refuse("admission assertion");
     let h = b64url_encode(&serde_json::to_vec(&header).map_err(unformable)?);
     let p = b64url_encode(&serde_json::to_vec(claims).map_err(unformable)?);
-    let signing_input = format!("{h}.{p}");
-    let sig = sign_root(signing_input.as_bytes())?;
+    let sig = sign_root(format!("{h}.{p}").as_bytes())?;
     if sig.len() != ED25519_SIGNATURE_LEN {
-        return Err(HttpProfileError::MalformedEvidence(
-            "admission signature length",
-        ));
+        return Err(refuse("admission signature length"));
     }
     Ok(format!("{h}.{p}.{}", b64url_encode(&sig)))
 }
