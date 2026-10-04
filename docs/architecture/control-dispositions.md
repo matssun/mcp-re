@@ -4516,3 +4516,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** Beside NP-192: that proposition covers where credential bytes live, and this one covers what a printed credential says.
 **Recorded:** 2026-10-04, round-12 remediation of aws_sigv4.rs.
+
+## NP-242 — a trust-epoch source's health change reaches the operator once per transition, not once per poll
+
+**Controls:** `mcp-re-proxy` `lib#trust_epoch::tests::a_trust_epoch_outage_is_announced_on_its_edges_not_per_poll`.
+**Carrier:** `mcp-re-proxy/src/trust_epoch.rs` (set_healthy).
+**Statement.** *A TrustEpochSource announces on stderr each change of its health latch, naming the cause and the effect, and announces nothing when a poll leaves the latch unchanged.*
+**If false.** A lost trust-epoch store silently reverts revocation to the bounded-T trust-cache TTL, or a seconds-cadence poll floods the log for the length of an outage.
+**Likely owner:** none. proxy.trust_epoch_source states the latch but not its announcement; NP-123, NP-145 and NP-215 are other axes.
+**Severity:** `medium`.
+**Root relationship.** Beside proxy.trust_epoch_source: the latch is stated there, and this proposition covers that its edges are announced without a per-poll flood.
+**Recorded:** 2026-10-04, round-12 remediation of trust_epoch.rs.

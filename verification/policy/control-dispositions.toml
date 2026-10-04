@@ -469,6 +469,15 @@ consequence = "high"
 root_relationship = "Beside NP-192: residency of the credential bytes, which says nothing about what a format string prints."
 record = "docs/architecture/control-dispositions.md#np-241"
 
+[[proposition]]
+id = "NP-242"
+title = "A trust-epoch source's health change reaches the operator once per transition, not once per poll"
+carrier = "mcp-re-proxy/src/trust_epoch.rs (set_healthy)"
+likely_owner = "none. proxy.trust_epoch_source states the unhealthy latch but not its announcement; NP-123, NP-145 and NP-215 are other axes."
+consequence = "medium"
+root_relationship = "Beside proxy.trust_epoch_source: the latch is stated there, and this one covers that its edges are announced without a per-poll flood."
+record = "docs/architecture/control-dispositions.md#np-242"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14244,4 +14253,12 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#tls::routing_header_tests::the_ingress_assertion_header_is_read_only_when_exactly_one_is_present"
 decision = "new-proposition"
 proposition = "NP-073"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20227"
+project = "mcp-re-proxy"
+control = "src/lib.rs#trust_epoch::tests::a_trust_epoch_outage_is_announced_on_its_edges_not_per_poll"
+decision = "new-proposition"
+proposition = "NP-242"
 recorded = "2026-10-04"

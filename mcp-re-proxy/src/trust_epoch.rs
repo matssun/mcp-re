@@ -135,17 +135,23 @@ impl<R: EpochReader> TrustEpochSource<R> {
         );
     }
 
+    /// Latch `healthy` to `now` and announce the transition; a repeat of the current
+    /// state is silent, so a seconds-cadence poll logs once per outage, not per poll.
+    fn set_healthy(&self, now: bool, cause: &str) -> bool {
+        let changed = std::mem::replace(&mut *recover(self.healthy.lock()), now) != now;
+        let effect = if now { "recovered" } else { "push tier UNHEALTHY, bounded-T trust-cache TTL" };
+        if changed {
+            eprintln!("mcp-re-proxy: WARNING: trust-epoch health changed ({cause}): {effect}.");
+        }
+        changed
+    }
+
     /// Read the epoch ONCE and queue a [`InvalidationEvent::FlushAll`] if it moved.
     ///
     /// **Called from a background poller, never from the request path.** The read is a
-    /// blocking network round trip behind a single connection mutex, and
-    /// `TrustResolver::resolve` runs it before signature verification for any kid
-    /// present in the trust file. Inline, that made every served request pay a Redis
-    /// round trip serialized across the whole fleet on one connection — so a
-    /// half-open store stalled the per-core runtimes for the socket timeout, and an
-    /// unauthenticated peer replaying an observed `keyid` could force it. It also
-    /// inverted the tier: a Tier-3 cache HIT cost a network read, making it more
-    /// expensive than Tier 2.
+    /// blocking network round trip behind a single connection mutex; keeping it off
+    /// the request path means a half-open store cannot stall the per-core runtimes and
+    /// an unauthenticated peer cannot force reads by replaying a `keyid`.
     ///
     /// Polling on a cadence changes the honest guarantee from "flush on the next
     /// request after an advance" to "flush within one poll interval", which is what
@@ -156,15 +162,14 @@ impl<R: EpochReader> TrustEpochSource<R> {
         *recover(self.last_poll.lock()) = Some(Instant::now());
         let epoch = match self.reader.read_epoch() {
             Ok(e) => e,
-            Err(_) => {
-                // Fail closed: mark unhealthy so the honesty contract reverts to
-                // bounded-`T`; do NOT advance the baseline, so a change that
-                // happened during the outage is still caught on recovery.
-                *recover(self.healthy.lock()) = false;
+            Err(e) => {
+                // Fail closed without advancing the baseline, so an outage-time
+                // change is caught on recovery.
+                self.set_healthy(false, &e.0);
                 return;
             }
         };
-        *recover(self.healthy.lock()) = true;
+        self.set_healthy(true, "the epoch read succeeded");
         let mut last = recover(self.last_seen.lock());
         match *last {
             None => {
@@ -248,21 +253,15 @@ pub struct RedisEpochReader {
 impl RedisEpochReader {
     /// An ABSENT epoch key is a read FAILURE, not epoch 0.
     ///
-    /// Redis nil used to map to `Ok(0)`, indistinguishable from a live counter at 0.
-    /// Two things followed, both silent:
+    /// A nil is indistinguishable from a live counter at 0, and treating it as
+    /// epoch 0 would hide two failures:
     ///
-    ///   * The source reported itself HEALTHY and established 0 as its baseline, so
-    ///     it never emitted a flush. A `--trust-epoch-key` pointing at a name nobody
-    ///     INCRs, at the wrong database, or at a key that has since been deleted left
-    ///     the Tier-3 kill switch inert while the startup line still advertised a
-    ///     near-zero revocation window. The operator's `INCR` never reached the data
-    ///     plane.
-    ///   * On the response side, a counter lost to a snapshot restore, FLUSHDB, LRU
-    ///     eviction (the key carries no TTL) or a failover to a replica that never saw
-    ///     the INCR read back as 0, and a restarting replica — whose `high_water`
-    ///     guard is per-process and starts empty — re-minted under `<base>#0`. Inside
-    ///     the bounded `{current, previous}` acceptance window that silently UNDOES a
-    ///     revocation the operator performed.
+    ///   * a `--trust-epoch-key` naming a key nobody INCRs, in the wrong database, or
+    ///     since deleted would leave the Tier-3 kill switch inert while the startup
+    ///     line advertised a near-zero revocation window;
+    ///   * a counter lost to a snapshot restore, FLUSHDB, LRU eviction or a failover
+    ///     would let a restarting replica re-mint under `<base>#0`, silently undoing
+    ///     a revocation inside the `{current, previous}` acceptance window.
     ///
     /// Failing closed makes both of those an unhealthy source, which reverts the
     /// surfaced guarantee to bounded-`T` and refuses to mint under a rolled-back
@@ -558,6 +557,17 @@ mod tests {
             TRUST_EPOCH_READ_BUDGET * 2 <= DEFAULT_OVERLAP,
             "the read must leave the overlap mostly free for the mint it precedes"
         );
+    }
+
+    #[test]
+    fn a_trust_epoch_outage_is_announced_on_its_edges_not_per_poll() {
+        let src = TrustEpochSource::new(FakeReader::new(3));
+        src.poll_once();
+        src.reader.fail();
+        src.poll_once();
+        assert!(!src.set_healthy(false, "probe"), "poll_once latched the edge");
+        assert!(src.set_healthy(true, "probe"));
+        assert!(!src.set_healthy(true, "probe"));
     }
 
     #[test]
