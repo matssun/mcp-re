@@ -2713,6 +2713,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_chain_whose_intermediate_is_on_no_crl_is_served",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::chain_validity_tests::a_chain_whose_intermediate_is_current_is_admitted",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::policy::tests::every_policy_states_exactly_which_controls_it_applies",
+  "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::tests::a_ceiling_beyond_every_representable_span_admits_rather_than_inverting",
+  "//mcp-re-proxy:proxy_unit_test#communication_assurance::credential_currency::evaluation::per_request_revocation_tests::a_self_issued_root_with_no_orderable_window_is_exempt_under_revocation_too",
 ]
 pilot = "verus-candidate"
 
@@ -7443,6 +7445,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::continuation_control::tests::every_legal_state_form_is_classified_and_accepted",
   # "a selected one that CANNOT BE ESTABLISHED" — a locator that names no store.
   "//mcp-re-proxy:proxy_unit_test#config_state::continuation_control::tests::a_locator_that_cannot_name_a_store_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::continuation_control::tests::a_locator_whose_scheme_is_not_at_its_start_is_refused",
 ]
 
 # The other build profile's arm of the SAME claim. A separate unit and not more selectors
