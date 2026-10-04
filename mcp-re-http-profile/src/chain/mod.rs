@@ -132,6 +132,25 @@ pub enum IncompleteReason {
     HopAfterAuditInstant,
 }
 
+impl IncompleteReason {
+    /// The reason's published token inside a signed chain label. Chosen, not
+    /// derived from a type name, and carrying no error diagnostic text.
+    // `pub(crate)`: its consumer is the SCITT commitment, a sibling subtree of `chain`.
+    pub(crate) fn token(&self) -> &'static str {
+        match self {
+            Self::RequestUnverifiable(_) => "request_unverifiable",
+            Self::ResponseUnverifiable(_) => "response_unverifiable",
+            Self::MissingContinuation => "missing_continuation",
+            Self::ContinuationDoesNotLink => "continuation_does_not_link",
+            Self::NonTerminalExpected => "non_terminal_expected",
+            Self::TerminalExpected => "terminal_expected",
+            Self::UnrecognizedResultType => "unrecognized_result_type",
+            Self::EmptyChain => "empty_chain",
+            Self::HopAfterAuditInstant => "hop_after_audit_instant",
+        }
+    }
+}
+
 /// The verdict on a retained chain. Never a bare boolean (§9.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChainLabel {
