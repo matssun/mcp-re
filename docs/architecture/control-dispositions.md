@@ -4638,3 +4638,13 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none. `client.serving_lifetime` states the refresher is started, not what clock it is given; NP-065 and NP-128 are the proxy's clock.
 **Root relationship.** A premise of `client.anchor_refresh` (THM-0120) and of the startup manifest load.
 **Severity:** `medium`.
+
+## NP-253 — the evidence block is read from a body this profile reads one way, or refused
+
+**Controls:** `mcp-re-http-profile` `body::tests::extract_refuses_a_body_it_cannot_read_one_way`.
+**Carrier:** `mcp-re-http-profile/src/body`.
+**Statement.** *A body carrying a duplicate member name (plain or escaped) or a value the carrier would alter is refused as malformed evidence by `extract_meta_block` before any block is read, so the verifier and any other reader of the signed bytes cannot reach different blocks.*
+**If false.** One signature and one Content-Digest cover bytes from which two readers extract two different evidence blocks.
+**Likely owner:** none of the units that measure this file; NP-088 states the composition side, and `http_profile.evidence_block_carriage` says nothing about which values the body may carry.
+**Root relationship.** A premise of every http_profile unit above it.
+**Severity:** `critical`.

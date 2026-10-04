@@ -568,6 +568,15 @@ consequence = "medium"
 root_relationship = "a premise of client.anchor_refresh (THM-0120) and of the startup manifest load: both compare now > expires_at, which an early fabricated instant passes."
 record = "docs/architecture/control-dispositions.md#np-252"
 
+[[proposition]]
+id = "NP-253"
+title = "The evidence block is read from a body this profile reads one way, or refused"
+carrier = "mcp-re-http-profile/src/body"
+likely_owner = "none of the units that MEASURE this file; each is about what its own verdict means"
+consequence = "critical"
+root_relationship = "a premise of every http_profile unit above it"
+record = "docs/architecture/control-dispositions.md#np-253"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14575,4 +14584,12 @@ project = "mcp-re-client"
 control = "src/main.rs#startup::tests::a_pre_epoch_clock_is_not_a_time"
 decision = "new-proposition"
 proposition = "NP-252"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20251"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#body::tests::extract_refuses_a_body_it_cannot_read_one_way"
+decision = "new-proposition"
+proposition = "NP-253"
 recorded = "2026-10-04"

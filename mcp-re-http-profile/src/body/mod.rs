@@ -57,7 +57,9 @@ pub fn insert_meta_block<T: Serialize>(
 /// Extract and strictly deserialize the block at top-level `_meta[key]`. An
 /// absent block is [`HttpProfileError::MissingEvidence`] (`what` names it); a
 /// present-but-malformed block is [`HttpProfileError::MalformedEvidence`]. The
-/// block types use `deny_unknown_fields`, so a foreign field fails closed.
+/// block types use `deny_unknown_fields`, so a foreign field fails closed. A body
+/// this profile could not read one way (see [`reject_unrepresentable_json`]) is
+/// refused as malformed evidence.
 pub fn extract_meta_block<T: DeserializeOwned>(
     body: &[u8],
     key: &str,
@@ -65,6 +67,7 @@ pub fn extract_meta_block<T: DeserializeOwned>(
 ) -> Result<T, HttpProfileError> {
     let root: Value = serde_json::from_slice(body)
         .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
+    reject_unrepresentable_json(body)?;
     let block = root
         .get(META_KEY)
         .and_then(|m| m.get(key))
@@ -72,14 +75,14 @@ pub fn extract_meta_block<T: DeserializeOwned>(
     serde_json::from_value(block.clone()).map_err(|_| HttpProfileError::MalformedEvidence(what))
 }
 
-/// Read the raw `Authorization: Bearer` token bytes from a request's headers, if
-/// present exactly once — the credential source for a DPoP `ath` binding
-/// (MCPRE-101, built-in header derivation).
+/// Read the raw `Authorization: Bearer` token bytes from a request's headers —
+/// the credential source for a DPoP `ath` binding (MCPRE-101, built-in header
+/// derivation). `None` when the header is absent, duplicated, or not a `Bearer`
+/// credential; each is a refusal, never a fall-through to another source.
 pub fn authorization_bearer_bytes(headers: &[(String, String)]) -> Option<Vec<u8>> {
-    let value = headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
-        .map(|(_, v)| v.as_str())?;
+    let value = crate::message::single_header(headers, "authorization")
+        .ok()
+        .flatten()?;
     crate::artifact::bearer_token(value).map(|t| t.as_bytes().to_vec())
 }
 
@@ -116,6 +119,32 @@ mod tests {
         let body = br#"{"jsonrpc":"2.0"}"#;
         let err = extract_meta_block::<Demo>(body, "k.demo", "demo block").unwrap_err();
         assert_eq!(err, HttpProfileError::MissingEvidence("demo block"));
+    }
+
+    #[test]
+    fn extract_refuses_a_body_it_cannot_read_one_way() {
+        let first = br#"{"_meta":{"k.demo":{"a":1}},"_meta":{"k.demo":{"a":2}}}"#;
+        let second = br#"{"_meta":{"k.demo":{"a":1},"k.demo":{"a":2}}}"#;
+        let last_wins: Value = serde_json::from_slice(first).unwrap();
+        assert_eq!(last_wins["_meta"]["k.demo"]["a"], Value::from(2));
+        for body in [&first[..], &second[..]] {
+            let err = extract_meta_block::<Demo>(body, "k.demo", "demo block").unwrap_err();
+            assert_eq!(
+                err,
+                HttpProfileError::MalformedEvidence("body object has a duplicate member name")
+            );
+        }
+    }
+
+    #[test]
+    fn authorization_bearer_bytes_refuses_a_duplicated_authorization_header() {
+        let dup = [
+            ("Authorization".to_owned(), "Bearer a".to_owned()),
+            ("authorization".to_owned(), "Bearer b".to_owned()),
+        ];
+        assert_eq!(authorization_bearer_bytes(&dup), None);
+        let one = [("Authorization".to_owned(), "Bearer a".to_owned())];
+        assert_eq!(authorization_bearer_bytes(&one), Some(b"a".to_vec()));
     }
 
     #[test]
