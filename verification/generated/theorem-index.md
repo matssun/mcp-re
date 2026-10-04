@@ -170,6 +170,7 @@ any of them is closed.
 | THM-0130 | One logical audit record renders to exactly one physical record, recoverably | proxy.audit_text_rendering | unit://proxy.audit_text_rendering | live |
 | THM-0131 | The client-revocation posture states what this replica is enforcing now | proxy.client_revocation_currency | unit://proxy.client_crl_next_update_gate, unit://proxy.client_crl_reload_republish, unit://proxy.client_revocation_currency, unit://proxy.retired_plane_cadence_retraction | live |
 | THM-0132 | A replica serves on last-known admission state for at most P after the authority last answered | proxy.admission_currency_gate | unit://proxy.admission_currency_gate | live |
+| THM-0133 | The delegated-signing plane mints only under the trust-epoch label its own read names, and never under a regressed one | proxy.delegated_epoch_label | unit://proxy.delegated_epoch_label | live |
 
 ## Claims in full
 
@@ -1616,3 +1617,13 @@ any of them is closed.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0005
+
+### THM-0133 — The delegated-signing plane mints only under the trust-epoch label its own read names, and never under a regressed one
+
+**Statement.** The label the delegated-signing plane hands its rotor is `<base>#<counter>`, where `counter` is the value this replica's most recent successful read of the shared trust-epoch counter returned. It is never the bare base label and never relative to a value this process read earlier, so every replica whose read returns the same value derives the same label, whenever it started. A read that fails yields no label. A read that returns a value below the highest this process has read also yields no label: the regression is refused, not adopted, and stays refused until a read at or above that high-water mark succeeds. No label means nothing is minted.
+
+**Security consequence.** An operator's `INCR` is a kill switch only if what the plane mints follows the counter. A label taken from a per-process baseline let a replica that restarted after an `INCR` adopt the advanced value as its own starting point and keep minting under an epoch the verifiers still accepted; a label adopted from a regressed read would re-mint under an epoch the verifiers have already stopped accepting, resurrecting the credentials the `INCR` retired. Both are excluded here, and a counter that cannot be read stops issuance rather than letting it continue under a label nobody checked.
+
+**Scope — what this does NOT establish.** LOCAL TO ONE REPLICA. This states what the plane does with the value its read returned. That the read returns the advanced value after an operator's `INCR` on another connection is ASM-0071, the store's fact and not MCP-RE's; "an `INCR` moves every replica to the next label" is this claim composed with that premise, and is no stronger than the premise. It says nothing about credentials already issued under an earlier label: no verifier reads the counter, so a credential minted before the `INCR` stays verifiable until the verifiers' accepted epochs are changed. Nothing about the startup refusal when the first read fails, which `proxy.signing_plane_epoch_read_refusal` measures, nor about when the rotation loop re-reads the counter. And no ordering between this plane's observation of an advance and the request-trust cache's flush on the same counter (THM-0097's scope disclaims it from the other side).
+
+**Review requirement.** Owner security-specification review

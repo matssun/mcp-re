@@ -11337,3 +11337,44 @@ expect_red = [
 note = """
 One slow root call refuses every issuance for the life of the process.
 """
+
+[[probe]]
+id = "M447-proxy-the-minted-label-is-not-the-counter"
+unit = "proxy.delegated_epoch_label"
+theorem = "THM-0133"
+conjunct = "the label is `<base>#<counter>` for the value the read returned, never the bare base"
+path = "mcp-re-proxy/src/signing_plane/mod.rs"
+anchor = """
+        Some(format!("{}#{}", self.base_label, counter))
+"""
+weakening = """
+        Some(self.base_label.clone())
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::label_is_always_base_hash_counter_never_the_bare_base",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::an_increment_survives_a_replica_restart",
+]
+note = """
+Every replica mints under the bare base label whatever the counter says, so an operator's `INCR`
+changes nothing that is minted and the kill switch is wired to nothing.
+"""
+
+[[probe]]
+id = "M448-proxy-a-regressed-epoch-read-is-adopted"
+unit = "proxy.delegated_epoch_label"
+theorem = "THM-0133"
+conjunct = "a read below the highest this process has read yields no label: the regression is refused, not adopted"
+path = "mcp-re-proxy/src/signing_plane/mod.rs"
+anchor = """
+        if matches!(*hw, Some(prev) if counter < prev) {
+"""
+weakening = """
+        if false && matches!(*hw, Some(prev) if counter < prev) {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::a_regressed_counter_is_refused_not_rebased",
+]
+note = """
+A store reset or a failover to a stale instance is adopted as the new epoch, and the plane
+re-mints under a label the verifiers already stopped accepting.
+"""

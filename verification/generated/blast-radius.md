@@ -175,6 +175,7 @@ attestations this view cannot see.
 | unit://proxy.current_authenticated_peer_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.custody_exposure | source, contracts or evidence | THM-0064 | _no consumer_ |
 | unit://proxy.custody_exposure_sole_producer | source, contracts or evidence | THM-0064 | _no consumer_ |
+| unit://proxy.delegated_epoch_label | source, contracts or evidence | THM-0133 | _no consumer_ |
 | unit://proxy.delegated_resolver_materialization | source, contracts or evidence | THM-0027 | _no consumer_ |
 | unit://proxy.delegated_resolver_materialization_sole_producer | source, contracts or evidence | THM-0027 | _no consumer_ |
 | unit://proxy.delegated_signing_configuration_state | source, contracts or evidence | THM-0077 | _no consumer_ |
@@ -431,6 +432,7 @@ attestations this view cannot see.
 | THM-0130 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0131 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0132 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0133 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 
@@ -503,3 +505,4 @@ attestations this view cannot see.
 | ASM-0068 | description, justification, scope or mechanism | host.request_freshness_inputs, proxy.delegated_signing_credential | assumption review |
 | ASM-0069 | description, justification, scope or mechanism | http_profile.delegated_credential_chain | assumption review |
 | ASM-0070 | description, justification, scope or mechanism | client.transport_server_identity | assumption review |
+| ASM-0071 | description, justification, scope or mechanism | proxy.delegated_epoch_label | assumption review |

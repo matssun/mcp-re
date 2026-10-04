@@ -12104,6 +12104,40 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#signing_plane::rotation_owner_tests::materialize_refuses_when_the_configured_shared_epoch_cannot_be_read",
 ]
 
+# The delegated plane's TWIN of `proxy.trust_epoch_source`: the same shared counter, read over the
+# plane's own connection for a different local decision — which epoch label to mint under — and
+# refusing a regression where the request side flushes. Registered as its own unit, over the file
+# that holds `DelegatedEpochWatch`, rather than by widening `proxy.trust_epoch_source` (whose paths
+# are `trust_epoch.rs`) or by moving ASM-0044, whose justification excludes this consumer by name.
+# ASM-0071 is the sibling premise and THM-0133 the claim; ASM-0044 is unchanged.
+#
+# `proxy.delegated_signing_credential` claims the same seven controls among the fifty-odd that
+# measure the whole credential lifecycle. They are named here as well because this unit's
+# fingerprint must move when the label rule moves, and the lifecycle unit's claim does not state it.
+[[unit]]
+id = "proxy.delegated_epoch_label"
+class = "V0"
+description = "THE DELEGATED-SIGNING PLANE MINTS UNDER THE LABEL ITS OWN READ OF THE SHARED TRUST-EPOCH COUNTER NAMES, AND UNDER NO OTHER: the label is always `<base>#<counter>` for the value that read returned, never the bare base and never a per-process baseline, so two replicas that read the same value mint the same label whichever started first, and a restarted replica resolves the label its peers mint; a read that fails, or that returns a value below the highest this process has read, yields no label, so nothing is minted (a regression is refused, not rebased) until a read at or above that mark succeeds. It says nothing about whether a read reflects an `INCR` issued on another connection, which is ASM-0071, nothing about credentials already issued under an earlier label, which stay verifiable until verifiers stop accepting that epoch, and nothing about the startup refusal when the first read fails, which is `proxy.signing_plane_epoch_read_refusal`'s."
+paths = ["mcp-re-proxy/src/signing_plane/mod.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/signing_plane/delegated_epoch_label",
+  "mutation://proxy/signing_plane/delegated_epoch_label",
+]
+# Every selector names the default-feature `//mcp-re-proxy:proxy_unit_test`: `DelegatedEpochWatch`
+# and its tests are not feature-gated; only the Redis reader that feeds it in production is.
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::label_is_always_base_hash_counter_never_the_bare_base",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::all_replicas_agree_regardless_of_start_time",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::an_increment_survives_a_replica_restart",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::an_outage_yields_no_label_so_minting_stops",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::reconnect_after_an_outage_resumes_and_sees_missed_increments",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::a_regressed_counter_is_refused_not_rebased",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::full_sequence_increment_outage_restart_reconnect_continued_issuance",
+]
+
 # ---------------------------------------------------------------------------
 # The per-request revocation slice — ADR-MCPRE-069 NP-165
 # ---------------------------------------------------------------------------

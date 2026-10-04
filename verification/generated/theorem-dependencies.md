@@ -453,3 +453,10 @@ graph BT
 graph BT
     THM_0128["THM-0128<br/>The civil-date conversion is total on the domain its caller can supply"]
 ```
+
+## Component 23
+
+```mermaid
+graph BT
+    THM_0133["THM-0133<br/>The delegated-signing plane mints only under the trust-epoch label its own read names, and never under a regressed one"]
+```
