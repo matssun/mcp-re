@@ -123,7 +123,7 @@ mod tests {
         let plan = plan_with_cadence(300);
         let currency = ClientRevocationCurrency::new(
             ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
-            true,
+            Some(300),
         );
         assert!(
             revocation_posture_lines(&plan, &currency)[0].contains("crl_reload=every_300s"),
@@ -154,7 +154,7 @@ mod tests {
         let plan = plan_with_cadence(300);
         let currency = ClientRevocationCurrency::new(
             ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
-            true,
+            Some(300),
         );
 
         currency.mark_degraded();
@@ -180,14 +180,14 @@ mod tests {
         let plan = plan_with_cadence(300);
         let currency = Arc::new(ClientRevocationCurrency::new(
             ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
-            true,
+            Some(300),
         ));
 
         let supervised = supervise_crl_reload(Arc::clone(&currency), plan.clone(), || {});
         std::thread::spawn(supervised)
             .join()
             .expect("a normal return joins Ok");
-        assert_eq!(currency.maintenance(), CrlMaintenance::Maintained);
+        assert_eq!(currency.maintenance(), CrlMaintenance::Maintained { cadence_secs: 300 });
 
         let hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));

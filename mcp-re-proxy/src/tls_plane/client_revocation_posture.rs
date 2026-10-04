@@ -121,8 +121,7 @@ pub(crate) fn revocation_posture_lines(
     plan: &crate::startup_plan::ChannelEstablishmentPlan,
     currency: &super::ClientRevocationCurrency,
 ) -> Vec<String> {
-    let crls = currency.evidence();
-    let maintenance = currency.maintenance();
+    let (crls, maintenance) = currency.in_force();
     // Both durations come from ONE owned window, so the exposure window is never reported
     // beside a connection age that outlives it. There is no `unbounded` arm because there
     // is no such deployment: disabling either bound is refused at layer A, and a window
@@ -145,7 +144,7 @@ pub(crate) fn revocation_posture_lines(
         } else {
             "enforced"
         },
-        maintenance.wire(plan.client_revocation.reload_cadence_secs()),
+        maintenance.wire(),
     )];
     if crls.is_empty() {
         let max_lifetime = plan.credential_window.cert_lifetime().as_secs();
@@ -216,7 +215,7 @@ mod revocation_posture_tests {
     fn with_no_crl_the_per_request_check_is_reported_as_not_configured() {
         let lines = revocation_posture_lines(
             &plan(3600),
-            &ClientRevocationCurrency::new(no_crls(), false),
+            &ClientRevocationCurrency::new(no_crls(), None),
         );
         assert!(
             lines[0].contains("per_request_crl_check=not_configured"),
@@ -253,7 +252,7 @@ mod revocation_posture_tests {
             },
         ]);
         let lines =
-            revocation_posture_lines(&plan(3600), &ClientRevocationCurrency::new(crls, true));
+            revocation_posture_lines(&plan(3600), &ClientRevocationCurrency::new(crls, Some(3600)));
         assert!(
             lines[0].contains("per_request_crl_check=enforced"),
             "got: {}",

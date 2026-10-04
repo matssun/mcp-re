@@ -162,7 +162,7 @@ impl TlsPlane {
             revocation: None,
             currency: Arc::new(ClientRevocationCurrency::new(
                 ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
-                true,
+                Some(300),
             )),
             key_exposure: PrivateKeyExposure::ProcessReadable,
             workers,
@@ -401,7 +401,7 @@ pub(crate) fn fleet_crl_bound(
             format!("short-lived-cert only (exposure_window {window_secs}s); no client CRL")
         }
         CredentialCurrencyBound::PublicationRefresh { cadence_secs }
-            if maintenance == CrlMaintenance::Maintained =>
+            if matches!(maintenance, CrlMaintenance::Maintained { .. }) =>
         {
             format!(
                 "bounded {cadence_secs}s (the --client-crl-reload-secs cadence), enforced per \
@@ -441,7 +441,7 @@ mod handle_lifetime_tests {
             revocation: None,
             currency: Arc::new(ClientRevocationCurrency::new(
                 ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
-                true,
+                Some(300),
             )),
             key_exposure: PrivateKeyExposure::ProcessReadable,
             workers,
@@ -496,7 +496,10 @@ mod handle_lifetime_tests {
         {
             let plane = plane(test_server_config(), Arc::clone(&observed));
             currency = plane.revocation_currency();
-            assert_eq!(currency.maintenance(), CrlMaintenance::Maintained);
+            assert_eq!(
+                currency.maintenance(),
+                CrlMaintenance::Maintained { cadence_secs: 300 }
+            );
         }
         assert_eq!(
             currency.maintenance(),
@@ -765,7 +768,7 @@ mod fleet_crl_bound_tests {
                 crate::config_state::test_support::crl_plan(&["/crl.pem"], Some(300)),
                 3600,
             ),
-            CrlMaintenance::Maintained,
+            CrlMaintenance::Maintained { cadence_secs: 300 },
         );
         assert!(bound.contains("bounded 300s"), "got: {bound}");
         assert!(

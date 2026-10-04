@@ -50,10 +50,10 @@ pub(super) fn start_reload_worker(
     let Some(cadence_secs) = plan.client_revocation.reload_cadence_secs() else {
         return (
             workers,
-            Arc::new(ClientRevocationCurrency::new(crls, false)),
+            Arc::new(ClientRevocationCurrency::new(crls, None)),
         );
     };
-    let currency = Arc::new(ClientRevocationCurrency::new(crls, true));
+    let currency = Arc::new(ClientRevocationCurrency::new(crls, Some(cadence_secs)));
     let custody = material.label();
     spawn_crl_reload_task(
         &mut workers,
@@ -95,8 +95,8 @@ pub(super) struct CrlReloadTask {
     /// bucket.
     pub(super) rebuild_state: Arc<TlsListenerSecurityState>,
     /// What this replica is enforcing and whether the cadence is being kept. The worker is
-    /// the only thing that knows either after boot, so it is the only thing that can keep
-    /// them true.
+    /// the only writer of `republish` and `mark_degraded`; `mark_stopped` has a second
+    /// writer, the plane's retirement (`Drop for TlsPlane`).
     pub(super) currency: Arc<ClientRevocationCurrency>,
 }
 /// The CRL reload loop proper. Split out so the supervisor can catch a panic.
@@ -274,11 +274,11 @@ mod tests {
         let halt = workers.halt();
         let currency = Arc::new(ClientRevocationCurrency::new(
             ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
-            true,
+            Some(300),
         ));
         assert_eq!(
             currency.maintenance(),
-            crate::tls_plane::revocation_currency::CrlMaintenance::Maintained
+            CrlMaintenance::Maintained { cadence_secs: 300 }
         );
         let t = task(
             chain_for_task(),
@@ -299,7 +299,7 @@ mod tests {
         let (path, issuer) = crl_file("ok");
         let currency = Arc::new(ClientRevocationCurrency::new(
             ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
-            true,
+            Some(300),
         ));
         currency.mark_degraded();
         let (reader, publisher) = SharedClientRevocation::establish(ClientRevocationIndex::empty());
@@ -318,8 +318,8 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         assert_eq!(failures, 0);
-        assert!(!currency.evidence().is_empty());
-        assert_eq!(currency.maintenance(), CrlMaintenance::Maintained);
+        assert!(!currency.in_force().0.is_empty());
+        assert_eq!(currency.maintenance(), CrlMaintenance::Maintained { cadence_secs: 300 });
         assert!(!revocation.load().is_empty());
     }
 
@@ -331,7 +331,7 @@ mod tests {
         let (path, _signer_not_configured) = crl_file("unsigned-by-anchor");
         let currency = Arc::new(ClientRevocationCurrency::new(
             ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
-            true,
+            Some(300),
         ));
         let (reader, publisher) = SharedClientRevocation::establish(ClientRevocationIndex::empty());
         let revocation = Arc::new(reader);
@@ -357,7 +357,7 @@ mod tests {
         let (path, issuer) = crl_file("bad-rebuild");
         let currency = Arc::new(ClientRevocationCurrency::new(
             ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
-            true,
+            Some(300),
         ));
         let (reader, publisher) = SharedClientRevocation::establish(ClientRevocationIndex::empty());
         let revocation = Arc::new(reader);
@@ -377,7 +377,7 @@ mod tests {
 
         assert_eq!(failures, 1);
         assert!(Arc::ptr_eq(&before, &revocation.load()));
-        assert!(currency.evidence().is_empty());
+        assert!(currency.in_force().0.is_empty());
         assert_eq!(currency.maintenance(), CrlMaintenance::Degraded);
     }
 }
