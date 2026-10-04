@@ -813,6 +813,77 @@ fn a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs
     );
 }
 
+/// `build_server` with retention on, whose backend breaks the evidence store when it runs,
+/// so reserve and commit succeed and completion fails.
+fn build_server_breaking_store_on_dispatch(
+    retention: Arc<EvidenceRetention>,
+    evidence: std::path::PathBuf,
+) -> HttpProfileProxy {
+    let config = server_config();
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let mut rotor = wiring.rotor;
+    rotor.rotate(NOW).expect("first delegated key");
+    let expected_audience = AudienceTuple {
+        audience_id: config.audience.clone(),
+        target_uri: config.target_uri.clone(),
+        route: config.route.clone(),
+    };
+    HttpProfileProxy::new_delegated(
+        resolver(),
+        expected_audience,
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
+            let _ = std::fs::remove_dir_all(&evidence);
+            let _ = std::fs::write(&evidence, b"not a directory");
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        }),
+        300,
+        Arc::clone(&wiring.signer),
+    )
+    .with_evidence_retention(retention)
+}
+
+/// Reserve and commit succeed, the backend runs, and completion then fails: neither success
+/// exit (bodied 200, bodyless 202) is served. Both go through `retain_accepted`, which
+/// refuses as indeterminate.
+#[test]
+fn a_success_whose_evidence_cannot_be_kept_after_execution_is_refused_on_both_exits() {
+    let bodied_scratch = Scratch::new("indeterminate-bodied");
+    let bodied_evidence = bodied_scratch.join("evidence");
+    let bodied_retention =
+        Arc::new(EvidenceRetention::open(&bodied_evidence).expect("open retention"));
+    let bodied = build_server_breaking_store_on_dispatch(bodied_retention, bodied_evidence);
+    assert_eq!(
+        serve_one_full(&bodied, "nonce-transparency-indeterminate-bodied-1"),
+        (
+            500,
+            Some("mcp-re.evidence_retention_indeterminate".to_owned())
+        ),
+    );
+
+    let notification_scratch = Scratch::new("indeterminate-notification");
+    let notification_evidence = notification_scratch.join("evidence");
+    let notification_retention =
+        Arc::new(EvidenceRetention::open(&notification_evidence).expect("open retention"));
+    let notification =
+        build_server_breaking_store_on_dispatch(notification_retention, notification_evidence);
+    assert_eq!(
+        serve_one_notification(
+            &notification,
+            "nonce-transparency-indeterminate-notification-1"
+        ),
+        500,
+        "a 202 here would acknowledge a call the deployment cannot account for"
+    );
+}
+
 /// R7-C018/C045/C058: the post-execution failure is a DIFFERENT state, and says so.
 ///
 /// Reserve succeeds, so the call is dispatched; the store is then broken, so completion

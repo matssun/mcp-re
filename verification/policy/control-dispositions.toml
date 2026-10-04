@@ -9277,14 +9277,6 @@ proposition = "NP-129"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-18143"
-project = "mcp-re-proxy"
-control = "src/lib.rs#http_profile_serve::reply_assembly::accepted::tests::nothing_is_owed_where_retention_is_not_configured"
-decision = "new-proposition"
-proposition = "NP-130"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-18144"
 project = "mcp-re-proxy"
 control = "src/lib.rs#http_profile_serve::reply_assembly::notification::tests::a_message_that_may_not_have_arrived_is_not_acknowledged"
@@ -14063,4 +14055,12 @@ project = "mcp-re-http-profile"
 control = "src/lib.rs#verified_request::floor::tests::debug_never_renders_the_signature_base_or_its_credentials"
 decision = "new-proposition"
 proposition = "NP-236"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20211"
+project = "mcp-re-proxy"
+control = "tests/integration_async/main.rs#transparency_e2e_test::a_success_whose_evidence_cannot_be_kept_after_execution_is_refused_on_both_exits"
+decision = "new-proposition"
+proposition = "NP-154"
 recorded = "2026-10-04"

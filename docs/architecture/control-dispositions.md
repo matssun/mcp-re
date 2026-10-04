@@ -3314,7 +3314,7 @@ Packet: [`../../verification/reviews/packets/adr069-np-153-ratification-2026-09-
 
 ## NP-154 — the shipped auditor over a served archive, and the retention posture the serving path refuses under
 
-**Controls:** `mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs` (15), `mcp-re-proxy/src/http_profile_serve/retention/mod.rs` (2).
+**Controls:** `mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs` (16), `mcp-re-proxy/src/http_profile_serve/retention/mod.rs` (2).
 **Statement.** *Over a real exchange, and then over the archive it left behind: a deployment that turned retention on refuses what it cannot account for and one that did not keeps nothing; the shipped `mcp-re-auditor` turns a served call into a portable attestation and refuses — writing nothing — an archive it cannot reconstruct, a tampered object or an illegal service pin; and that attestation registers with a transparency service over either of two mechanisms, hermetically, and against a live external one when a deployment opts in.*
 **If false.** The answerability record and the exchange diverge on the live path, which is where they are relied on; or the shipped auditor attests a record it should refuse, which is worse than refusing one it should attest, because the artifact is the thing a third party reads.
 **Likely owner:** none — a composition's source is every unit under it.

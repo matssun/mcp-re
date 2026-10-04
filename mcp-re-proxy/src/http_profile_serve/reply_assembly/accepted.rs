@@ -193,8 +193,6 @@ impl HttpProfileProxy {
 
 #[cfg(test)]
 mod tests {
-    use crate::request_stages::RetentionDisposition;
-
     /// The refusal a publication failure serves, asserted whole.
     ///
     /// Not merely that it refuses. `mcp-re.exchange_invariant_violation` says *this
@@ -263,18 +261,5 @@ mod tests {
             body[decision..retention].contains("return self.refuse_retained("),
             "the refusing arm must exit before retention discharges"
         );
-    }
-
-    /// A deployment that retains nothing owes nothing, and the disposition says so rather
-    /// than being inferred from an absent store at the discharge site. Reconstructing it
-    /// here would let the two halves of the reservation disagree.
-    #[test]
-    fn nothing_is_owed_where_retention_is_not_configured() {
-        assert!(matches!(
-            RetentionDisposition::NotConfigured(
-                crate::http_profile_serve::retention::NothingRetained::for_a_test()
-            ),
-            RetentionDisposition::NotConfigured(_)
-        ));
     }
 }
