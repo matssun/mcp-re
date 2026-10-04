@@ -152,14 +152,18 @@ impl RevocationTier {
                 "near-zero revocation window: the store is consulted on every \
                  verification with no positive-trust caching, at the cost of a \
                  per-request store round-trip and a hard availability dependency \
-                 (store unavailability fails closed); NOT proven zero-window"
+                 (store unavailability fails closed); the window is measured against \
+                 the store, which learns of a key removed from --trust only at the next \
+                 re-read (see store-change-cadence); NOT proven zero-window"
             }
             RevocationTier::Push { .. } => {
                 "near-zero revocation window with bounded-T fallback: a pushed \
                  revocation evicts affected entries immediately, but on \
                  invalidation-channel failure entries fall back to expiry within \
-                 the bounded window T; NOT zero-window (the reference channel does \
-                 not prove reliable ordering/delivery)"
+                 the bounded window T; an eviction re-resolves against the store, \
+                 which learns of a key removed from --trust only at the next re-read \
+                 (see store-change-cadence); NOT zero-window (the reference channel \
+                 does not prove reliable ordering/delivery)"
             }
         }
     }
@@ -295,6 +299,7 @@ mod tests {
         assert!(push.contains("near-zero"));
         assert!(push.contains("bounded-T fallback"));
         assert!(push.contains("NOT zero-window"));
+        assert!(push.contains("store-change-cadence"));
     }
 
     #[test]
@@ -303,6 +308,7 @@ mod tests {
         assert!(live.contains("near-zero"));
         assert!(live.contains("every verification"));
         assert!(live.contains("fails closed"));
+        assert!(live.contains("store-change-cadence"));
     }
 
     #[test]
