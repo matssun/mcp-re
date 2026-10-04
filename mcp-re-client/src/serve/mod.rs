@@ -186,14 +186,17 @@ pub fn serve(
                     continue;
                 };
                 let worker_context = Arc::clone(&context);
-                // A spawn failure drops the closure, and with it `slot`, so the claim is
-                // released by the same destructor that releases it on unwind.
-                let _ = std::thread::Builder::new()
-                    .name("mcp-re-client-conn".to_owned())
-                    .spawn(move || {
-                        let _slot = slot;
-                        handle_connection(stream, &worker_context, &authority);
-                    });
+                admission::dispatch(
+                    stream,
+                    slot,
+                    move |stream| handle_connection(stream, &worker_context, &authority),
+                    |job| {
+                        std::thread::Builder::new()
+                            .name("mcp-re-client-conn".to_owned())
+                            .spawn(job)
+                            .map(drop)
+                    },
+                );
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(20));

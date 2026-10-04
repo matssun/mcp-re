@@ -10387,6 +10387,7 @@ tested_symbols = [
   "//mcp-re-client:mcp_re_client_test#serve::admission::tests::a_refused_claim_is_released",
   "//mcp-re-client:mcp_re_client_test#serve::admission::tests::a_zero_ceiling_admits_nothing",
   "//mcp-re-client:mcp_re_client_test#serve::admission::tests::a_panicking_worker_returns_its_in_flight_slot",
+  "//mcp-re-client:mcp_re_client_test#serve::admission::tests::a_worker_that_cannot_be_spawned_is_answered_503_and_returns_its_slot",
   "//mcp-re-client:mcp_re_client_test#serve::exchange::tests::a_path_names_its_route",
   "//mcp-re-client:mcp_re_client_test#serve::exchange::tests::a_nested_or_empty_path_names_no_route",
   "//mcp-re-client:mcp_re_client_test#serve::exchange::tests::any_other_path_falls_to_the_default_route_only_when_one_is_configured",
