@@ -361,10 +361,13 @@ pub(in crate::http_profile_serve) mod tests {
         // wired: a deployment holding no capability now refuses this leg outright, and the
         // fact under test is which key a deployment that CAN look one up asks with.
         let store = Arc::new(RecordingStore::default());
-        let established = ContinuationPlane::wired(store.clone(), 300)
-            .prepare(&ex, "aud")
-            .await
-            .expect("a store miss is the caller's fact, not a refusal");
+        let established = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        )
+        .prepare(&ex, "aud")
+        .await
+        .expect("a store miss is the caller's fact, not a refusal");
         let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
 
         let carried = continuation_key("aud", &verified.resolved_actor().actor_id(), b"s-1");
@@ -475,10 +478,13 @@ pub(in crate::http_profile_serve) mod tests {
         };
 
         let store = Arc::new(RecordingStore::hit());
-        let established = ContinuationPlane::wired(store.clone(), 300)
-            .prepare(&ex, "aud")
-            .await
-            .expect("a live approval is not a refusal");
+        let established = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        )
+        .prepare(&ex, "aud")
+        .await
+        .expect("a live approval is not a refusal");
         let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
 
         assert!(prep.was_peeked(), "the live approval was read");

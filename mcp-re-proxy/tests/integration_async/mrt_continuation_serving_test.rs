@@ -55,6 +55,7 @@ use mcp_re_proxy::async_serve::ServedHttpResponse;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS;
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::DelegatedRotor;
 use mcp_re_proxy::DelegatedServerSigner;
@@ -232,7 +233,7 @@ fn replica(
         300,
         signer,
     )
-    .with_continuation_store(store, TTL)
+    .with_continuation_store(store, DEFAULT_CONTINUATION_TTL_SECS)
 }
 
 fn ready_signer() -> Arc<DelegatedServerSigner> {
@@ -649,7 +650,7 @@ fn replica_with_inner(
         300,
         signer,
     )
-    .with_continuation_store(store, TTL)
+    .with_continuation_store(store, DEFAULT_CONTINUATION_TTL_SECS)
 }
 
 /// An inner backend that announces a non-terminal turn and then withholds the state
@@ -1587,7 +1588,7 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
             300,
             ready_signer(),
         )
-        .with_continuation_store(Arc::clone(&store), TTL)
+        .with_continuation_store(Arc::clone(&store), DEFAULT_CONTINUATION_TTL_SECS)
     };
     let a = make();
     let b = make();
@@ -1807,7 +1808,7 @@ async fn a_retention_reservation_failure_leaves_the_backend_untouched() {
         300,
         ready_signer(),
     )
-    .with_continuation_store(Arc::clone(&store), TTL)
+    .with_continuation_store(Arc::clone(&store), DEFAULT_CONTINUATION_TTL_SECS)
     .with_evidence_retention(retention);
     dir.wedge();
 
@@ -1893,7 +1894,7 @@ async fn a_consumption_followed_by_a_refusal_reports_a_spent_approval_and_an_unr
         300,
         ready_signer(),
     )
-    .with_continuation_store(Arc::clone(&store), TTL)
+    .with_continuation_store(Arc::clone(&store), DEFAULT_CONTINUATION_TTL_SECS)
     .with_evidence_retention(retention);
     dir.wedge();
 
@@ -2337,7 +2338,7 @@ async fn an_indeterminate_continuation_retirement_is_never_reported_as_retry_saf
         300,
         ready_signer(),
     )
-    .with_continuation_store(store, TTL);
+    .with_continuation_store(store, DEFAULT_CONTINUATION_TTL_SECS);
 
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
     let (answer, _e) = signed_request("nonce-R8-consume", &answer_body(&state), Some(continuation));

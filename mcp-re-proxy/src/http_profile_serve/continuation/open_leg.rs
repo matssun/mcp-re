@@ -92,7 +92,7 @@ impl ContinuationPlane {
         // budget exists for), `Collision` stops immediately (a taken key answers the same
         // way every time), `Stored` is the only way out with an answerable leg.
         for _ in 0..RECORD_ATTEMPTS {
-            match store.create(&key, &bases, self.ttl_secs).await {
+            match store.create(&key, &bases, i64::from(self.ttl.get())).await {
                 Ok(Creation::Stored) => return Ok(Established::new((), OPEN_LEG_RECORDED)),
                 Ok(Creation::Collision) => return Err(conflict()),
                 Err(e) => report(Fault::ContinuationRecord, "record the open leg", &e),
@@ -148,7 +148,10 @@ mod tests {
         }
 
         let store = std::sync::Arc::new(CapturingStore(Mutex::new(Vec::new())));
-        let plane = ContinuationPlane::wired(store.clone(), 300);
+        let plane = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
         let verified = fixtures::verified_as("did:example:host-a", "key-1");
         let actor_id = verified.resolved_actor().actor_id();
         let http_req = fixtures::http_request(fixtures::BODY_ASSERTING_ANOTHER_ACTOR);
@@ -220,7 +223,10 @@ mod tests {
         }
 
         let store = std::sync::Arc::new(CollidingStore(AtomicUsize::new(0)));
-        let plane = ContinuationPlane::wired(store.clone(), 300);
+        let plane = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
         let verified = fixtures::verified_as("did:example:host-a", "key-1");
         let actor_id = verified.resolved_actor().actor_id();
         let http_req = fixtures::http_request(fixtures::BODY_ASSERTING_ANOTHER_ACTOR);
@@ -329,7 +335,10 @@ mod tests {
         }
 
         let store = std::sync::Arc::new(FailingStore(AtomicUsize::new(0)));
-        let plane = ContinuationPlane::wired(store.clone(), 300);
+        let plane = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
         let refusal = record_over(&plane).await;
         assert_unavailable_after_admission(&refusal);
         assert_eq!(store.0.load(Ordering::SeqCst), RECORD_ATTEMPTS);

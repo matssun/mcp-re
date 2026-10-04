@@ -138,7 +138,10 @@ mod tests {
             disabled.retire(prepared(&disabled, false).await).await,
             Retirement::NotInvolved
         );
-        let wired = ContinuationPlane::wired(Arc::new(UnansweringStore), 300);
+        let wired = ContinuationPlane::wired(
+            Arc::new(UnansweringStore),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
         assert_eq!(
             wired.retire(prepared(&wired, false).await).await,
             Retirement::NotInvolved,
@@ -153,7 +156,10 @@ mod tests {
         // the CALLER — rather than the `Indeterminate` reserved for a tier that did not
         // answer at all.
         let store = Arc::new(crate::continuation_store::InMemoryContinuationStore::new());
-        let plane = ContinuationPlane::wired(store.clone(), 300);
+        let plane = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
         let actor_id = verified_as("did:example:host-a", "key-1")
             .resolved_actor()
             .actor_id();
@@ -178,7 +184,10 @@ mod tests {
     /// gives a person's approval a fate the deployment did not observe.
     #[tokio::test]
     async fn a_tier_that_does_not_answer_the_spend_is_its_own_outcome() {
-        let plane = ContinuationPlane::wired(Arc::new(UnansweringStore), 300);
+        let plane = ContinuationPlane::wired(
+            Arc::new(UnansweringStore),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
         assert_eq!(
             plane.retire(prepared(&plane, true).await).await,
             Retirement::Indeterminate

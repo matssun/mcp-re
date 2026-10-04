@@ -138,7 +138,11 @@ use authority_verdicts::AuthorityVerdicts;
 /// (ADR-MCPS-047): long enough for a client to answer an `InputRequiredResult`,
 /// bounded so an unanswered continuation does not linger. Overridable via
 /// [`HttpProfileProxy::with_continuation_store`].
-pub const DEFAULT_CONTINUATION_TTL_SECS: i64 = 300;
+pub const DEFAULT_CONTINUATION_TTL_SECS: std::num::NonZeroU32 = match std::num::NonZeroU32::new(300)
+{
+    Some(ttl) => ttl,
+    None => panic!("the default continuation lifetime is positive"),
+};
 
 /// One exchange's identity, as every stage past VERIFIED needs it.
 ///
@@ -338,9 +342,9 @@ impl HttpProfileProxy {
     pub fn with_continuation_store(
         mut self,
         store: Arc<dyn AsyncContinuationStore>,
-        ttl_secs: i64,
+        ttl: std::num::NonZeroU32,
     ) -> Self {
-        self.continuations = continuation::ContinuationPlane::wired(store, ttl_secs);
+        self.continuations = continuation::ContinuationPlane::wired(store, ttl);
         self
     }
 
