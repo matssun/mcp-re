@@ -86,6 +86,24 @@ pub enum ExecutionDisposition {
 /// the copy took only the disposition, so it could not express the wire-code-dependent
 /// retention case at all. Adding a wrapper to keep this private would recreate exactly that.
 pub fn retry_semantics(wire_code: &str, execution: ExecutionDisposition) -> Option<Value> {
+    if wire_code == mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code() {
+        // The backend ran; only the evidence write failed. A client that treats this
+        // as an ordinary outage and retries re-executes the action, and the retry's
+        // fresh nonce passes replay admission — so the state is stated rather than
+        // left to be guessed from a status code.
+        //
+        // First arm: this code is minted only after dispatch, so it asserts a consequence
+        // no pre-dispatch disposition may lower — the strongest consequence wins, the same
+        // order as the exchange machine's SafeNothingExecuted < RequiresNewElicitation <
+        // NotRetrySafe. It stays ahead of the generic PossiblyExecuted arm because it names
+        // which obligation failed: the difference between "reconcile" and "reconcile, and
+        // know the evidence store has no record of this call".
+        return Some(json!({
+            "execution_status": "possibly_executed",
+            "retention_status": "failed",
+            "retry_safety": "unsafe_without_reconciliation",
+        }));
+    }
     if execution == ExecutionDisposition::ApprovalSpentNothingExecuted {
         // The action did NOT run, so this is not the indeterminate case — but the human
         // approval that authorized it is gone, and an ordinary retry cannot recover it.
@@ -108,21 +126,6 @@ pub fn retry_semantics(wire_code: &str, execution: ExecutionDisposition) -> Opti
             "retry_safety": "unsafe_without_reconciliation",
         }));
     }
-    if wire_code == mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code() {
-        // The backend ran; only the evidence write failed. A client that treats this
-        // as an ordinary outage and retries re-executes the action, and the retry's
-        // fresh nonce passes replay admission — so the state is stated rather than
-        // left to be guessed from a status code.
-        //
-        // Kept ahead of the generic arm because it says one thing more: WHICH obligation
-        // failed. The extra field is the difference between "reconcile" and "reconcile,
-        // and know the evidence store has no record of this call".
-        return Some(json!({
-            "execution_status": "possibly_executed",
-            "retention_status": "failed",
-            "retry_safety": "unsafe_without_reconciliation",
-        }));
-    }
     if execution == ExecutionDisposition::PossiblyExecuted {
         // Every other failure below the execution threshold. Derived from the exchange
         // machine, not from an allowlist of wire codes: an allowlist is a thing a NEW
@@ -134,4 +137,48 @@ pub fn retry_semantics(wire_code: &str, execution: ExecutionDisposition) -> Opti
         }));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mcp_re_core::McpReError;
+
+    fn field<'a>(v: &'a Value, k: &str) -> &'a str {
+        v.get(k).and_then(Value::as_str).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_post_dispatch_wire_code_outranks_a_pre_dispatch_disposition() {
+        for d in [
+            ExecutionDisposition::ApprovalSpentNothingExecuted,
+            ExecutionDisposition::NothingExecutedRetentionUnresolved,
+            ExecutionDisposition::PossiblyExecuted,
+            ExecutionDisposition::Unstated,
+        ] {
+            let v = retry_semantics(McpReError::EvidenceRetentionIndeterminate.wire_code(), d)
+                .expect("indeterminate code always projects");
+            assert_eq!(field(&v, "execution_status"), "possibly_executed", "{d:?}");
+            assert_eq!(field(&v, "retention_status"), "failed", "{d:?}");
+            assert_eq!(field(&v, "retry_safety"), "unsafe_without_reconciliation", "{d:?}");
+        }
+
+        let v = retry_semantics(
+            McpReError::ReplayCacheUnavailable.wire_code(),
+            ExecutionDisposition::ApprovalSpentNothingExecuted,
+        )
+        .expect("disposition arm answers");
+        assert_eq!(field(&v, "execution_status"), "not_executed");
+        assert_eq!(field(&v, "continuation_status"), "consumed");
+        assert_eq!(field(&v, "retry_safety"), "unsafe_without_new_elicitation");
+
+        let v = retry_semantics(
+            McpReError::EvidenceRetentionUnavailable.wire_code(),
+            ExecutionDisposition::NothingExecutedRetentionUnresolved,
+        )
+        .expect("disposition arm answers");
+        assert_eq!(field(&v, "execution_status"), "not_executed");
+        assert_eq!(field(&v, "retention_status"), "unresolved");
+        assert_eq!(field(&v, "retry_safety"), "unsafe_without_reconciliation");
+    }
 }
