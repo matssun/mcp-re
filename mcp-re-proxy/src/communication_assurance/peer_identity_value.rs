@@ -2,7 +2,9 @@
 //! The generic peer-identity value invariant — one owner, every provenance.
 //!
 //! A peer identity value is non-empty after trimming, length-bounded, and free of control
-//! characters. That is a property of an identity value as such: it is what makes the value
+//! characters: Cc controls, whitespace other than an ASCII space, and the invisible and
+//! bidi-reordering format controls. A value containing one can render as a different
+//! identity, so it is not safe to compare by eye or write to a log. That is a property of an identity value as such: it is what makes the value
 //! safe to compare, to bind a signer to, and to write to a log. It is NOT a property of
 //! X.509, of a SAN, of an HTTP header, or of any other mechanism that happens to carry
 //! one. An issuer can mint a SAN holding a CR/LF or a megabyte of padding exactly as a
@@ -26,6 +28,28 @@
 /// refuse a smuggling payload.
 pub const MAX_PEER_IDENTITY_LEN: usize = 8192;
 
+/// True for a character a well-formed identity never carries: a Cc control, any whitespace
+/// other than U+0020 (interior spaces are legitimate in RFC 2253 DNs), or an invisible or
+/// display-reordering format control.
+fn is_refused_char(c: char) -> bool {
+    c.is_control()
+        || (c.is_whitespace() && c != ' ')
+        || matches!(
+            c as u32,
+            0x00AD
+                | 0x061C
+                | 0x180E
+                | 0x200B..=0x200F
+                | 0x202A..=0x202E
+                | 0x2060..=0x2064
+                | 0x2066..=0x206F
+                | 0xFEFF
+                | 0xFFF9..=0xFFFB
+                | 0xE0001
+                | 0xE0020..=0xE007F
+        )
+}
+
 /// Why a candidate value is not a peer identity value.
 ///
 /// A closed algebra rather than an absence: "the certificate field held something the
@@ -37,8 +61,10 @@ pub enum PeerIdentityValueRefusal {
     Empty,
     /// Longer than [`MAX_PEER_IDENTITY_LEN`].
     TooLong,
-    /// Contains a control character (CR / LF / NUL / …): a log-injection and
-    /// header-smuggling shape that a well-formed identity value never has.
+    /// Contains a control character (CR / LF / NUL / …), a non-ASCII or non-space
+    /// whitespace, or an invisible or bidi format control (zero-width, LRM/RLM, embeddings,
+    /// overrides, isolates, BOM, tag characters): a log-injection, header-smuggling or
+    /// visual-spoofing shape that a well-formed identity value never has.
     ControlCharacter,
 }
 
@@ -66,7 +92,7 @@ impl PeerIdentityValue {
         if trimmed.len() > MAX_PEER_IDENTITY_LEN {
             return Err(PeerIdentityValueRefusal::TooLong);
         }
-        if trimmed.chars().any(char::is_control) {
+        if trimmed.chars().any(is_refused_char) {
             return Err(PeerIdentityValueRefusal::ControlCharacter);
         }
         Ok(PeerIdentityValue {
@@ -96,6 +122,15 @@ mod tests {
             "the accepted value is the trimmed one; surrounding whitespace is not part of \
              the identity"
         );
+        for unchanged in ["CN=Agent One,O=Example", "CN=Agent Ö,O=Exämple"] {
+            assert_eq!(
+                PeerIdentityValue::interpret(unchanged)
+                    .expect("accepted")
+                    .as_str(),
+                unchanged,
+                "interior ASCII space and non-ASCII letters stay admitted"
+            );
+        }
     }
 
     #[test]
@@ -132,6 +167,13 @@ mod tests {
             "agent\r\nX-Spoof: y",
             // A bare control character that is neither CR, LF, NUL nor TAB.
             "ag\u{7}ent",
+            "spiffe://example.org/agent-1\u{202E}",
+            "spiffe://example.org/a\u{200B}gent",
+            "\u{FEFF}spiffe://example.org/agent",
+            "spiffe://example.org/a\u{2066}b\u{2069}",
+            "spiffe://example.org/a\u{00A0}b",
+            "spiffe://example.org/a\u{2028}b",
+            "spiffe://example.org/a\u{E0041}b",
         ] {
             assert_eq!(
                 PeerIdentityValue::interpret(candidate),
