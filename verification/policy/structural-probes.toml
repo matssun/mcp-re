@@ -1208,3 +1208,177 @@ pub struct UnboundResponseSignatureFacts {
     pub response_signature_base_digest: RequestEvidence,
 }"""
 new = "pub type UnboundResponseSignatureFacts = BoundResponseSignatureFacts;"
+
+[[probe]]
+id = "S36"
+unit = "proxy.channel_associated_identity_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no module outside `channel_associated_identity` can write a ChannelAssociatedCertificatePeerIdentityEvidence literal, so every inhabitant came from `interpret_associated_identity` reading a channel-associated credential"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S36. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build.
+use super::channel_associated_identity::ChannelAssociatedCertificatePeerIdentityEvidence;
+
+#[allow(unreachable_code)]
+pub fn hostile() -> ChannelAssociatedCertificatePeerIdentityEvidence {
+    ChannelAssociatedCertificatePeerIdentityEvidence {
+        identity: todo!(), // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the `identity` field is bare-private to the owner module, which declares no child module but the `#[cfg(test)] mod tests`"
+alternate-constructors = "`interpret_associated_identity` is the only producer; `value()` and `source()` return projections; no From, Default or builder exists, and Clone copies an existing inhabitant"
+generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Serialize or Deserialize"
+test-only-construction = "the owner's tests build values only through `interpret_associated_identity`; no test-gated constructor or field visibility exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/channel_associated_identity.rs"
+old = """
+    identity: CertificatePeerIdentityEvidence,
+"""
+new = """
+    pub(super) identity: CertificatePeerIdentityEvidence,
+"""
+
+[[probe]]
+id = "S37"
+unit = "proxy.authenticated_relationship_peer_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no module outside `authenticated_relationship_peer` can write an AuthenticatedRelationshipPeerFacts literal, so an acceptance cannot be paired with an identity read from a different credential"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S37. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build.
+use super::authenticated_relationship_peer::AuthenticatedRelationshipPeerFacts;
+
+#[allow(unreachable_code)]
+pub fn hostile() -> AuthenticatedRelationshipPeerFacts {
+    AuthenticatedRelationshipPeerFacts {
+        accepted: todo!(), // STRUCTURAL-PROBE-SITE
+        identity: todo!(),
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to the owner module, which declares no child module but the `#[cfg(test)] mod tests`"
+alternate-constructors = "the owner's authenticate operation is the only producer; accessors return projections; no From, Default or builder exists, and Clone copies an existing inhabitant"
+generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Serialize or Deserialize"
+test-only-construction = "the owner's tests build values through the authenticate operation; no test-gated constructor or field visibility exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/authenticated_relationship_peer.rs"
+old = """
+    /// would make this type a second place where an acceptance is represented.
+    accepted: MechanismVerifiedCredentialEvidence,
+"""
+new = """
+    /// would make this type a second place where an acceptance is represented.
+    pub(super) accepted: MechanismVerifiedCredentialEvidence,
+"""
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/authenticated_relationship_peer.rs"
+old = """
+    identity: ChannelAssociatedCertificatePeerIdentityEvidence,
+}
+
+impl AuthenticatedRelationshipPeerFacts {"""
+new = """
+    pub(super) identity: ChannelAssociatedCertificatePeerIdentityEvidence,
+}
+
+impl AuthenticatedRelationshipPeerFacts {"""
+
+[[probe]]
+id = "S38"
+unit = "proxy.current_authenticated_peer_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no module outside `current_authenticated_peer` can write a CurrentAuthenticatedRelationshipPeerFacts literal, so an authentication cannot be paired with a currency evaluation made for a different peer"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S38. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build.
+use super::current_authenticated_peer::CurrentAuthenticatedRelationshipPeerFacts;
+
+#[allow(unreachable_code)]
+pub fn hostile() -> CurrentAuthenticatedRelationshipPeerFacts {
+    CurrentAuthenticatedRelationshipPeerFacts {
+        peer: todo!(), // STRUCTURAL-PROBE-SITE
+        evaluated_at: 0,
+        applied: todo!(),
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "all three fields are bare-private to the owner module, which declares no child module but the `#[cfg(test)] mod tests`"
+alternate-constructors = "the owner's currency operation is the only producer; accessors return projections; no From, Default or builder exists, and Clone copies an existing inhabitant"
+generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Serialize or Deserialize"
+test-only-construction = "the owner's tests build values through the currency operation; no test-gated constructor or field visibility exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs"
+old = """
+    peer: AuthenticatedRelationshipPeerFacts,
+    /// The instant"""
+new = """
+    pub(super) peer: AuthenticatedRelationshipPeerFacts,
+    /// The instant"""
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs"
+old = """
+    evaluated_at: i64,
+"""
+new = """
+    pub(super) evaluated_at: i64,
+"""
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs"
+old = """
+    applied: CurrencyControls,
+}
+
+impl CurrentAuthenticatedRelationshipPeerFacts {"""
+new = """
+    pub(super) applied: CurrencyControls,
+}
+
+impl CurrentAuthenticatedRelationshipPeerFacts {"""
+
+[[probe]]
+id = "S39"
+unit = "proxy.channel_associated_credential_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no module outside the channel-associated credential's module tree can call the private `associate` constructor"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S39. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build.
+use super::channel_associated_credential::ChannelAssociatedCertificateCredentialEvidence;
+
+pub fn hostile() {
+    let _ = ChannelAssociatedCertificateCredentialEvidence::associate(Vec::new()); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`associate` is private to the credential module; its descendants (`rustls_adapter` and the `#[cfg(test)]` `mechanism_harness`) are inside the boundary, and a newly added child module would be too, which this probe does not see"
+alternate-constructors = "`associate` is the only constructor; accessors return projections; no From, Default or builder exists"
+generated-or-deserialization = "no Serialize or Deserialize; the value is produced from a live handshake, never decoded"
+test-only-construction = "the owner's tests and the mechanism harness are descendants and reach `associate` by module privacy; no test-gated visibility widening exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mod.rs"
+old = """
+    fn associate(chain_der: Vec<Vec<u8>>) -> Result<Self, ChannelCredentialAssociationRefusal> {
+"""
+new = """
+    pub(super) fn associate(chain_der: Vec<Vec<u8>>) -> Result<Self, ChannelCredentialAssociationRefusal> {
+"""

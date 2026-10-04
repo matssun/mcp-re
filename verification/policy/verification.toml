@@ -2622,6 +2622,62 @@ to = "proxy.authenticated_relationship_peer"
 rationale = "The identity half of this product is the channel-associated identity linkage applied to the accepted credential. If that linkage stopped reading the relationship's own leaf, this product would authenticate the wrong certificate's identity while these controls — which vary the RELATIONSHIP and hold the policy fixed — stayed green."
 
 [[unit]]
+id = "proxy.channel_associated_identity_sole_producer"
+class = "V0"
+description = "No code outside `channel_associated_identity` can assemble a ChannelAssociatedCertificatePeerIdentityEvidence, so possession of one means the interpreter produced it from a channel-associated credential. WHICH certificate is read stays `proxy.channel_associated_identity`'s."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/channel_associated_identity.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/communication_assurance/channel_associated_identity_sole_producer",
+]
+
+[[unit]]
+id = "proxy.authenticated_relationship_peer_sole_producer"
+class = "V0"
+description = "No code outside `authenticated_relationship_peer` can assemble an AuthenticatedRelationshipPeerFacts by struct literal, so an acceptance and an identity cannot be paired by hand."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/authenticated_relationship_peer.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/communication_assurance/authenticated_relationship_peer_sole_producer",
+]
+
+[[unit]]
+id = "proxy.current_authenticated_peer_sole_producer"
+class = "V0"
+description = "No code outside `current_authenticated_peer` can assemble a CurrentAuthenticatedRelationshipPeerFacts by struct literal, so an authenticated peer and a currency evaluation cannot be paired by hand."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/communication_assurance/current_authenticated_peer_sole_producer",
+]
+
+[[unit]]
+id = "proxy.channel_associated_credential_sole_producer"
+class = "V0"
+description = "No module outside the channel-associated credential's module tree can call its private constructor."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mod.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/communication_assurance/channel_associated_credential_sole_producer",
+]
+
+[[unit]]
 id = "proxy.authenticated_relationship_peer"
 class = "V0"
 description = "The peer of an established relationship, authenticated: the mechanism's acceptance and the identity read from the leaf of that same accepted credential, composed inside one construction closure — and claiming nothing about currency, revocation, admission, authorization, channel binding, or which actor signed a request."
@@ -10563,7 +10619,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.channel_credential_custody_state"
 class = "V0"
-description = "WHETHER THE CHANNEL-ESTABLISHMENT PRIVATE KEY CAN LEAVE THE SIGNER HOLDING IT: both roles answer the custody question with ONE semantic fact, a file key is the exported state and carries the key it exports, the exported state cannot start without that key, the delegated state does not want it, any backend's selector names the same state and records itself, a channel mechanism that does not exist drives the same consumer, and a key object projects its own locator and no neighbours. Says nothing about which selector is legal beside the response-signing custody state — that relation is `proxy.cross_machine_legality`'s X2a."
+description = "WHETHER THE CHANNEL-ESTABLISHMENT PRIVATE KEY CAN LEAVE THE SIGNER HOLDING IT: both roles answer the custody question with ONE semantic fact, a file key is the exported state and carries the key it exports, the exported state cannot start without that key nor the delegated state without naming its key object, the delegated state does not want it, any backend's selector names the same state and records itself, a channel mechanism that does not exist drives the same consumer, and a key object projects its own locator and no neighbours. Says nothing about which selector is legal beside the response-signing custody state — that relation is `proxy.cross_machine_legality`'s X2a."
 paths = [
   "mcp-re-proxy/src/config_state/channel_credential_custody.rs",
   "mcp-re-proxy/src/config_state/channel_key_material.rs",
@@ -10577,6 +10633,7 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::channel_credential_custody::tests::a_channel_mechanism_that_does_not_exist_drives_the_same_consumer",
+  "//mcp-re-proxy:proxy_unit_test#config_state::channel_credential_custody::tests::a_delegated_state_cannot_start_without_the_key_object_it_names",
   "//mcp-re-proxy:proxy_unit_test#config_state::channel_credential_custody::tests::a_file_key_is_the_exported_state_and_carries_the_key_it_exports",
   "//mcp-re-proxy:proxy_unit_test#config_state::channel_credential_custody::tests::any_backends_selector_names_the_same_state_and_records_itself",
   "//mcp-re-proxy:proxy_unit_test#config_state::channel_credential_custody::tests::both_roles_answer_the_custody_question_with_one_semantic_fact",
