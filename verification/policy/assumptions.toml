@@ -2375,3 +2375,23 @@ review_requirement = "Owner review; any change of ECDSA backend or pinned versio
 premise_class = "assumed"
 affected_contracts = []
 tool_specific_mechanism = "none:trusted-primitive"
+
+[[assumption]]
+id = "ASM-0066"
+description = "The signed trust-anchor manifest is verified over the serialization the released clients already consume, and that serialization is a frozen compatibility surface for the present version: every signer and verifier reproduces the same signing input from it until ADR-MCPRE-053 replaces it."
+justification = """
+A compatibility constraint MCP-RE relies on, not a proved cryptographic property: nothing
+here establishes that the representation is canonical, only that changing it inside the
+present version would break every manifest already distributed to released clients. The
+replacement (compact JWS over the received bytes), its version boundary and cutover, its
+signing semantics and golden vectors belong to a separate ADR-MCPRE-053 slice, with no
+dual-format reader. Owner Ruling 13.1 (2026-10-04, finding 9f28d71b502a2418).
+"""
+scope = ["unit://client.trust_manifest_lifecycle", "boundary://boundary.unmodelled_own_behaviour"]
+owner = "mats@sundvall.name"
+introduced_by = "Owner Ruling 13.1 (r12 remediation, 9f28d71b502a2418)"
+review_requirement = "Owner review; any change to the manifest representation or its signing input."
+premise_class = "review-obligation"
+discharging_event = { kind = "owner-event", statement = "The ADR-MCPRE-053 serialization slice lands: the new manifest representation, its version boundary and cutover, signing semantics and golden vectors. This entry is then withdrawn, never renewed beside the new format." }
+affected_contracts = []
+tool_specific_mechanism = "none:compatibility-constraint"
