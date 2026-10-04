@@ -1088,6 +1088,11 @@ tested_symbols = [
   "//mcp-re-proxy:integration_test#client_verifier_posture_test::the_builder_enforces_expiration_and_admits_no_posture_argument",
   "//mcp-re-proxy:integration_test#client_verifier_posture_test::the_only_other_verifier_is_the_declared_fault_injector",
   "//mcp-re-proxy:integration_test#client_verifier_posture_test::the_rules_would_catch_each_regression",
+  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::client_verifier::tests::a_fresh_crl_admits_an_unrevoked_leaf_of_its_issuer",
+  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::client_verifier::tests::a_leaf_its_issuers_crl_revokes_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::client_verifier::tests::a_stale_crl_refuses_an_unrevoked_leaf_of_its_issuer",
+  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::client_verifier::tests::a_leaf_whose_issuer_has_no_crl_is_refused_when_crls_are_configured",
+  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::client_verifier::tests::an_unparseable_client_ca_is_refused_as_bad_client_ca",
 ]
 
 # M118 is the anti-vacuity probe and is worth naming as one: a store that refused every
