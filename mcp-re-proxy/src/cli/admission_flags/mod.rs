@@ -4,9 +4,9 @@
 //! An operator names `--admission` and then, flatly, the gate's inputs. The request has one
 //! tagged value, so this is the adapter.
 //!
-//! **Seven refusals live here now.** Five said that a gate input was set beside
+//! **Eight refusals live here now.** Six said that a gate input was set beside
 //! `--admission off`, and two were the degraded pair's illegal cells. The union and the
-//! `NonZeroU64` bound make all seven unbuildable, so the boundary has nothing left to
+//! `NonZeroU64` bound make all eight unbuildable, so the boundary has nothing left to
 //! examine and the parser — the one place that still sees the selection beside the value —
 //! answers them (ADR-MCPRE-067 §7). What did NOT move is every clause about what a supplied
 //! value SAYS: an authority that names nothing, or a key that does not decode, is still the
@@ -39,18 +39,20 @@ pub(super) struct AdmissionFlags {
 }
 
 impl AdmissionFlags {
+    /// Every value-taking flag of the family.
+    const FAMILY: [&'static str; 7] = [
+        "--admission",
+        "--admission-authority-kid",
+        "--admission-authority-pubkey",
+        "--admission-redis-url",
+        "--admission-record-max-age-secs",
+        "--admission-degraded-bound-secs",
+        "--admission-allow-degraded",
+    ];
+
     /// Whether this value-taking flag belongs to the family.
     pub(super) fn owns(flag: &str) -> bool {
-        matches!(
-            flag,
-            "--admission"
-                | "--admission-authority-kid"
-                | "--admission-authority-pubkey"
-                | "--admission-redis-url"
-                | "--admission-record-max-age-secs"
-                | "--admission-degraded-bound-secs"
-                | "--admission-allow-degraded"
-        )
+        Self::FAMILY.contains(&flag)
     }
 
     /// Read one flag of the family. [`Self::owns`] decided it is one.
@@ -144,7 +146,7 @@ impl AdmissionFlags {
 
     /// A gate input named beside `--admission off`.
     ///
-    /// Five flags, one sentence each half: the gate's inputs live inside the enforcing
+    /// Six flags, one sentence each half: the gate's inputs live inside the enforcing
     /// forms, so an unenforced request has nowhere to carry them and an auditor cannot be
     /// shown a configured-looking authority that gates nothing.
     fn dangling_refusal(&self) -> Result<(), String> {
@@ -156,6 +158,14 @@ impl AdmissionFlags {
                 "--admission-authority-kid / --admission-authority-pubkey / \
                  --admission-redis-url are set but --admission is off; enable it or remove \
                  them"
+                    .to_string(),
+            );
+        }
+        if self.record_max_age_secs.is_some() {
+            return Err(
+                "--admission-record-max-age-secs is set but --admission is off; the budget is \
+                 the revocation-currentness promise of a gate that does not exist. Enable \
+                 --admission or remove it"
                     .to_string(),
             );
         }
@@ -220,28 +230,24 @@ mod tests {
     /// Every gate input beside `--admission off` is answered where it is still visible.
     #[test]
     fn a_gate_input_beside_off_is_refused_by_the_adapter() {
-        /// A flag a case must name in its refusal, and the value that provokes it.
-        type Case = (&'static str, fn(&mut AdmissionFlags));
-        let cases: [Case; 5] = [
-            ("--admission-authority-kid", |f| {
-                f.take_authority_kid("a".to_string());
-            }),
-            ("--admission-authority-pubkey", |f| {
-                f.take_authority_pubkey("k".to_string());
-            }),
-            ("--admission-redis-url", |f| {
-                f.take_store_url("redis://h:6379".to_string());
-            }),
-            ("--admission-degraded-bound-secs", |f| {
-                f.take_degraded_bound("30").expect("an integer");
-            }),
-            ("--admission-allow-degraded", |f| {
-                f.take_allow_degraded("true").expect("a boolean");
-            }),
-        ];
-        for (flag, mutate) in cases {
+        /// A value that provokes the refusal of one gate-input flag.
+        fn sample(flag: &str) -> &'static str {
+            match flag {
+                "--admission-authority-kid"
+                | "--admission-authority-pubkey"
+                | "--admission-redis-url" => "sample",
+                "--admission-record-max-age-secs" => "60",
+                "--admission-degraded-bound-secs" => "30",
+                "--admission-allow-degraded" => "true",
+                other => panic!("no provoking value for {other}"),
+            }
+        }
+        for flag in AdmissionFlags::FAMILY
+            .iter()
+            .filter(|f| **f != "--admission")
+        {
             let mut flags = AdmissionFlags::default();
-            mutate(&mut flags);
+            flags.take(flag, sample(flag)).expect("a valid value");
             let err = flags.finish().expect_err("a gate input beside off");
             assert!(err.contains(flag), "{flag}: {err}");
             assert!(err.contains("--admission is off"), "{flag}: {err}");
