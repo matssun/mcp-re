@@ -236,6 +236,7 @@ attestations this view cannot see.
 | unit://proxy.retained_record_content | source, contracts or evidence | THM-0112 | _no consumer_ |
 | unit://proxy.retention_commitment | source, contracts or evidence | THM-0088 | _no consumer_ |
 | unit://proxy.retired_plane_cadence_retraction | source, contracts or evidence | THM-0131 | _no consumer_ |
+| unit://proxy.root_issuer_call_bound | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
 | unit://proxy.runtime_lifecycle_sole_mutator | source, contracts or evidence | THM-0012 | _no consumer_ |
 | unit://proxy.scrapi_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
@@ -499,3 +500,5 @@ attestations this view cannot see.
 | ASM-0065 | description, justification, scope or mechanism | http_profile.scitt_algorithm_agreement, http_profile.scitt_derived_root | assumption review |
 | ASM-0066 | description, justification, scope or mechanism | client.trust_manifest_lifecycle | assumption review |
 | ASM-0067 | description, justification, scope or mechanism | _no unit_ | assumption review |
+| ASM-0068 | description, justification, scope or mechanism | host.request_freshness_inputs, proxy.delegated_signing_credential | assumption review |
+| ASM-0069 | description, justification, scope or mechanism | http_profile.delegated_credential_chain | assumption review |

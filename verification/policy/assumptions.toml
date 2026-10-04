@@ -2417,3 +2417,96 @@ premise_class = "external-boundary"
 boundary_owner = "The operator writing the audit profile, across the profile document's `transparency_service_keys` member, under every registering auditor run (`--register-to`)."
 affected_contracts = []
 tool_specific_mechanism = "none:operator-assertion"
+
+[[assumption]]
+id = "ASM-0068"
+description = "`getrandom` over the host CSPRNG returns `Err` or unpredictable bytes."
+justification = """
+Two units rest their secrecy on bytes drawn from the operating system. The request nonce
+`host.request_freshness_inputs` produces is drawn by `SystemNonceSource::fill`, and replay
+freshness is worth what that nonce's unpredictability is worth: a nonce an attacker can predict
+is a request it can pre-sign a replay slot for. The delegated response-signing key
+`proxy.delegated_signing_credential` mints on every rotation is seeded by `getrandom::fill` in
+`delegated_wiring.rs`, and a predictable seed is a published private key. Both sites abort on
+`Err` rather than continue with the zeroed buffer, and `host.request_freshness_inputs` measures
+that every byte of a nonce is written; no measurement can say anything about whether the bytes
+that came back were unpredictable. Nothing in this repository can: the property belongs to the
+host's entropy source.
+
+So the premise is exactly the split `getrandom` itself draws. An unavailable source is
+reported, and every site handles that report; a source that answers with predictable bytes
+is not distinguishable from a good one by any test, and that is the case this entry
+registers. It is an environment premise and not a cryptographic one: the algorithms consuming
+the bytes are `boundary.crypto_primitives`' premises, and this states only what they are fed.
+
+`boundary.os_entropy` names four acquisition sites. The rotation backoff jitter in
+`signing_plane/mod.rs` falls back to no jitter on `Err` and protects no secret, and the OCSP
+request nonce in `ocsp.rs` belongs to no unit; neither unit in this scope rests on either.
+
+It stops being acceptable if `getrandom` is configured with a backend other than the host OS
+CSPRNG, if a site starts continuing with a buffer it did not fill after an `Err`, or if a host
+class is admitted whose CSPRNG can answer before it is seeded.
+"""
+scope = [
+  "unit://host.request_freshness_inputs",
+  "unit://proxy.delegated_signing_credential",
+  "boundary://boundary.os_entropy",
+]
+owner = "mats@sundvall.name"
+introduced_by = "owner-signature:tcb-os-entropy-premise (r12, fb18b3b14dc7bf01, b243d21bc1720a78)"
+review_requirement = "Owner review; any change of `getrandom` backend or version, and any new production acquisition site of OS entropy."
+premise_class = "external-boundary"
+boundary_owner = """
+The HOST OPERATING SYSTEM's CSPRNG, reached through the pinned `getrandom` crate's `fill`: every
+call either returns `Err` or fills the whole buffer with bytes unpredictable to every party other
+than this process.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0069"
+description = "The wall-clock `now` handed to the delegated-credential chain check is the verifying party's current UTC time, to within the deployment's configured skew of the issuer's clock."
+justification = """
+`http_profile.delegated_credential_chain` admits a credential only inside its own `nbf`/`exp`
+window, widened by the clamped skew (`check_freshness`). The chain holds no clock: `now` is an
+argument to every verifier operation, supplied by whoever verifies the response — the client
+proxy's verification clock, an SDK caller, or, for a retained exchange, the instant at which
+the exchange was retained. So the conclusion *this credential is inside its window* is a
+conclusion about the instant the chain was GIVEN, and it is a conclusion about the present only
+if that value is the present. Nothing in this repository can establish that: the reading comes
+from a host clock disciplined by whatever the verifying party runs.
+
+This is the per-unit counterpart of ASM-0057 and does not widen it. ASM-0057 states what the
+serving path hands the request-side verifier operations, scoped to `http_profile.freshness_window`
+and `http_profile.admission_currency`; the delegated chain is a response-side check fed by a
+different party's clock, and widening an owner-reviewed premise to a consumer it was not written
+for would reopen its review for the units it already serves.
+
+A clock that steps backwards re-admits a credential whose `exp` has passed, and one that steps
+forwards refuses a credential that is current; both are the same failure of this premise and
+neither is detectable from one response. The skew clamp bounds how far a misconfigured
+TOLERANCE can widen the window; it says nothing about a wrong READING.
+
+It stops being acceptable if the chain is ever handed a value that is not an acquisition of the
+verifying host's wall clock (or, for a retained exchange, the instant recorded when it was
+retained), or if the chain gains a clock of its own.
+"""
+scope = [
+  "unit://http_profile.delegated_credential_chain",
+  "boundary://boundary.clock",
+]
+owner = "mats@sundvall.name"
+introduced_by = "owner-signature:tcb-os-entropy-premise (r12, b243d21bc1720a78, clock half)"
+review_requirement = "Owner review if the delegated-credential window is judged against any value other than the verifying party's wall-clock reading, or if the chain gains a clock of its own."
+premise_class = "external-boundary"
+boundary_owner = """
+The operator of the VERIFYING host's clock discipline (NTP or equivalent), across the wall-clock
+acquisition that supplies `now` to a delegated-response verification: the reading is the current
+UTC time to within the configured skew of the issuer's clock.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-http-profile/src/delegation/verify.rs#check_freshness",
+]
+tool_specific_mechanism = "none:trusted-seam"

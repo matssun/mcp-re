@@ -331,6 +331,30 @@ paths = [
 beyond = "That the monotonic clock advances, and that it advances at a rate which makes an elapsed measurement a duration. It is not comparable to any peer's clock, which is why it is not boundary.clock."
 max_class_without_assumption = "V0"
 
+[[boundary]]
+id = "boundary.os_entropy"
+description = """
+ACQUISITION of randomness from the host operating system's CSPRNG. The authority this
+boundary names is the act of asking the OS for entropy and treating the bytes it returns as
+unpredictable — not the handling of bytes some caller already drew.
+"""
+kind = "environment"
+# Every production site that calls `getrandom::fill` directly, i.e. every place OS entropy
+# enters the system, named by the rule `boundary.clock` uses: the authority, not the callers
+# of a wrapper. `SystemNonceSource` in `nonce.rs` is the injected `NonceSource` seam the
+# request path reads its nonce through; its callers hold no entropy authority of their own
+# and are not listed. The other three draw directly: the delegated response-signing key seed
+# (`delegated_wiring.rs`), the rotation backoff jitter (`signing_plane/mod.rs`) and the OCSP
+# request nonce (`ocsp.rs`).
+paths = [
+  "mcp-re-host/src/nonce.rs",
+  "mcp-re-proxy/src/delegated_wiring.rs",
+  "mcp-re-proxy/src/ocsp.rs",
+  "mcp-re-proxy/src/signing_plane/mod.rs",
+]
+beyond = "Whether the bytes the host CSPRNG returns are unpredictable to every party other than this process. `getrandom` reports an unavailable source as `Err`; it cannot report a predictable one."
+max_class_without_assumption = "V0"
+
 # ---------------------------------------------------------------------------
 # What is deliberately NOT a boundary
 # ---------------------------------------------------------------------------
