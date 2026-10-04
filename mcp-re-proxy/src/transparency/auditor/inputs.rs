@@ -17,6 +17,7 @@ use std::path::Path;
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::scitt::ScittServiceTrustPin;
+use zeroize::Zeroizing;
 
 use crate::key_source::signing_key_from_seed_b64url;
 use crate::trust_document::TrustDocument;
@@ -45,10 +46,10 @@ impl AuditInputs {
         let pin: ScittServiceTrustPin =
             serde_json::from_slice(&read("--service-trust-pin", &invocation.service_trust_pin)?)
                 .map_err(|e| format!("--service-trust-pin: {e}"))?;
-        let seed = read("--issuer-key-seed", &invocation.issuer_key_seed)?;
-        let seed =
-            std::str::from_utf8(&seed).map_err(|_| "--issuer-key-seed: not UTF-8".to_owned())?;
-        let issuer = signing_key_from_seed_b64url(seed).map_err(|e| format!("{e:?}"))?;
+        let issuer = issuer_key(&Zeroizing::new(read(
+            "--issuer-key-seed",
+            &invocation.issuer_key_seed,
+        )?))?;
         Ok(AuditInputs {
             profile,
             trust,
@@ -74,4 +75,36 @@ impl AuditInputs {
 /// Read a file, naming what was being read when it failed.
 fn read(what: &str, path: &Path) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("{what} {}: {e}", path.display()))
+}
+
+/// The issuing key a seed file's bytes encode, refusing under the flag that named them.
+fn issuer_key(seed: &[u8]) -> Result<SigningKey, String> {
+    let seed = std::str::from_utf8(seed).map_err(|_| "--issuer-key-seed: not UTF-8".to_owned())?;
+    signing_key_from_seed_b64url(seed).map_err(|e| format!("--issuer-key-seed: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_malformed_issuer_seed_is_refused_under_its_flag_without_rendering_it() {
+        let Err(refusal) = issuer_key(b"not!base64url!seed-text") else {
+            panic!("a malformed seed must be refused");
+        };
+        assert!(refusal.starts_with("--issuer-key-seed:"), "{refusal}");
+        assert!(!refusal.contains("seed-text"), "{refusal}");
+    }
+
+    #[test]
+    fn an_issuer_seed_loads_the_key_it_encodes() {
+        let encoded = mcp_re_core::b64url_encode(&[7u8; 32]);
+        let key = issuer_key(encoded.as_bytes()).expect("a 32-byte seed loads");
+        assert_eq!(
+            key.public_key().to_b64url(),
+            SigningKey::from_seed_bytes(&[7u8; 32])
+                .public_key()
+                .to_b64url()
+        );
+    }
 }

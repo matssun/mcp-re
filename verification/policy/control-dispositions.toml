@@ -14020,6 +14020,15 @@ consequence = "high"
 root_relationship = "Beside NP-215: that proposition covers what a refusal says, and this one covers what a printed request value says."
 record = "docs/architecture/control-dispositions.md#np-238"
 
+[[proposition]]
+id = "NP-266"
+title = "The auditor's issuing key is loaded from its seed, and a refused seed is never rendered"
+carrier = "mcp-re-proxy/src/transparency/auditor/inputs.rs (issuer_key)"
+likely_owner = "none. NP-039 states the invocation parse, and NP-040 states what the profile enrolls; neither states the loading of the issuing key."
+consequence = "high"
+root_relationship = "Beside NP-039: the invocation names the seed file, and this proposition states what loading it yields and what its refusal says."
+record = "docs/architecture/control-dispositions.md#np-266"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -15235,4 +15244,20 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#blocking_mtls_harness::http1::read_bound_tests::reads_stop_at_the_terminator_and_the_declared_length"
 decision = "new-proposition"
 proposition = "NP-138"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20316"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::inputs::tests::a_malformed_issuer_seed_is_refused_under_its_flag_without_rendering_it"
+decision = "new-proposition"
+proposition = "NP-266"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20317"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::inputs::tests::an_issuer_seed_loads_the_key_it_encodes"
+decision = "new-proposition"
+proposition = "NP-266"
 recorded = "2026-10-04"

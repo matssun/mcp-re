@@ -4771,3 +4771,13 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none. `client.transport_server_identity` states the handshake identity, not the Host header.
 **Root relationship.** A premise of `client.transport_message_hygiene` beside `client.transport_server_identity`.
 **Severity:** `medium`.
+
+## NP-266 — the auditor's issuing key is loaded from its seed, and a refused seed is never rendered
+
+**Controls:** `mcp-re-proxy` `lib#transparency::auditor::inputs::tests::a_malformed_issuer_seed_is_refused_under_its_flag_without_rendering_it`, `lib#transparency::auditor::inputs::tests::an_issuer_seed_loads_the_key_it_encodes`.
+**Carrier:** `mcp-re-proxy/src/transparency/auditor/inputs.rs`.
+**Statement.** *The auditor's issuing key is the key its Base64URL seed file encodes, and a seed that is not UTF-8, not Base64URL or not 32 bytes is refused under `--issuer-key-seed` with text that never carries the seed.*
+**If false.** The auditor signs its statement under a key other than the one the operator named, or a refused seed file prints key material into an operator transcript.
+**Likely owner:** none. NP-039 states the invocation parse, and NP-040 states what the profile enrolls; neither states the loading of the issuing key.
+**Root relationship.** Beside NP-039.
+**Severity:** `high`.
