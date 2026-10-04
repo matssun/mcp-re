@@ -109,3 +109,67 @@ pub(super) fn parse_covered_components(
     }
     Ok(components)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALLOWLIST: [&str; 15] = [
+        "@method",
+        "@target-uri",
+        "@authority",
+        "@path",
+        "@status",
+        "content-digest",
+        "content-type",
+        "content-length",
+        "authorization",
+        "dpop",
+        "mcp-method",
+        "mcp-name",
+        "mcp-protocol-version",
+        "mcp-re-delegation",
+        "mcp-re-request-evidence",
+    ];
+
+    fn flags(list: &str) -> Result<Vec<(&'static str, bool)>, HttpProfileError> {
+        parse_covered_components(list).map(|v| v.iter().map(|c| (c.name, c.req)).collect())
+    }
+
+    #[test]
+    fn every_allowlisted_identifier_parses_and_a_foreign_one_is_refused() {
+        for name in ALLOWLIST {
+            assert_eq!(flags(&format!("\"{name}\"")).unwrap(), [(name, false)]);
+            assert_eq!(flags(&format!("\"{name}\";req")).unwrap(), [(name, true)]);
+        }
+        assert!(matches!(
+            flags("\"x-foreign\""),
+            Err(HttpProfileError::MalformedEvidence("unknown covered component"))
+        ));
+    }
+
+    #[test]
+    fn an_exact_name_and_req_repeat_is_refused_but_req_distinguishes() {
+        for list in [
+            "\"content-digest\" \"content-digest\"",
+            "\"content-digest\";req \"content-digest\";req",
+        ] {
+            assert!(matches!(
+                flags(list),
+                Err(HttpProfileError::MalformedEvidence("duplicate covered component"))
+            ));
+        }
+        assert_eq!(
+            flags("\"content-digest\" \"content-digest\";req").unwrap(),
+            [("content-digest", false), ("content-digest", true)]
+        );
+    }
+
+    #[test]
+    fn an_unquoted_identifier_is_refused() {
+        assert!(matches!(
+            flags("@method"),
+            Err(HttpProfileError::MalformedEvidence("component identifier"))
+        ));
+    }
+}
