@@ -460,6 +460,15 @@ consequence = "medium"
 root_relationship = "Beside THM-0117: credential completeness of the env source, which that theorem's web-identity scope does not reach."
 record = "docs/architecture/control-dispositions.md#np-240"
 
+[[proposition]]
+id = "NP-241"
+title = "An AWS credential renders its access key id and neither secret half"
+carrier = "mcp-re-proxy/src/aws_sigv4.rs (Debug for AwsCredentials)"
+likely_owner = "none. No unit's statement covers credential rendering; NP-185 is SecretString at pin.rs and NP-192 is residency."
+consequence = "high"
+root_relationship = "Beside NP-192: residency of the credential bytes, which says nothing about what a format string prints."
+record = "docs/architecture/control-dispositions.md#np-241"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14195,4 +14204,20 @@ project = "mcp-re-http-profile"
 control = "src/lib.rs#admission::tests::a_signer_returning_a_non_ed25519_signature_is_refused_at_issuance"
 decision = "new-proposition"
 proposition = "NP-102"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20224"
+project = "mcp-re-proxy"
+control = "src/lib.rs#redis_continuation_store::tests::an_unrepresentable_ttl_is_refused_before_any_command"
+decision = "new-proposition"
+proposition = "NP-119"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20225"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_sigv4::tests::aws_credentials_debug_names_the_key_id_and_redacts_both_secret_halves"
+decision = "new-proposition"
+proposition = "NP-241"
 recorded = "2026-10-04"

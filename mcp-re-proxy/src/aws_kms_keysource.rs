@@ -30,6 +30,7 @@ use mcp_re_core::b64url_encode;
 use mcp_re_core::verify_ed25519;
 use mcp_re_core::VerificationKey;
 
+use crate::aws_sigv4::AmzDate;
 use crate::aws_sigv4::Header;
 use crate::aws_sigv4::SigV4Signer;
 use crate::aws_sts::AwsCredentialSource;
@@ -267,37 +268,13 @@ fn endpoint_of(url: &str) -> Result<KmsEndpoint, KeyError> {
 }
 
 /// The SigV4 date for a clock reading, refusing one the clock owner marks as faulted.
-fn amz_date_at(now: i64) -> Result<String, RemoteSignerFailure> {
+fn amz_date_at(now: i64) -> Result<AmzDate, RemoteSignerFailure> {
     match u64::try_from(now) {
-        Ok(secs) if !crate::startup_plan::host_clock_is_faulted(now) => Ok(format_amz_date(secs)),
+        Ok(secs) if !crate::startup_plan::host_clock_is_faulted(now) => Ok(AmzDate::from_unix(secs)),
         _ => Err(RemoteSignerFailure::malformed(format!(
             "aws-kms: the host clock reads {now}, which no KMS request can be signed at"
         ))),
     }
-}
-
-/// Format a UNIX timestamp as SigV4's `YYYYMMDDTHHMMSSZ` (UTC). Hand-rolled via the
-/// civil-from-days algorithm to avoid a date-library dependency.
-fn format_amz_date(unix_secs: u64) -> String {
-    let days = (unix_secs / 86_400) as i64;
-    let sod = unix_secs % 86_400;
-    let (hour, min, sec) = (sod / 3600, (sod % 3600) / 60, sod % 60);
-    let (y, m, d) = civil_from_days(days);
-    format!("{y:04}{m:02}{d:02}T{hour:02}{min:02}{sec:02}Z")
-}
-
-/// Howard Hinnant's `civil_from_days`: days since 1970-01-01 → (year, month, day).
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
-    let doe = z - era * 146_097; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 /// The KMS `Sign` request body for the canonical preimage.
@@ -607,16 +584,6 @@ mod tests {
 
     fn spki_from_raw(raw: &[u8; 32]) -> Vec<u8> {
         Ed25519PublicKeyValue::spki_der_for_point(*raw)
-    }
-
-    /// GOLDEN: UTC formatting matches well-known timestamps.
-    #[test]
-    fn amz_date_formats_known_epochs() {
-        assert_eq!(format_amz_date(0), "19700101T000000Z");
-        // 2001-09-09T01:46:40Z — the well-known 1e9 UNIX timestamp.
-        assert_eq!(format_amz_date(1_000_000_000), "20010909T014640Z");
-        // 2015-08-30T12:36:00Z — the get-vanilla vector's instant.
-        assert_eq!(format_amz_date(1_440_938_160), "20150830T123600Z");
     }
 
     #[test]
@@ -1171,7 +1138,10 @@ mod tests {
             let err = amz_date_at(now).expect_err("a faulted clock must be refused");
             assert!(format!("{err:?}").contains("host clock"), "{now}: {err:?}");
         }
-        assert_eq!(amz_date_at(1_440_938_160).unwrap(), "20150830T123600Z");
+        assert_eq!(
+            amz_date_at(1_440_938_160).unwrap().as_str(),
+            "20150830T123600Z"
+        );
     }
 
     /// Credentials that change per call: AKIDFIRST at construction, AKIDSECOND on the

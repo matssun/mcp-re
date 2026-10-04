@@ -4505,3 +4505,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `medium`.
 **Root relationship.** Beside THM-0117: credential completeness of the env source, which that theorem's web-identity scope does not reach.
 **Recorded:** 2026-10-04, round-12 remediation of aws_sts.rs.
+
+## NP-241 — an AWS credential renders its access key id and neither secret half
+
+**Controls:** `mcp-re-proxy` `lib#aws_sigv4::tests::aws_credentials_debug_names_the_key_id_and_redacts_both_secret_halves`.
+**Carrier:** `mcp-re-proxy/src/aws_sigv4.rs` (Debug for AwsCredentials).
+**Statement.** *The Debug rendering of `AwsCredentials` — and so of every value that derives Debug over one — names the access key id, renders the secret access key and a present session token as `<redacted>`, and renders an absent session token as `<none>`; neither secret string appears.*
+**If false.** A `{:?}` of a credential, a `KeyError` chain or a panic message prints a live KMS-signing secret and bearer token verbatim into operator transcripts and logs.
+**Likely owner:** none. No unit's statement covers credential rendering; NP-185 is SecretString at pin.rs and NP-192 is residency.
+**Severity:** `high`.
+**Root relationship.** Beside NP-192: that proposition covers where credential bytes live, and this one covers what a printed credential says.
+**Recorded:** 2026-10-04, round-12 remediation of aws_sigv4.rs.

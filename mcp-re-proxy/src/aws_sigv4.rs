@@ -19,6 +19,9 @@ use sha2::Digest;
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
+mod amz_date;
+pub use amz_date::AmzDate;
+
 type HmacSha256 = Hmac<Sha256>;
 
 /// The SigV4 algorithm label and the credential-scope terminator.
@@ -27,12 +30,7 @@ const TERMINATOR: &str = "aws4_request";
 
 /// Lowercase hex (SigV4 requires lowercase) — kept local to avoid a `hex` dep.
 fn to_hex_lower(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push(char::from_digit((b >> 4) as u32, 16).expect("nibble"));
-        s.push(char::from_digit((b & 0x0f) as u32, 16).expect("nibble"));
-    }
-    s
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn sha256_hex(data: &[u8]) -> String {
@@ -41,8 +39,11 @@ fn sha256_hex(data: &[u8]) -> String {
     to_hex_lower(&h.finalize())
 }
 
+#[allow(clippy::expect_used)]
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    // HMAC accepts a key of any length, so `new_from_slice` cannot fail here.
+    // `Hmac<D>`'s `KeyInit::new_from_slice` has no rejecting length: a key longer than
+    // the block is hashed and a shorter one zero-padded, so the `InvalidLength` arm is
+    // uninhabited for every input and no total constructor over a slice exists.
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     mac.finalize().into_bytes().into()
@@ -139,15 +140,10 @@ impl SigV4Signer {
         }
     }
 
-    /// The `YYYYMMDD` credential-scope date carved from an `amz_date`.
-    fn datestamp(amz_date: &str) -> &str {
-        &amz_date[..8]
-    }
-
-    fn scope(&self, amz_date: &str) -> String {
+    fn scope(&self, amz_date: &AmzDate) -> String {
         format!(
             "{}/{}/{}/{}",
-            Self::datestamp(amz_date),
+            amz_date.datestamp(),
             self.region,
             self.service,
             TERMINATOR
@@ -156,12 +152,12 @@ impl SigV4Signer {
 
     /// Derive the SigV4 signing key (the HMAC chain kSecret→kDate→kRegion→
     /// kService→kSigning).
-    fn signing_key(&self, amz_date: &str) -> [u8; 32] {
+    fn signing_key(&self, amz_date: &AmzDate) -> [u8; 32] {
         let k_secret = Zeroizing::new(format!(
             "AWS4{}",
             self.credentials.secret_access_key.as_str()
         ));
-        let k_date = hmac_sha256(k_secret.as_bytes(), Self::datestamp(amz_date).as_bytes());
+        let k_date = hmac_sha256(k_secret.as_bytes(), amz_date.datestamp().as_bytes());
         let k_region = hmac_sha256(&k_date, self.region.as_bytes());
         let k_service = hmac_sha256(&k_region, self.service.as_bytes());
         hmac_sha256(&k_service, TERMINATOR.as_bytes())
@@ -192,14 +188,14 @@ impl SigV4Signer {
 
     /// Sign a request: given the headers to sign (must include `host`; for KMS also
     /// `content-type` and `x-amz-target`) plus the body and timestamp, produce the
-    /// `Authorization` header. `amz_date` is `YYYYMMDDTHHMMSSZ`; the caller is
+    /// `Authorization` header. `amz_date` is the signing instant; the caller is
     /// responsible for also sending `host`, `content-type`, `x-amz-target`,
     /// `x-amz-date`, and (if returned) `x-amz-security-token`.
-    pub fn sign(&self, mut headers: Vec<Header>, payload: &[u8], amz_date: &str) -> SignedAuth {
+    pub fn sign(&self, mut headers: Vec<Header>, payload: &[u8], amz_date: &AmzDate) -> SignedAuth {
         // x-amz-date is always signed.
         headers.push(Header {
             name: "x-amz-date".to_string(),
-            value: amz_date.to_string(),
+            value: amz_date.as_str().to_string(),
         });
         // Temporary-credential session token is signed when present.
         if let Some(token) = &self.credentials.session_token {
@@ -212,7 +208,8 @@ impl SigV4Signer {
         let (canonical_request, signed_headers) = Self::canonical_request(&headers, payload);
         let scope = self.scope(amz_date);
         let string_to_sign = format!(
-            "{ALGORITHM}\n{amz_date}\n{scope}\n{}",
+            "{ALGORITHM}\n{}\n{scope}\n{}",
+            amz_date.as_str(),
             sha256_hex(canonical_request.as_bytes())
         );
         let signature = to_hex_lower(&hmac_sha256(
@@ -225,7 +222,7 @@ impl SigV4Signer {
         );
         SignedAuth {
             authorization,
-            amz_date: amz_date.to_string(),
+            amz_date: amz_date.as_str().to_string(),
             security_token: self.credentials.session_token.clone(),
         }
     }
@@ -258,12 +255,12 @@ mod tests {
     #[test]
     fn sigv4_matches_published_get_vanilla_vector() {
         let signer = vanilla_signer();
-        let amz_date = "20150830T123600Z";
+        let amz_date = AmzDate::from_unix(1_440_938_160);
 
         // get-vanilla canonical headers: host + x-amz-date, empty body.
         let mut sorted: Vec<(String, String)> = vec![
             ("host".to_string(), "example.amazonaws.com".to_string()),
-            ("x-amz-date".to_string(), amz_date.to_string()),
+            ("x-amz-date".to_string(), amz_date.as_str().to_string()),
         ];
         sorted.sort_by(|a, b| a.0.cmp(&b.0));
         let canonical_headers: String = sorted.iter().map(|(n, v)| format!("{n}:{v}\n")).collect();
@@ -276,20 +273,49 @@ mod tests {
             sha256_hex(b"")
         );
 
-        let scope = signer.scope(amz_date);
+        let scope = signer.scope(&amz_date);
         assert_eq!(scope, "20150830/us-east-1/service/aws4_request");
         let string_to_sign = format!(
-            "{ALGORITHM}\n{amz_date}\n{scope}\n{}",
+            "{ALGORITHM}\n{}\n{scope}\n{}",
+            amz_date.as_str(),
             sha256_hex(canonical_request.as_bytes())
         );
         let signature = to_hex_lower(&hmac_sha256(
-            &signer.signing_key(amz_date),
+            &signer.signing_key(&amz_date),
             string_to_sign.as_bytes(),
         ));
 
         assert_eq!(
             signature, "5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31",
             "SigV4 signature must match AWS's published get-vanilla vector"
+        );
+    }
+
+    /// `sign()` end to end against AWS's published `post-vanilla` vector: it pins the
+    /// builder `sign()` uses, which the GET vector cannot.
+    #[test]
+    fn sign_matches_published_post_vanilla_vector() {
+        let host = || Header {
+            name: "host".to_string(),
+            value: "example.amazonaws.com".to_string(),
+        };
+        let amz_date = AmzDate::from_unix(1_440_938_160);
+        let with_date = vec![
+            host(),
+            Header {
+                name: "x-amz-date".to_string(),
+                value: amz_date.as_str().to_string(),
+            },
+        ];
+        let (canonical_request, _) = SigV4Signer::canonical_request(&with_date, b"");
+        assert_eq!(
+            canonical_request,
+            "POST\n/\n\nhost:example.amazonaws.com\nx-amz-date:20150830T123600Z\n\nhost;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        let auth = vanilla_signer().sign(vec![host()], b"", &amz_date);
+        assert_eq!(
+            auth.authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=5da7c1a2acd57cee7505fc6676e4e544621c30862966e37dddb68e92efbe5d6b"
         );
     }
 
@@ -310,7 +336,7 @@ mod tests {
     #[test]
     fn kms_sign_request_canonical_shape_is_stable() {
         let signer = vanilla_signer();
-        let amz_date = "20150830T123600Z";
+        let amz_date = AmzDate::from_unix(1_440_938_160);
         let body = br#"{"KeyId":"k","Message":"AA==","MessageType":"RAW","SigningAlgorithm":"ED25519_SHA_512"}"#;
         let headers = vec![
             Header {
@@ -329,7 +355,7 @@ mod tests {
         let mut to_sign = headers.clone();
         to_sign.push(Header {
             name: "x-amz-date".to_string(),
-            value: amz_date.to_string(),
+            value: amz_date.as_str().to_string(),
         });
         let (canonical_request, signed_headers) = SigV4Signer::canonical_request(&to_sign, body);
 
@@ -340,13 +366,29 @@ mod tests {
 
         // The end-to-end sign() must produce a SigV4 Authorization header naming the
         // same signed headers and credential scope.
-        let auth = signer.sign(headers, body, amz_date);
+        let auth = signer.sign(headers, body, &amz_date);
         assert!(auth
             .authorization
             .contains("SignedHeaders=content-type;host;x-amz-date;x-amz-target"));
         assert!(auth.authorization.starts_with(
             "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request"
         ));
+    }
+
+    #[test]
+    fn aws_credentials_debug_names_the_key_id_and_redacts_both_secret_halves() {
+        let mut c = AwsCredentials {
+            access_key_id: "AKIDEXAMPLE".to_string(),
+            secret_access_key: Zeroizing::new("secret-bytes-must-not-render".to_string()),
+            session_token: Some(Zeroizing::new("token-bytes-must-not-render".to_string())),
+        };
+        let rendered = format!("{c:?}");
+        assert!(rendered.contains("AKIDEXAMPLE"), "{rendered}");
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+        assert!(!rendered.contains("secret-bytes-must-not-render"), "{rendered}");
+        assert!(!rendered.contains("token-bytes-must-not-render"), "{rendered}");
+        c.session_token = None;
+        assert!(format!("{c:?}").contains("<none>"));
     }
 
     /// A session token is signed in and surfaced for sending.
@@ -367,7 +409,7 @@ mod tests {
                 value: "kms.us-east-1.amazonaws.com".to_string(),
             }],
             b"{}",
-            "20150830T123600Z",
+            &AmzDate::from_unix(1_440_938_160),
         );
         assert_eq!(
             auth.security_token.as_deref().map(String::as_str),

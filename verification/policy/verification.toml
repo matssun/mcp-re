@@ -6102,8 +6102,11 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::handle_lifetime_tests::a_mint_completing_inside_the_drop_join_window_cannot_restore_signing",
   "//mcp-re-proxy:proxy_unit_test#signing_plane::handle_lifetime_tests::a_surviving_signer_does_not_keep_the_rotation_worker_alive",
   # And the deployment-time half of the same refusal: a planned epoch source that cannot be
-  # read refuses at materialization rather than minting unrevocably later.
-  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch_wiring_tests::a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably",
+  # read refuses at materialization rather than minting unrevocably later. The reader-
+  # construction refusal exists only in the `redis_replay` lane (proxy_ext_unit_test); the
+  # build refusal is the non-`redis_replay` form (proxy_unit_test).
+  "//mcp-re-proxy:proxy_ext_unit_test#signing_plane::epoch_watch_wiring_tests::a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch_wiring_tests::a_planned_source_this_build_cannot_read_refuses_instead_of_minting_unrevocably",
   "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch_wiring_tests::no_planned_epoch_source_is_still_accepted",
   # ADR-MCPRE-069 NP-148, one R1 row needing no `paths` widening: `signing_plane/mod.rs` is
   # already this unit's, and "yields none before the first rotation" is the statement it
@@ -9752,6 +9755,7 @@ description = "The AWS KMS Ed25519 response signer: the key spec is read at cons
 paths = [
   "mcp-re-proxy/src/aws_kms_keysource.rs",
   "mcp-re-proxy/src/aws_sigv4.rs",
+  "mcp-re-proxy/src/aws_sigv4/amz_date.rs",
   "mcp-re-proxy/src/kms_keysource/handshake_control.rs",
 ]
 exported_contracts = []
@@ -9767,7 +9771,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::aws_backend_signs_and_verifies_end_to_end",
   "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::prehash_signature_is_rejected_before_return",
   "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::a_poisoned_signer_lock_still_signs",
-  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::amz_date_formats_known_epochs",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_sigv4::amz_date::tests::amz_date_formats_known_epochs",
   # The delegated-TLS handshake: the adapter's `Sign` output is accepted by a validating
   # rustls client, and a non-verifying one is not. Moved in-crate from `tls_test`, with the
   # local-seed constructor it needed deleted.
@@ -9789,6 +9793,7 @@ tested_symbols = [
   # makes every request unsignable; one that drifts WRONG makes them signable by the wrong
   # key. The published GET-vanilla vector is the external fixed point.
   "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_sigv4::tests::sigv4_matches_published_get_vanilla_vector",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_sigv4::tests::sign_matches_published_post_vanilla_vector",
   "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_sigv4::tests::kms_sign_request_canonical_shape_is_stable",
   "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_sigv4::tests::empty_payload_hash_is_well_known",
   "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_sigv4::tests::session_token_is_signed_and_returned",
