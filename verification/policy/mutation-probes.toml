@@ -11119,3 +11119,101 @@ each is stated against whatever clock it was handed. Only the composition says w
 and a backend left on the bare system clock is a deployment that declared a divergence bound and
 is not held to it.
 """
+
+[[probe]]
+id = "M436-proxy-a-session-that-goes-invalid-is-reopened-once"
+unit = "proxy.pkcs11_adapter"
+conjunct = "a session that goes invalid is reopened once and retried"
+path = "mcp-re-proxy/src/pkcs11_keysource/amortized_session.rs"
+anchor = """
+            Err(SessionOpError::SessionInvalid(_)) => {
+"""
+weakening = """
+            Err(SessionOpError::SessionInvalid(e)) => {
+                return Err(e);
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::session_invalid_reopens_once_and_retries",
+]
+note = """
+The first SessionInvalid is returned to the caller's match without the re-open arm; the arm that re-opens is made unreachable.
+"""
+
+[[probe]]
+id = "M437-proxy-a-fatal-error-is-not-retried"
+unit = "proxy.pkcs11_adapter"
+conjunct = "a fatal error is not retried"
+path = "mcp-re-proxy/src/pkcs11_keysource/amortized_session.rs"
+anchor = """
+            Err(SessionOpError::Fatal(e)) => Err(e),
+            Err(SessionOpError::SessionInvalid(_)) => {
+"""
+weakening = """
+            Err(SessionOpError::Fatal(_)) | Err(SessionOpError::SessionInvalid(_)) => {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::fatal_error_is_not_retried",
+]
+note = """
+A first-attempt Fatal is no longer propagated immediately.
+"""
+
+[[probe]]
+id = "M438-proxy-a-failed-retry-is-never-cached"
+unit = "proxy.pkcs11_adapter"
+conjunct = "a failed retry is never cached"
+path = "mcp-re-proxy/src/pkcs11_keysource/amortized_session.rs"
+anchor = """
+                        // `guard.session` stays None; `session` is dropped (closed) here.
+                        Err(e)
+"""
+weakening = """
+                        guard.session = Some(session);
+                        Err(e)
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::failed_retry_does_not_cache_the_session",
+]
+note = """
+The fresh session whose retried op failed Fatal is cached.
+"""
+
+[[probe]]
+id = "M439-proxy-the-reopen-cool-off-bounds-logins-per-unit-time"
+unit = "proxy.pkcs11_adapter"
+conjunct = "a session whose re-open fails, or whose freshly opened session is invalid again, is not re-opened by any caller within a cool-off"
+path = "mcp-re-proxy/src/pkcs11_keysource/amortized_session.rs"
+anchor = """
+            .is_some_and(|since| since.elapsed() < self.cool_off)
+"""
+weakening = """
+            .is_some_and(|_since| false)
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::amortized_session::tests::a_persistently_invalid_session_logs_in_twice_per_cool_off_not_per_request",
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::amortized_session::tests::a_failed_login_is_not_retried_within_the_cool_off",
+]
+note = """
+The cool-off check never refuses, so every request logs in.
+"""
+
+[[probe]]
+id = "M440-proxy-a-poisoned-session-is-retired-and-reopened"
+unit = "proxy.pkcs11_adapter"
+conjunct = "a session whose lock was poisoned by a panicking operation is retired and re-opened rather than left dead"
+path = "mcp-re-proxy/src/pkcs11_keysource/amortized_session.rs"
+anchor = """
+                let mut guard = poisoned.into_inner();
+                guard.session = None;
+                self.cached.clear_poison();
+                guard
+"""
+weakening = """
+                return Err(KeyError::NotFound(format!("pkcs11: session mutex poisoned: {poisoned}")));
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::amortized_session::tests::a_poisoned_session_is_retired_and_reopened",
+]
+note = """
+A poisoned lock kills the slot forever.
+"""

@@ -9834,7 +9834,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.pkcs11_adapter"
 class = "V0"
-description = "The PKCS#11-backed response signer: the Ed25519 private key never leaves the token, the public key is read from the token and re-emitted as well-formed RFC 8410 SPKI, and a 64-byte signature that does not verify under it is refused before emission. A session that goes invalid is reopened once and retried; a fatal error is not retried and a failed retry is never cached."
+description = "The PKCS#11-backed response signer: the Ed25519 private key never leaves the token, the public key is read from the token and re-emitted as well-formed RFC 8410 SPKI, and a 64-byte signature that does not verify under it is refused before emission. A session that goes invalid is reopened once and retried; a fatal error is not retried and a failed retry is never cached. A session whose re-open fails, or whose freshly opened session is invalid again, is not re-opened by any caller within a cool-off, so logins are bounded per unit time rather than per request; a session whose lock was poisoned by a panicking operation is retired and re-opened rather than left dead."
 paths = [
   # Enumerated rather than globbed, because a `lib#pkcs11_keysource::...` selector names a
   # module whose own source must be measured: without the module file in `paths`, the test
@@ -9872,6 +9872,10 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::session_invalid_reopens_once_and_retries",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::reopen_failure_after_invalid_fails_closed",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::failed_retry_does_not_cache_the_session",
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::amortized_session::tests::a_persistently_invalid_session_logs_in_twice_per_cool_off_not_per_request",
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::amortized_session::tests::a_failed_login_is_not_retried_within_the_cool_off",
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::amortized_session::tests::the_cool_off_expires",
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::amortized_session::tests::a_poisoned_session_is_retired_and_reopened",
   # THE ANTI-VACUITY HALF, AND THE ONLY ONE TAKEN OVER A REAL CRYPTOKI SURFACE. Every
   # `lib#` name above drives a fake device inside the crate, and all of them are
   # REFUSALS — `unverifiable_64byte_signature_is_rejected_before_emit` is satisfied by
