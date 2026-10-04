@@ -1,3 +1,11 @@
 {"baseline": 0, "commit": "f13ea3b8", "findings": [], "measured": 1, "metric": "too_many_lines", "path": "mcp-re-demo", "remediated_file": ""}
 {"baseline": 721, "commit": "7b3cd308", "findings": [], "measured": 722, "metric": "module-size", "path": "sdk/typescript/src/lib.rs", "remediated_file": ""}
 {"baseline": 721, "commit": "977550e2", "findings": [], "measured": 727, "metric": "module-size", "path": "sdk/typescript/src/lib.rs", "remediated_file": ""}
+{"baseline": 377, "commit": "f1ed54b0", "findings": ["5bb1f0c0188b1d33"], "measured": 405, "metric": "module-size", "path": "mcp-re-proxy/src/config_state/validation/residue.rs", "remediated_file": "mcp-re-proxy/src/http_profile_serve/receipt/mod.rs"}
+{"baseline": 519, "commit": "f1ed54b0", "findings": ["5bb1f0c0188b1d33"], "measured": 524, "metric": "module-size", "path": "mcp-re-proxy/src/http_profile_serve/mod.rs", "remediated_file": "mcp-re-proxy/src/http_profile_serve/receipt/mod.rs"}
+{"baseline": 721, "commit": "f1ed54b0", "findings": ["5bb1f0c0188b1d33"], "measured": 727, "metric": "module-size", "path": "sdk/typescript/src/lib.rs", "remediated_file": "mcp-re-proxy/src/http_profile_serve/receipt/mod.rs"}
+{"baseline": 377, "commit": "e9e7a668", "findings": ["074e8d4ca495b14c"], "measured": 405, "metric": "module-size", "path": "mcp-re-proxy/src/config_state/validation/residue.rs", "remediated_file": "mcp-re-proxy/src/config_state/validation/residue.rs"}
+{"baseline": 721, "commit": "e9e7a668", "findings": ["074e8d4ca495b14c"], "measured": 727, "metric": "module-size", "path": "sdk/typescript/src/lib.rs", "remediated_file": "mcp-re-proxy/src/config_state/validation/residue.rs"}
+{"baseline": 721, "commit": "1ea73fc1", "findings": ["c76d20ceab5c0932"], "measured": 727, "metric": "module-size", "path": "sdk/typescript/src/lib.rs", "remediated_file": "mcp-re-proxy/src/deployment_request/admission/availability.rs"}
+{"baseline": 721, "commit": "cec0256a", "findings": ["75682cb317ff0e1c"], "measured": 727, "metric": "module-size", "path": "sdk/typescript/src/lib.rs", "remediated_file": "mcp-re-proxy/src/deployment_request/admission/mod.rs"}
+{"baseline": 721, "commit": "fc163797", "findings": ["dc25c1b61554f8ca"], "measured": 727, "metric": "module-size", "path": "sdk/typescript/src/lib.rs", "remediated_file": "mcp-re-proxy/src/deployment_request/authorization.rs"}
