@@ -258,9 +258,10 @@ async fn a_duplicate_member_name_is_never_forwarded() {
         "the inner server was dispatched with a body the re-serializer had already \
          collapsed to last-one-wins"
     );
-    // 400: the fault is in the request, and the refusal is taken at the request-envelope
-    // boundary before admission spends a nonce or an approval on it.
-    assert_eq!(out.status, 400, "refused, not served");
+    // 403: evidence extraction reads the body one way and refuses a duplicate member, so the
+    // request fails verification before the envelope boundary, and before admission spends a
+    // nonce or an approval on it.
+    assert_eq!(out.status, 403, "refused, not served");
 }
 
 /// A number the `f64` carrier cannot hold exactly. `1234567890123456789.5` comes back
@@ -278,7 +279,7 @@ async fn a_number_the_f64_carrier_rewrites_is_never_forwarded() {
         seen.lock().unwrap().is_empty(),
         "the inner server was dispatched with a rewritten number"
     );
-    assert_eq!(out.status, 400, "refused, not served");
+    assert_eq!(out.status, 403, "refused, not served");
 }
 
 /// The negative control. The refusal is narrow: an ordinary body — including one
