@@ -297,6 +297,9 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::components::tests::a_duplicated_conditionally_covered_header_is_refused_even_when_one_is_covered",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::components::tests::a_req_flagged_component_does_not_cover_a_present_request_header",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::components::tests::require_components_refuses_a_missing_component_and_admits_a_superset",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::params::tests::an_absent_created_is_missing_evidence_not_a_stale_window",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::params::tests::an_absent_expires_is_missing_evidence_not_a_stale_window",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::params::tests::a_present_window_past_its_expiry_is_still_stale",
 ]
 
 # THM-0015's owner.

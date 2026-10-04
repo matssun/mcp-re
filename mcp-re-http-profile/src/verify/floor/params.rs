@@ -108,8 +108,8 @@ pub(crate) fn check_params(
         .as_deref()
         .and_then(|alg| policy.accepted_algorithm(alg))
         .ok_or(HttpProfileError::UnsupportedAlgorithm)?;
-    let created = params.created.ok_or(HttpProfileError::StaleWindow)?;
-    let expires = params.expires.ok_or(HttpProfileError::StaleWindow)?;
+    let created = params.created.ok_or(HttpProfileError::MissingEvidence("created"))?;
+    let expires = params.expires.ok_or(HttpProfileError::MissingEvidence("expires"))?;
     // Freshness with a bounded, symmetric skew tolerance (§5.1), through the one
     // predicate that states it. A signer deciding whether a window it is about to mint
     // will still be acceptable when its exchange completes asks the SAME function, so the
@@ -138,4 +138,55 @@ pub(crate) fn check_params(
         .clone()
         .ok_or(HttpProfileError::MissingEvidence("keyid"))?;
     Ok((created, expires, nonce, key_id, algorithm))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NOW: i64 = 1_700_000_000;
+
+    fn params() -> SignatureParams {
+        SignatureParams {
+            tag: Some(PROFILE_TAG.to_owned()),
+            alg: Some("ed25519".to_owned()),
+            created: Some(NOW),
+            expires: Some(NOW + 300),
+            nonce: Some("n".to_owned()),
+            keyid: Some("k".to_owned()),
+        }
+    }
+
+    fn refusal(params: &SignatureParams, now: i64) -> Option<HttpProfileError> {
+        check_params(params, &VerifierPolicy::default(), now, true).err()
+    }
+
+    #[test]
+    fn an_absent_created_is_missing_evidence_not_a_stale_window() {
+        let mut p = params();
+        p.created = None;
+        let err = refusal(&p, NOW);
+        assert_eq!(err, Some(HttpProfileError::MissingEvidence("created")));
+        assert_eq!(
+            err.map(|e| e.wire_code()),
+            Some("mcp-re.missing_envelope")
+        );
+    }
+
+    #[test]
+    fn an_absent_expires_is_missing_evidence_not_a_stale_window() {
+        let mut p = params();
+        p.expires = None;
+        assert_eq!(
+            refusal(&p, NOW),
+            Some(HttpProfileError::MissingEvidence("expires"))
+        );
+    }
+
+    #[test]
+    fn a_present_window_past_its_expiry_is_still_stale() {
+        let now = NOW + 300 + VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW + 1;
+        assert_eq!(refusal(&params(), now), Some(HttpProfileError::StaleWindow));
+        assert_eq!(refusal(&params(), NOW), None);
+    }
 }
