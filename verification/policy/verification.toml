@@ -292,6 +292,11 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#policy::tests::the_registry_maps_tokens_to_implemented_verifiers",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::request::tests::a_valid_request_consults_the_trust_seam_once_in_the_request_slot",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::request::tests::a_body_that_misses_its_digest_never_reaches_the_trust_seam",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::components::tests::the_conditionally_covered_set_is_exactly_the_credential_and_transport_headers",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::components::tests::every_conditionally_covered_header_present_but_uncovered_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::components::tests::a_duplicated_conditionally_covered_header_is_refused_even_when_one_is_covered",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::components::tests::a_req_flagged_component_does_not_cover_a_present_request_header",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::components::tests::require_components_refuses_a_missing_component_and_admits_a_superset",
 ]
 
 # THM-0015's owner.
@@ -4167,7 +4172,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.cross_machine_legality"
 class = "V0"
-description = "Pass 2 of the layer-A legality boundary: the relations that join two configuration machines. Every relation reads classified owner states rather than raw request fields, and each illegal combination is refused unconditionally rather than reinterpreted into a weaker posture."
+description = "Pass 2 of the layer-A legality boundary: the relations that join two configuration machines. No relation re-decides a state a machine already classified: X9 reads the recognised trust-revocation state and refuses no configuration, X2a reads the signing-source and channel-key request selections, and X6 reads a deny-list field no machine classifies. Each illegal combination X2a and X6 declare is refused unconditionally rather than reinterpreted into a weaker posture."
 paths = ["mcp-re-proxy/src/config_state/cross_machine.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -4176,8 +4181,8 @@ evidence = [
   "test://proxy/config_state/cross_machine_relations",
   "mutation://proxy/config_state/cross_machine_relations",
 ]
-# The last control is the one that keeps this pass from becoming a second opinion: the
-# trust-epoch posture is NOT re-derived here, it is read from the machine that owns it.
+# The last control pins X9's no-op: a push-networked trust-epoch configuration draws no X9
+# refusal. It cannot see whether a plan re-derives the epoch posture; no plan is in `paths`.
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::a_selector_matching_the_custody_state_is_legal",
   "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::every_selector_is_refused_under_every_other_custody_state",
