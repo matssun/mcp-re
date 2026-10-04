@@ -222,4 +222,91 @@ mod tests {
             ))
         );
     }
+
+    fn mint_der(params: rcgen::CertificateParams) -> Vec<u8> {
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("ed25519 key");
+        params
+            .self_signed(&key)
+            .expect("self-signed certificate")
+            .der()
+            .to_vec()
+    }
+
+    fn interpret(
+        der: &[u8],
+        policy: CertificateIdentityPolicy,
+    ) -> Result<super::CertificatePeerIdentityEvidence, CertificateIdentityRefusal> {
+        CertificateChainEvidence::from_leaf_der(der).interpret_identity(policy)
+    }
+
+    #[test]
+    fn a_duplicated_san_extension_in_real_der_refuses_as_uninterpretable_never_as_absent() {
+        let mut params = rcgen::CertificateParams::new(Vec::new()).expect("params");
+        params.subject_alt_names = vec![rcgen::SanType::URI(
+            "spiffe://example.org/peer".try_into().expect("uri"),
+        )];
+        assert!(
+            interpret(&mint_der(params.clone()), CertificateIdentityPolicy::UriSan).is_ok(),
+            "positive control: the single-SAN leaf interprets"
+        );
+
+        let mut content = vec![0x30u8, 0x13, 0x82, 0x11];
+        content.extend_from_slice(b"decoy.example.org");
+        params
+            .custom_extensions
+            .push(rcgen::CustomExtension::from_oid_content(
+                &[2, 5, 29, 17],
+                content,
+            ));
+        let der = mint_der(params);
+        for selected in [
+            CertificateIdentityPolicy::UriSan,
+            CertificateIdentityPolicy::DnsSan,
+        ] {
+            assert_eq!(
+                interpret(&der, selected),
+                Err(CertificateIdentityRefusal::Leaf(
+                    LeafIdentityRefusal::SelectedFieldUninterpretable { selected }
+                )),
+                "an unreadable SAN extension is not an absent SAN"
+            );
+        }
+    }
+
+    #[test]
+    fn a_common_name_the_parser_cannot_read_in_real_der_refuses_as_uninterpretable_never_as_absent()
+    {
+        let with_cn = |value: rcgen::DnValue| {
+            let mut params = rcgen::CertificateParams::new(Vec::new()).expect("params");
+            params.subject_alt_names = vec![rcgen::SanType::DnsName(
+                "peer.example.org".try_into().expect("dns"),
+            )];
+            let mut dn = rcgen::DistinguishedName::new();
+            dn.push(rcgen::DnType::CommonName, value);
+            params.distinguished_name = dn;
+            mint_der(params)
+        };
+        let readable = with_cn(rcgen::DnValue::Utf8String("peer.example.org".to_owned()));
+        assert!(
+            interpret(&readable, CertificateIdentityPolicy::CommonNameLegacy).is_ok(),
+            "positive control: a UTF8String common name interprets"
+        );
+
+        let bmp = with_cn(rcgen::DnValue::BmpString(
+            rcgen::string::BmpString::try_from("peer.example.org").expect("bmp"),
+        ));
+        assert_eq!(
+            interpret(&bmp, CertificateIdentityPolicy::CommonNameLegacy),
+            Err(CertificateIdentityRefusal::Leaf(
+                LeafIdentityRefusal::SelectedFieldUninterpretable {
+                    selected: CertificateIdentityPolicy::CommonNameLegacy
+                }
+            )),
+            "an unreadable common name is not an absent common name"
+        );
+        assert!(
+            interpret(&bmp, CertificateIdentityPolicy::DnsSan).is_ok(),
+            "unreadability is per field"
+        );
+    }
 }
