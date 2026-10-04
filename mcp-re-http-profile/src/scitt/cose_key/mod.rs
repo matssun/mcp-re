@@ -53,10 +53,11 @@ pub enum CoseVerificationKey {
 /// check and an invalid value is still unconstructible, because the check IS the
 /// constructor.
 ///
-/// Before this, `from_ec2_p256` checked the point and then discarded the parsed key, so
-/// every verification re-decoded it and the invariant was carried by *"the only constructor
-/// happens to check"*. That is a statement about one call site; this is a statement about
-/// the type.
+/// `pub`, and re-exported as `scitt::P256Point`, because it is the payload of the public
+/// variant `CoseVerificationKey::EcdsaP256`, so a caller holding or matching that variant
+/// can name what it holds. It is an opaque handle and grants no capability: no public
+/// constructor, field or method. The only way in is `CoseVerificationKey::from_ec2_p256`,
+/// and only this crate's verifier reads the key.
 #[derive(Debug, Clone)]
 pub struct P256Point {
     verifying: p256::ecdsa::VerifyingKey,
