@@ -165,7 +165,7 @@ impl TrustPlane {
             .spawn("test trust reload", move || body(halt))
             .expect("spawn test worker");
         let inner: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> =
-            Arc::new(crate::reloading_trust::SharedTrustStore(Arc::clone(&store)));
+            Arc::new(store.shared_resolver());
         TrustPlane {
             resolver: Arc::new(StaleFailsClosed {
                 inner,
@@ -279,9 +279,7 @@ impl TrustPlane {
         }
         let resolver = crate::trust_plane::revocation_resolver::build_revocation_resolver(
             &plan.revocation().tier(),
-            Box::new(crate::reloading_trust::SharedTrustStore(Arc::clone(
-                &trust_store,
-            ))),
+            Box::new(trust_store.shared_resolver()),
             trust_clock(),
             push_channel,
         );

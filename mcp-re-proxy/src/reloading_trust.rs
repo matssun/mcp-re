@@ -84,7 +84,11 @@ impl ReloadingTrustStore {
     }
 
     /// Swap in a freshly-read store. Subsequent resolves observe it, whole.
-    pub fn store(
+    ///
+    /// `pub(crate)` because the only legitimate caller is the `--trust` reload worker in
+    /// `crate::trust_plane::reload`, a sibling subtree that `pub(in path)` cannot name from
+    /// here; consumers receive a `SignerDirectory` or the resolve-only `shared_resolver`.
+    pub(crate) fn store(
         &self,
         resolver: InMemoryTrustResolver,
         signers: std::collections::HashMap<String, String>,
@@ -94,6 +98,11 @@ impl ReloadingTrustStore {
             Ok(mut guard) => *guard = next,
             Err(poisoned) => *poisoned.into_inner() = next,
         }
+    }
+
+    /// A resolve-only view of this store for the tier resolvers; it cannot swap.
+    pub(crate) fn shared_resolver(self: &Arc<Self>) -> SharedTrustStore {
+        SharedTrustStore(Arc::clone(self))
     }
 
     /// A live read-only view of the signer coordinate, for consumers that must observe
@@ -172,7 +181,7 @@ impl SignerDirectory {
 /// The tier wrappers take `Box<dyn TrustResolver + Send + Sync>` by value, while the
 /// reload task needs to keep writing to the same store — so the store lives behind an
 /// `Arc` and this is the boxable view of it.
-pub struct SharedTrustStore(pub Arc<ReloadingTrustStore>);
+pub(crate) struct SharedTrustStore(Arc<ReloadingTrustStore>);
 
 impl TrustResolver for SharedTrustStore {
     fn resolve(&self, signer: &str, key_id: &str) -> Result<VerificationKey, TrustResolverError> {
