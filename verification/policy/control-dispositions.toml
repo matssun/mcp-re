@@ -299,6 +299,14 @@ carrier = "tools/verification/test_scoped_verification.py"
 reason_family = "ND-001"
 recorded = "2026-09-25"
 
+[[disposition]]
+id = "ND-001-027"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_feature_lanes.py"
+reason_family = "ND-001"
+recorded = "2026-10-04"
+
 # ND-002 — 7 carrier(s)
 
 [[disposition]]

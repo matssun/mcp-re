@@ -8094,7 +8094,7 @@ weakening = """
         Scrapi11Fault::MalformedResponse { phase, detail } => RegistrationError::Refused(
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::every_post_submission_fault_is_indeterminate",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::every_post_submission_fault_is_indeterminate",
 ]
 note = """
 INDETERMINATE IS A WEAKER CLAIM THAN REFUSED, AND IT IS THE TRUE ONE. An answer this profile
@@ -8159,7 +8159,7 @@ weakening = """
         CapsuleAnchorFault::Transport { detail } => RegistrationError::Refused(format!(
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::tests::a_submission_that_never_went_out_is_indeterminate",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::tests::a_submission_that_never_went_out_is_indeterminate",
 ]
 note = """
 A SECOND MECHANISM LEAF, NOT A CONFIGURATION OF THE FIRST, and this probe is why that split is

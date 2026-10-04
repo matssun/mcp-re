@@ -258,6 +258,7 @@ stage_static() {
     && python3 scripts/assurance_obligation_gate.py \
     && python3 tools/verification/test_r9_linkage.py \
     && python3 tools/verification/test_evidence_class.py \
+    && python3 tools/verification/test_feature_lanes.py \
     `# Every file under verification/generated/ is what the catalogues render right now.` \
     `# It rode inside check-generated, which is the extraction-phase generated-model lane,` \
     `# so six cheap Markdown comparisons were reachable only through the pinned Linux` \

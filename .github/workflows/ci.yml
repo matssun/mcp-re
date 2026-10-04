@@ -538,6 +538,9 @@ jobs:
           # reason the comment above gives: `merge_path_gate.py` reads literal paths,
           # so a suite a workflow assembles at run time is one it cannot see.
           python3 tools/verification/test_evidence_class.py
+          # A cited control must be compiled by the target that cites it: a unit naming a
+          # feature-gated module's test in a target built without the feature measures nothing.
+          python3 tools/verification/test_feature_lanes.py
           # ADR-MCPRE-068 Phase 0B. These two are not only self-tests of a lane's edges —
           # they ARE the two lanes' liveness, because the ratification requires each to
           # fail-close on zero execution and neither registry is yet large enough for a

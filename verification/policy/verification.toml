@@ -7010,17 +7010,19 @@ evidence = [
 # modules above, whose fixtures drive real request and response shapes. It is in `paths`
 # because a change to it changes what those controls measure; it is not cited, because
 # there is nothing here to cite and inventing a symbol would be worse.
+# THE LANE IS `//mcp-re-proxy:proxy_auditor_unit_test`: this leaf compiles only under
+# `scitt_registration`, and the default `:proxy_unit_test` holds none of these controls.
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::tests::a_submission_that_never_went_out_is_indeterminate",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::tests::an_accepted_submission_with_an_unreadable_answer_does_not_report_a_failure",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::tests::the_statement_is_submitted_verbatim_to_this_contracts_resource",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::tests::a_receipt_about_another_statement_is_refused",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::tests::a_receipt_this_leaf_brings_back_is_accepted_only_after_it_verifies",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::tests::the_unsigned_log_coordinates_beside_the_receipt_are_not_consumed",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::fault::tests::a_transport_failure_is_not_a_failure_to_register",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::fault::tests::an_undefined_status_is_unknown_rather_than_a_refusal",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::fault::tests::only_a_pre_acceptance_answer_is_a_definitive_negative",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::capsule_anchor::fault::tests::an_accepted_submission_with_an_unreadable_answer_is_indeterminate_and_says_so",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::tests::a_submission_that_never_went_out_is_indeterminate",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::tests::an_accepted_submission_with_an_unreadable_answer_does_not_report_a_failure",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::tests::the_statement_is_submitted_verbatim_to_this_contracts_resource",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::tests::a_receipt_about_another_statement_is_refused",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::tests::a_receipt_this_leaf_brings_back_is_accepted_only_after_it_verifies",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::tests::the_unsigned_log_coordinates_beside_the_receipt_are_not_consumed",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::fault::tests::a_transport_failure_is_not_a_failure_to_register",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::fault::tests::an_undefined_status_is_unknown_rather_than_a_refusal",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::fault::tests::only_a_pre_acceptance_answer_is_a_definitive_negative",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::capsule_anchor::fault::tests::an_accepted_submission_with_an_unreadable_answer_is_indeterminate_and_says_so",
 ]
 
 [[unit]]
@@ -7044,30 +7046,32 @@ evidence = [
 # different wire vocabularies and different fault algebras are two units: a union would
 # invent an exclusion the deployment does not have, and a peer differing on a leaf's own
 # axes is a SECOND leaf rather than a configuration of the first.
+# THE LANE IS `//mcp-re-proxy:proxy_auditor_unit_test`: this leaf compiles only under
+# `scitt_registration`, and the default `:proxy_unit_test` holds none of these controls.
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_synchronous_registration_yields_a_receipt_that_verifies",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::an_asynchronous_registration_polls_until_the_receipt_is_ready",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_client_error_is_a_definitive_refusal",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::every_post_submission_fault_is_indeterminate",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::an_exhausted_budget_is_indeterminate",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_poll_that_never_completes_names_its_transport_failure",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_lost_receipt_resource_is_indeterminate_and_not_a_refusal",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_transport_failure_while_polling_is_retried_within_the_budget",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_rate_limit_is_throttled_and_a_503_is_not",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::a_location_outside_the_service_is_never_fetched",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::the_submitted_body_is_the_statement_verbatim",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::tests::the_protocol_revision_is_a_draft_and_names_itself",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::answer::tests::a_submission_rate_limit_and_a_503_are_different_faults",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::answer::tests::a_202_without_a_location_is_its_own_fault",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::answer::tests::a_location_outside_the_service_is_refused_by_the_reader",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::answer::tests::a_pending_answer_is_neither_success_nor_failure",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::answer::tests::a_receipt_body_is_read_only_under_the_cose_media_type",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::fault::tests::the_phase_reaches_the_message",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::fault::tests::every_refusal_names_the_draft_revision",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::fault::tests::only_a_pre_acceptance_answer_is_a_definitive_negative",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::wire::tests::rate_limiting_is_not_a_refusal",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::wire::tests::the_entries_url_has_exactly_one_separator",
-  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::scrapi::wire::tests::the_cose_type_is_matched_past_its_parameters",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::a_synchronous_registration_yields_a_receipt_that_verifies",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::an_asynchronous_registration_polls_until_the_receipt_is_ready",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::a_client_error_is_a_definitive_refusal",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::every_post_submission_fault_is_indeterminate",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::an_exhausted_budget_is_indeterminate",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::a_poll_that_never_completes_names_its_transport_failure",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::a_lost_receipt_resource_is_indeterminate_and_not_a_refusal",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::a_transport_failure_while_polling_is_retried_within_the_budget",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::a_rate_limit_is_throttled_and_a_503_is_not",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::a_location_outside_the_service_is_never_fetched",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::the_submitted_body_is_the_statement_verbatim",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::tests::the_protocol_revision_is_a_draft_and_names_itself",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::answer::tests::a_submission_rate_limit_and_a_503_are_different_faults",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::answer::tests::a_202_without_a_location_is_its_own_fault",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::answer::tests::a_location_outside_the_service_is_refused_by_the_reader",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::answer::tests::a_pending_answer_is_neither_success_nor_failure",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::answer::tests::a_receipt_body_is_read_only_under_the_cose_media_type",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::fault::tests::the_phase_reaches_the_message",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::fault::tests::every_refusal_names_the_draft_revision",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::fault::tests::only_a_pre_acceptance_answer_is_a_definitive_negative",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::wire::tests::rate_limiting_is_not_a_refusal",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::wire::tests::the_entries_url_has_exactly_one_separator",
+  "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::scrapi::wire::tests::the_cose_type_is_matched_past_its_parameters",
 ]
 
 # NP-042 (ADR-MCPRE-069), ratified by owner sign-off np-042-registration-receipt-acceptance-unit as
