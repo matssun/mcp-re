@@ -46,7 +46,9 @@ pub enum HttpProfileError {
     MissingCoveredComponent(&'static str),
     /// The signature parameters carry an unknown/foreign profile tag.
     UnknownProfileTag,
-    /// The signature algorithm is not the profile's `ed25519`.
+    /// An algorithm token this verifier will not verify under: either a message's declared
+    /// `alg` is outside the local verifier policy's accepted set (verification), or a
+    /// policy names an algorithm with no implemented verifier (policy construction).
     UnsupportedAlgorithm,
     /// The Ed25519 signature does not verify over the reconstructed base.
     InvalidSignature,
@@ -213,6 +215,7 @@ mod core_projection;
 #[cfg(test)]
 mod tests {
     use super::HttpProfileError;
+    use mcp_re_core::McpReError;
 
     /// What this file owns is the taxonomy, and the taxonomy's job is to keep failures
     /// that mean different things apart. MCPRE-92 separated omission from tampering
@@ -224,16 +227,27 @@ mod tests {
             HttpProfileError::MissingEvidence("signature"),
             HttpProfileError::MalformedEvidence("signature")
         );
+        assert_eq!(
+            HttpProfileError::MissingEvidence("signature").wire_code(),
+            "mcp-re.missing_envelope"
+        );
+        assert_eq!(
+            HttpProfileError::MalformedEvidence("signature").wire_code(),
+            "mcp-re.malformed_envelope"
+        );
     }
 
     /// A context-carrying variant is distinguished BY its context: two missing components
     /// are two different facts about the request, not one repeated.
     #[test]
     fn a_context_carrying_failure_names_what_was_missing() {
-        assert_ne!(
-            HttpProfileError::MissingCoveredComponent("@method"),
-            HttpProfileError::MissingCoveredComponent("content-digest")
-        );
+        let method = HttpProfileError::MissingCoveredComponent("@method");
+        let digest = HttpProfileError::MissingCoveredComponent("content-digest");
+        assert_ne!(method, digest);
+        assert_eq!(McpReError::from(&method), McpReError::MissingEnvelope);
+        assert_eq!(McpReError::from(&digest), McpReError::MissingEnvelope);
+        assert!(format!("{method:?}").contains("@method"));
+        assert!(format!("{digest:?}").contains("content-digest"));
     }
 
     /// A store outage is not a verdict about the caller's key. The taxonomy keeps them as
@@ -244,6 +258,14 @@ mod tests {
         assert_ne!(
             HttpProfileError::TrustResolverUnavailable,
             HttpProfileError::UnresolvedKeyId
+        );
+        assert_eq!(
+            HttpProfileError::TrustResolverUnavailable.wire_code(),
+            "mcp-re.trust_resolver_unavailable"
+        );
+        assert_eq!(
+            HttpProfileError::UnresolvedKeyId.wire_code(),
+            "mcp-re.actor_binding_failed"
         );
     }
 }
