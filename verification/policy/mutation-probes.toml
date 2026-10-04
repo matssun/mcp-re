@@ -11164,12 +11164,19 @@ unit = "proxy.pkcs11_adapter"
 conjunct = "a failed retry is never cached"
 path = "mcp-re-proxy/src/pkcs11_keysource/amortized_session.rs"
 anchor = """
-                        // `guard.session` stays None; `session` is dropped (closed) here.
-                        Err(e)
+                slot.cooling_since = Some(Instant::now());
+                Err(e)
+            }
+            Err(SessionOpError::Fatal(e)) => Err(e),
 """
 weakening = """
-                        guard.session = Some(session);
-                        Err(e)
+                slot.cooling_since = Some(Instant::now());
+                Err(e)
+            }
+            Err(SessionOpError::Fatal(e)) => {
+                slot.session = Some(session);
+                Err(e)
+            }
 """
 expect_red = [
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::failed_retry_does_not_cache_the_session",
