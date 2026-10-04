@@ -854,7 +854,7 @@ struct WriteFailingStore(InMemoryContinuationStore);
 impl AsyncContinuationStore for WriteFailingStore {
     fn create<'a>(
         &'a self,
-        _key: &'a str,
+        _key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
         _bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         _ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
@@ -871,7 +871,7 @@ impl AsyncContinuationStore for WriteFailingStore {
     }
     fn peek<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
         Option<mcp_re_proxy::continuation_store::RetainedHandles>,
@@ -880,7 +880,7 @@ impl AsyncContinuationStore for WriteFailingStore {
     }
     fn consume<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
         self.0.consume(key)
     }
@@ -2168,7 +2168,7 @@ struct PeekFailingStore(Arc<dyn AsyncContinuationStore>);
 impl AsyncContinuationStore for PeekFailingStore {
     fn create<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
         bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
@@ -2179,7 +2179,7 @@ impl AsyncContinuationStore for PeekFailingStore {
     }
     fn peek<'a>(
         &'a self,
-        _key: &'a str,
+        _key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
         Option<mcp_re_proxy::continuation_store::RetainedHandles>,
@@ -2194,7 +2194,7 @@ impl AsyncContinuationStore for PeekFailingStore {
     }
     fn consume<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
         self.0.consume(key)
     }
@@ -2207,7 +2207,7 @@ struct ConsumeFailingStore(Arc<dyn AsyncContinuationStore>);
 impl AsyncContinuationStore for ConsumeFailingStore {
     fn create<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
         bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
@@ -2218,7 +2218,7 @@ impl AsyncContinuationStore for ConsumeFailingStore {
     }
     fn peek<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
         Option<mcp_re_proxy::continuation_store::RetainedHandles>,
@@ -2227,7 +2227,7 @@ impl AsyncContinuationStore for ConsumeFailingStore {
     }
     fn consume<'a>(
         &'a self,
-        _key: &'a str,
+        _key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
         Box::pin(async {
             Err(

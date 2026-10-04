@@ -24,8 +24,8 @@
 //! is the wiring in `app.rs`.
 #![cfg(feature = "redis_replay")]
 
-use mcp_re_proxy::continuation_store::continuation_key;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
+use mcp_re_proxy::continuation_store::ContinuationKey;
 use mcp_re_proxy::continuation_store::Creation;
 use mcp_re_proxy::continuation_store::RetainedHandles;
 use mcp_re_proxy::redis_continuation_store::RedisContinuationStore;
@@ -33,8 +33,58 @@ use mcp_re_proxy::redis_continuation_store::RedisContinuationStore;
 /// The dispatch boundary the continuation key is scoped to; a second deployment on
 /// the same shared Redis has a different one, and therefore a different namespace.
 const AUD: &str = "did:example:server-1";
-const ACTOR_A: &str = "client:example.com:did:example:host-a:client-key-1";
-const ACTOR_B: &str = "client:example.com:did:example:host-b:client-key-2";
+
+/// A verification product whose resolved actor is `subject`/`keyid`: a continuation key
+/// exists only for the actor a verification resolved.
+fn verified_as(subject: &str, keyid: &str) -> mcp_re_http_profile::VerifiedMcpRequest {
+    let audience = mcp_re_http_profile::AudienceTuple {
+        audience_id: AUD.into(),
+        target_uri: "https://example.test/mcp".into(),
+        route: None,
+    };
+    mcp_re_http_profile::VerifiedMcpRequest {
+        floor: mcp_re_http_profile::CryptographicFloorVerifiedRequest {
+            profile_id: "p".into(),
+            signature_label: "mcpre".into(),
+            resolved_actor: mcp_re_http_profile::ResolvedActor {
+                identity: mcp_re_http_profile::ActorIdentity {
+                    role: "client".into(),
+                    trust_domain: "example.com".into(),
+                    subject: subject.into(),
+                    keyid: keyid.into(),
+                },
+                verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
+                slot: mcp_re_http_profile::SignerSlot::Request,
+            },
+            evidence: mcp_re_http_profile::RequestEvidence::from_signature_base(b"base"),
+            request_signature_base: b"base".to_vec(),
+            content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
+            created: 1,
+            expires: 2,
+            nonce: "n".into(),
+            key_id: keyid.into(),
+        },
+        audience: audience.clone(),
+        audience_hash: audience.audience_hash(),
+        request_block: mcp_re_http_profile::HttpRequestEvidenceBlock {
+            profile: "p".into(),
+            audience,
+            artifact_bindings: Vec::new(),
+            continuation: None,
+            admission: None,
+            admission_assertion: None,
+            authorization_decision: None,
+        },
+    }
+}
+
+fn actor_a() -> mcp_re_http_profile::VerifiedMcpRequest {
+    verified_as("did:example:host-a", "client-key-1")
+}
+
+fn actor_b() -> mcp_re_http_profile::VerifiedMcpRequest {
+    verified_as("did:example:host-b", "client-key-2")
+}
 
 /// A per-run suffix so each run targets a key space of its own: entries live for
 /// their TTL, and these tests assert a first `peek` finds what this run stored.
@@ -91,7 +141,7 @@ async fn peek_is_non_destructive_and_consume_is_one_shot_across_replicas() {
     };
     let (a, b) = two_replicas(&url).await;
     let state = format!("state-{}", run_id());
-    let key = continuation_key(AUD, ACTOR_A, state.as_bytes());
+    let key = ContinuationKey::for_request(AUD, &actor_a(), state.as_bytes());
     let expected = bases("one-shot");
 
     // OPEN on A.
@@ -140,8 +190,8 @@ async fn one_actors_continuation_is_not_reachable_by_another() {
     };
     let (a, b) = two_replicas(&url).await;
     let state = format!("state-{}", run_id());
-    let a_key = continuation_key(AUD, ACTOR_A, state.as_bytes());
-    let b_key = continuation_key(AUD, ACTOR_B, state.as_bytes());
+    let a_key = ContinuationKey::for_request(AUD, &actor_a(), state.as_bytes());
+    let b_key = ContinuationKey::for_request(AUD, &actor_b(), state.as_bytes());
     assert_ne!(
         a_key, b_key,
         "the same requestState under two actors is two keys"
@@ -178,7 +228,7 @@ async fn a_recorded_continuation_carries_a_bounded_ttl() {
         .await
         .expect("connects to Redis");
     let state = format!("state-{}", run_id());
-    let key = continuation_key(AUD, ACTOR_A, state.as_bytes());
+    let key = ContinuationKey::for_request(AUD, &actor_a(), state.as_bytes());
 
     store
         .create(&key, &bases("ttl"), 1)
@@ -212,7 +262,7 @@ async fn two_replicas_opening_one_key_yield_exactly_one_stored() {
     };
     let (a, b) = two_replicas(&url).await;
     let state = format!("state-{}", run_id());
-    let key = continuation_key(AUD, ACTOR_A, state.as_bytes());
+    let key = ContinuationKey::for_request(AUD, &actor_a(), state.as_bytes());
 
     let winner = bases("replica-a");
     let loser = bases("replica-b");

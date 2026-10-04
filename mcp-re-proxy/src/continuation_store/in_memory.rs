@@ -10,6 +10,7 @@
 
 use super::AsyncContinuationStore;
 use super::ContinuationFuture;
+use super::ContinuationKey;
 use super::ContinuationStoreError;
 use super::Creation;
 use super::RetainedHandles;
@@ -101,17 +102,20 @@ impl InMemoryContinuationStore {
 impl AsyncContinuationStore for InMemoryContinuationStore {
     fn create<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a ContinuationKey,
         bases: &'a RetainedHandles,
         ttl_secs: i64,
     ) -> ContinuationFuture<'a, Creation> {
-        let key = key.to_string();
+        let key = key.as_str().to_string();
         let bases = bases.clone();
         Box::pin(async move { self.insert_if_absent(key, bases, ttl_secs) })
     }
 
-    fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedHandles>> {
-        let key = key.to_string();
+    fn peek<'a>(
+        &'a self,
+        key: &'a ContinuationKey,
+    ) -> ContinuationFuture<'a, Option<RetainedHandles>> {
+        let key = key.as_str().to_string();
         Box::pin(async move {
             let now = std::time::Instant::now();
             Ok(self
@@ -124,8 +128,8 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
         })
     }
 
-    fn consume<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, bool> {
-        let key = key.to_string();
+    fn consume<'a>(&'a self, key: &'a ContinuationKey) -> ContinuationFuture<'a, bool> {
+        let key = key.as_str().to_string();
         Box::pin(async move {
             // `remove` returning Some is the single-process form of "this call is the
             // one that removed a live entry" — the map lock makes it atomic. An EXPIRED
@@ -146,6 +150,7 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
 #[cfg(test)]
 mod tests {
     use super::AsyncContinuationStore;
+    use super::ContinuationKey;
     use super::ContinuationStoreError;
     use super::InMemoryContinuationStore;
     use super::RetainedHandles;
@@ -187,7 +192,12 @@ mod tests {
     #[test]
     fn a_poisoned_correlation_map_is_unavailable_on_every_operation() {
         let store = Arc::new(InMemoryContinuationStore::new());
-        block_on(store.create("k", &bases(), 300)).expect("a fresh map stores");
+        block_on(store.create(
+            &ContinuationKey::of_parts("aud", "actor", b"k"),
+            &bases(),
+            300,
+        ))
+        .expect("a fresh map stores");
 
         let poisoner = Arc::clone(&store);
         let died = std::thread::spawn(move || {
@@ -199,14 +209,18 @@ mod tests {
 
         assert!(
             matches!(
-                block_on(store.create("k2", &bases(), 300)),
+                block_on(store.create(
+                    &ContinuationKey::of_parts("aud", "actor", b"k2"),
+                    &bases(),
+                    300
+                )),
                 Err(ContinuationStoreError::Unavailable { .. })
             ),
             "an open leg must not be told a key is free by a map nobody can trust"
         );
         assert!(
             matches!(
-                block_on(store.peek("k")),
+                block_on(store.peek(&ContinuationKey::of_parts("aud", "actor", b"k"))),
                 Err(ContinuationStoreError::Unavailable { .. })
             ),
             "a poisoned map must not read as an absent entry — that is an answer leg \
@@ -214,7 +228,7 @@ mod tests {
         );
         assert!(
             matches!(
-                block_on(store.consume("k")),
+                block_on(store.consume(&ContinuationKey::of_parts("aud", "actor", b"k"))),
                 Err(ContinuationStoreError::Unavailable { .. })
             ),
             "and consumption must not report a removal it cannot have performed"
@@ -226,10 +240,17 @@ mod tests {
     fn an_unrepresentable_ttl_is_refused_not_stored() {
         let store = InMemoryContinuationStore::new();
         assert!(matches!(
-            block_on(store.create("k", &bases(), i64::MAX)),
+            block_on(store.create(
+                &ContinuationKey::of_parts("aud", "actor", b"k"),
+                &bases(),
+                i64::MAX
+            )),
             Err(ContinuationStoreError::Unavailable { .. })
         ));
-        assert!(matches!(block_on(store.peek("k")), Ok(None)));
+        assert!(matches!(
+            block_on(store.peek(&ContinuationKey::of_parts("aud", "actor", b"k"))),
+            Ok(None)
+        ));
     }
 
     /// Consuming past TTL would honour an answer leg the Redis twin already dropped: an
@@ -237,14 +258,30 @@ mod tests {
     #[test]
     fn consuming_an_expired_entry_removes_it_but_reports_not_live() {
         let store = InMemoryContinuationStore::new();
-        block_on(store.create("expired", &bases(), -1)).expect("stored");
-        assert!(matches!(block_on(store.consume("expired")), Ok(false)));
+        block_on(store.create(
+            &ContinuationKey::of_parts("aud", "actor", b"expired"),
+            &bases(),
+            -1,
+        ))
+        .expect("stored");
+        assert!(matches!(
+            block_on(store.consume(&ContinuationKey::of_parts("aud", "actor", b"expired"))),
+            Ok(false)
+        ));
         assert!(!store
             .entries
             .lock()
             .expect("not poisoned")
-            .contains_key("expired"));
-        block_on(store.create("live", &bases(), 300)).expect("stored");
-        assert!(matches!(block_on(store.consume("live")), Ok(true)));
+            .contains_key(ContinuationKey::of_parts("aud", "actor", b"expired").as_str()));
+        block_on(store.create(
+            &ContinuationKey::of_parts("aud", "actor", b"live"),
+            &bases(),
+            300,
+        ))
+        .expect("stored");
+        assert!(matches!(
+            block_on(store.consume(&ContinuationKey::of_parts("aud", "actor", b"live"))),
+            Ok(true)
+        ));
     }
 }

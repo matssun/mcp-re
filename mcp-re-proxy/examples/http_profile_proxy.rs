@@ -65,8 +65,8 @@ use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::config_state::FreshnessWindow;
-use mcp_re_proxy::continuation_store::continuation_key;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
+use mcp_re_proxy::continuation_store::ContinuationKey;
 use mcp_re_proxy::continuation_store::Creation;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
 use mcp_re_proxy::continuation_store::RetainedHandles;
@@ -278,11 +278,7 @@ async fn handle(
         .as_ref()
         .and_then(|_| extract_request_state(&http_req.body));
     let answer_key = answer_state.as_ref().map(|state| {
-        continuation_key(
-            &expected_audience.audience_id,
-            &verified.resolved_actor().actor_id(),
-            state.as_bytes(),
-        )
+        ContinuationKey::for_request(&expected_audience.audience_id, &verified, state.as_bytes())
     });
     let retained = match &answer_key {
         Some(key) => state.continuations.peek(key).await.ok().flatten(),
@@ -426,9 +422,9 @@ async fn handle(
             if let Some(request_state) = open_leg_state {
                 let bases =
                     RetainedHandles::over(verified.request_signature_base(), &response_base);
-                let key = continuation_key(
+                let key = ContinuationKey::for_request(
                     &expected_audience.audience_id,
-                    &verified.resolved_actor().actor_id(),
+                    &verified,
                     request_state.as_bytes(),
                 );
                 // Anything but a fresh entry fails the leg closed: an outage could not

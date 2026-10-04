@@ -20,6 +20,7 @@ use redis::aio::ConnectionManager;
 
 use crate::continuation_store::AsyncContinuationStore;
 use crate::continuation_store::ContinuationFuture;
+use crate::continuation_store::ContinuationKey;
 use crate::continuation_store::ContinuationStoreError;
 use crate::continuation_store::Creation;
 use crate::continuation_store::RetainedHandles;
@@ -89,11 +90,11 @@ impl RedisContinuationStore {
 impl AsyncContinuationStore for RedisContinuationStore {
     fn create<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a ContinuationKey,
         bases: &'a RetainedHandles,
         ttl_secs: i64,
     ) -> ContinuationFuture<'a, Creation> {
-        let key = key.to_string();
+        let key = key.as_str().to_string();
         let value = encode_handles(bases);
         let mut conn = self.conn.clone();
         // A non-positive TTL would ask Redis for a <=0 PX; clamp to a 1s floor so a
@@ -139,8 +140,11 @@ impl AsyncContinuationStore for RedisContinuationStore {
         })
     }
 
-    fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedHandles>> {
-        let key = key.to_string();
+    fn peek<'a>(
+        &'a self,
+        key: &'a ContinuationKey,
+    ) -> ContinuationFuture<'a, Option<RetainedHandles>> {
+        let key = key.as_str().to_string();
         let mut conn = self.conn.clone();
         Box::pin(async move {
             // A plain GET: reading the handles the binding is checked against must not
@@ -162,8 +166,8 @@ impl AsyncContinuationStore for RedisContinuationStore {
         })
     }
 
-    fn consume<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, bool> {
-        let key = key.to_string();
+    fn consume<'a>(&'a self, key: &'a ContinuationKey) -> ContinuationFuture<'a, bool> {
+        let key = key.as_str().to_string();
         let mut conn = self.conn.clone();
         Box::pin(async move {
             // DEL returns the number of keys it actually removed, and Redis executes it
@@ -206,7 +210,10 @@ mod tests {
         RetainedHandles::over(b"prev-base", b"irr-base")
     }
 
-    const KEY: &str = "mcp-re:cont:abc";
+    /// The one key every wire test addresses.
+    fn key() -> ContinuationKey {
+        ContinuationKey::of_parts("aud", "actor", b"abc")
+    }
 
     /// A store wired to a scripted server, plus that server's recording.
     async fn store_against(reply: &str) -> (RedisContinuationStore, Commands) {
@@ -249,7 +256,7 @@ mod tests {
         let (store, seen) = store_against("+OK\r\n").await;
         assert_eq!(
             store
-                .create(KEY, &bases(), 300)
+                .create(&key(), &bases(), 300)
                 .await
                 .expect("SET accepted"),
             Creation::Stored,
@@ -264,7 +271,7 @@ mod tests {
         );
         let set = &commands[0];
         assert_eq!(set[0], "SET");
-        assert_eq!(set[1], KEY);
+        assert_eq!(set[1], key().as_str());
         assert_eq!(
             decode_handles(&set[2]),
             Some(bases()),
@@ -293,7 +300,7 @@ mod tests {
         let (store, seen) = store_against("$-1\r\n").await;
         assert_eq!(
             store
-                .create(KEY, &bases(), 300)
+                .create(&key(), &bases(), 300)
                 .await
                 .expect("a NIL reply is an ANSWER, not a transport failure"),
             Creation::Collision,
@@ -311,7 +318,7 @@ mod tests {
         // open leg closed on a merely degenerate window.
         for ttl_secs in [0, -5] {
             let (store, seen) = store_against("+OK\r\n").await;
-            store.create(KEY, &bases(), ttl_secs).await.expect("SET");
+            store.create(&key(), &bases(), ttl_secs).await.expect("SET");
             let commands = recorded(&seen);
             assert_eq!(commands[0][5], "1000", "ttl_secs {ttl_secs} must clamp up");
         }
@@ -320,7 +327,7 @@ mod tests {
     #[tokio::test]
     async fn an_unrepresentable_ttl_is_refused_before_any_command() {
         let (store, seen) = store_against("+OK\r\n").await;
-        let refused = store.create(KEY, &bases(), i64::MAX).await;
+        let refused = store.create(&key(), &bases(), i64::MAX).await;
         assert!(
             matches!(&refused, Err(ContinuationStoreError::Unavailable { details }) if details.contains("ttl")),
             "got {refused:?}"
@@ -336,8 +343,8 @@ mod tests {
         let reply = format!("${}\r\n{encoded}\r\n", encoded.len());
         let (store, seen) = store_against(&reply).await;
 
-        assert_eq!(store.peek(KEY).await.expect("GET"), Some(bases()));
-        assert_eq!(store.peek(KEY).await.expect("GET"), Some(bases()));
+        assert_eq!(store.peek(&key()).await.expect("GET"), Some(bases()));
+        assert_eq!(store.peek(&key()).await.expect("GET"), Some(bases()));
 
         let commands = recorded(&seen);
         assert_eq!(commands.len(), 2);
@@ -352,13 +359,13 @@ mod tests {
     #[tokio::test]
     async fn a_missing_entry_reads_as_absent_but_a_malformed_one_does_not() {
         let (store, _) = store_against("$-1\r\n").await;
-        assert_eq!(store.peek(KEY).await.expect("GET"), None);
+        assert_eq!(store.peek(&key()).await.expect("GET"), None);
 
         // A value this code cannot decode is a broken shared tier, not the answer
         // "never opened, expired, or already answered".
         let (store, _) = store_against("$5\r\nwrong\r\n").await;
         let err = store
-            .peek(KEY)
+            .peek(&key())
             .await
             .expect_err("an undecodable entry must not read as no entry");
         let ContinuationStoreError::Unavailable { details } = err;
@@ -369,7 +376,7 @@ mod tests {
     async fn the_delete_count_is_the_one_shot_verdict() {
         let (store, seen) = store_against(":1\r\n").await;
         assert!(
-            store.consume(KEY).await.expect("DEL"),
+            store.consume(&key()).await.expect("DEL"),
             "removing a live entry is what admits this answer leg"
         );
         assert_eq!(recorded(&seen)[0][0], "DEL");
@@ -377,7 +384,7 @@ mod tests {
         // Nothing removed: the entry was already answered, so this leg must be refused.
         let (store, _) = store_against(":0\r\n").await;
         assert!(
-            !store.consume(KEY).await.expect("DEL"),
+            !store.consume(&key()).await.expect("DEL"),
             "a second answer leg spends a human approval twice"
         );
     }
@@ -387,21 +394,21 @@ mod tests {
         let (store, _) = store_against("-ERR backend down\r\n").await;
 
         let store_err = store
-            .create(KEY, &bases(), 300)
+            .create(&key(), &bases(), 300)
             .await
             .expect_err("an unrecorded open leg cannot be honoured cross-replica");
         let ContinuationStoreError::Unavailable { details } = store_err;
         assert!(details.contains("SET"), "got: {details}");
 
         let peek_err = store
-            .peek(KEY)
+            .peek(&key())
             .await
             .expect_err("a transient failure must not be indistinguishable from no entry");
         let ContinuationStoreError::Unavailable { details } = peek_err;
         assert!(details.contains("GET"), "got: {details}");
 
         let consume_err = store
-            .consume(KEY)
+            .consume(&key())
             .await
             .expect_err("an unconfirmed removal must not read as a one-shot win");
         let ContinuationStoreError::Unavailable { details } = consume_err;

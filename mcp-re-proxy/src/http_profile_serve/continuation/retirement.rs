@@ -94,8 +94,8 @@ pub(in crate::http_profile_serve) enum Retirement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::continuation_store::continuation_key;
     use crate::continuation_store::AsyncContinuationStore;
+    use crate::continuation_store::ContinuationKey;
     use crate::continuation_store::ContinuationStoreError;
     use crate::continuation_store::RetainedHandles;
     use crate::http_profile_serve::continuation::answer_leg::tests::{http_request, verified_as};
@@ -166,7 +166,7 @@ mod tests {
         let actor_id = verified_as("did:example:host-a", "key-1")
             .resolved_actor()
             .actor_id();
-        let key = continuation_key("aud", &actor_id, b"s-1");
+        let key = ContinuationKey::of_parts("aud", &actor_id, b"s-1");
         store
             .create(&key, &RetainedHandles::over(b"req", b"resp"), 300)
             .await
@@ -206,7 +206,7 @@ mod tests {
     impl AsyncContinuationStore for UnansweringStore {
         fn create<'a>(
             &'a self,
-            _key: &'a str,
+            _key: &'a ContinuationKey,
             _bases: &'a RetainedHandles,
             _ttl_secs: i64,
         ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
@@ -216,14 +216,14 @@ mod tests {
 
         fn peek<'a>(
             &'a self,
-            _key: &'a str,
+            _key: &'a ContinuationKey,
         ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>> {
             Box::pin(async { Ok(None) })
         }
 
         fn consume<'a>(
             &'a self,
-            _key: &'a str,
+            _key: &'a ContinuationKey,
         ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
             Box::pin(async {
                 Err(ContinuationStoreError::Unavailable {

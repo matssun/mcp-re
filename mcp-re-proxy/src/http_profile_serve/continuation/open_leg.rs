@@ -7,7 +7,7 @@
 
 use mcp_re_core::McpReError;
 
-use crate::continuation_store::continuation_key;
+use crate::continuation_store::ContinuationKey;
 use crate::continuation_store::Creation;
 use crate::continuation_store::RetainedHandles;
 use crate::exchange_state::Established;
@@ -84,7 +84,7 @@ impl ContinuationPlane {
             return Err(Refusal::new(McpReError::ReplayCacheUnavailable, 503));
         };
         let bases = RetainedHandles::over(ex.verified.request_signature_base(), &response_base);
-        let key = continuation_key(audience_id, ex.actor_id, state.as_bytes());
+        let key = ContinuationKey::for_request(audience_id, ex.verified, state.as_bytes());
         // Named so the arm below stays an EXPRESSION: a block arm is a nesting level, and
         // this function is inside a loop inside a method already.
         let conflict = || Refusal::new(McpReError::ContinuationConflict, 409);
@@ -118,12 +118,12 @@ mod tests {
         use super::super::answer_leg::tests as fixtures;
         use std::sync::Mutex;
 
-        struct CapturingStore(Mutex<Vec<String>>);
+        struct CapturingStore(Mutex<Vec<ContinuationKey>>);
 
         impl crate::continuation_store::AsyncContinuationStore for CapturingStore {
             fn create<'a>(
                 &'a self,
-                key: &'a str,
+                key: &'a ContinuationKey,
                 _bases: &'a RetainedHandles,
                 _ttl_secs: i64,
             ) -> crate::continuation_store::ContinuationFuture<'a, Creation> {
@@ -133,7 +133,7 @@ mod tests {
 
             fn peek<'a>(
                 &'a self,
-                _key: &'a str,
+                _key: &'a ContinuationKey,
             ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>>
             {
                 Box::pin(async { Ok(None) })
@@ -141,7 +141,7 @@ mod tests {
 
             fn consume<'a>(
                 &'a self,
-                _key: &'a str,
+                _key: &'a ContinuationKey,
             ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
                 Box::pin(async { Ok(false) })
             }
@@ -171,11 +171,7 @@ mod tests {
 
         assert_eq!(
             store.0.lock().expect("keys").clone(),
-            vec![continuation_key(
-                "aud",
-                &verified.resolved_actor().actor_id(),
-                b"s-1"
-            )]
+            vec![ContinuationKey::for_request("aud", &verified, b"s-1")]
         );
     }
 
@@ -198,7 +194,7 @@ mod tests {
         impl crate::continuation_store::AsyncContinuationStore for CollidingStore {
             fn create<'a>(
                 &'a self,
-                _key: &'a str,
+                _key: &'a ContinuationKey,
                 _bases: &'a RetainedHandles,
                 _ttl_secs: i64,
             ) -> crate::continuation_store::ContinuationFuture<'a, Creation> {
@@ -208,7 +204,7 @@ mod tests {
 
             fn peek<'a>(
                 &'a self,
-                _key: &'a str,
+                _key: &'a ContinuationKey,
             ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>>
             {
                 Box::pin(async { Ok(None) })
@@ -216,7 +212,7 @@ mod tests {
 
             fn consume<'a>(
                 &'a self,
-                _key: &'a str,
+                _key: &'a ContinuationKey,
             ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
                 Box::pin(async { Ok(false) })
             }
@@ -304,7 +300,7 @@ mod tests {
         impl crate::continuation_store::AsyncContinuationStore for FailingStore {
             fn create<'a>(
                 &'a self,
-                _key: &'a str,
+                _key: &'a ContinuationKey,
                 _bases: &'a RetainedHandles,
                 _ttl_secs: i64,
             ) -> crate::continuation_store::ContinuationFuture<'a, Creation> {
@@ -320,7 +316,7 @@ mod tests {
 
             fn peek<'a>(
                 &'a self,
-                _key: &'a str,
+                _key: &'a ContinuationKey,
             ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>>
             {
                 Box::pin(async { Ok(None) })
@@ -328,7 +324,7 @@ mod tests {
 
             fn consume<'a>(
                 &'a self,
-                _key: &'a str,
+                _key: &'a ContinuationKey,
             ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
                 Box::pin(async { Ok(false) })
             }

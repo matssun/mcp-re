@@ -89,7 +89,7 @@ mod retained_handles;
 pub use in_memory::InMemoryContinuationStore;
 // Re-exported rather than relocated: the key and the contract are one public surface to
 // every consumer, and both legs reach for them together.
-pub use key::continuation_key;
+pub use key::ContinuationKey;
 pub use key::CONTINUATION_KEY_PREFIX;
 pub use retained_handles::RetainedHandles;
 
@@ -134,8 +134,8 @@ pub type ContinuationFuture<'a, T> =
 
 /// The fleet-shared MRTR continuation correlation tier.
 ///
-/// `create` establishes the open-leg bases under `key` (an actor-scoped `requestState`
-/// digest) with a bounded TTL, refusing to disturb a live entry; `peek` reads them
+/// `create` establishes the open-leg bases under `key` (a [`ContinuationKey`], minted only
+/// from the verification product) with a bounded TTL, refusing to disturb a live entry; `peek` reads them
 /// without side effects; `consume` atomically removes them and reports whether it was
 /// the caller that did so.
 /// Implementations MUST be non-blocking — all three are awaited on the per-core
@@ -167,7 +167,7 @@ pub trait AsyncContinuationStore: Send + Sync {
     /// outage may be retried, a collision may not — the key will still be taken.
     fn create<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a ContinuationKey,
         bases: &'a RetainedHandles,
         ttl_secs: i64,
     ) -> ContinuationFuture<'a, Creation>;
@@ -175,7 +175,10 @@ pub trait AsyncContinuationStore: Send + Sync {
     /// Read the retained bases for `key` WITHOUT removing them. `Ok(None)` means no
     /// live entry (never opened, expired, or already answered) — the answer leg then
     /// fails closed on the continuation binding.
-    fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedHandles>>;
+    fn peek<'a>(
+        &'a self,
+        key: &'a ContinuationKey,
+    ) -> ContinuationFuture<'a, Option<RetainedHandles>>;
 
     /// Atomically remove the entry for `key`, returning whether THIS call removed a
     /// live one.
@@ -184,7 +187,7 @@ pub trait AsyncContinuationStore: Send + Sync {
     /// that both peeked the same entry and both bound successfully, exactly one gets
     /// `true`. The other MUST be failed closed — it is answering a continuation that
     /// has already been answered.
-    fn consume<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, bool>;
+    fn consume<'a>(&'a self, key: &'a ContinuationKey) -> ContinuationFuture<'a, bool>;
 }
 
 #[cfg(test)]
@@ -205,7 +208,7 @@ mod tests {
     #[tokio::test]
     async fn peek_does_not_consume_and_consume_is_one_shot() {
         let store = InMemoryContinuationStore::new();
-        let key = continuation_key(AUD, ACTOR_A, b"state-1");
+        let key = ContinuationKey::of_parts(AUD, ACTOR_A, b"state-1");
         store.create(&key, &bases(), 300).await.unwrap();
 
         // Reading is free of side effects: the binding is checked against these bytes
@@ -224,10 +227,10 @@ mod tests {
     async fn one_actors_entry_is_not_reachable_by_another() {
         // The cross-actor denial this scoping exists to stop: B naming A's requestState.
         let store = InMemoryContinuationStore::new();
-        let a_key = continuation_key(AUD, ACTOR_A, b"state-1");
+        let a_key = ContinuationKey::of_parts(AUD, ACTOR_A, b"state-1");
         store.create(&a_key, &bases(), 300).await.unwrap();
 
-        let b_key = continuation_key(AUD, ACTOR_B, b"state-1");
+        let b_key = ContinuationKey::of_parts(AUD, ACTOR_B, b"state-1");
         assert_ne!(a_key, b_key);
         assert_eq!(store.peek(&b_key).await.unwrap(), None);
         assert!(!store.consume(&b_key).await.unwrap());
@@ -248,7 +251,7 @@ mod tests {
     #[tokio::test]
     async fn the_first_open_leg_stores() {
         let store = InMemoryContinuationStore::new();
-        let key = continuation_key(AUD, ACTOR_A, b"state-1");
+        let key = ContinuationKey::of_parts(AUD, ACTOR_A, b"state-1");
         assert_eq!(
             store.create(&key, &bases(), 300).await.unwrap(),
             Creation::Stored
@@ -266,7 +269,7 @@ mod tests {
     #[tokio::test]
     async fn a_second_open_on_a_live_key_is_refused_and_changes_nothing() {
         let store = InMemoryContinuationStore::new();
-        let key = continuation_key(AUD, ACTOR_A, b"state-1");
+        let key = ContinuationKey::of_parts(AUD, ACTOR_A, b"state-1");
         store.create(&key, &bases(), 300).await.unwrap();
 
         let intruder = RetainedHandles::over(b"second-leg-prev", b"second-leg-irr");
@@ -297,7 +300,7 @@ mod tests {
     async fn concurrent_creators_yield_exactly_one_stored() {
         let store: std::sync::Arc<dyn AsyncContinuationStore> =
             std::sync::Arc::new(InMemoryContinuationStore::new());
-        let key = continuation_key(AUD, ACTOR_A, b"state-1");
+        let key = ContinuationKey::of_parts(AUD, ACTOR_A, b"state-1");
 
         let mut outcomes = Vec::new();
         for _ in 0..2 {
@@ -327,7 +330,7 @@ mod tests {
     #[tokio::test]
     async fn an_expired_key_may_be_established_again() {
         let store = InMemoryContinuationStore::new();
-        let key = continuation_key(AUD, ACTOR_A, b"state-1");
+        let key = ContinuationKey::of_parts(AUD, ACTOR_A, b"state-1");
         // A TTL already in the past: the entry is written and is immediately not live.
         store.create(&key, &bases(), -1).await.unwrap();
         assert_eq!(store.peek(&key).await.unwrap(), None, "already expired");
@@ -355,7 +358,7 @@ mod tests {
         impl AsyncContinuationStore for BrokenStore {
             fn create<'a>(
                 &'a self,
-                _key: &'a str,
+                _key: &'a ContinuationKey,
                 _bases: &'a RetainedHandles,
                 _ttl_secs: i64,
             ) -> ContinuationFuture<'a, Creation> {
@@ -367,16 +370,22 @@ mod tests {
             }
             fn peek<'a>(
                 &'a self,
-                _key: &'a str,
+                _key: &'a ContinuationKey,
             ) -> ContinuationFuture<'a, Option<RetainedHandles>> {
                 Box::pin(async { Ok(None) })
             }
-            fn consume<'a>(&'a self, _key: &'a str) -> ContinuationFuture<'a, bool> {
+            fn consume<'a>(&'a self, _key: &'a ContinuationKey) -> ContinuationFuture<'a, bool> {
                 Box::pin(async { Ok(false) })
             }
         }
 
-        let outcome = BrokenStore.create("k", &bases(), 300).await;
+        let outcome = BrokenStore
+            .create(
+                &ContinuationKey::of_parts("aud", "actor", b"k"),
+                &bases(),
+                300,
+            )
+            .await;
         assert!(
             matches!(outcome, Err(ContinuationStoreError::Unavailable { .. })),
             "a tier that could not answer must not be reported as a taken key"

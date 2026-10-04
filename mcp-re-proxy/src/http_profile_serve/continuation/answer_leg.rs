@@ -18,7 +18,7 @@
 use mcp_re_core::McpReError;
 use mcp_re_http_profile::RetainedContinuation;
 
-use crate::continuation_store::continuation_key;
+use crate::continuation_store::ContinuationKey;
 use crate::continuation_store::ContinuationStoreError;
 use crate::continuation_store::RetainedHandles;
 use crate::exchange_state::Established;
@@ -70,7 +70,7 @@ impl ContinuationPlane {
         };
         let answer_key = answer_state
             .as_ref()
-            .map(|state| continuation_key(audience_id, ex.actor_id, state.as_bytes()));
+            .map(|state| ContinuationKey::for_request(audience_id, ex.verified, state.as_bytes()));
         let retained = match (&self.store, &answer_key) {
             (Some(store), Some(key)) => peeked_or_refusal(store.peek(key).await)?,
             // A key exists, so this leg NEEDS correlation, and this deployment holds no
@@ -142,7 +142,7 @@ fn capability_absent() -> Refusal {
 /// about what an absent base means.
 pub(in crate::http_profile_serve) struct ContinuationPrep {
     answer_state: Option<String>,
-    answer_key: Option<String>,
+    answer_key: Option<ContinuationKey>,
     retained: Option<RetainedHandles>,
 }
 
@@ -179,7 +179,7 @@ impl ContinuationPrep {
     }
 
     /// The key this exchange's approval is retired under, when it answers one.
-    pub(super) fn answer_key(&self) -> Option<&String> {
+    pub(super) fn answer_key(&self) -> Option<&ContinuationKey> {
         self.answer_key.as_ref()
     }
 }
@@ -380,8 +380,8 @@ pub(in crate::http_profile_serve) mod tests {
         .expect("a store miss is the caller's fact, not a refusal");
         let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
 
-        let carried = continuation_key("aud", &verified.resolved_actor().actor_id(), b"s-1");
-        let asserted = continuation_key(
+        let carried = ContinuationKey::for_request("aud", &verified, b"s-1");
+        let asserted = ContinuationKey::of_parts(
             "aud",
             "client:example.com:did:example:impostor:key-9",
             b"s-1",
@@ -397,9 +397,9 @@ pub(in crate::http_profile_serve) mod tests {
     /// One store method call, with the key it was made under.
     #[derive(Debug, PartialEq, Eq)]
     enum StoreCall {
-        Create(String),
-        Peek(String),
-        Consume(String),
+        Create(ContinuationKey),
+        Peek(ContinuationKey),
+        Consume(ContinuationKey),
     }
 
     /// A store that records every method it is asked for, and answers every read with a
@@ -429,7 +429,7 @@ pub(in crate::http_profile_serve) mod tests {
             std::mem::take(&mut *self.calls.lock().expect("no test thread panics here"))
         }
 
-        fn keys(&self) -> Vec<String> {
+        fn keys(&self) -> Vec<ContinuationKey> {
             self.calls()
                 .into_iter()
                 .filter_map(|call| match call {
@@ -443,7 +443,7 @@ pub(in crate::http_profile_serve) mod tests {
     impl AsyncContinuationStore for RecordingStore {
         fn create<'a>(
             &'a self,
-            key: &'a str,
+            key: &'a ContinuationKey,
             _bases: &'a RetainedHandles,
             _ttl_secs: i64,
         ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
@@ -454,7 +454,7 @@ pub(in crate::http_profile_serve) mod tests {
 
         fn peek<'a>(
             &'a self,
-            key: &'a str,
+            key: &'a ContinuationKey,
         ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>> {
             self.record(StoreCall::Peek(key.to_owned()));
             let live = self.live.then(|| RetainedHandles::over(b"req", b"resp"));
@@ -463,7 +463,7 @@ pub(in crate::http_profile_serve) mod tests {
 
         fn consume<'a>(
             &'a self,
-            key: &'a str,
+            key: &'a ContinuationKey,
         ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
             self.record(StoreCall::Consume(key.to_owned()));
             Box::pin(async { Ok(false) })
@@ -503,7 +503,9 @@ pub(in crate::http_profile_serve) mod tests {
         assert!(prep.binding().is_some());
         assert_eq!(
             store.calls(),
-            vec![StoreCall::Peek(continuation_key("aud", &actor_id, b"s-1"))],
+            vec![StoreCall::Peek(ContinuationKey::of_parts(
+                "aud", &actor_id, b"s-1"
+            ))],
             "prepare reads once and neither consumes nor creates"
         );
     }
@@ -515,7 +517,7 @@ pub(in crate::http_profile_serve) mod tests {
         // a continuation that was signed but cannot be bound is never admitted.
         let prep = ContinuationPrep {
             answer_state: Some("s-1".to_owned()),
-            answer_key: Some("k-1".to_owned()),
+            answer_key: Some(ContinuationKey::of_parts("aud", "actor", b"k-1")),
             retained: None,
         };
         assert!(prep.binding().is_none());
@@ -523,7 +525,10 @@ pub(in crate::http_profile_serve) mod tests {
             !prep.was_peeked(),
             "nothing was read, so nothing is at stake"
         );
-        assert_eq!(prep.answer_key(), Some(&"k-1".to_owned()));
+        assert_eq!(
+            prep.answer_key(),
+            Some(&ContinuationKey::of_parts("aud", "actor", b"k-1"))
+        );
     }
     /// D2b: an outage and a miss are different facts, and NEITHER proceeds unbound.
     ///
