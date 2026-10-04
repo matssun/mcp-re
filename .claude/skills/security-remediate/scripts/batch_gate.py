@@ -13,6 +13,11 @@ Run it BEFORE the first batch of a run (`--files` empty): the lane's attribution
 rests on starting from a tree measured green. Run it AFTER each batch with the
 files the batch touched.
 
+It also runs every `tools/verification/test_*.py` self-test suite once. They read the
+registry and pin measured facts about it — premise totals, the controls each record states —
+so a registry-only change moves them while no Rust target notices; they are not per-file
+work, and leaving them out let two suites stay red under a green batch gate.
+
 Two lanes are left to the pre-handover gate (`scripts/local_gate.sh`) and are NOT
 claimed here: `bazel test //...` (the only lane that runs the `async_serve` drain
 tests) and the SLO lane.
@@ -59,6 +64,37 @@ STRUCTURAL = [
 ]
 
 
+VERIFICATION_SUITES = "tools/verification"
+
+
+def _structural_suites() -> set[str]:
+    """The self-test suites STRUCTURAL already runs, by file name."""
+    return {os.path.basename(cmd[0]) for cmd in STRUCTURAL
+            if os.path.dirname(cmd[0]) == VERIFICATION_SUITES}
+
+
+def verification_suites(work_dir: str, root: str = VERIFICATION_SUITES,
+                        already: set[str] | None = None) -> dict:
+    """Every `test_*.py` self-test suite under `root`, each run once, as one gate result.
+
+    A suite in `already` (by default the ones STRUCTURAL runs) is not run twice. No suite
+    found is `infra`, not `ok`: an empty set would be a green that measured nothing.
+    """
+    already = _structural_suites() if already is None else already
+    suites = sorted(f for f in os.listdir(root) if f.startswith("test_") and f.endswith(".py")
+                    and f not in already) if os.path.isdir(root) else []
+    if not suites:
+        return {"gate": root + "/test_*.py", "verdict": "infra", "why": "no suite found"}
+    failed = []
+    for suite in suites:
+        log = os.path.join(work_dir, "batch-verification-%s.log" % suite)
+        if _run([sys.executable, os.path.join(root, suite)], log):
+            failed.append({"suite": suite, "log": log, "tail": _tail(log)})
+    return {"gate": root + "/test_*.py", "suites": len(suites),
+            "verdict": "new-failures" if failed else "ok",
+            **({"failed": failed} if failed else {})}
+
+
 def _run(cmd: list[str], log: str) -> int:
     with open(log, "w", encoding="utf-8") as fh:
         return subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT).returncode
@@ -101,6 +137,8 @@ def main() -> int:
         results.append({"gate": cmd[0], "verdict": verdict, "log": log,
                         **({} if rc == 0 else {"tail": _tail(log)}),
                         **({"debt": debt} if verdict == "size-debt" else {})})
+
+    results.append(verification_suites(a.work_dir))
 
     files = [f.strip() for f in a.files.split(",") if f.strip()]
     labels = [lbl for lbl in (rust_gate.file_label(f) for f in files) if lbl]
