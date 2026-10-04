@@ -6577,6 +6577,10 @@ tested_symbols = [
   "//mcp-re-http-profile:delegated_202_test#a_delegated_202_verifies_via_the_credential_chain",
   "//mcp-re-http-profile:delegated_202_test#a_delegated_202_refuses_a_retransmission_of_the_same_notification",
   "//mcp-re-http-profile:delegated_202_test#a_delegated_202_refuses_a_content_distinct_notification",
+  # The emitted signature covers a digest and signature headers the emitter computed, never ones
+  # the caller supplied, and the delegated evidence block is inside the digested body.
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::caller_supplied_digest_and_signature_headers_do_not_survive_emission",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::the_delegated_response_block_is_inside_the_digested_body",
 ]
 
 # ---------------------------------------------------------------------------------------
