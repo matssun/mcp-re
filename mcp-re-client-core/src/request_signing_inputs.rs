@@ -54,7 +54,21 @@ pub struct RequestSigningInputs {
     /// document when the evidence block is authored, so the two cannot disagree and a
     /// second presentation replaces the first. Set via
     /// [`with_authorization_decision`](Self::with_authorization_decision), the sole producer.
-    authorization_decision: Option<String>,
+    pub authorization_decision: PresentedDecision,
+}
+
+/// The authorization-decision document a request presents, or none.
+///
+/// The document is private to this type and only
+/// [`RequestSigningInputs::with_authorization_decision`] fills it, so a value here is a
+/// document the evidence block mints its `pdp-decision` binding from.
+#[derive(Debug, Clone, Default)]
+pub struct PresentedDecision(Option<String>);
+
+impl PresentedDecision {
+    fn document(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
 }
 
 impl RequestSigningInputs {
@@ -77,7 +91,7 @@ impl RequestSigningInputs {
             continuation: None,
             extra_headers: Vec::new(),
             admission: None,
-            authorization_decision: None,
+            authorization_decision: PresentedDecision::default(),
         }
     }
 
@@ -125,7 +139,7 @@ impl RequestSigningInputs {
     /// authority DECIDED; whether this deployment trusts that authority, and whether the
     /// decision is about this request, are the PEP's.
     pub fn with_authorization_decision(mut self, decision_jws: impl Into<String>) -> Self {
-        self.authorization_decision = Some(decision_jws.into());
+        self.authorization_decision = PresentedDecision(Some(decision_jws.into()));
         self
     }
 
@@ -136,7 +150,7 @@ impl RequestSigningInputs {
     /// assembled around it.
     pub(crate) fn evidence_block(&self) -> HttpRequestEvidenceBlock {
         let mut artifact_bindings = self.artifact_bindings.clone();
-        if let Some(jws) = &self.authorization_decision {
+        if let Some(jws) = self.authorization_decision.document() {
             artifact_bindings.push(ArtifactBinding::opaque_digest(
                 mcp_re_http_profile::ArtifactType::PdpDecision,
                 jws.as_bytes(),
@@ -149,7 +163,7 @@ impl RequestSigningInputs {
             continuation: self.continuation.clone(),
             admission: self.admission.as_ref().map(|(b, _)| b.clone()),
             admission_assertion: self.admission.as_ref().map(|(_, jws)| jws.clone()),
-            authorization_decision: self.authorization_decision.clone(),
+            authorization_decision: self.authorization_decision.document().map(str::to_owned),
         }
     }
 }
