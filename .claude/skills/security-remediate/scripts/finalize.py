@@ -99,6 +99,12 @@ def finding_ids(package: dict, work_ids: list[str]) -> list[str]:
 def _revert(paths: list[str], work_dir: str, tag: str, store: str | None = None,
             file: str | None = None) -> str:
     patch = os.path.join(work_dir, "review-rejected-%s.patch" % tag)
+    if not paths:
+        # Nothing landed. An empty pathspec is NOT "no paths" to git: `ls-files --` and
+        # `checkout HEAD --` would then take the whole tree, erasing every other writer's
+        # uncommitted change (batch 64: a rejected writer with no edits did exactly that).
+        open(patch, "w").close()
+        return patch
     own = writer_patch.patch_path(store, file) if store and file else None
     if own:
         ok, why = writer_patch.reverse(store, file)

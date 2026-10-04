@@ -129,6 +129,17 @@ def test_finalize_reverts_and_commits_per_writer() -> None:
     print("  finalize: rejected writer's hunk and new file leave (saved); accepted commit is its own  OK")
 
 
+def test_a_writer_that_touched_nothing_reverts_nothing() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = _repo(td)
+        with _in(root):
+            os.makedirs("w", exist_ok=True)
+            _append(SHARED, "[other writer, uncommitted]\n")
+            finalize._revert([], "w", "nothing", "w/gates", "untouched.rs")
+            assert "[other writer, uncommitted]" in open(SHARED).read(), open(SHARED).read()
+    print("  finalize: a rejected writer with no edits leaves everyone else's work alone  OK")
+
+
 def test_a_revert_without_snapshot_still_saves_new_files() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = _repo(td)
