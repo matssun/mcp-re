@@ -9705,12 +9705,11 @@ path = "mcp-re-proxy/src/client_crl_publication.rs"
 # matches twice — correctly: a weakening applied to the wrong one of two identical sites
 # measures a different function.
 anchor = """
-    let crl = CertificateList::from_der(crl_der)
-        .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))?;
+    let crl = decode_crl(crl_der)?;
     let next_update = match crl.tbs_cert_list.next_update {
 """
 weakening = """
-    let crl = match CertificateList::from_der(crl_der) {
+    let crl = match decode_crl(crl_der) {
         Ok(crl) => crl,
         Err(_) => return Ok(CrlFreshness::Fresh),
     };
