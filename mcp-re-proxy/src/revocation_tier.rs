@@ -178,15 +178,6 @@ impl RevocationTier {
             self.guarantee()
         )
     }
-
-    /// Whether this tier's surfaced guarantee claims a zero / instantaneous window.
-    /// ALWAYS `false`: ADR-MCPS-021's claim matrix forbids a zero-window claim in
-    /// v0.4's in-process reference implementation (no tier here proves reliable
-    /// ordering/delivery). Exposed so callers and tests can assert the honesty
-    /// boundary explicitly rather than re-parsing the guarantee string.
-    pub fn claims_zero_window(&self) -> bool {
-        false
-    }
 }
 
 #[cfg(test)]
@@ -273,11 +264,6 @@ mod tests {
         // CRITICAL honesty rule (ADR-MCPS-021): no tier in the v0.4 in-process
         // reference implementation may claim a zero / instantaneous window.
         for tier in all_tiers() {
-            assert!(
-                !tier.claims_zero_window(),
-                "{} must not claim a zero window in the reference implementation",
-                tier.wire_name()
-            );
             let g = tier.guarantee().to_lowercase();
             // The literal phrase "zero-window" only ever appears negated.
             let negated_everywhere = g
