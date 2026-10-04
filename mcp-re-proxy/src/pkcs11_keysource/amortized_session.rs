@@ -145,34 +145,42 @@ impl<S> AmortizedSession<S> {
             Ok(value) => Ok(value),
             Err(SessionOpError::Fatal(e)) => Err(e),
             Err(SessionOpError::SessionInvalid(_)) => {
-                // Transient: the cached session is dead. Drop it, open exactly ONE
-                // fresh logged-in session, and retry the op once. Re-open failure
-                // (or a second transient failure) fails closed.
-                guard.session = None;
-                let session = self.open(&mut guard, factory)?;
-                // Cache the fresh session ONLY if the retried op SUCCEEDS (issue
-                // #25). A session whose op returned Fatal or SessionInvalid must
-                // NOT be cached — leaving the cache empty so the next call re-opens
-                // a clean session — otherwise a dead/invalid handle would be reused
-                // and every subsequent op would fail until eviction.
-                match op(&session) {
-                    Ok(value) => {
-                        guard.session = Some(session);
-                        guard.cooling_since = None;
-                        Ok(value)
-                    }
-                    Err(SessionOpError::SessionInvalid(e)) => {
-                        // `session` is dropped (closed) here; the next open waits out
-                        // the cool-off.
-                        guard.cooling_since = Some(Instant::now());
-                        Err(e)
-                    }
-                    Err(SessionOpError::Fatal(e)) => {
-                        // `guard.session` stays None; `session` is dropped (closed) here.
-                        Err(e)
-                    }
-                }
+                self.retry_on_fresh_session(&mut guard, factory, &op)
             }
+        }
+    }
+
+    /// The one retry after a transient failure: drop the dead session, open exactly ONE
+    /// fresh logged-in session, and run `op` once more. A re-open failure (or a second
+    /// transient failure) fails closed.
+    ///
+    /// The fresh session is cached ONLY if the retried op SUCCEEDS (issue #25): a session
+    /// whose op returned Fatal or SessionInvalid is dropped (closed) and the cache stays
+    /// empty, so the next call re-opens a clean session instead of reusing a dead handle.
+    fn retry_on_fresh_session<F, T, Op>(
+        &self,
+        slot: &mut Slot<S>,
+        factory: &F,
+        op: &Op,
+    ) -> Result<T, KeyError>
+    where
+        F: LoginSessionFactory<Session = S>,
+        Op: Fn(&S) -> Result<T, SessionOpError>,
+    {
+        slot.session = None;
+        let session = self.open(slot, factory)?;
+        match op(&session) {
+            Ok(value) => {
+                slot.session = Some(session);
+                slot.cooling_since = None;
+                Ok(value)
+            }
+            Err(SessionOpError::SessionInvalid(e)) => {
+                // The next open waits out the cool-off.
+                slot.cooling_since = Some(Instant::now());
+                Err(e)
+            }
+            Err(SessionOpError::Fatal(e)) => Err(e),
         }
     }
 }
