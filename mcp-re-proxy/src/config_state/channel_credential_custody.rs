@@ -342,13 +342,18 @@ mod tests {
         ];
         for (key, flag) in cases {
             let (state, violations) = run(|c| delegate(c, key));
-            assert!(state.is_none(), "{flag}: a delegated state was built over no key");
+            assert!(
+                state.is_none(),
+                "{flag}: a delegated state was built over no key"
+            );
             assert!(
                 violations.iter().any(|v| v.contains(flag)),
                 "{flag}: {violations:?}"
             );
             assert!(
-                violations.iter().all(|v| !v.contains("--tls-key is required")),
+                violations
+                    .iter()
+                    .all(|v| !v.contains("--tls-key is required")),
                 "{flag}: {violations:?}"
             );
         }

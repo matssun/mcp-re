@@ -143,10 +143,16 @@ mod tests {
     /// `retention = window + propagation_margin` must keep this passing.
     #[test]
     fn retention_never_ends_before_the_verifier_stops_accepting() {
-        for skew in [0_i64, 1, 45, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND] {
+        for skew in [
+            0_i64,
+            1,
+            45,
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+        ] {
             let w = window(skew).expect("a bounded skew resolves");
-            let policy = mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], w.verifier_skew_secs())
-                .expect("a resolved skew is within the verifier's bound");
+            let policy =
+                mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], w.verifier_skew_secs())
+                    .expect("a resolved skew is within the verifier's bound");
             for expires in [1_i64, 1_000, 1_787_000_000, i64::MAX - 1, i64::MAX] {
                 let created = expires.checked_sub(1).expect("expires is at least 1");
                 let retain = w.replay_retain_until(expires);

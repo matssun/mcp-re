@@ -497,7 +497,10 @@ mod tests {
                 violations.iter().any(|v| v.contains(flag)),
                 "{flag}: not refused — {violations:?}"
             );
-            assert!(state.is_none(), "{flag}: a refused locator still became a validated state");
+            assert!(
+                state.is_none(),
+                "{flag}: a refused locator still became a validated state"
+            );
         }
     }
 
