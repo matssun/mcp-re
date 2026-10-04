@@ -42,7 +42,6 @@ use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::FileKeySource;
 use mcp_re_proxy::KeyError;
 use mcp_re_proxy::KeySource;
-use mcp_re_proxy::RawEd25519TlsSigner;
 use mcp_re_proxy::Pkcs11KeySource;
 use mcp_re_proxy::ResponseSigner;
 use mcp_re_proxy::ServerOptions;

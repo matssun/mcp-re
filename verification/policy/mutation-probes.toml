@@ -4354,11 +4354,13 @@ conjunct = "a published delegated credential is one this deployment can demonstr
 # rather than at the first issuance, and after the fleet has already rotated onto it.
 path = "mcp-re-proxy/src/delegated_wiring.rs"
 anchor = """
-            verify_ed25519(input, &b64, public_key)
-                .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
+    verify_ed25519(input, &b64, public_key).map_err(|_| {
+        "root issuer CONTRACT VIOLATION: its signature does not verify under the key it advertises"
+            .to_string()
+    })?;
 """
 weakening = """
-            let _ = public_key;
+    let _ = public_key;
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#delegated_wiring::tests::a_root_signing_under_a_key_it_does_not_advertise_publishes_no_credential",

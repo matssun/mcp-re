@@ -91,6 +91,12 @@ fn root_signature(
         .map_err(|_| "root issuer CONTRACT VIOLATION: its signature is not base64url".to_string())
 }
 
+/// Name why an issuance was refused, and answer with the one error the custody understands.
+fn issuance_refused(class: impl std::fmt::Display) -> HttpProfileError {
+    eprintln!("mcp-re-proxy: delegated credential issuance refused: {class}");
+    HttpProfileError::DelegationCredentialInvalid
+}
+
 /// Build the delegated-signing wiring from a [`SigningPlan`](crate::startup_plan::SigningPlan)
 /// and a `root_signer` (the ROOT issuer). Does NOT issue the first key or start any thread
 /// — the caller drives the initial [`DelegatedRotor::rotate`] (so a startup issuance
@@ -132,10 +138,7 @@ pub fn build_delegated_signing(
     // custody state machine already guarantees.
     let issue: BoxedIssuer = Box::new(move |h, c| {
         issue_delegation_credential_with_signer(h, c, |input| {
-            root_signature(&root_signer, root_public_key.as_ref(), input).map_err(|class| {
-                eprintln!("mcp-re-proxy: delegated credential issuance refused: {class}");
-                HttpProfileError::DelegationCredentialInvalid
-            })
+            root_signature(&root_signer, root_public_key.as_ref(), input).map_err(issuance_refused)
         })
         .ok()
     });
