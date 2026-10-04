@@ -11,7 +11,8 @@
 //! rule — the caller still has to know that group read is conditional on the process's
 //! supplementary groups, that group WRITE is never acceptable, and that any world bit is
 //! fatal. A [`KeyFileAccessPolicy`] answers the question instead: given a mode, a file
-//! group and the process's groups, is this posture refused, and why.
+//! owner uid, a file group, the process's effective uid and its groups, is this posture
+//! refused, and why. The containing directory's posture is NOT examined by this rule.
 //!
 //! # Why the relaxed posture exists
 //!
@@ -54,7 +55,9 @@ impl KeyFileAccessPolicy {
     /// Why this key file's posture is refused, or `None` when it is acceptable.
     ///
     /// Pure, so the rule is black-box testable without touching a filesystem — the caller
-    /// supplies the `stat` results and the process's supplementary groups.
+    /// supplies the `stat` results (mode, owner uid, group), the process's effective uid
+    /// and its groups. The file must be owned by that uid or by root (an fsGroup-mounted
+    /// Secret is root-owned). The containing directory's posture is NOT examined here.
     ///
     /// The order of the clauses is the order of severity, and each is separate on purpose:
     /// a world bit and a group-write bit are refused under BOTH policies, so relaxing the
@@ -62,9 +65,14 @@ impl KeyFileAccessPolicy {
     pub fn violation(
         &self,
         mode: u32,
+        file_uid: u32,
         file_gid: u32,
+        process_euid: u32,
         process_gids: &[u32],
     ) -> Option<&'static str> {
+        if file_uid != process_euid && file_uid != 0 {
+            return Some("owned by a uid that is neither this process's effective uid nor root");
+        }
         if mode & 0o007 != 0 {
             return Some("world-accessible");
         }
@@ -169,20 +177,25 @@ mod tests {
     /// The owner-only posture accepts exactly the two owner-only modes.
     #[test]
     fn owner_only_accepts_0600_and_0400_and_nothing_else() {
-        assert_eq!(STRICT.violation(0o600, 1000, &[1000]), None);
-        assert_eq!(STRICT.violation(0o400, 1000, &[1000]), None);
-        assert!(STRICT.violation(0o440, 1000, &[1000]).is_some());
-        assert!(STRICT.violation(0o604, 1000, &[1000]).is_some());
-        assert!(STRICT.violation(0o660, 1000, &[1000]).is_some());
-        assert!(STRICT.violation(0o777, 1000, &[1000]).is_some());
+        assert_eq!(STRICT.violation(0o600, 1000, 1000, 1000, &[1000]), None);
+        assert_eq!(STRICT.violation(0o400, 1000, 1000, 1000, &[1000]), None);
+        assert!(STRICT.violation(0o440, 1000, 1000, 1000, &[1000]).is_some());
+        assert!(STRICT.violation(0o604, 1000, 1000, 1000, &[1000]).is_some());
+        assert!(STRICT.violation(0o660, 1000, 1000, 1000, &[1000]).is_some());
+        assert!(STRICT.violation(0o777, 1000, 1000, 1000, &[1000]).is_some());
     }
 
     /// The relaxed posture is the fsGroup mount, and only that.
     #[test]
     fn group_read_is_accepted_only_for_a_group_this_process_is_in() {
-        assert_eq!(RELAXED.violation(0o440, 2000, &[1000, 2000]), None);
+        assert_eq!(
+            RELAXED.violation(0o440, 1000, 2000, 1000, &[1000, 2000]),
+            None
+        );
         assert!(
-            RELAXED.violation(0o440, 9999, &[1000, 2000]).is_some(),
+            RELAXED
+                .violation(0o440, 1000, 9999, 1000, &[1000, 2000])
+                .is_some(),
             "a group the process is not in grants a stranger, which is worse than strict"
         );
     }
@@ -198,18 +211,32 @@ mod tests {
             0o004, 0o002, 0o001, 0o441, 0o444, 0o604, 0o642, 0o666, 0o777,
         ] {
             assert!(
-                RELAXED.violation(mode, 2000, &[2000]).is_some(),
+                RELAXED.violation(mode, 1000, 2000, 1000, &[2000]).is_some(),
                 "world bit accepted at {mode:o}"
             );
-            assert!(STRICT.violation(mode, 2000, &[2000]).is_some());
+            assert!(STRICT.violation(mode, 1000, 2000, 1000, &[2000]).is_some());
         }
         for mode in [0o020, 0o060, 0o460, 0o620, 0o660] {
             assert!(
-                RELAXED.violation(mode, 2000, &[2000]).is_some(),
+                RELAXED.violation(mode, 1000, 2000, 1000, &[2000]).is_some(),
                 "group write accepted at {mode:o}"
             );
-            assert!(STRICT.violation(mode, 2000, &[2000]).is_some());
+            assert!(STRICT.violation(mode, 1000, 2000, 1000, &[2000]).is_some());
         }
+    }
+
+    #[test]
+    fn a_key_file_owned_by_another_uid_is_refused_under_both_policies() {
+        assert!(STRICT.violation(0o600, 1001, 1000, 1000, &[1000]).is_some());
+        assert!(RELAXED
+            .violation(0o440, 1001, 2000, 1000, &[1000, 2000])
+            .is_some());
+    }
+
+    #[test]
+    fn a_root_owned_fsgroup_secret_is_still_admitted() {
+        assert_eq!(RELAXED.violation(0o440, 0, 2000, 1000, &[1000, 2000]), None);
+        assert_eq!(STRICT.violation(0o400, 0, 0, 1000, &[1000]), None);
     }
 
     /// The flag decides the policy, and absence is the strict one.

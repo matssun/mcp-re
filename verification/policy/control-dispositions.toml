@@ -4124,6 +4124,22 @@ proposition = "NP-054"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20297"
+project = "mcp-re-proxy"
+control = "src/lib.rs#config_state::key_file_access::tests::a_key_file_owned_by_another_uid_is_refused_under_both_policies"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20298"
+project = "mcp-re-proxy"
+control = "src/lib.rs#config_state::key_file_access::tests::a_root_owned_fsgroup_secret_is_still_admitted"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-8039"
 project = "mcp-re-proxy"
 control = "src/lib.rs#config_state::key_file_access::tests::the_default_deployment_is_owner_only"

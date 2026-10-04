@@ -1704,7 +1704,7 @@ registry edit.
 
 ## NP-054 — key-file access policy
 
-**Controls:** `config_state/key_file_access.rs` (5), and
+**Controls:** `config_state/key_file_access.rs` (7), and
 `mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs` (2): which key
 files the policy is applied to. Batch 12 recorded ten `app.rs` controls here; the r12 file-11
 extraction moved key-file custody into `capability_materialization::key_file_custody`, where
@@ -1713,7 +1713,7 @@ without the opt-in and accepted with it only when the process is in that group; 
 is refused even with the opt-in; an owner-only file is accepted; an absent file is not an
 error; a file whose posture cannot be established is refused; the PKCS#11 PIN file is
 permission-checked; the TLS key is checked under EVERY custody mode; and a delegated TLS key
-contributes no file to check.
+contributes no file to check. A key file owned by a uid other than this process's effective uid or root is refused under both policies, and a root-owned fsGroup Secret is admitted.
 
 **Two halves of one proposition, and both are needed.** The classifier half says the policy
 is right; the root half says it is applied to every file, which is the half a correct policy

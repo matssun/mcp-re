@@ -112,7 +112,9 @@ pub(super) fn observe(
     let meta = file.metadata().map_err(unobservable)?;
     let mode = meta.permissions().mode();
     let gids = super::process_groups::process_gids();
-    if let Some(reason) = policy.violation(mode, meta.gid(), &gids) {
+    // SAFETY: `geteuid` takes no arguments, touches no memory and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    if let Some(reason) = policy.violation(mode, meta.uid(), meta.gid(), euid, &gids) {
         return Err(format!(
             "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
              is {reason} (mode {:o}); restrict to 0600",
