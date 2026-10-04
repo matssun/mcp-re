@@ -161,10 +161,12 @@ def _testlog(label: str) -> str:
     return open(path, encoding="utf-8", errors="replace").read() if os.path.isfile(path) else ""
 
 
-def _test(targets: list[str], filt: str, log: str) -> dict:
+def _test(targets: list[str], filt: str | list[str], log: str) -> dict:
     cmd = bazel() + ["test", "--test_output=errors", "--keep_going", *targets]
-    if filt:
-        cmd.append("--test_arg=" + filt)
+    # libtest runs a test that matches ANY of its filters.
+    for f in [filt] if isinstance(filt, str) else filt:
+        if f:
+            cmd.append("--test_arg=" + f)
     rc, out = _run(cmd, log)
     logs = {t: _testlog(t) for t in targets}
     ran = sum(int(n) for text in logs.values() for n in _RUNNING.findall(text))
@@ -192,7 +194,12 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
     edited = sorted({f for f in (touched or []) + [file] if f.endswith(".rs")})
     touched_targets = compiling_targets([f for f in edited if f != file])
     lint_scope = sorted(set(own + touched_targets + compiling_targets(related)))
-    units = unit_test_targets(own)
+    # Unit tests of every touched source file, not only the edited one: a writer's new test
+    # often lives in a neighbouring module, and a filter on this file's module skips it.
+    sources = [f for f in edited
+               if not {"tests", "benches", "examples"} & set(f.split("/"))]
+    units = unit_test_targets(sorted(set(own + compiling_targets(
+        [f for f in sources if f != file]))))
     tag = _slug(file)
     parts: list[dict] = [dict(_lint(sorted(set(lint_scope + units)),
                                     os.path.join(work_dir, "lint-%s.log" % tag)),
@@ -230,11 +237,13 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
 
     if any(p["verdict"] == "new-failures" for p in parts):
         return parts          # a tree that does not compile has no test result to add
-    mod = "::".join(r.module_path(file))
+    mods = sorted({"::".join(r.module_path(f)) for f in sources})
+    # A crate root has the empty module path, which selects every test in the target.
+    filters = [] if "" in mods else [m + "::" for m in mods]
     if units:
-        parts.append(dict(_test(units, mod + "::" if mod else "",
+        parts.append(dict(_test(units, filters,
                                 os.path.join(work_dir, "test-unit-%s.log" % tag)),
-                          gate="test", target="unit", targets=units, filter=mod))
+                          gate="test", target="unit", targets=units, filter=filters))
     else:
         parts.append({"gate": "test", "target": "unit", "verdict": "infra",
                       "why": "no unit-test target compiles %s's crate" % file})

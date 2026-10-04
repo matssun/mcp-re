@@ -131,6 +131,51 @@ def test_the_size_part_exit_agrees_with_its_verdict() -> None:
     print("  rust gate: the size part's exit is the writer's status, raw status kept  OK")
 
 
+def test_the_unit_tests_of_every_touched_source_file_run() -> None:
+    """A writer's new test in a neighbouring touched module must be selected: batch 71's
+    refresher fix put its test in anchors::tests, and a filter on refresher:: alone ran
+    nothing of it, so a wrong test passed the per-file gate."""
+    class Modules:
+        def module_path(self, path: str) -> list[str]:
+            return {"c/src/anchors/refresher.rs": ["anchors", "refresher"],
+                    "c/src/anchors/mod.rs": ["anchors"],
+                    "c/src/lib.rs": []}[path]
+
+    seen: dict = {}
+    saved = (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+             rust_gate._rustfmt, rust_gate._run, rust_gate._test)
+    rust_gate.compiling_targets = lambda files: ["//c:lib"] if files else []  # type: ignore[assignment]
+    rust_gate.unit_test_targets = lambda targets: ["//c:test"] if targets else []  # type: ignore[assignment]
+    rust_gate._lint = lambda t, log: {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._rustfmt = lambda t, e, log: {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._run = lambda cmd, log: (0, "")  # type: ignore[assignment]
+
+    def record(targets, filt, log):
+        seen.setdefault("filters", []).append(filt)
+        return {"verdict": "ok", "ran": 1}
+    rust_gate._test = record  # type: ignore[assignment]
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = os.getcwd()
+            os.chdir(td)
+            os.makedirs("c/src/anchors")
+            for f in ("c/src/anchors/refresher.rs", "c/src/anchors/mod.rs", "c/src/lib.rs"):
+                open(f, "w").write("fn f() {}\n")
+            try:
+                rust_gate.gate("c/src/anchors/refresher.rs", [], [], td, Modules(),  # type: ignore[arg-type]
+                               touched=["c/src/anchors/mod.rs", "c/tests/e2e.rs"])
+                rust_gate.gate("c/src/anchors/refresher.rs", [], [], td, Modules(),  # type: ignore[arg-type]
+                               touched=["c/src/lib.rs"])
+            finally:
+                os.chdir(cwd)
+    finally:
+        (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+         rust_gate._rustfmt, rust_gate._run, rust_gate._test) = saved
+    assert seen["filters"][0] == ["anchors::", "anchors::refresher::"], seen
+    assert seen["filters"][1] == [], "a touched crate root selects the whole unit target"
+    print("  rust gate: unit tests of every touched source module run; a crate root runs all  OK")
+
+
 def test_only_growth_in_touched_files_is_the_writers() -> None:
     _, rows = size_debt.classify("m", "FAIL\n%s\n%s\n%s\n" % (GREW, NEW, FN))
     mine = size_debt.attributable(rows, ["mcp-re-proxy/src/b.rs", "mcp-re-proxy/src/z.rs"])
