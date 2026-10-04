@@ -148,5 +148,5 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         McpReError::ResponseSigInvalid,
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
-    Ok(AcknowledgedDelegation::established(verified))
+    Ok(AcknowledgedDelegation::established(verified, server_signer))
 }

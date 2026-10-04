@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! What a verified bodyless acknowledgement establishes (#418, ADR-MCPRE-052 §4).
 
-use crate::block::ResolvedActor;
+use crate::block::{ActorIdentity, ResolvedActor, SignerSlot};
 use crate::delegation::VerifiedDelegation;
 
 /// What a verified bodyless acknowledgement establishes.
@@ -29,26 +29,23 @@ pub struct AcknowledgedDelegation {
 impl AcknowledgedDelegation {
     /// Record what a completed credential verification established.
     ///
-    /// Takes the whole [`VerifiedDelegation`] rather than an actor and a kid, so the two
-    /// cannot be supplied from different verifications: the anchor and the signing actor
-    /// are projections of ONE proved credential, and this is where that is stated.
+    /// Both arguments are the two products of ONE `verify_credential` call in the parent
+    /// verifier: the credential, and the scope identity its root was proved entitled to.
+    /// The actor's identity is that scope — the same one the bodied delegated path
+    /// attributes a response to — so the anchor and the signing actor are projections of
+    /// ONE proved credential.
     ///
     /// `pub(super)`, and the reason at the point of widening is that the parent module IS
     /// the verifier: it is the only code that has proved the response's signature under the
     /// delegated key and the credential under the root. No sibling exists, and a sibling
     /// added later would be inside the bodyless verifier — which is where a second producer
     /// would have to justify itself.
-    pub(super) fn established(verified: VerifiedDelegation) -> Self {
+    pub(super) fn established(verified: VerifiedDelegation, server_signer: ActorIdentity) -> Self {
         AcknowledgedDelegation {
             actor: ResolvedActor {
-                identity: crate::block::ActorIdentity {
-                    role: "server".to_owned(),
-                    trust_domain: String::new(),
-                    subject: verified.server_signer,
-                    keyid: verified.delegated_kid,
-                },
+                identity: server_signer,
                 verification_key: verified.delegated_key,
-                slot: crate::block::SignerSlot::Response,
+                slot: SignerSlot::Response,
             },
             issuer_kid: verified.issuer_kid,
         }
@@ -77,15 +74,24 @@ mod tests {
     use super::*;
 
     fn acknowledged(issuer_kid: &str) -> AcknowledgedDelegation {
-        AcknowledgedDelegation::established(VerifiedDelegation {
-            delegated_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
-            delegated_kid: "delegated-kid-1".to_owned(),
-            server_signer: "did:example:server".to_owned(),
-            issuer_kid: issuer_kid.to_owned(),
-            nbf: 0,
-            exp: i64::MAX,
-            trust_epoch: "epoch-1".to_owned(),
-        })
+        let server_signer = ActorIdentity {
+            role: "server".to_owned(),
+            trust_domain: "example.com".to_owned(),
+            subject: "did:example:server".to_owned(),
+            keyid: "delegated-kid-1".to_owned(),
+        };
+        AcknowledgedDelegation::established(
+            VerifiedDelegation {
+                delegated_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
+                delegated_kid: "delegated-kid-1".to_owned(),
+                server_signer: server_signer.actor_id(),
+                issuer_kid: issuer_kid.to_owned(),
+                nbf: 0,
+                exp: i64::MAX,
+                trust_epoch: "epoch-1".to_owned(),
+            },
+            server_signer,
+        )
     }
 
     #[test]
@@ -107,6 +113,8 @@ mod tests {
         let actor = acknowledged("root-kid-1").into_actor();
         assert_eq!(actor.identity.subject, "did:example:server");
         assert_eq!(actor.identity.keyid, "delegated-kid-1");
-        assert_eq!(actor.slot, crate::block::SignerSlot::Response);
+        assert_eq!(actor.identity.trust_domain, "example.com");
+        assert_eq!(actor.identity.role, "server");
+        assert_eq!(actor.slot, SignerSlot::Response);
     }
 }
