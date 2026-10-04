@@ -2601,3 +2601,46 @@ admits for that key.
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0072"
+description = "For any two distinct request bodies a preflight receipt can be about, `content_digest_sha256` produces distinct SHA-256 digest values."
+justification = """
+`check_unbound_receipt_is_about_this_request` accepts a preflight receipt as being about this
+call only when the `sha-256-received` digest the server signed into the receipt equals the
+SHA-256 digest of the body this client sent. So `client.response_binding_disposition`'s *a
+receipt about another request answers nothing* is conditional on two distinct bodies not
+sharing that digest, and the unit registered no premise saying so. The comparison is exact
+over the encoded digest; what it cannot do is make the DIGEST injective, and a claim may not
+exceed its evidence closure.
+
+It is the second-preimage property and no stronger, and the difference is the whole argument.
+The adversary does not choose this client's request body: the client composes and sends it.
+What an adversary can obtain is a receipt the server signed for bytes the adversary chose and
+submitted, and to have it accepted here it needs those bytes to land on the digest of a body it
+was handed. That is a second preimage of a value it did not choose. This premise is therefore
+deliberately weaker than collision resistance (ASM-0037) and is a per-unit entry rather than a
+widening of ASM-0028, whose scope the ADR-068 Phase-1 split narrowed to the six propositions that
+conclude byte agreement from digest agreement on the profile side: widening an owner-reviewed
+premise would reopen assumption review for all six consumers, and none of them is this one.
+
+Nothing here may be read as MCP-RE having proved SHA-256's second-preimage resistance, and
+colliding bodies exist because the digest is not injective. The claim is computational and
+deployment-scoped. It is also a BYTE binding, which this premise does not strengthen: two
+transmissions of identical bytes share the digest, and that residue is why the outcome stays
+`bound: false`.
+
+It stops being acceptable if the received digest moves to a digest without SHA-256's standing,
+or if the request body becomes attacker-chosen before it is sent, which would need collision
+resistance and not this.
+"""
+scope = [
+  "unit://client.response_binding_disposition",
+  "boundary://boundary.crypto_primitives",
+]
+owner = "mats@sundvall.name"
+introduced_by = "owner-signature:asm-client-preflight-received-digest-premise (r12, 87ece9fc35fd3cf1)"
+review_requirement = "Owner review; any change to the received-digest algorithm or to what it is computed over, and any change that lets the answering party choose the request body before it is sent."
+premise_class = "assumed"
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-primitive"

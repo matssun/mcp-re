@@ -506,3 +506,4 @@ attestations this view cannot see.
 | ASM-0069 | description, justification, scope or mechanism | http_profile.delegated_credential_chain | assumption review |
 | ASM-0070 | description, justification, scope or mechanism | client.transport_server_identity | assumption review |
 | ASM-0071 | description, justification, scope or mechanism | proxy.delegated_epoch_label | assumption review |
+| ASM-0072 | description, justification, scope or mechanism | client.response_binding_disposition | assumption review |

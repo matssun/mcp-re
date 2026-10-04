@@ -39,7 +39,7 @@ not an omission to hide.
 | client.receipt_contract_carriage | V0 | _none_ | 0 |
 | client.reported_core_version | V0 | _none_ | 0 |
 | client.request_construction | V0 | THM-0125 | 0 |
-| client.response_binding_disposition | V0 | THM-0059, THM-0076 | 0 |
+| client.response_binding_disposition | V0 | THM-0059, THM-0076 | 1 |
 | client.response_signer_authorization | V0 | THM-0058 | 0 |
 | client.serving_lifetime | V0 | THM-0127 | 0 |
 | client.transport_message_hygiene | V0 | THM-0110 | 0 |
