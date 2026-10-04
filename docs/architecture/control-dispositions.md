@@ -4792,3 +4792,12 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none. NP-109 states the in-era round trip, THM-0002 states the parser's containment, and `core.time_civil_from_days` states totality; none states the refusal.
 **Root relationship.** Beside NP-109.
 **Severity:** `high`.
+
+## NP-268 — a remote signer's error body reaches the operator diagnostic with every control and non-printable character escaped, and reaches the quota classifier untouched
+
+**Controls:** `mcp-re-proxy/src/remote_signer_call/mod.rs`.
+**Statement.** *The rendering of a `Status` failure in `into_key_error` and `describe` escapes every control and non-printable character of the remote's body, while `body()` returns the stored body byte for byte.*
+**If false.** An attacker-influenced error body ends an operator log line and forges the next one, or hides text behind a bidirectional override.
+**Likely owner:** none. `proxy.remote_signer_call_aws`/`_gcp` state the failure value and the quota rule, not its rendering; NP-215 is credential non-echo.
+**Root relationship.** Beside NP-215.
+**Severity:** `low`.

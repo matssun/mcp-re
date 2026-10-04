@@ -128,7 +128,10 @@ impl RemoteSignerFailure {
             CallOutcome::Rendered(error) if cause.is_none() => return error,
             CallOutcome::Rendered(error) => format!("{provider}: {error}"),
             CallOutcome::Status(code, body) => {
-                format!("{provider}: {operation} HTTP {code}: {body}")
+                format!(
+                    "{provider}: {operation} HTTP {code}: {}",
+                    neutralised(&body)
+                )
             }
             CallOutcome::Transport(error) => format!("{provider}: {operation}: {error}"),
         };
@@ -147,7 +150,9 @@ impl RemoteSignerFailure {
     pub(crate) fn describe(&self, operation: &str) -> String {
         match &self.outcome {
             CallOutcome::Rendered(error) => format!("{error}"),
-            CallOutcome::Status(code, body) => format!("{operation} HTTP {code}: {body}"),
+            CallOutcome::Status(code, body) => {
+                format!("{operation} HTTP {code}: {}", neutralised(body))
+            }
             CallOutcome::Transport(error) => format!("{operation}: {error}"),
         }
     }
@@ -167,6 +172,22 @@ impl RemoteSignerFailure {
             CallOutcome::Rendered(_) | CallOutcome::Transport(_) => None,
         }
     }
+}
+
+/// The remote's body is untrusted data at the moment it becomes a diagnostic, so its
+/// rendering cannot end or forge an operator line: control and non-printable characters
+/// become their visible escape, and quotes stay readable.
+fn neutralised(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        let mut escaped = c.escape_debug();
+        if matches!(c, '"' | '\'' | '\\') || (escaped.len() == 1) {
+            out.push(c);
+        } else {
+            out.extend(escaped.by_ref());
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -221,5 +242,18 @@ mod tests {
             rendered.contains("HTTP 401"),
             "the cause must survive: {rendered}"
         );
+    }
+
+    #[test]
+    fn a_status_body_cannot_forge_an_operator_line() {
+        let raw = "{\"__type\":\"X\"}\n[FATAL] rotation thread exited\u{1b}[31m\u{202e}";
+        let failure = RemoteSignerFailure::status_body(500, raw.to_string());
+        assert_eq!(failure.body(), Some(raw));
+        let rendered = format!("{}", failure.into_key_error("aws-kms", "TrentService.Sign"));
+        assert!(!rendered.contains('\n'), "{rendered}");
+        assert!(!rendered.contains('\u{1b}'), "{rendered}");
+        assert!(!rendered.contains('\u{202e}'), "{rendered}");
+        assert!(rendered.contains("{\"__type\":\"X\"}"), "{rendered}");
+        assert!(rendered.contains("\\n[FATAL]"), "{rendered}");
     }
 }

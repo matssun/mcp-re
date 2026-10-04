@@ -15358,3 +15358,20 @@ control = "src/lib.rs#async_replay::l1_fast_reject::tests::an_l2_replay_is_not_c
 decision = "new-proposition"
 proposition = "NP-197"
 recorded = "2026-10-04"
+
+[[proposition]]
+id = "NP-268"
+title = "A remote signer's error body reaches the operator diagnostic with every control and non-printable character escaped, and reaches the quota classifier untouched"
+carrier = "mcp-re-proxy/src/remote_signer_call/mod.rs (into_key_error, describe)"
+likely_owner = "none. proxy.remote_signer_call_aws/_gcp state the failure value and the quota rule, not its rendering; NP-215 is credential non-echo."
+consequence = "low"
+root_relationship = "Beside NP-215: that states what a refusal must not echo, this states that echoed remote text cannot forge a line."
+record = "docs/architecture/control-dispositions.md#np-268"
+
+[[disposition]]
+id = "CD-20330"
+project = "mcp-re-proxy"
+control = "src/lib.rs#remote_signer_call::tests::a_status_body_cannot_forge_an_operator_line"
+decision = "new-proposition"
+proposition = "NP-268"
+recorded = "2026-10-04"
