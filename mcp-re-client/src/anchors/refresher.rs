@@ -65,7 +65,10 @@ pub fn refresh_once(
             }
         }
         Err(error) => {
-            if now >= *manifest_expires_at {
+            if TrustedIssuerSet::new()
+                .with_manifest_expiry(*manifest_expires_at)
+                .is_expired(now)
+            {
                 // Holding these anchors would be using the stale trust picture the
                 // expiry check exists to refuse. Withdraw rather than serve on it.
                 snapshot.store(TrustedIssuerSet::new());

@@ -10217,6 +10217,7 @@ tested_symbols = [
   "//mcp-re-client:mcp_re_client_test#anchors::tests::a_refreshed_manifest_reaches_a_running_client",
   "//mcp-re-client:mcp_re_client_test#anchors::tests::a_failed_refresh_keeps_the_anchors_in_force",
   "//mcp-re-client:mcp_re_client_test#anchors::tests::an_expired_manifest_withdraws_the_anchors_rather_than_serving_on_them",
+  "//mcp-re-client:mcp_re_client_test#anchors::tests::the_refresher_withdraws_only_after_the_instant_the_manifest_names",
   "//mcp-re-client:mcp_re_client_test#anchors::tests::an_unreadable_clock_withdraws_the_anchors_rather_than_holding_them",
   # The end-to-end witness: the rollback refusal reaching the RUNNING listener, not only the
   # loader. Without it the controls above are about a module rather than about the deployable.

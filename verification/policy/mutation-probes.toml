@@ -6799,7 +6799,10 @@ theorem = "THM-0120"
 conjunct = "an EXPIRED manifest with no newer document accepted publishes an EMPTY anchor set rather than keeping the last good one"
 path = "mcp-re-client/src/anchors/refresher.rs"
 anchor = """
-            if now >= *manifest_expires_at {
+            if TrustedIssuerSet::new()
+                .with_manifest_expiry(*manifest_expires_at)
+                .is_expired(now)
+            {
 """
 weakening = """
             if false {

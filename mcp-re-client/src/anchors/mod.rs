@@ -464,4 +464,33 @@ mod tests {
             "a repaired manifest restores service in place"
         );
     }
+
+    /// The deadline is inclusive of the instant the manifest names: at that instant the
+    /// anchors are still in force, one second later they are withdrawn.
+    #[test]
+    fn the_refresher_withdraws_only_after_the_instant_the_manifest_names() {
+        let scratch = Scratch::new("deadline");
+        let trust = trust_config(&scratch, true);
+        publish(&trust.manifest_path, 1, false, NOW + 100);
+
+        let mut loader = AnchorLoader::new(&trust).expect("loader");
+        let initial = loader.load(NOW).expect("v1 loads");
+        let snapshot = AnchorSnapshot::new(initial.issuers);
+        let mut expires_at = initial.expires_at;
+
+        let at_deadline = refresh_once(&mut loader, &snapshot, &mut expires_at, NOW + 100);
+        assert!(
+            matches!(at_deadline, RefreshOutcome::KeptLastGood { .. }),
+            "unexpected: {at_deadline:?}"
+        );
+        assert!(snapshot.load().trusts(ROOT_KID, NOW + 100));
+
+        assert_eq!(
+            refresh_once(&mut loader, &snapshot, &mut expires_at, NOW + 101),
+            RefreshOutcome::Withdrawn {
+                expired_at: NOW + 100
+            }
+        );
+        assert!(!snapshot.load().trusts(ROOT_KID, NOW + 101));
+    }
 }
