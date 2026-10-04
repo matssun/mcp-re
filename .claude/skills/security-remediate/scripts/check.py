@@ -27,6 +27,7 @@ Two phases, because a baseline is only honest if it is taken BEFORE the edit:
              baseline, and `bazel_gate.py check` per tree.
              Rust: `rust_gate.py` — `bazel build --config=lint` over every target
              that compiles the file (plus the related files' targets above `local`),
+             `bazel build --config=rustfmt` over the targets of every touched file,
              the module-size gate, the file's own unit tests in the unit-test targets
              built from those libraries, and any `--it` integration test target.
         and append `gate` (plus `gate-failed` when a gate BLAMES the change).
@@ -249,7 +250,8 @@ def cmd_post(a) -> int:
     pre = _prescan(a, touched, related)
     parts: list[dict] = []
     if a.file.endswith(".rs"):
-        parts = rust_gate.gate(a.file, related if a.tier != "local" else [], _ids(a.it), a.work_dir)
+        parts = rust_gate.gate(a.file, related if a.tier != "local" else [], _ids(a.it), a.work_dir,
+                               touched=touched)
     else:
         if a.tier != "local":
             parts.append(dict(_pyright(a), gate="pyright"))

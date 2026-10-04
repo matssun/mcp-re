@@ -9,7 +9,9 @@ What is pinned here, each refusal beside its positive control:
   rust_gate.py
     2. a lint diagnostic and a failed test are `new-failures` (naming the
        test); a Bazel failure with no diagnostic is `infra`; a selection that ran
-       0 tests is `infra` when the file HAS tests and `ok` when it has none
+       0 tests is `infra` when the file HAS tests and `ok` when it has none;
+       a rustfmt diff in a touched file is `new-failures`, one only in an
+       untouched file is `infra`
   check.py
     3. a red change is saved as a patch and reverted — tracked edits and new
        files — so the next writer starts clean
@@ -113,8 +115,9 @@ if cmd == "query":
             break
     sys.exit(0)
 if cmd == "build":
-    print(cfg["build"]["out"])
-    sys.exit(cfg["build"]["rc"])
+    lane = cfg.get("rustfmt", {"out": "", "rc": 0}) if "--config=rustfmt" in rest else cfg["build"]
+    print(lane["out"])
+    sys.exit(lane["rc"])
 if cmd == "test":
     for label, text in cfg["test"].get("logs", {}).items():
         pkg, name = label[2:].split(":", 1)
@@ -129,7 +132,8 @@ UNIT = "//alpha:alpha_test"
 ALPHA_BUILD = 'nt_rust_library(\n    name = "alpha",\n    crate_name = "alpha",\n)\n'
 
 
-def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int) -> list[dict]:
+def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int,
+          fmt: tuple[str, int] = ("", 0)) -> list[dict]:
     root = os.path.join(td, "ws")
     _write(root, "alpha/BUILD.bazel", ALPHA_BUILD)
     _write(root, "alpha/src/lib.rs", "pub mod keys;\n")
@@ -145,6 +149,7 @@ def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int
         json.dump({"query": [["rdeps(", ["//alpha:alpha"]], ["attr(crate", [UNIT]],
                              ['kind("^rust_test rule$", set(', []], ["attr(tags", []]],
                    "build": {"out": lint_out, "rc": lint_rc},
+                   "rustfmt": {"out": fmt[0], "rc": fmt[1]},
                    "test": {"out": "", "rc": test_rc, "logs": {UNIT: log}}}, fh)
     orig, cwd, env = rust_gate.bazel, os.getcwd(), os.environ.get("FAKE_BAZEL_CONFIG")
     rust_gate.bazel = lambda: [sys.executable, fake]  # type: ignore[assignment]
@@ -171,7 +176,8 @@ def test_rust_gate_verdicts() -> None:
     has_tests = "pub struct S;\n#[cfg(test)]\nmod tests { #[test] fn t() {} }\n"
     with tempfile.TemporaryDirectory() as td:
         ok = _gate(td, has_tests, "", 0, passed, 0)
-        assert _verdicts(ok) == {"clippy": "ok", "module-size": "ok", "test": "ok"}, ok
+        assert _verdicts(ok) == {"clippy": "ok", "rustfmt": "ok", "module-size": "ok",
+                                 "test": "ok"}, ok
         lint = _gate(td, "pub struct S;\n", "error: unused variable", 1, passed, 0)
         assert _verdicts(lint)["clippy"] == "new-failures" and "test" not in _verdicts(lint), lint
         red = _gate(td, has_tests, "", 0,
@@ -187,6 +193,24 @@ def test_rust_gate_verdicts() -> None:
         empty_none = _gate(td, "pub struct S;\n", "", 0, none, 0)
         assert _verdicts(empty_none)["test"] == "ok", empty_none
     print("  rust gate: lint/test failures blamed, a silent build = infra, 0 tests judged by the file  OK")
+
+
+def test_rust_gate_rustfmt_blames_only_touched_files() -> None:
+    passed = "running 3 tests\ntest result: ok. 3 passed; 0 failed; 0 ignored"
+    has_tests = "pub struct S;\n#[cfg(test)]\nmod tests { #[test] fn t() {} }\n"
+    with tempfile.TemporaryDirectory() as td:
+        root = os.path.realpath(os.path.join(td, "ws"))
+        mine = _gate(td, has_tests, "", 0, passed, 0,
+                     ("Diff in %s/alpha/src/keys.rs:3:\n-fn  x(){}\n+fn x() {}" % root, 1))
+        f = [p for p in mine if p["gate"] == "rustfmt"][0]
+        assert f["verdict"] == "new-failures" and f["unformatted"] == ["alpha/src/keys.rs"], f
+        assert "test" not in _verdicts(mine), mine
+        other = _gate(td, has_tests, "", 0, passed, 0,
+                      ("Diff in %s/alpha/src/lib.rs:1:\n" % root, 1))
+        assert _verdicts(other)["rustfmt"] == "infra", other
+        silent = _gate(td, has_tests, "", 0, passed, 0, ("ERROR: analysis failed", 1))
+        assert _verdicts(silent)["rustfmt"] == "infra", silent
+    print("  rust gate: a rustfmt diff in the touched file is blamed; elsewhere or silent = infra  OK")
 
 
 def test_revert_on_fail_restores_tree() -> None:

@@ -11,6 +11,9 @@ configurations it is compiled in.
   lint    `bazel build --config=lint` over the targets that compile the file (and, at the
           `wide` tier, those that compile the related files), plus the unit-test targets
           built from them: clippy under the workspace lint policy, warnings as errors.
+  format  `bazel build --config=rustfmt` over the targets that compile the touched files —
+          the rustfmt lane, scoped. A diff in a touched file is the writer's; a diff only in
+          files nobody touched means the lane did not start on a formatted tree (`infra`).
   size    `scripts/module_size_gate.py` — seconds, whole tree.
   tests   the `rust_test` targets whose `crate` is a library that compiles the file (its
           own unit tests), filtered to the file's module path, plus every integration test
@@ -23,7 +26,7 @@ Verdicts: `new-failures` (a lint, a compile error, a failed test or a grown modu
 `infra` (Bazel could not judge: analysis failed, or no test ran), `ok`.
 
 Usage:
-  rust_gate.py --file F [--related a,b] [--it //pkg:target,...] --work-dir DIR
+  rust_gate.py --file F [--related a,b] [--touched a,b] [--it //pkg:target,...] --work-dir DIR
 """
 from __future__ import annotations
 
@@ -44,6 +47,7 @@ _DIAGNOSTIC = re.compile(r"^error(?:\[E\d+\])?: ", re.M)
 _RUNNING = re.compile(r"^running (\d+) tests?$", re.M)
 _FAILED_TEST = re.compile(r"^---- (\S+) stdout ----$", re.M)
 _INLINE_TEST = re.compile(r"#\[(?:tokio::)?test\b")
+_FMT_DIFF = re.compile(r"^Diff in (\S+?\.rs):\d+:$", re.M)
 
 
 def bazel() -> list[str]:
@@ -118,6 +122,21 @@ def _lint(targets: list[str], log: str) -> dict:
             "why": "the lint build failed without a diagnostic — analysis, fetch or toolchain"}
 
 
+def _rustfmt(targets: list[str], touched: list[str], log: str) -> dict:
+    rc, out = _run(bazel() + ["build", "--config=rustfmt", "--keep_going", *targets], log)
+    if rc == 0:
+        return {"verdict": "ok", "exit": rc, "log": log}
+    diffs = sorted({os.path.relpath(p) if os.path.isabs(p) else p for p in _FMT_DIFF.findall(out)})
+    mine = [p for p in diffs if p in set(touched)]
+    if mine:
+        return {"verdict": "new-failures", "exit": rc, "log": log, "unformatted": mine}
+    if diffs:
+        return {"verdict": "infra", "exit": rc, "log": log, "unformatted": diffs,
+                "why": "rustfmt diffs only in untouched files — the lane did not start formatted"}
+    return {"verdict": "infra", "exit": rc, "log": log,
+            "why": "the rustfmt build failed without a diff — analysis, fetch or toolchain"}
+
+
 def _testlog(label: str) -> str:
     pkg, name = label[2:].split(":", 1)
     path = os.path.join("bazel-testlogs", pkg, name, "test.log")
@@ -146,7 +165,7 @@ def _test(targets: list[str], filt: str, log: str) -> dict:
 
 
 def gate(file: str, related: list[str], its: list[str], work_dir: str,
-         resolver: RustResolver | None = None) -> list[dict]:
+         resolver: RustResolver | None = None, touched: list[str] | None = None) -> list[dict]:
     r = resolver or RustResolver(".")
     own = compiling_targets([file])
     if not own:
@@ -158,6 +177,10 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
     parts: list[dict] = [dict(_lint(sorted(set(lint_scope + units)),
                                     os.path.join(work_dir, "lint-%s.log" % tag)),
                               gate="clippy", targets=lint_scope)]
+    edited = sorted({f for f in (touched or []) + [file] if f.endswith(".rs")})
+    fmt_scope = sorted(set(own + compiling_targets([f for f in edited if f != file])))
+    parts.append(dict(_rustfmt(fmt_scope, edited, os.path.join(work_dir, "fmt-%s.log" % tag)),
+                      gate="rustfmt", targets=fmt_scope))
 
     rc, out = _run([sys.executable, SIZE_GATE], os.path.join(work_dir, "size-%s.log" % tag))
     parts.append({"gate": "module-size", "verdict": "ok" if rc == 0 else "new-failures",
@@ -188,12 +211,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Bazel Rust gate for one file's fix")
     ap.add_argument("--file", required=True)
     ap.add_argument("--related", default="")
+    ap.add_argument("--touched", default="", help="comma-separated files edited (default: --file)")
     ap.add_argument("--it", default="", help="integration test targets (Bazel labels), comma-separated")
     ap.add_argument("--work-dir", required=True)
     a = ap.parse_args()
     os.makedirs(a.work_dir, exist_ok=True)
     ids = lambda s: [x.strip() for x in s.split(",") if x.strip()]  # noqa: E731
-    print(json.dumps(gate(a.file, ids(a.related), ids(a.it), a.work_dir), indent=1))
+    print(json.dumps(gate(a.file, ids(a.related), ids(a.it), a.work_dir,
+                          touched=ids(a.touched)), indent=1))
     return 0
 
 
