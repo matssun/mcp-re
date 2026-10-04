@@ -50,7 +50,7 @@ SIZE_GATE = "scripts/module_size_gate.py"
 # joins no unit, a fingerprint input no CI filter triggers on, a mutation anchor the change
 # made stale. Writers kept leaving these for the batch gate.
 REGISTRY_GATES = ("scripts/unit_closure_gate.py", "scripts/verification_trigger_gate.py",
-                  "tools/verification/test_mutation_lane.py")
+                  "tools/verification/test_mutation_lane.py", "scripts/control_census_gate.py")
 RUST_RULES = "rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro"
 _DIAGNOSTIC = re.compile(r"^error(?:\[E\d+\])?: ", re.M)
 _RUNNING = re.compile(r"^running (\d+) tests?$", re.M)

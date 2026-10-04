@@ -69,7 +69,7 @@ def test_rust_gate_records_size_and_still_tests() -> None:
     assert by["module-size"]["verdict"] == "size-debt", by
     assert by["module-size"]["debt"][0]["measured"] == 606, by
     registry = [p for p in parts if p["gate"] == "registry"]
-    assert [p["verdict"] for p in registry] == ["new-failures", "ok", "ok"], registry
+    assert [p["verdict"] for p in registry] == ["new-failures", "ok", "ok", "ok"], registry
     assert "test" not in by, "a registry failure is the writer's and stops the gate"
     print("  rust gate: size-only is size-debt; a registry failure (unit closure) blames the writer  OK")
 
