@@ -28,12 +28,9 @@ use super::{AdmissionFuture, AdmissionSourceError, AsyncAdmissionSource};
 pub struct InMemoryAdmissionSource {
     /// Signed records, by the id they were published under.
     records: Mutex<HashMap<String, String>>,
-    /// When set, every lookup fails as unavailable — for exercising the §5.2 degraded fork
-    /// without taking a real store down.
-    unavailable: Mutex<bool>,
     /// The one place stored bytes become authoritative state.
     verifier: AdmissionRecordVerifier,
-    /// Panics observed inside one of the two guarded regions above. A FAULT count, not an
+    /// Panics observed inside the record map's guarded region. A FAULT count, not an
     /// outage count: the two are different operator facts and folding them together is how
     /// "a thread died holding the map" reads as "the store is unreachable".
     poison_observed: AtomicU64,
@@ -44,7 +41,6 @@ impl InMemoryAdmissionSource {
     pub fn new(verifier: AdmissionRecordVerifier) -> Self {
         InMemoryAdmissionSource {
             records: Mutex::new(HashMap::new()),
-            unavailable: Mutex::new(false),
             verifier,
             poison_observed: AtomicU64::new(0),
         }
@@ -64,11 +60,6 @@ impl InMemoryAdmissionSource {
     /// a missing record is a definitive negative, not an outage.
     pub fn remove(&self, admission_id: &str) {
         self.recovered(&self.records).remove(admission_id);
-    }
-
-    /// Make every subsequent lookup fail as unavailable (or stop doing so).
-    pub fn set_unavailable(&self, unavailable: bool) {
-        *self.recovered(&self.unavailable) = unavailable;
     }
 
     /// Panics observed inside one of this source's guarded regions.
@@ -94,7 +85,7 @@ impl InMemoryAdmissionSource {
     /// verifier is the only thing that turns them into state; a half-updated `HashMap`
     /// cannot produce a record the verifier will accept that the authority did not sign.
     ///
-    /// Poison is STICKY, so refusing on it is not "one call fails". One panic under either
+    /// Poison is STICKY, so refusing on it is not "one call fails". One panic under the record
     /// lock would turn every later lookup into an outage for the process lifetime: the
     /// replica then serves the §5.2 degraded fork until its window closes and fails closed
     /// after that — a permanent refusal bought by a single panic. That is the trade
@@ -115,11 +106,6 @@ impl InMemoryAdmissionSource {
     /// nothing else. The async block is not a scope this logic belongs inside: none of it
     /// awaits.
     fn read(&self, admission_id: &str, now: i64) -> Result<AnsweredAs, AdmissionSourceError> {
-        if *self.recovered(&self.unavailable) {
-            return Err(AdmissionSourceError::Unavailable {
-                details: "in-memory source marked unavailable".to_owned(),
-            });
-        }
         let raw = self.recovered(&self.records).get(admission_id).cloned();
         // A record this store HAS but cannot authenticate is a definitive negative, exactly
         // as an absent one is, and the answer says which. Never an outage: that fork serves
@@ -180,21 +166,6 @@ mod tests {
         assert!(matches!(
             block_on(source(&key).current("nobody", 1_030)),
             Ok(AnsweredAs::NoRecord)
-        ));
-    }
-
-    #[test]
-    fn an_outage_is_distinguishable_from_an_unknown_workload() {
-        let key = authority();
-        let s = source(&key);
-        s.publish(
-            "workload-7",
-            signed_admitted(&key, "workload-7", 5, 1, 1_000),
-        );
-        s.set_unavailable(true);
-        assert!(matches!(
-            block_on(s.current("workload-7", 1_030)),
-            Err(AdmissionSourceError::Unavailable { .. })
         ));
     }
 

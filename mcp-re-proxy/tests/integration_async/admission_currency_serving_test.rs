@@ -57,7 +57,10 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::admission_enforcer::AdmissionEnforcement;
+use mcp_re_proxy::admission_source::AdmissionFuture;
 use mcp_re_proxy::admission_source::AdmissionRecordVerifier;
+use mcp_re_proxy::admission_source::AdmissionSourceError;
+use mcp_re_proxy::admission_source::AnsweredAs;
 use mcp_re_proxy::admission_source::AsyncAdmissionSource;
 use mcp_re_proxy::admission_source::InMemoryAdmissionSource;
 use mcp_re_proxy::async_inner::AsyncInnerServer;
@@ -233,6 +236,44 @@ fn publish_admitted(source: &InMemoryAdmissionSource, generation: u64) {
 /// The authority revokes, KEEPING the generation and advancing the publication.
 fn revoke(source: &InMemoryAdmissionSource, generation: u64) {
     publish_state(source, generation, 2, AdmissionStatus::Revoked);
+}
+
+/// A source whose authority can be taken down: lookups fail as unavailable while `down`,
+/// and otherwise answer from the wrapped store. The in-process store cannot be unreachable
+/// on its own, so the outage lives in this double and not in production code.
+struct OutageSwitch {
+    store: InMemoryAdmissionSource,
+    down: std::sync::atomic::AtomicBool,
+}
+
+impl OutageSwitch {
+    fn new(store: InMemoryAdmissionSource) -> Self {
+        OutageSwitch {
+            store,
+            down: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn store(&self) -> &InMemoryAdmissionSource {
+        &self.store
+    }
+
+    fn set_unavailable(&self, down: bool) {
+        self.down.store(down, Ordering::SeqCst);
+    }
+}
+
+impl AsyncAdmissionSource for OutageSwitch {
+    fn current<'a>(&'a self, admission_id: &'a str, now: i64) -> AdmissionFuture<'a, AnsweredAs> {
+        if self.down.load(Ordering::SeqCst) {
+            return Box::pin(async move {
+                Err(AdmissionSourceError::Unavailable {
+                    details: "injected outage".to_owned(),
+                })
+            });
+        }
+        self.store.current(admission_id, now)
+    }
 }
 
 fn admission_claims(generation: u64, status: AdmissionStatus, iat: i64) -> AdmissionClaims {
@@ -705,8 +746,8 @@ fn an_unknown_workload_is_refused_not_routed_into_degraded_mode() {
 
 #[test]
 fn an_unreachable_authority_fails_closed_by_default() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
+    let source = Arc::new(OutageSwitch::new(admission_store()));
+    publish_admitted(source.store(), 5);
     source.set_unavailable(true);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
@@ -743,8 +784,8 @@ fn an_unreachable_authority_fails_closed_by_default() {
 /// against an enforcer that reported `Degraded` for everything.
 #[test]
 fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
+    let source = Arc::new(OutageSwitch::new(admission_store()));
+    publish_admitted(source.store(), 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = AdmissionPolicy {
         allow_degraded_mode: true,
@@ -810,8 +851,8 @@ fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
 /// however long. Every assertion below is FRESH; only the outage ages.
 #[test]
 fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
+    let source = Arc::new(OutageSwitch::new(admission_store()));
+    publish_admitted(source.store(), 5);
     let calls = Arc::new(AtomicUsize::new(0));
     // P is ONE SECOND, because the window is elapsed time on the monotonic clock and the
     // control ages the OUTAGE by waiting — which is the only thing that ages it. A 120s
@@ -885,8 +926,8 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
 /// a window that has to have been opened by a real read.
 #[test]
 fn a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
+    let source = Arc::new(OutageSwitch::new(admission_store()));
+    publish_admitted(source.store(), 5);
     source.set_unavailable(true);
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = AdmissionPolicy {

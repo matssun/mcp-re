@@ -1503,9 +1503,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::tests::a_publish_refusal_is_a_verdict_and_not_an_outage",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::an_unknown_workload_is_a_definitive_negative_not_an_outage",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::restoring_an_older_publication_after_a_revocation_is_refused",
-  # The mirror: a GENUINE outage still reads as one, so the clause above is a
-  # classification and not a verifier that reports everything the same way.
-  "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::an_outage_is_distinguishable_from_an_unknown_workload",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::a_panic_under_the_record_lock_does_not_close_the_source",
   # And the accepting half, so none of the above is satisfied by a source that refuses
   # everything.
@@ -2107,6 +2104,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_chain_evidence::tests::absent_evidence_refuses_as_no_leaf_under_every_policy",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_chain_evidence::tests::bytes_that_are_not_a_certificate_refuse_as_malformed_not_as_absent",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_chain_evidence::tests::empty_bytes_are_a_malformed_certificate_rather_than_an_absent_one",
+  "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_chain_evidence::tests::a_duplicated_san_extension_in_real_der_refuses_as_uninterpretable_never_as_absent",
+  "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_chain_evidence::tests::a_common_name_the_parser_cannot_read_in_real_der_refuses_as_uninterpretable_never_as_absent",
   # --- provenance is part of the fact ---
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_peer_identity_evidence::tests::two_evidences_differing_only_in_source_are_not_equal",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_identity_policy::tests::every_policy_selects_exactly_one_source",
