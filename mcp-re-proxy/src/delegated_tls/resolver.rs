@@ -250,23 +250,37 @@ mod correspondence_gate {
         // The other side of the gate. Before the slice this produced a resolver too — the
         // constructor never looked at the bytes it was handed.
         let (_, signer) = corresponding_material();
-        assert!(DelegatedCertResolver::materialize(
+        let refusal = DelegatedCertResolver::materialize(
             vec![CertificateDer::from(vec![1u8; 8])],
             signer,
             Arc::new(TlsHandshakeSignBudget::new(8, 8)),
         )
-        .is_err());
+        .expect_err("a credential that cannot be interpreted must not materialize");
+        assert_eq!(
+            refusal,
+            crate::communication_assurance::CredentialKeyCorrespondenceRefusal::Credential(
+                crate::communication_assurance::CredentialKeyRefusal::UninterpretableCredential
+            ),
+            "refused on the wrong fact: {refusal:?}"
+        );
     }
 
     #[test]
     fn an_absent_credential_cannot_materialize_a_resolver() {
         let (_, signer) = corresponding_material();
-        assert!(DelegatedCertResolver::materialize(
+        let refusal = DelegatedCertResolver::materialize(
             Vec::new(),
             signer,
             Arc::new(TlsHandshakeSignBudget::new(8, 8)),
         )
-        .is_err());
+        .expect_err("a credential that cannot be interpreted must not materialize");
+        assert_eq!(
+            refusal,
+            crate::communication_assurance::CredentialKeyCorrespondenceRefusal::Credential(
+                crate::communication_assurance::CredentialKeyRefusal::Absent
+            ),
+            "refused on the wrong fact: {refusal:?}"
+        );
     }
 
     #[test]
