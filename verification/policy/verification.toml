@@ -4732,6 +4732,7 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::a_receipt_that_says_nothing_is_not_a_receipt_that_says_it_did_not_run",
   "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::a_body_carrying_no_contract_yields_the_silent_one_rather_than_a_guess",
   "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::an_unrecognized_value_is_carried_and_never_read_as_a_known_one",
+  "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::an_unrecognized_execution_status_alone_refuses_a_blind_retry",
   "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::the_wire_code_and_its_disposition_are_read_in_one_parse",
   "//mcp-re-client-core:mcp_re_client_core_test#result_classification::tests::an_absent_result_type_is_terminal_as_the_spec_requires_of_clients",
   "//mcp-re-client-core:mcp_re_client_core_test#result_classification::tests::an_unrecognized_result_type_is_never_terminal",

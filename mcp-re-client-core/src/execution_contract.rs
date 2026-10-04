@@ -111,7 +111,8 @@ impl ExecutionContract {
     }
 
     /// Whether a blind retry is refused by this receipt: the server stated a retry
-    /// hazard, or stated the work may already have run.
+    /// hazard, stated the work may already have run, or stated either in a token this
+    /// client does not recognize (an unrecognized statement is never read as permission).
     ///
     /// A receipt that states NOTHING returns `false` — this reports what the server
     /// said, and a caller that needs the difference between "stated safe" and "said
@@ -119,7 +120,10 @@ impl ExecutionContract {
     /// for "safe to retry": the contract only ever names hazards.
     pub fn retry_is_refused(&self) -> bool {
         !matches!(self.retry(), RetrySafety::Unstated)
-            || matches!(self.execution(), ExecutionStatus::PossiblyExecuted)
+            || !matches!(
+                self.execution(),
+                ExecutionStatus::Unstated | ExecutionStatus::NotExecuted
+            )
     }
 
     /// Whether the exchange consumed a continuation (a human approval) that a retry
@@ -189,6 +193,21 @@ mod tests {
             ExecutionStatus::Unrecognized("quantum_superposition".to_owned())
         );
         assert!(future.is_stated(), "the server did state something");
+    }
+
+    #[test]
+    fn an_unrecognized_execution_status_alone_refuses_a_blind_retry() {
+        let unrecognized = ExecutionContract {
+            execution_status: Some("definitely_executed".to_owned()),
+            ..ExecutionContract::default()
+        };
+        assert!(unrecognized.retry_is_refused());
+        let not_run = ExecutionContract {
+            execution_status: Some("not_executed".to_owned()),
+            ..ExecutionContract::default()
+        };
+        assert!(!not_run.retry_is_refused());
+        assert!(!ExecutionContract::default().retry_is_refused());
     }
 
     #[test]
