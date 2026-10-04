@@ -472,12 +472,18 @@ impl HttpProfileProxy {
             Ok(admitted) => admitted,
             Err(rejection) => return rejection,
         };
-        let (ans, window) = match self.commit_to_answering(ex, &mut progress).await {
+        let (ans, window) = match self.commit_to_answering(ex, &admitted, &mut progress).await {
             Ok(answered) => answered,
             Err(rejection) => return rejection,
         };
         let acc = receipt::Accepted::record(&self.audit, &admitted, ans);
-        let commitment = self.commit_to_dispatch(&acc, admitted.authorized, &window, &mut progress);
+        let commitment = self.commit_to_dispatch(
+            &acc,
+            &admitted.envelope,
+            admitted.authorized,
+            &window,
+            &mut progress,
+        );
         let (prepared, retention) = match commitment.await {
             Ok(committed) => committed,
             Err(rejection) => return rejection,
@@ -500,12 +506,12 @@ impl HttpProfileProxy {
         // NOTIFICATION — a one-way message with no JSON-RPC `id` is its own terminal: it
         // says the boundary accepted the message, never that anything completed. Decided
         // from the REQUEST, which is where the fact lives.
-        if matches!(admitted.outstanding, OutstandingId::Notification) {
+        if matches!(admitted.envelope.outstanding(), OutstandingId::Notification) {
             return self
                 .answer_notification_terminal(&acc, &mut progress, &outcome, &window, &owed)
                 .await;
         }
-        let outstanding = &admitted.outstanding;
+        let outstanding = admitted.envelope.outstanding();
         let reply = match self
             .assemble_reply(&acc, &mut progress, outcome, outstanding, &window, &owed)
             .await

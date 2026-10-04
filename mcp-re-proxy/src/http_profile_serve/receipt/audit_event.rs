@@ -46,7 +46,7 @@ impl<'a> Accepted<'a> {
     /// on the response side anyway.
     pub(in crate::http_profile_serve) fn record(
         audit: &MaybeAuditSink,
-        admitted: &AdmittedRequest,
+        admitted: &AdmittedRequest<'_>,
         ans: Answerable<'a>,
     ) -> Self {
         crate::audit_record::record_to(
@@ -186,9 +186,9 @@ mod tests {
     use super::super::RefusalPoint;
     use super::*;
     use crate::authorization::AuthorizationPosture;
+    use crate::http_profile_serve::request_admission::tests::validated;
     use crate::refusal::Refusal;
     use mcp_re_core::McpReError;
-    use mcp_re_http_profile::OutstandingId;
 
     fn verified() -> mcp_re_http_profile::VerifiedMcpRequest {
         let audience = mcp_re_http_profile::AudienceTuple {
@@ -283,8 +283,14 @@ mod tests {
                 100, 7,
             )),
         };
+        let notification = crate::http_profile_serve::HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://example.test/mcp".into(),
+            headers: Vec::new(),
+            body: br#"{"jsonrpc":"2.0","method":"ping"}"#.to_vec(),
+        };
         let admitted = AdmittedRequest {
-            outstanding: OutstandingId::Notification,
+            envelope: validated(&notification),
             authorized: AuthorizationPosture::NoPolicyConfigured,
         };
         let acc = Accepted::record(&audit, &admitted, ans);

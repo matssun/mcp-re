@@ -23,6 +23,7 @@ use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::refusal::Refusal;
 
 use super::continuation::Retirement;
+use super::pre_admission::AdmittedRequest;
 use super::receipt::RefusalPoint;
 use super::signing_window::SigningWindow;
 use super::Answerable;
@@ -157,11 +158,12 @@ impl HttpProfileProxy {
     pub(super) async fn commit_to_answering<'a>(
         &self,
         mut ex: Exchange<'a>,
+        admitted: &AdmittedRequest<'_>,
         progress: &mut ExchangeProgress,
     ) -> Result<(Answerable<'a>, SigningWindow), ServedHttpResponse> {
         let prep = match self
             .continuations
-            .prepare(&ex, self.requests.audience_id())
+            .prepare(&ex, &admitted.envelope, self.requests.audience_id())
             .await
         {
             Ok(prep) => progress.establish(prep),

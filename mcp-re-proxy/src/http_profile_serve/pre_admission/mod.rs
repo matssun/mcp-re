@@ -14,7 +14,6 @@
 //! [`HttpProfileProxy::refuse`] signs.
 
 use mcp_re_http_profile::HttpRequest;
-use mcp_re_http_profile::OutstandingId;
 use mcp_re_http_profile::VerifiedMcpRequest;
 
 use crate::admission_enforcer::AdmissionFacet;
@@ -22,6 +21,7 @@ use crate::async_serve::ServedHttpResponse;
 use crate::authorization::AuthorizationPosture;
 use crate::exchange_state::ExchangeProgress;
 
+use super::request_admission::ValidatedRequestEnvelope;
 use super::Exchange;
 use super::HttpProfileProxy;
 
@@ -38,10 +38,11 @@ mod action;
 /// Exactly two, because exactly two are read later. The binding and what admission decided
 /// over do not appear: they are prerequisites the stages below consumed, and reconstructing
 /// them downstream is how a decision gets taken twice.
-pub(super) struct AdmittedRequest {
-    /// Which terminal the exchange has — a bodied reply, or the bodyless 202 a
-    /// notification gets. Decided from the REQUEST, where the fact lives.
-    pub(super) outstanding: OutstandingId,
+pub(super) struct AdmittedRequest<'a> {
+    /// The validated request envelope. Which terminal the exchange has — a bodied reply, or
+    /// the bodyless 202 a notification gets — is `envelope.outstanding()`, decided from the
+    /// REQUEST, where the fact lives.
+    pub(super) envelope: ValidatedRequestEnvelope<'a>,
     /// The ADR-MCPRE-065 posture. Held rather than re-asked because the dispatch consumes
     /// it: the body [`crate::request_stages::ReadyForDispatch`] carries has exactly one
     /// producer, and it is this value.
@@ -96,19 +97,22 @@ impl HttpProfileProxy {
     /// admission, and what admission decided over reaches authorization. Authorization
     /// receives the ADR-MCPRE-064 product whole; it never reopens it.
     ///
+    /// The first link is checked by the compiler too: the body the authorization stage reads
+    /// is a [`ValidatedRequestEnvelope`], which only `validate_envelope` can produce.
+    ///
     /// The second link is checked by the compiler, not by this ordering:
     /// [`HttpProfileProxy::authorization_stage`] takes a `standing::AdmissionDecidedOver`,
     /// which only [`HttpProfileProxy::admission_stage`] can produce, so removing the §7
     /// gate from this sequence is a type error rather than a silently shorter pipeline.
-    pub(super) async fn admit_request(
+    pub(super) async fn admit_request<'a>(
         &self,
-        ex: &mut Exchange<'_>,
+        ex: &mut Exchange<'a>,
         peer: Option<&crate::communication_assurance::AuthenticatedChannelPeer>,
         progress: &mut ExchangeProgress,
-    ) -> Result<AdmittedRequest, ServedHttpResponse> {
+    ) -> Result<AdmittedRequest<'a>, ServedHttpResponse> {
         // What this request IS, decided once and carried: a legal JSON-RPC 2.0 request, and
         // the outstanding id that selects its terminal.
-        let outstanding = self
+        let envelope = self
             .requests
             .validate_envelope(ex.http_req)
             .map_err(|refusal| self.refuse(ex, refusal, progress))?;
@@ -127,14 +131,14 @@ impl HttpProfileProxy {
         // authorization line below follows, and for the same reason.
         ex.verdicts.record_admission(admission);
         let authorized = self
-            .authorization_stage(ex, &decided_over)
+            .authorization_stage(ex, &envelope, &decided_over)
             .map_err(|refusal| self.refuse(ex, refusal, progress))?;
         // The verdict this exchange was permitted under, recorded where it is obtained. A
         // refusal named by a later stage then reports what the policy decided, instead of
         // deriving "no policy decided" from the kind of verdict that refused it.
         ex.verdicts.record_authorization(authorized.audit_facet());
         Ok(AdmittedRequest {
-            outstanding,
+            envelope,
             authorized,
         })
     }
@@ -144,14 +148,26 @@ impl HttpProfileProxy {
 mod tests {
     use super::*;
     use crate::authorization::audit::AuthorizationFacet;
+    use crate::http_profile_serve::request_admission::tests::validated;
+    use mcp_re_http_profile::OutstandingId;
+
+    fn ping() -> HttpRequest {
+        HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://example.test/mcp".into(),
+            headers: vec![],
+            body: br#"{"jsonrpc":"2.0","method":"ping"}"#.to_vec(),
+        }
+    }
 
     /// The carrier keeps the two postures apart. A region product that flattened them would
     /// let the accepted record say *a policy permitted this* on a deployment where none is
     /// deployed — the one thing ADR-MCPRE-066 §1.1 invariant 5 forbids.
     #[test]
     fn the_carrier_does_not_flatten_the_authorization_posture() {
+        let http_req = ping();
         let unconfigured = AdmittedRequest {
-            outstanding: OutstandingId::Notification,
+            envelope: validated(&http_req),
             authorized: AuthorizationPosture::NoPolicyConfigured,
         };
         assert!(matches!(
@@ -164,12 +180,13 @@ mod tests {
     /// the dispatch — no reply can make a notification bodied or stop it being one.
     #[test]
     fn the_carrier_holds_the_terminal_selected_by_the_request() {
+        let http_req = ping();
         let notification = AdmittedRequest {
-            outstanding: OutstandingId::Notification,
+            envelope: validated(&http_req),
             authorized: AuthorizationPosture::NoPolicyConfigured,
         };
         assert!(matches!(
-            notification.outstanding,
+            notification.envelope.outstanding(),
             OutstandingId::Notification
         ));
     }

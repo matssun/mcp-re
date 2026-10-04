@@ -12,6 +12,7 @@
 use crate::authorization::AuthorizationPosture;
 use crate::refusal::Refusal;
 
+use super::super::request_admission::ValidatedRequestEnvelope;
 use super::super::Exchange;
 use super::super::HttpProfileProxy;
 use super::standing::AdmissionDecidedOver;
@@ -31,7 +32,10 @@ impl HttpProfileProxy {
     /// input to the decision, and running a tool for an action no policy permits is exactly
     /// what a free refusal here prevents.
     ///
-    /// That order is a PRECONDITION rather than a convention: the only value of type
+    /// Its first precondition is the [`ValidatedRequestEnvelope`]: the body this stage reads
+    /// for meaning is the one `validate_envelope` accepted, and no other handle is offered.
+    ///
+    /// The second is a PRECONDITION rather than a convention: the only value of type
     /// [`AdmissionDecidedOver`] anywhere is the one
     /// [`HttpProfileProxy::admission_stage`] returns, so a pipeline reaching this stage
     /// without the §7 gate has nothing to call it with.
@@ -44,10 +48,11 @@ impl HttpProfileProxy {
     pub(super) fn authorization_stage(
         &self,
         ex: &Exchange<'_>,
+        envelope: &ValidatedRequestEnvelope<'_>,
         decided_over: &AdmissionDecidedOver,
     ) -> Result<AuthorizationPosture, Refusal> {
         self.authorization
-            .decide(ex.verified, &ex.http_req.body, decided_over.binding())
+            .decide(ex.verified, envelope.body(), decided_over.binding())
             .map_err(|refusal| Refusal::new(refusal, 403))
     }
 }

@@ -99,6 +99,7 @@ mod tests {
     use crate::continuation_store::ContinuationStoreError;
     use crate::continuation_store::RetainedHandles;
     use crate::http_profile_serve::continuation::answer_leg::tests::{http_request, verified_as};
+    use crate::http_profile_serve::request_admission::tests::validated;
     use crate::http_profile_serve::Exchange;
     use std::sync::Arc;
 
@@ -110,7 +111,9 @@ mod tests {
             verified.request_block.continuation = None;
         }
         let actor_id = verified.resolved_actor().actor_id();
-        let http_req = http_request(br#"{"params":{"requestState":"s-1"}}"#);
+        let http_req = http_request(
+            br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"requestState":"s-1"}}"#,
+        );
         let ex = Exchange {
             http_req: &http_req,
             verified: &verified,
@@ -119,7 +122,7 @@ mod tests {
             verdicts: Default::default(),
         };
         let established = plane
-            .prepare(&ex, "aud")
+            .prepare(&ex, &validated(&http_req), "aud")
             .await
             .expect("a store miss or an absent continuation is not a refusal");
         crate::exchange_state::ExchangeProgress::new().establish(established)

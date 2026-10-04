@@ -32,7 +32,7 @@ const DECISION: &str = "validate_envelope";
 const SECOND_READ: &str = "outstanding_id(";
 
 /// The value every downstream reader is given instead.
-const CARRIED: &str = "admitted.outstanding";
+const CARRIED: &str = "admitted.envelope.outstanding()";
 
 fn collect_rust_files(dir: &Path, into: &mut Vec<PathBuf>) {
     let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read dir {dir:?}: {e}"));

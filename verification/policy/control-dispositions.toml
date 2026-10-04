@@ -9678,6 +9678,14 @@ proposition = "NP-129"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20304"
+project = "mcp-re-proxy"
+control = "src/lib.rs#http_profile_serve::request_admission::tests::the_envelope_hands_on_the_bytes_it_validated"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-18150"
 project = "mcp-re-proxy"
 control = "src/lib.rs#http_profile_serve::retention::tests::a_deployment_that_retains_nothing_owes_nothing_on_any_of_the_three"

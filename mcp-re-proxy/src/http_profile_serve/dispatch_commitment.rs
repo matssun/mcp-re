@@ -36,6 +36,7 @@ use crate::request_stages::RetentionDisposition;
 use super::body_boundary::ForwardedBody;
 use super::receipt::Accepted;
 use super::receipt::RefusalPoint;
+use super::request_admission::ValidatedRequestEnvelope;
 use super::signing_window;
 use super::signing_window::SigningWindow;
 use super::Exchange;
@@ -68,9 +69,13 @@ impl HttpProfileProxy {
     /// Fails closed when the trusted carrier is on but the context could not be written:
     /// the inner server would otherwise get an ordinary-looking request with no verified
     /// context, which is a silent downgrade to an unauthenticated call.
-    fn forward_body_stage(&self, ex: &Exchange<'_>) -> Result<Established<Vec<u8>>, Refusal> {
+    fn forward_body_stage(
+        &self,
+        ex: &Exchange<'_>,
+        envelope: &ValidatedRequestEnvelope<'_>,
+    ) -> Result<Established<Vec<u8>>, Refusal> {
         let forwarded = ForwardedBody::prepare(
-            &ex.http_req.body,
+            envelope.body(),
             ex.verified,
             self.verified_context_policy,
             ex.now,
@@ -102,11 +107,12 @@ impl HttpProfileProxy {
     pub(super) async fn commit_to_dispatch<'p>(
         &'p self,
         acc: &Accepted<'_>,
+        envelope: &ValidatedRequestEnvelope<'_>,
         authorized: AuthorizationPosture,
         window: &SigningWindow,
         progress: &mut ExchangeProgress,
     ) -> Result<(PreparedInnerDispatch<'p>, RetentionDisposition), ServedHttpResponse> {
-        let forwarded = match self.forward_body_stage(acc.exchange()) {
+        let forwarded = match self.forward_body_stage(acc.exchange(), envelope) {
             Ok(body) => progress.establish(body),
             Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
         };

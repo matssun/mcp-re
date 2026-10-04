@@ -23,6 +23,7 @@ use crate::continuation_store::ContinuationStoreError;
 use crate::continuation_store::RetainedHandles;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
+use crate::http_profile_serve::request_admission::ValidatedRequestEnvelope;
 use crate::http_profile_serve::retention::fault_report::{self, Fault};
 use crate::http_profile_serve::Exchange;
 use crate::refusal::Refusal;
@@ -58,11 +59,12 @@ impl ContinuationPlane {
     pub(in crate::http_profile_serve) async fn prepare(
         &self,
         ex: &Exchange<'_>,
+        envelope: &ValidatedRequestEnvelope<'_>,
         audience_id: &str,
     ) -> Result<Established<ContinuationPrep>, Refusal> {
         let has_continuation = ex.verified.request_block().continuation.is_some();
         let answer_state = if has_continuation {
-            crate::http_profile_serve::extract_request_state(&ex.http_req.body)
+            crate::http_profile_serve::extract_request_state(envelope.body())
         } else {
             None
         };
@@ -186,6 +188,7 @@ impl ContinuationPrep {
 pub(in crate::http_profile_serve) mod tests {
     use super::*;
     use crate::continuation_store::AsyncContinuationStore;
+    use crate::http_profile_serve::request_admission::tests::validated;
     use std::sync::Arc;
 
     /// D1b′ / SLICE B: a deployment holding NO correlation capability refuses an answer
@@ -201,7 +204,9 @@ pub(in crate::http_profile_serve) mod tests {
     async fn an_absent_capability_is_the_deployments_fact_and_not_the_callers() {
         let verified = verified_as("did:example:host-a", "key-1");
         let actor_id = verified.resolved_actor().actor_id();
-        let http_req = http_request(br#"{"params":{"requestState":"s-1"}}"#);
+        let http_req = http_request(
+            br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"requestState":"s-1"}}"#,
+        );
         let ex = Exchange {
             http_req: &http_req,
             verified: &verified,
@@ -210,7 +215,10 @@ pub(in crate::http_profile_serve) mod tests {
             verdicts: Default::default(),
         };
 
-        let Err(refusal) = ContinuationPlane::disabled().prepare(&ex, "aud").await else {
+        let Err(refusal) = ContinuationPlane::disabled()
+            .prepare(&ex, &validated(&http_req), "aud")
+            .await
+        else {
             panic!("a leg needing correlation in a deployment with none must be refused");
         };
         assert_eq!(refusal.status, 503, "a deployment-side unavailability");
@@ -231,7 +239,9 @@ pub(in crate::http_profile_serve) mod tests {
         let mut verified = verified_as("did:example:host-a", "key-1");
         verified.request_block.continuation = None;
         let actor_id = verified.resolved_actor().actor_id();
-        let http_req = http_request(br#"{"params":{"requestState":"s-1"}}"#);
+        let http_req = http_request(
+            br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"requestState":"s-1"}}"#,
+        );
         let ex = Exchange {
             http_req: &http_req,
             verified: &verified,
@@ -241,7 +251,7 @@ pub(in crate::http_profile_serve) mod tests {
         };
 
         let established = ContinuationPlane::disabled()
-            .prepare(&ex, "aud")
+            .prepare(&ex, &validated(&http_req), "aud")
             .await
             .expect("a leg carrying no continuation is not this owner's to refuse");
         let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
@@ -319,7 +329,7 @@ pub(in crate::http_profile_serve) mod tests {
 
     /// A body that names a second identity in the members a leg reading the request would
     /// read. Nothing admits it; it is here so the controls can show it names nothing.
-    pub(in crate::http_profile_serve) const BODY_ASSERTING_ANOTHER_ACTOR: &[u8] = br#"{"params":{"requestState":"s-1","actorIdentity":{"role":"client","trust_domain":"example.com","subject":"did:example:impostor","keyid":"key-9"}}}"#;
+    pub(in crate::http_profile_serve) const BODY_ASSERTING_ANOTHER_ACTOR: &[u8] = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"requestState":"s-1","actorIdentity":{"role":"client","trust_domain":"example.com","subject":"did:example:impostor","keyid":"key-9"}}}"#;
 
     pub(in crate::http_profile_serve) fn http_request(
         body: &[u8],
@@ -365,7 +375,7 @@ pub(in crate::http_profile_serve) mod tests {
             store.clone(),
             crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
         )
-        .prepare(&ex, "aud")
+        .prepare(&ex, &validated(&http_req), "aud")
         .await
         .expect("a store miss is the caller's fact, not a refusal");
         let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
@@ -468,7 +478,9 @@ pub(in crate::http_profile_serve) mod tests {
     async fn prepare_reads_a_live_approval_without_spending_it() {
         let verified = verified_as("did:example:host-a", "key-1");
         let actor_id = verified.resolved_actor().actor_id();
-        let http_req = http_request(br#"{"params":{"requestState":"s-1"}}"#);
+        let http_req = http_request(
+            br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"requestState":"s-1"}}"#,
+        );
         let ex = Exchange {
             http_req: &http_req,
             verified: &verified,
@@ -482,7 +494,7 @@ pub(in crate::http_profile_serve) mod tests {
             store.clone(),
             crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
         )
-        .prepare(&ex, "aud")
+        .prepare(&ex, &validated(&http_req), "aud")
         .await
         .expect("a live approval is not a refusal");
         let prep = crate::exchange_state::ExchangeProgress::new().establish(established);

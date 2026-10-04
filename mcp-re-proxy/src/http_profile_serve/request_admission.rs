@@ -32,6 +32,29 @@ use crate::refusal::RefusalCause;
 
 use super::ActorResolver;
 
+/// A request body that passed [`RequestAdmission::validate_envelope`], and the outstanding id
+/// that validation decided.
+///
+/// Private representation, and `validate_envelope` is the only producer: holding one means
+/// the body is a legal, representable JSON-RPC 2.0 request, and the readers that interpret a
+/// body accept this value instead of the raw bytes.
+pub(super) struct ValidatedRequestEnvelope<'a> {
+    body: &'a [u8],
+    outstanding: OutstandingId,
+}
+
+impl<'a> ValidatedRequestEnvelope<'a> {
+    /// The exact bytes that were validated.
+    pub(super) fn body(&self) -> &'a [u8] {
+        self.body
+    }
+
+    /// The exchange's single answer to "what is this request".
+    pub(super) fn outstanding(&self) -> &OutstandingId {
+        &self.outstanding
+    }
+}
+
 /// The deployment's request-admission authority: who may speak, to whom, and under what
 /// acceptance policy.
 ///
@@ -130,22 +153,27 @@ impl RequestAdmission {
     /// — goes through `serde_json`, which answers for one winner rather than for the
     /// document the client signed.
     ///
-    /// The returned [`OutstandingId`] is the exchange's single answer to "what is this
+    /// The returned [`ValidatedRequestEnvelope`] is the only body handle the meaning readers
+    /// accept, and its [`OutstandingId`] is the exchange's single answer to "what is this
     /// request": the notification arm and the response envelope validator are both given
     /// this value rather than re-reading the body. Two readers of one document can disagree,
     /// and the disagreement that mattered here is a body dispatched as a request and
     /// acknowledged as a notification.
-    pub(super) fn validate_envelope(
+    pub(super) fn validate_envelope<'r>(
         &self,
-        http_req: &HttpRequest,
-    ) -> Result<OutstandingId, Refusal> {
-        mcp_re_http_profile::validate_request_envelope(&http_req.body)
-            .map_err(|e| Refusal::new(e, 400))
+        http_req: &'r HttpRequest,
+    ) -> Result<ValidatedRequestEnvelope<'r>, Refusal> {
+        let outstanding = mcp_re_http_profile::validate_request_envelope(&http_req.body)
+            .map_err(|e| Refusal::new(e, 400))?;
+        Ok(ValidatedRequestEnvelope {
+            body: &http_req.body,
+            outstanding,
+        })
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::http_profile_serve) mod tests {
     use super::*;
     use mcp_re_http_profile::ResolverOutcome;
 
@@ -158,6 +186,15 @@ mod tests {
                 route: Some("/mcp".to_owned()),
             },
         )
+    }
+
+    /// The envelope of a legal request, obtained through the validator.
+    pub(in crate::http_profile_serve) fn validated(
+        http_req: &HttpRequest,
+    ) -> ValidatedRequestEnvelope<'_> {
+        admission()
+            .validate_envelope(http_req)
+            .expect("the request body is a legal JSON-RPC request")
     }
 
     fn request(body: &str) -> HttpRequest {
@@ -211,13 +248,33 @@ mod tests {
         // the response-envelope validator are handed THIS value rather than re-reading the
         // body, because two readers of one document can disagree.
         let admission = admission();
+        let notification = request(r#"{"jsonrpc":"2.0","method":"ping"}"#);
         assert!(matches!(
-            admission.validate_envelope(&request(r#"{"jsonrpc":"2.0","method":"ping"}"#)),
-            Ok(OutstandingId::Notification)
+            admission
+                .validate_envelope(&notification)
+                .map(|e| matches!(e.outstanding(), OutstandingId::Notification)),
+            Ok(true)
         ));
+        let call = request(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#);
         assert!(matches!(
-            admission.validate_envelope(&request(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)),
-            Ok(OutstandingId::Id(_))
+            admission
+                .validate_envelope(&call)
+                .map(|e| matches!(e.outstanding(), OutstandingId::Id(_))),
+            Ok(true)
         ));
+    }
+
+    #[test]
+    fn the_envelope_hands_on_the_bytes_it_validated() {
+        let admission = admission();
+        let http_req = request(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#);
+        let Ok(envelope) = admission.validate_envelope(&http_req) else {
+            panic!("a legal request body was refused");
+        };
+        assert!(std::ptr::eq(envelope.body(), http_req.body.as_slice()));
+        assert!(matches!(envelope.outstanding(), OutstandingId::Id(_)));
+        assert!(admission
+            .validate_envelope(&request(r#"{"not":"jsonrpc"}"#))
+            .is_err());
     }
 }

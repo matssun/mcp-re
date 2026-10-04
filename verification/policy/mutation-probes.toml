@@ -6889,7 +6889,7 @@ theorem = "THM-0083"
 conjunct = "the serving path never reads the outstanding id from the body a second time, carrying the decided value to its terminal instead"
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
 anchor = """
-        let outstanding = &admitted.outstanding;
+        let outstanding = admitted.envelope.outstanding();
 """
 weakening = """
         let reread = mcp_re_http_profile::outstanding_id(&http_req.body)
@@ -8568,12 +8568,12 @@ theorem = "THM-0078"
 conjunct = "an inbound exchange that fails to establish a required pre-dispatch obligation reaches a declared refusal terminal before backend dispatch, and cannot fall through into a success-path dispatch"
 path = "mcp-re-proxy/src/http_profile_serve/request_admission.rs"
 anchor = """
-        mcp_re_http_profile::validate_request_envelope(&http_req.body)
-            .map_err(|e| Refusal::new(e, 400))
+        let outstanding = mcp_re_http_profile::validate_request_envelope(&http_req.body)
+            .map_err(|e| Refusal::new(e, 400))?;
 """
 weakening = """
-        Ok(mcp_re_http_profile::validate_request_envelope(&http_req.body)
-            .unwrap_or(OutstandingId::Notification))
+        let outstanding = mcp_re_http_profile::validate_request_envelope(&http_req.body)
+            .unwrap_or(OutstandingId::Notification);
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::request_admission::tests::a_document_that_is_not_an_mcp_message_is_refused_at_400",
