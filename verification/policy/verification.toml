@@ -4592,6 +4592,7 @@ tested_symbols = [
   "//mcp-re-client:mcp_re_client_test#serve::request::tests::the_head_terminator_is_found_at_its_own_end",
   "//mcp-re-client:mcp_re_client_test#serve::request::tests::a_head_split_across_reads_still_frames_a_body_that_arrived_with_it",
   "//mcp-re-client:mcp_re_client_test#serve::request::tests::a_dripping_caller_hits_the_exchange_deadline_instead_of_holding_the_worker",
+  "//mcp-re-client:mcp_re_client_test#serve::request::tests::a_folded_or_padded_field_line_is_refused_rather_than_read",
   # ADR-MCPRE-069 `reattribute`, from `client.local_serving_pipeline`: the control's subject
   # is what the HTTP surface refuses, which is this unit's proposition and not that one's.
   "//mcp-re-client:local_leg_e2e_test#the_local_http_surface_refuses_everything_it_does_not_implement",

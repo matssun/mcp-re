@@ -38,10 +38,18 @@ impl<'a> HeadFields<'a> {
         let mut host: Option<&str> = None;
         let mut content_type: Option<&str> = None;
         for line in lines {
+            // An obs-fold continuation is a field a front parser may read differently:
+            // the Content-Length smuggling class. Refused whether or not it has a colon.
+            if line.starts_with([' ', '\t']) {
+                return Err(400);
+            }
             let Some((name, value)) = line.split_once(':') else {
                 continue;
             };
-            let name = name.trim();
+            // Whitespace between the field name and the colon is the same class.
+            if name.contains([' ', '\t']) {
+                return Err(400);
+            }
             let value = value.trim();
             if name.eq_ignore_ascii_case("content-length") {
                 // A repeated Content-Length is a request-smuggling primitive, not a
