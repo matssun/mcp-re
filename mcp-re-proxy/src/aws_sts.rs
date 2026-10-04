@@ -169,6 +169,12 @@ pub trait AwsCredentialSource: Send + Sync {
     fn describe(&self) -> String;
 }
 
+/// One required variable: absent and empty are the same refusal.
+fn required_var(var: &dyn Fn(&str) -> Option<String>, name: &str) -> Result<String, KeyError> {
+    let value = var(name).filter(|v| !v.is_empty());
+    value.ok_or_else(|| KeyError::NotFound(format!("aws-kms: {name} is not set or is empty")))
+}
+
 /// Static or STS credentials from the narrow, explicit environment-variable set.
 pub struct EnvCredentialSource;
 
@@ -184,17 +190,15 @@ impl EnvCredentialSource {
     /// As [`Self::from_env`], over an injected lookup. Absent and empty are one refusal, as
     /// they are for the STS credential fields.
     fn from_lookup(var: &dyn Fn(&str) -> Option<String>) -> Result<AwsCredentials, KeyError> {
-        let required = |name: &str| {
-            var(name).filter(|v| !v.is_empty()).ok_or_else(|| {
-                KeyError::NotFound(format!("aws-kms: {name} is not set or is empty"))
-            })
-        };
+        let required = |name: &str| required_var(var, name);
         let access_key_id = required("AWS_ACCESS_KEY_ID")?;
         let secret_access_key = required("AWS_SECRET_ACCESS_KEY")?;
         Ok(AwsCredentials {
             access_key_id,
             secret_access_key: Zeroizing::new(secret_access_key),
-            session_token: var("AWS_SESSION_TOKEN").filter(|s| !s.is_empty()).map(Zeroizing::new),
+            session_token: var("AWS_SESSION_TOKEN")
+                .filter(|s| !s.is_empty())
+                .map(Zeroizing::new),
         })
     }
 }
