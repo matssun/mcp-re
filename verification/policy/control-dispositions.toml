@@ -13561,7 +13561,7 @@ id = "NP-233"
 title = "An unreadable trust epoch is recorded as a rotation failure when first observed"
 carrier = "mcp-re-proxy/src/signing_plane/rotation.rs (wait_for_window)"
 likely_owner = "none. proxy.delegated_signing_credential holds the carrier in its paths but states fail-closed transitions, which a metric-timeliness test does not falsify."
-consequence = "low"
+consequence = "medium"
 root_relationship = "Observability premise of the operator's trust-epoch kill switch (ADR-MCPRE-052 §7)."
 record = "docs/architecture/control-dispositions.md#np-233"
 

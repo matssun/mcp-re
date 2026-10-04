@@ -147,6 +147,29 @@ pub(super) fn rotation_loop(
 /// An unreadable epoch is not an advance: the wait keeps polling, and records a failure
 /// once per wait when it first sees one so the metric stops reading healthy.
 ///
+/// Whether the shared trust epoch has moved off `last_label`. An unreadable or regressed
+/// epoch is recorded as a rotation failure the first time it is seen, and not again on later
+/// polls of the same wait.
+fn epoch_moved(
+    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    watch: &DelegatedEpochWatch,
+    last_label: &str,
+    unreadable_seen: &mut bool,
+) -> bool {
+    match watch.current_label() {
+        Some(l) => l != last_label,
+        None => {
+            if !std::mem::replace(unreadable_seen, true) {
+                let n = signer.metrics().record_failure();
+                eprintln!(
+                    "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed during the steady-state wait; minting will be refused when the window opens unless it recovers; consecutive_failures {n}"
+                );
+            }
+            false
+        }
+    }
+}
+
 /// Returns `true` when a halt was requested.
 fn wait_for_window(
     signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
@@ -173,15 +196,8 @@ fn wait_for_window(
         }
         // Poll the shared trust epoch ~every 500ms (10 * 50ms).
         if let Some(watch) = epoch_watch.filter(|_| ticks.is_multiple_of(10)) {
-            match watch.current_label() {
-                Some(l) if l != last_label => break,
-                None if !std::mem::replace(&mut unreadable_seen, true) => {
-                    let n = signer.metrics().record_failure();
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed during the steady-state wait; minting will be refused when the window opens unless it recovers; consecutive_failures {n}"
-                    );
-                }
-                _ => {}
+            if epoch_moved(signer, watch, last_label, &mut unreadable_seen) {
+                break;
             }
         }
         // Wrapping IS the algebra: a phase counter read only through `is_multiple_of(10)`
