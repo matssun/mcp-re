@@ -560,6 +560,7 @@ _PROXY_LIB_SRCS = [
     # supersedes the ADR-MCPS-018 §1 lean-sync firewall for the proxy serving path;
     # `mcp-re-core` stays pure.
     "src/async_serve/mod.rs",
+    "src/async_serve/accept.rs",
     # ADR-MCPRE-061: the listener's own authorities — what a core admits work against, the
     # byte half of that admission, one connection, and one request over it.
     "src/async_serve/core_admission.rs",
