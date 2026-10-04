@@ -3241,7 +3241,7 @@ unit = "proxy.trust_epoch_source"
 conjunct = "a source outage is reported, never read as a steady epoch"
 path = "mcp-re-proxy/src/trust_epoch.rs"
 anchor = """
-                *recover(self.healthy.lock()) = false;
+                self.set_healthy(false, &e.0);
                 return;
 """
 weakening = """
