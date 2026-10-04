@@ -2426,7 +2426,7 @@ record's other thirty-one rows are unpacketed.
 ## NP-092 — a result is classified once, and never read as terminal by default
 
 **Controls:** `mcp-re-http-profile/src/result_class.rs`.
-**Statement.** *The recognised set is complete — input-required and absent; a body with no result member is terminal; a near-miss discriminator, an unparseable body, and an input-required reply without a usable state are each REFUSED and not read as terminal; a non-string or unadvertised result type is unrecognized, and unrecognized is not terminal; a terminal reply has no continuation state and an input-required one yields its state.*
+**Statement.** *The recognised set is complete — input-required and absent; a body with no result member is terminal; a near-miss discriminator, an unparseable body, and an input-required reply without a usable state are each REFUSED and not read as terminal; a non-string or unadvertised result type is unrecognized, and unrecognized is not terminal; a result member that is not an object is unrecognized, and a body that is not one response object is refused; a terminal reply has no continuation state and an input-required one yields its state.*
 **If false.** A continuation is consumed as a completed call. Every clause names a different way to arrive there, and the repeated 'not read as terminal' is the point: the default on doubt must not be the one that ends the exchange.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.

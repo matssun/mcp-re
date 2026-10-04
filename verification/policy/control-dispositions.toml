@@ -6637,7 +6637,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-15081"
 project = "mcp-re-http-profile"
-control = "src/lib.rs#result_class::tests::is_input_required_is_false_for_unrecognized_but_that_is_not_terminal"
+control = "src/lib.rs#result_class::tests::an_unrecognized_result_type_is_not_terminal_on_either_face"
 decision = "new-proposition"
 proposition = "NP-092"
 recorded = "2026-09-19"
@@ -6649,6 +6649,22 @@ control = "src/lib.rs#result_class::tests::the_recognized_set_is_complete_input_
 decision = "new-proposition"
 proposition = "NP-092"
 recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-20234"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#result_class::tests::a_non_object_result_member_is_unrecognized_not_terminal"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20235"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#result_class::tests::a_body_that_is_not_one_response_object_is_refused_not_read_as_terminal"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-10-04"
 
 [[disposition]]
 id = "CD-15083"
@@ -14345,4 +14361,12 @@ project = "mcp-re-http-profile"
 control = "src/lib.rs#message::tests::an_absent_content_type_is_missing_evidence_under_the_callers_label"
 decision = "new-proposition"
 proposition = "NP-246"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20233"
+project = "mcp-re-proxy"
+control = "src/lib.rs#retained_evidence::store::tests::stage_at_refuses_a_path_outside_the_archive_root"
+decision = "new-proposition"
+proposition = "NP-136"
 recorded = "2026-10-04"
