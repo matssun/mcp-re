@@ -19,7 +19,6 @@ mod pkcs11;
 mod role_identity;
 mod role_separation;
 
-pub use pin::read_pkcs11_pin;
 pub use role_separation::MaterializedSigningRoles;
 
 use super::key_file_custody::{AdmittedKeyFiles, CheckedKeyFile};

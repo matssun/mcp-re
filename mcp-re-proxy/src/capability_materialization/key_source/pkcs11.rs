@@ -2,7 +2,7 @@
 //! The PKCS#11 token-backed key source (#4034).
 
 #[cfg(feature = "pkcs11_keysource")]
-use super::read_pkcs11_pin;
+use super::pin::read_pkcs11_pin;
 use super::ChannelMaterial;
 use crate::capability_materialization::key_file_custody::AdmittedKeyFiles;
 use crate::config_state::ChannelKeyMaterial;
@@ -22,9 +22,9 @@ pub(super) fn open(
     channel: ChannelKeyMaterial<'_>,
     material: ChannelMaterial<'_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
-    // Read the User PIN here, at the one point it is used, so it exists for as short a
-    // window as possible and never lands in `DeploymentRequest` (which is `Debug` and
-    // freely cloned). The PIN comes from the file the custody check admitted, which held
+    // Read the User PIN here, at the one point it is used, so it never lands in
+    // `DeploymentRequest` (which is `Debug` and freely cloned); the token keeps its own
+    // scrubbed copy for re-login. The PIN comes from the file the custody check admitted, which held
     // it to the key-file floor: it unlocks the token holding the signing keys.
     let pin = read_pkcs11_pin(admitted.take(pin_file)?)?;
     let tls_key = super::exported_tls_key(admitted, material)?;

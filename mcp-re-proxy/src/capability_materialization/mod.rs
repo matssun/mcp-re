@@ -34,6 +34,6 @@ pub mod revocation;
 pub use ingress::build_attested_ingress_binding;
 pub use key_file_custody::admit_key_files;
 pub use key_file_custody::AdmittedKeyFiles;
-pub use key_source::{build_key_source, read_pkcs11_pin, MaterializedSigningRoles};
+pub use key_source::{build_key_source, MaterializedSigningRoles};
 #[cfg(feature = "online_ocsp")]
 pub use revocation::build_ocsp_checker;
