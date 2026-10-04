@@ -146,24 +146,44 @@ pub(super) fn fault_to_error(fault: Scrapi11Fault) -> RegistrationError {
 mod tests {
     use super::*;
 
+    /// What an operator is told about a registration, as the test classifies it.
+    enum Certainty {
+        Refused,
+        Throttled,
+        Indeterminate,
+    }
+
+    /// The certainty each fault must carry. Names every variant with no wildcard, so a new
+    /// variant is classified here independently of `fault_to_error`.
+    fn expected_certainty(fault: &Scrapi11Fault) -> Certainty {
+        match fault {
+            // The exchange broke after the bytes went out.
+            Scrapi11Fault::Transport { .. } => Certainty::Indeterminate,
+            // The service answered after accepting; the answer is unusable.
+            Scrapi11Fault::MalformedResponse { .. } => Certainty::Indeterminate,
+            Scrapi11Fault::UnsupportedMediaType { .. } => Certainty::Indeterminate,
+            // A `202` means the service accepted before these were observed.
+            Scrapi11Fault::MissingLocation => Certainty::Indeterminate,
+            Scrapi11Fault::LocationOutsideService { .. } => Certainty::Indeterminate,
+            Scrapi11Fault::ProtocolError { .. } => Certainty::Indeterminate,
+            // The service read the submission and declined it before accepting.
+            Scrapi11Fault::Refused { .. } => Certainty::Refused,
+            // A rate limiter declined the request before it was handled.
+            Scrapi11Fault::RateLimited { .. } => Certainty::Throttled,
+            // A reverse proxy answers 503 over an origin that accepted.
+            Scrapi11Fault::Unavailable { .. } => Certainty::Indeterminate,
+            // The budget ran out after acceptance.
+            Scrapi11Fault::TimedOut { .. } => Certainty::Indeterminate,
+        }
+    }
+
     /// The certainty rule, stated over every variant. This is the test that has to be
     /// read to know what the auditor will tell an operator.
     #[test]
     fn only_a_pre_acceptance_answer_is_a_definitive_negative() {
-        let definite: Vec<(Scrapi11Fault, &str)> = vec![
-            (Scrapi11Fault::Refused { status: 400 }, "refused"),
-            (Scrapi11Fault::RateLimited { status: 429 }, "throttled"),
-        ];
-        for (fault, kind) in definite {
-            let error = fault_to_error(fault);
-            let matched = match kind {
-                "refused" => matches!(error, RegistrationError::Refused(_)),
-                _ => matches!(error, RegistrationError::Throttled(_)),
-            };
-            assert!(matched, "{kind}: {error:?}");
-        }
-
-        let unknown = [
+        let samples = [
+            Scrapi11Fault::Refused { status: 400 },
+            Scrapi11Fault::RateLimited { status: 429 },
             Scrapi11Fault::Transport {
                 phase: Phase::Submitting,
                 detail: "connection reset".to_owned(),
@@ -200,12 +220,14 @@ mod tests {
             // way over an origin that accepted, and nothing in the response separates them.
             Scrapi11Fault::Unavailable { status: 503 },
         ];
-        for fault in unknown {
+        for fault in samples {
             let error = fault_to_error(fault.clone());
-            assert!(
-                matches!(error, RegistrationError::Indeterminate(_)),
-                "{fault:?} happened after the bytes went out: {error:?}",
-            );
+            let matched = match expected_certainty(&fault) {
+                Certainty::Refused => matches!(error, RegistrationError::Refused(_)),
+                Certainty::Throttled => matches!(error, RegistrationError::Throttled(_)),
+                Certainty::Indeterminate => matches!(error, RegistrationError::Indeterminate(_)),
+            };
+            assert!(matched, "{fault:?}: {error:?}");
         }
     }
 
