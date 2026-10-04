@@ -4761,3 +4761,13 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none. `proxy.dispatch_commitment` states the refusal of an `Unstated` plane; none states who may supply the bound.
 **Root relationship.** A premise of the proxy units above it.
 **Severity:** `medium`.
+
+## NP-265 — the client transport's Host header is derived from the expected server name, never invented
+
+**Controls:** `mcp-re-transport` `client::tests::the_host_header_is_derived_from_the_expected_server_name`.
+**Carrier:** `mcp-re-transport/src/client.rs` (`MtlsClient::with_limits`, `host_header_value`).
+**Statement.** *The Host header a client emits is the expected server name it verifies, rendered from the parsed identity; a server-name form with no derivable host is refused when the client is built.*
+**If false.** A request names an authority the client never configured, and a vhost or route decision at the peer is made against it.
+**Likely owner:** none. `client.transport_server_identity` states the handshake identity, not the Host header.
+**Root relationship.** A premise of `client.transport_message_hygiene` beside `client.transport_server_identity`.
+**Severity:** `low`.

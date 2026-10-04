@@ -37,6 +37,8 @@ pub struct MtlsClient {
     pub(super) config: ClientTlsConfig,
     pub(super) server_name: ServerName<'static>,
     pub(super) limits: ClientLimits,
+    /// The Host header value derived from `server_name` at construction.
+    host: String,
 }
 
 impl MtlsClient {
@@ -62,10 +64,12 @@ impl MtlsClient {
     ) -> Result<Self, TransportError> {
         let server_name = ServerName::try_from(expected_server_name.to_string())
             .map_err(|e| TransportError::BadServerName(e.to_string()))?;
+        let host = host_header_value(&server_name)?;
         Ok(MtlsClient {
             config,
             server_name,
             limits,
+            host,
         })
     }
 
@@ -117,25 +121,34 @@ impl MtlsClient {
         // Build (and validate) the request bytes BEFORE opening the connection: a
         // caller header that cannot be emitted safely is a local programming error,
         // not something to discover with a socket already open.
-        let request_head = build_request_head(
-            method,
-            path,
-            &server_name_host(&self.server_name),
-            headers,
-            body.len(),
-        )?;
+        let request_head = build_request_head(method, path, &self.host, headers, body.len())?;
         self.exchange(addr, request_head.as_bytes(), body)
     }
 }
 
 /// The host header value for the expected server name.
-fn server_name_host(name: &ServerName<'_>) -> String {
+fn host_header_value(name: &ServerName<'_>) -> Result<String, TransportError> {
     match name {
-        ServerName::DnsName(dns) => dns.as_ref().to_string(),
+        ServerName::DnsName(dns) => Ok(dns.as_ref().to_string()),
         ServerName::IpAddress(ip) => {
             let addr: std::net::IpAddr = (*ip).into();
-            addr.to_string()
+            Ok(addr.to_string())
         }
-        _ => "localhost".to_string(),
+        _ => Err(TransportError::BadServerName(
+            "the expected server name has a form no Host header can be derived from".to_string(),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_host_header_is_derived_from_the_expected_server_name() {
+        let dns = ServerName::try_from("proxy.internal").expect("dns name parses");
+        assert_eq!(host_header_value(&dns).expect("dns host"), "proxy.internal");
+        let ip = ServerName::try_from("127.0.0.1").expect("ip parses");
+        assert_eq!(host_header_value(&ip).expect("ip host"), "127.0.0.1");
     }
 }
