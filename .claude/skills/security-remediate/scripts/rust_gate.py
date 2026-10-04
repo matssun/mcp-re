@@ -49,6 +49,7 @@ _RUNNING = re.compile(r"^running (\d+) tests?$", re.M)
 _FAILED_TEST = re.compile(r"^---- (\S+) stdout ----$", re.M)
 _INLINE_TEST = re.compile(r"#\[(?:tokio::)?test\b")
 _FMT_DIFF = re.compile(r"^Diff in (\S+?\.rs):\d+:$", re.M)
+_FMT_PARSE = re.compile(r"^\s*--> (\S+?\.rs):\d+:\d+$", re.M)
 
 
 def bazel() -> list[str]:
@@ -124,10 +125,18 @@ def _lint(targets: list[str], log: str) -> dict:
 
 
 def _rustfmt(targets: list[str], touched: list[str], log: str) -> dict:
-    rc, out = _run(bazel() + ["build", "--config=rustfmt", "--keep_going", *targets], log)
+    # Only the format checks: the config adds them to the default output groups, which
+    # would also compile the targets and report a compile error as a format failure.
+    rc, out = _run(bazel() + ["build", "--config=rustfmt", "--output_groups=rustfmt_checks",
+                              "--keep_going", *targets], log)
     if rc == 0:
         return {"verdict": "ok", "exit": rc, "log": log}
-    diffs = sorted({os.path.relpath(p) if os.path.isabs(p) else p for p in _FMT_DIFF.findall(out)})
+    rel = lambda p: os.path.relpath(p) if os.path.isabs(p) else p  # noqa: E731
+    diffs = sorted({rel(p) for p in _FMT_DIFF.findall(out)})
+    unparsable = sorted({rel(p) for p in _FMT_PARSE.findall(out)} & set(touched))
+    if unparsable:
+        return {"verdict": "new-failures", "exit": rc, "log": log, "unformatted": unparsable,
+                "why": "rustfmt cannot parse a touched file"}
     mine = [p for p in diffs if p in set(touched)]
     if mine:
         return {"verdict": "new-failures", "exit": rc, "log": log, "unformatted": mine}

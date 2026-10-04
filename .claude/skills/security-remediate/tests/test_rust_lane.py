@@ -115,7 +115,9 @@ if cmd == "query":
             break
     sys.exit(0)
 if cmd == "build":
-    lane = cfg.get("rustfmt", {"out": "", "rc": 0}) if "--config=rustfmt" in rest else cfg["build"]
+    fmt = "--config=rustfmt" in rest
+    assert not fmt or "--output_groups=rustfmt_checks" in rest, "the format lane must not compile"
+    lane = cfg.get("rustfmt", {"out": "", "rc": 0}) if fmt else cfg["build"]
     print(lane["out"])
     sys.exit(lane["rc"])
 if cmd == "test":
@@ -208,6 +210,10 @@ def test_rust_gate_rustfmt_blames_only_touched_files() -> None:
         other = _gate(td, has_tests, "", 0, passed, 0,
                       ("Diff in %s/alpha/src/lib.rs:1:\n" % root, 1))
         assert _verdicts(other)["rustfmt"] == "infra", other
+        broken = _gate(td, has_tests, "", 0, passed, 0,
+                       ("error: unexpected closing delimiter: `}`\n   --> %s/alpha/src/keys.rs:9:1"
+                        % root, 1))
+        assert _verdicts(broken)["rustfmt"] == "new-failures", broken
         silent = _gate(td, has_tests, "", 0, passed, 0, ("ERROR: analysis failed", 1))
         assert _verdicts(silent)["rustfmt"] == "infra", silent
     print("  rust gate: a rustfmt diff in the touched file is blamed; elsewhere or silent = infra  OK")
