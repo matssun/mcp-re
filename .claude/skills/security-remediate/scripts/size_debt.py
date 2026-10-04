@@ -78,33 +78,57 @@ def drop(work_dir: str, file: str) -> None:
         os.remove(p)
 
 
+def _merge(register: str, rows: list[dict], commit: str, findings: list[str]) -> int:
+    """One register row per (metric, path): its first baseline, its latest measurement, and
+    every commit and finding that grew it. Returns how many rows changed."""
+    book: dict[tuple[str, str], dict] = {}
+    if os.path.exists(register):
+        for line in open(register, encoding="utf-8"):
+            if line.strip():
+                r = json.loads(line)
+                book[(r["metric"], r["path"])] = r
+    changed = 0
+    for r in rows:
+        key = (r["metric"], r["path"])
+        cur = book.get(key)
+        if cur is None:
+            book[key] = {"metric": r["metric"], "path": r["path"], "baseline": r["baseline"],
+                         "measured": r["measured"], "commits": [commit],
+                         "findings": sorted(set(findings))}
+            changed += 1
+        elif r["measured"] != cur["measured"]:
+            cur["measured"] = r["measured"]
+            cur["commits"] = cur["commits"] + [commit]
+            cur["findings"] = sorted(set(cur["findings"]) | set(findings))
+            changed += 1
+    os.makedirs(os.path.dirname(register) or ".", exist_ok=True)
+    with open(register, "w", encoding="utf-8") as fh:
+        for key in sorted(book):
+            fh.write(json.dumps(book[key], sort_keys=True) + "\n")
+    return changed
+
+
 def settle(work_dir: str, file: str, commit: str, register: str = REGISTER,
            findings: list[str] | None = None) -> int:
     p = _pending(work_dir, file)
     if not os.path.exists(p):
         return 0
     rows = json.load(open(p, encoding="utf-8")).get("rows", [])
-    os.makedirs(os.path.dirname(register) or ".", exist_ok=True)
-    with open(register, "a", encoding="utf-8") as fh:
-        for r in rows:
-            fh.write(json.dumps(dict(r, remediated_file=file, commit=commit,
-                                     findings=findings or []), sort_keys=True) + "\n")
     os.remove(p)
-    return len(rows)
+    return _merge(register, rows, commit, findings or [])
 
 
 def register_rows(rows: list[dict], commit: str, register: str = REGISTER) -> int:
-    """Rows the batch gate measured that no writer recorded (a hand commit): register them
-    under the batch, keyed so a re-run adds nothing twice."""
-    have = set()
-    if os.path.exists(register):
-        for line in open(register, encoding="utf-8"):
-            if line.strip():
-                r = json.loads(line)
-                have.add((r["metric"], r["path"], r["measured"]))
-    new = [r for r in rows if (r["metric"], r["path"], r["measured"]) not in have]
-    with open(register, "a", encoding="utf-8") as fh:
-        for r in new:
-            fh.write(json.dumps(dict(r, remediated_file="", commit=commit, findings=[]),
-                                sort_keys=True) + "\n")
-    return len(new)
+    """Rows the batch gate measured: merged under the commit, so a re-run or a growth some
+    writer already registered changes nothing."""
+    return _merge(register, rows, commit, [])
+
+
+def attributable(rows: list[dict], touched: list[str]) -> list[dict]:
+    """The rows this writer caused. The module-size gate measures the whole tree, so a file
+    grown by an earlier, already-registered change is reported to every later writer; only
+    a file the writer touched is the writer's growth. A function-size row is keyed by crate,
+    so it is the writer's when the writer touched that crate."""
+    crates = {t.split("/", 1)[0] for t in touched}
+    return [r for r in rows if r["path"] in touched
+            or (r["metric"] == "too_many_lines" and r["path"] in crates)]

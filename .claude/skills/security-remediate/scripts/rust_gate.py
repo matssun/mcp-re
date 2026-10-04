@@ -203,10 +203,14 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
 
     rc, out = _run([sys.executable, SIZE_GATE], os.path.join(work_dir, "size-%s.log" % tag))
     soft, debt = size_debt.classify("module-size", out) if rc else (False, [])
-    parts.append({"gate": "module-size",
-                  "verdict": "ok" if rc == 0 else "size-debt" if soft else "new-failures",
-                  "exit": rc, **({} if rc == 0 else {"head": out.strip().splitlines()[-5:]}),
-                  **({"debt": debt} if soft else {})})
+    debt = size_debt.attributable(debt, edited) if soft else []
+    size_verdict = ("ok" if rc == 0 or (soft and not debt) else
+                    "size-debt" if soft else "new-failures")
+    parts.append({"gate": "module-size", "verdict": size_verdict, "exit": rc,
+                  **({} if rc == 0 else {"head": out.strip().splitlines()[-5:]}),
+                  **({"debt": debt} if debt else {}),
+                  **({"note": "size growth only in files this writer did not touch"}
+                     if rc and soft and not debt else {})})
 
     for script in REGISTRY_GATES:
         if not os.path.isfile(script):

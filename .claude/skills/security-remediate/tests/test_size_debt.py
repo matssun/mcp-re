@@ -61,7 +61,8 @@ def test_rust_gate_records_size_and_still_tests() -> None:
     try:
         with tempfile.TemporaryDirectory() as td:
             open(os.path.join(td, "keys.rs"), "w").write("#[test]\nfn t() {}\n")
-            parts = rust_gate.gate(os.path.join(td, "keys.rs"), [], [], td, RustResolver(td))
+            parts = rust_gate.gate(os.path.join(td, "keys.rs"), [], [], td, RustResolver(td),
+                                   touched=["mcp-re-proxy/src/a.rs"])
     finally:
         (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
          rust_gate._rustfmt, rust_gate._run, rust_gate._test) = saved
@@ -87,13 +88,23 @@ def test_a_size_only_failure_still_runs_the_tests() -> None:
     try:
         with tempfile.TemporaryDirectory() as td:
             open(os.path.join(td, "keys.rs"), "w").write("#[test]\nfn t() {}\n")
-            parts = rust_gate.gate(os.path.join(td, "keys.rs"), [], [], td, RustResolver(td))
+            parts = rust_gate.gate(os.path.join(td, "keys.rs"), [], [], td, RustResolver(td),
+                                   touched=["mcp-re-proxy/src/a.rs"])
     finally:
         (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
          rust_gate._rustfmt, rust_gate._run, rust_gate._test) = saved
     by = {p["gate"]: p for p in parts}
     assert by["module-size"]["verdict"] == "size-debt" and by["test"]["verdict"] == "ok", by
     print("  rust gate: a size-only failure is size-debt and the tests still run  OK")
+
+
+def test_only_growth_in_touched_files_is_the_writers() -> None:
+    _, rows = size_debt.classify("m", "FAIL\n%s\n%s\n%s\n" % (GREW, NEW, FN))
+    mine = size_debt.attributable(rows, ["mcp-re-proxy/src/b.rs", "mcp-re-proxy/src/z.rs"])
+    assert [(r["metric"], r["path"]) for r in mine] == [
+        ("module-size", "mcp-re-proxy/src/b.rs"), ("too_many_lines", "mcp-re-proxy")], mine
+    assert size_debt.attributable(rows, ["mcp-re-demo/src/x.rs"]) == []
+    print("  size: a writer is charged only for growth in what it touched  OK")
 
 
 def test_committed_rows_settle_and_reverted_rows_drop() -> None:
@@ -106,8 +117,13 @@ def test_committed_rows_settle_and_reverted_rows_drop() -> None:
         size_debt.drop(td, "y.rs")
         assert size_debt.settle(td, "y.rs", "def5678", reg) == 0
         got = [json.loads(l) for l in open(reg)]
-        assert len(got) == 1 and got[0]["commit"] == "abc1234" and got[0]["findings"] == ["f1"], got
+        assert len(got) == 1 and got[0]["commits"] == ["abc1234"] and got[0]["findings"] == ["f1"], got
         assert size_debt.register_rows(rows, "batch", reg) == 0, "an already registered growth is not added twice"
+        grown = [dict(rows[0], measured=610)]
+        assert size_debt.register_rows(grown, "later", reg) == 1
+        got = [json.loads(l) for l in open(reg)]
+        assert len(got) == 1 and got[0]["measured"] == 610 and got[0]["baseline"] == 599 \
+            and got[0]["commits"] == ["abc1234", "later"], got
     print("  size: committed rows join the register with the commit; reverted rows are dropped  OK")
 
 
