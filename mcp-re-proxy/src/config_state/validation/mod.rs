@@ -160,8 +160,8 @@ pub fn validate_configuration(
 ) -> Result<DeploymentConfigState, Vec<String>> {
     // PASS 1 — each machine recognises its own state and checks that state's columns.
     let recognised = Recognised::classify(config);
-    // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
-    // of the fields again.
+    // PASS 2 — the relations between machines: X9 over the recognised trust-revocation
+    // state, X2a and X6 over request selections no machine re-decides here.
     let cross =
         crate::config_state::cross_machine::validate(recognised.states.trust_revocation(), config);
     let violations = legality_violations(config, recognised.refusals.with_cross(cross));

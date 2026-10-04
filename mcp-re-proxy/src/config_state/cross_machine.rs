@@ -6,11 +6,15 @@
 //! the relation count from twelve to six, each pass moving a rule to the owner that would
 //! still make sense if the dependency graph were never drawn.
 //!
-//! **This pass reads classified states, never raw fields.** That is what makes it a second
-//! pass rather than a second opinion: every question it asks has already been answered
-//! once, by the machine that owns it.
+//! **No relation here re-decides a state a machine already classified.** That is what makes
+//! it a second pass rather than a second opinion. What each relation reads, and why:
+//! X9 takes the recognised `TrustRevocationState` and refuses nothing, because that machine's
+//! decision is the only one. X2a reads the requested signing-source and channel-key
+//! SELECTIONS, not the custody states: a source the custody machine refuses still names the
+//! mechanism the channel key must match (see `x2a`). X6 reads `revocation_list_paths`, a
+//! field no machine classifies.
 //!
-//! All four live here: X2a, X2b, X6, X9.
+//! Three live here: X2a, X6, X9. X2b has no representation left to refuse (see its test).
 
 use crate::config_state::trust_revocation::TrustRevocationState;
 use crate::deployment_request::{
@@ -108,7 +112,8 @@ fn delegated_channel_key(key: &ChannelKeyRequest) -> Option<&DelegatedChannelKey
     }
 }
 
-/// Check the cross-machine relations over states pass 1 recognised.
+/// Check the cross-machine relations: X9 over the trust-revocation state pass 1 recognised,
+/// X2a and X6 over the request selections they relate.
 pub(crate) fn validate(
     trust_revocation: Option<&TrustRevocationState>,
     config: &DeploymentRequest,
@@ -272,8 +277,8 @@ mod tests {
         .is_empty());
     }
 
-    /// CF-09 holding, asserted rather than assumed: the epoch posture is decided by the
-    /// `TrustRevocation` machine, so this relation has nothing left to re-decide.
+    /// X9 refuses nothing, even for a push-networked epoch: a mutant that gives `x9` any
+    /// refusal turns this red. Whether a plan re-derives the posture is not visible here.
     #[test]
     fn the_trust_epoch_posture_is_not_re_derived_here() {
         let found = relations(|c| {
