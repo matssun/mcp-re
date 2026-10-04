@@ -31,7 +31,7 @@ use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
 use crate::ids::STATUS_ACCEPTED;
 use crate::message::reject_content_encoding;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::ProfileAlgorithm;
@@ -73,8 +73,8 @@ fn check_envelope(response: &HttpResponse, request: &HttpRequest) -> Result<(), 
             "bodyless acknowledgement status",
         ));
     }
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
     check_request_evidence(&response.headers, request)
 }

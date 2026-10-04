@@ -102,8 +102,8 @@ pub fn verify_pre_052_root_signed_202_for_negative_test<R: Into<ResolverOutcome>
 
     // The digest of empty content is checked like any other: it is a signed
     // statement that there is no body, so it must be true of the bytes received.
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
     // C019b: the acknowledgement names the exact request TRANSMISSION it answers, and

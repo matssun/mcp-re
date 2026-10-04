@@ -23,7 +23,7 @@ use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
 use crate::message::reject_content_encoding;
 use crate::message::require_json_media_type;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
@@ -53,12 +53,12 @@ pub(crate) fn floor_bound_response<R: Into<ResolverOutcome>>(
     // violation, not a streaming opt-in.
     require_json_media_type(&response.headers, "response content-type")?;
 
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?
+        .ok_or(HttpProfileError::MissingEvidence("response signature-input"))?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(
         &parsed.components,
@@ -102,12 +102,12 @@ pub(crate) fn floor_unbound_response<R: Into<ResolverOutcome>>(
     // violation, not a streaming opt-in.
     require_json_media_type(&response.headers, "response content-type")?;
 
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?
+        .ok_or(HttpProfileError::MissingEvidence("response signature-input"))?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {

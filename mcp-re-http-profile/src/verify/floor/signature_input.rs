@@ -12,7 +12,7 @@
 //! refusal in this subtree is stated there once.
 
 use crate::error::HttpProfileError;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
 
@@ -62,8 +62,8 @@ pub(crate) fn parse_signature_input_for(
     label: &str,
     what: &'static str,
 ) -> Result<ParsedSignatureInput, HttpProfileError> {
-    let input_header = required_header(headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence(what))?;
+    let input_header = single_header(headers, "signature-input")?
+        .ok_or(HttpProfileError::MissingEvidence(what))?;
     parse_signature_input(member_value(input_header, label)?)
 }
 

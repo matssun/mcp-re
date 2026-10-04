@@ -42,7 +42,7 @@
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::ids::REQUEST_LABEL;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::sigbase::signature_base;
 use crate::sigbase::SourceMessage;
@@ -58,8 +58,8 @@ use crate::verify::floor::signature_input::parse_signature_input;
 pub(crate) fn request_evidence_of(
     request: &HttpRequest,
 ) -> Result<RequestEvidence, HttpProfileError> {
-    let input_header = required_header(&request.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("request signature-input"))?;
+    let input_header = single_header(&request.headers, "signature-input")?
+        .ok_or(HttpProfileError::MissingEvidence("request signature-input"))?;
     let parsed = parse_signature_input(member_value(input_header, REQUEST_LABEL)?)?;
     let base = signature_base(
         &parsed.components,

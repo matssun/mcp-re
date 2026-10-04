@@ -16,7 +16,7 @@ use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
 
 use crate::error::HttpProfileError;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::policy::ProfileAlgorithm;
 use crate::sign::base64_standard_decode;
 
@@ -56,8 +56,8 @@ pub(crate) fn signature_value_b64url(
     header_error: &'static str,
     label: &str,
 ) -> Result<String, HttpProfileError> {
-    let signature_header = required_header(headers, "signature")
-        .map_err(|_| HttpProfileError::MissingEvidence(header_error))?;
+    let signature_header = single_header(headers, "signature")?
+        .ok_or(HttpProfileError::MissingEvidence(header_error))?;
     let member = member_value(signature_header, label)?;
     let b64 = member
         .strip_prefix(':')

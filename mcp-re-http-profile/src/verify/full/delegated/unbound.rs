@@ -27,7 +27,7 @@ use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::ids::RESPONSE_LABEL;
 use crate::message::reject_content_encoding;
 use crate::message::require_json_media_type;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
 use crate::sigbase::signature_base;
@@ -69,13 +69,13 @@ pub(crate) fn delegated_unbound_response<R: Into<ResolverOutcome>>(
     // JSON mode (§3.4): the delegated path gets the same gate — a credential
     // chain to the root does not make a stream evidenceable.
     require_json_media_type(&response.headers, "response content-type")?;
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
     // Response-only signature parse: required response components, and NO `;req`.
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?
+        .ok_or(HttpProfileError::MissingEvidence("response signature-input"))?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {
