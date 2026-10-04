@@ -5,8 +5,8 @@
 //!
 //! - [`Flags`], the accumulator, and its routing table: each flag is dispatched to the one
 //!   family that owns its meaning. The families are the `cli::*_flags` children.
-//! - [`refused_or_unknown`], the answer for a flag no family owns, including the one
-//!   spelling recognised only to refuse it.
+//! - [`argv`], the reader: which token is a value, and the answer for a flag no family
+//!   owns.
 //! - [`parse_args`], which composes the families' products into a request and hands it to
 //!   the layer-A boundary.
 //!
@@ -21,6 +21,7 @@
 //! module: the configuration state machines read a request without depending on the parser.
 
 mod admission_flags;
+mod argv;
 mod audit_flags;
 mod authorization_flags;
 mod channel_flags;
@@ -70,6 +71,24 @@ impl Flags {
             || self.peer_identity.take_switch(flag)
     }
 
+    /// The routing set of `take`.
+    fn owns(flag: &str) -> bool {
+        identity_flags::IdentityFlags::owns(flag)
+            || serving_flags::ServingFlags::owns(flag)
+            || protocol_flags::ProtocolFlags::owns(flag)
+            || runtime_flags::RuntimeFlags::owns(flag)
+            || channel_flags::ChannelFlags::owns(flag)
+            || signing_source_flags::SigningSourceFlags::owns(flag)
+            || peer_identity_flags::PeerIdentityFlags::owns(flag)
+            || revocation_flags::RevocationFlags::owns(flag)
+            || storage_flags::StorageFlags::owns(flag)
+            || currency_flags::CurrencyFlags::owns(flag)
+            || admission_flags::AdmissionFlags::owns(flag)
+            || authorization_flags::AuthorizationFlags::owns(flag)
+            || audit_flags::AuditFlags::owns(flag)
+            || delegated_signing_flags::DelegatedSigningFlags::owns(flag)
+    }
+
     /// Route one value-taking flag to the family that owns it.
     ///
     /// One line per family, and the families are disjoint: a flag belongs to exactly one,
@@ -104,7 +123,7 @@ impl Flags {
         } else if delegated_signing_flags::DelegatedSigningFlags::owns(flag) {
             self.delegated_signing.take(flag, value)?;
         } else {
-            return Err(refused_or_unknown(flag));
+            return Err(argv::refused_or_unknown(flag));
         }
         Ok(())
     }
@@ -173,27 +192,6 @@ impl Flags {
     }
 }
 
-/// A flag no family owns.
-///
-/// One spelling is recognised only to REFUSE it with the reason and the replacement.
-/// Falling through to "unknown flag" would be a worse error for the one operator who most
-/// needs to understand what changed — and worse, it would report a secret-handling decision
-/// as a typo.
-fn refused_or_unknown(flag: &str) -> String {
-    if flag == "--pkcs11-pin" {
-        // The PIN has already been exposed at this point (it is in this process's argv,
-        // which is world-readable): the refusal is about not making it a standing exposure,
-        // and the operator should treat that PIN as compromised and change it.
-        return "--pkcs11-pin is refused: a process command line is world-readable \
-                (ps, /proc/<pid>/cmdline), so the PIN unlocking the token that holds the \
-                signing keys would be published to every local user for the lifetime of the \
-                process. Use --pkcs11-pin-file <path> with a 0600 file. Treat any PIN \
-                previously passed this way as compromised."
-            .to_string();
-    }
-    format!("unknown flag {flag}")
-}
-
 /// A required value, or the flag that would have supplied it.
 fn require(value: Option<String>, flag: &str) -> Result<String, String> {
     value.ok_or_else(|| format!("missing required {flag}"))
@@ -206,20 +204,7 @@ fn require(value: Option<String>, flag: &str) -> Result<String, String> {
 /// request they describe. Both halves are one line each, because every flag's grammar lives
 /// with the family that owns its meaning (ADR-MCPRE-067 §16, Phase 7).
 pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
-    let mut flags = Flags::default();
-    let mut i = 0usize;
-    #[allow(clippy::arithmetic_side_effects)] // class C: every read of `args` is a `get`
-    while let Some(flag) = args.get(i).map(String::as_str) {
-        if flags.take_switch(flag) {
-            i += 1;
-            continue;
-        }
-        let value = args
-            .get(i + 1)
-            .ok_or_else(|| format!("flag {flag} requires a value"))?;
-        flags.take(flag, value)?;
-        i += 2;
-    }
+    let flags = argv::read(args)?;
     // Whether the deployment this argument list describes is one that may run is not the
     // parser's question, and the answer is the same however the request was built. Every
     // violation is reported, not the first — a command line missing four things is worth

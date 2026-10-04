@@ -218,6 +218,7 @@ _PROXY_LIB_SRCS = [
     "src/cli/admission_flags/availability.rs",
     "src/cli/admission_flags/record_currentness.rs",
     "src/cli/admission_flags/mod.rs",
+    "src/cli/argv.rs",
     "src/cli/audit_flags.rs",
     "src/cli/channel_flags.rs",
     "src/cli/delegated_signing_flags.rs",

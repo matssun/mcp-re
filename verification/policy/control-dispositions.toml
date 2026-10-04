@@ -541,6 +541,15 @@ consequence = "high"
 root_relationship = "a premise of the units above it"
 record = "docs/architecture/control-dispositions.md#np-249"
 
+[[proposition]]
+id = "NP-250"
+title = "The exported channel key is taken from the admission only when channel custody exports one"
+carrier = "mcp-re-proxy/src/capability_materialization/key_source/mod.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-250"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -2130,6 +2139,38 @@ control = "src/lib.rs#cli::tests::unknown_flag_errors"
 decision = "new-proposition"
 proposition = "NP-025"
 recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-20246"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::argv::tests::a_flag_spelling_in_a_value_position_is_a_missing_value"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20247"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::argv::tests::a_value_that_is_not_a_flag_spelling_is_read_as_a_value"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20248"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::argv::tests::a_single_valued_flag_stated_twice_is_refused_naming_both"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20249"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::argv::tests::a_repeatable_flag_stated_twice_accumulates"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-10-04"
 
 # --- NP-026 (30) ---
 
@@ -8952,6 +8993,14 @@ proposition = "NP-184"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20245"
+project = "mcp-re-proxy"
+control = "src/lib.rs#capability_materialization::key_source::tests::the_exported_channel_key_is_taken_from_the_admission_only_when_custody_exports_one"
+decision = "new-proposition"
+proposition = "NP-250"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-18069"
 project = "mcp-re-proxy"
 control = "src/lib.rs#communication_assurance::certificate_identity_policy::tests::the_default_policy_is_the_uri_san"
@@ -14444,4 +14493,28 @@ project = "mcp-re-client"
 control = "src/lib.rs#tests::a_signing_key_seed_must_decode_to_exactly_32_bytes"
 decision = "new-proposition"
 proposition = "NP-249"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20242"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::covered_components::tests::every_allowlisted_identifier_parses_and_a_foreign_one_is_refused"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20243"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::covered_components::tests::an_exact_name_and_req_repeat_is_refused_but_req_distinguishes"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20244"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::covered_components::tests::an_unquoted_identifier_is_refused"
+decision = "new-proposition"
+proposition = "NP-090"
 recorded = "2026-10-04"
