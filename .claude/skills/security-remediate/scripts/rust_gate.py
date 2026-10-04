@@ -207,7 +207,11 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
     size_verdict = ("ok" if rc == 0 or (soft and not debt) else
                     "size-debt" if soft else "new-failures")
     record = size_debt.encountered(edited)
-    parts.append({"gate": "module-size", "verdict": size_verdict, "exit": rc,
+    # `exit` is this writer's status, so it agrees with the verdict the journal and the
+    # reviewer read: growth in files the writer did not touch, and recorded size debt, are
+    # not a failure of this change. The script's own status stays as `raw_exit`.
+    parts.append({"gate": "module-size", "verdict": size_verdict,
+                  "exit": 1 if size_verdict == "new-failures" else 0, "raw_exit": rc,
                   **({} if rc == 0 else {"head": out.strip().splitlines()[-5:]}),
                   **({"debt": debt} if debt else {}),
                   **({"record": record} if record else {}),

@@ -98,6 +98,39 @@ def test_a_size_only_failure_still_runs_the_tests() -> None:
     print("  rust gate: a size-only failure is size-debt and the tests still run  OK")
 
 
+def test_the_size_part_exit_agrees_with_its_verdict() -> None:
+    """The journal's exit and the reviewer's evidence come from the part's `exit`; a raw
+    status of 1 beside verdict `ok` got a correct change rejected for "exit=1"."""
+    saved = (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+             rust_gate._rustfmt, rust_gate._run, rust_gate._test)
+    rust_gate.compiling_targets = lambda files: ["//alpha:lib"] if files else []  # type: ignore[assignment]
+    rust_gate.unit_test_targets = lambda targets: ["//alpha:test"]  # type: ignore[assignment]
+    rust_gate._lint = lambda t, log: {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._rustfmt = lambda t, e, log: {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._test = lambda t, f, log: {"verdict": "ok", "ran": 3}  # type: ignore[assignment]
+
+    def size(report: str, touched: str) -> dict:
+        rust_gate._run = lambda cmd, log: ((1, report)  # type: ignore[assignment]
+                                           if cmd[-1] == rust_gate.SIZE_GATE else (0, ""))
+        with tempfile.TemporaryDirectory() as td:
+            open(os.path.join(td, "keys.rs"), "w").write("#[test]\nfn t() {}\n")
+            parts = rust_gate.gate(os.path.join(td, "keys.rs"), [], [], td, RustResolver(td),
+                                   touched=[touched])
+        return {p["gate"]: p for p in parts}["module-size"]
+
+    try:
+        theirs = size("FAIL\n%s\n" % GREW, "mcp-re-proxy/src/other.rs")
+        mine = size("FAIL\n%s\n" % GREW, "mcp-re-proxy/src/a.rs")
+        hard = size("FAIL\n%s\n%s\n" % (GREW, TRANSITION), "mcp-re-proxy/src/a.rs")
+    finally:
+        (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+         rust_gate._rustfmt, rust_gate._run, rust_gate._test) = saved
+    assert (theirs["verdict"], theirs["exit"], theirs["raw_exit"]) == ("ok", 0, 1), theirs
+    assert (mine["verdict"], mine["exit"]) == ("size-debt", 0), mine
+    assert (hard["verdict"], hard["exit"]) == ("new-failures", 1), hard
+    print("  rust gate: the size part's exit is the writer's status, raw status kept  OK")
+
+
 def test_only_growth_in_touched_files_is_the_writers() -> None:
     _, rows = size_debt.classify("m", "FAIL\n%s\n%s\n%s\n" % (GREW, NEW, FN))
     mine = size_debt.attributable(rows, ["mcp-re-proxy/src/b.rs", "mcp-re-proxy/src/z.rs"])
