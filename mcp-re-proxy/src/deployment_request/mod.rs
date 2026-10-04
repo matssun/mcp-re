@@ -180,13 +180,13 @@ pub struct DeploymentRequest {
     /// enforcing forms, so there is no `off` to hang them from and the five dangling
     /// clauses have no configuration left to examine (ADR-MCPRE-067 §7).
     pub admission: AdmissionRequest,
-    /// ADR-MCPS-035: where the per-request security record goes. `Stderr` by default,
-    /// because the absent case has to be the safe one: an invocation that does not go
-    /// through the Helm chart — the container run directly, a harness, a hand-rolled
-    /// unit file — would otherwise serve production traffic with no per-request
-    /// attribution, and a compromise cannot be scoped after the fact from records that
-    /// were never written. Turning it off is available but explicit (`--audit-sink
-    /// none`), and the startup line states which posture is in force either way.
+    /// ADR-MCPS-035: where the per-request security record goes. The field has no
+    /// default (a request built in code names it); the CLI surface defaults an absent
+    /// `--audit-sink` to `Stderr`, because the absent case has to be the safe one: a
+    /// run outside the Helm chart would otherwise serve production traffic with no
+    /// per-request attribution, and a compromise cannot be scoped from records never
+    /// written. Turning it off is explicit (`--audit-sink none`), and the startup line
+    /// states which posture is in force either way.
     pub audit_sink: AuditSinkKind,
     /// ADR-MCPRE-054: where retained evidence goes. `None` by default — nothing is
     /// retained and the request path is unchanged.
@@ -198,8 +198,8 @@ pub struct DeploymentRequest {
     /// a store failure refuses the exchange with `mcp-re.evidence_retention_unavailable`.
     pub retained_evidence_dir: Option<String>,
     /// #415 rev 2 §10: whether the PEP writes its own verified context into the body
-    /// forwarded to the inner server. `Disabled` by default because `Trusted` asserts
-    /// an unverifiable property of the inner channel.
+    /// forwarded to the inner server. The CLI surface defaults an absent
+    /// `--verified-context` to `Disabled`: `Trusted` asserts an unverifiable property.
     pub verified_context: VerifiedContextKind,
     /// How current this deployment's belief about a request signer is: which ADR-MCPS-021
     /// posture it asserts, and the material that posture is inhabited by. One tagged value,

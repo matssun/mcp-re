@@ -15,9 +15,10 @@
 ///
 /// The record is the deployment's only per-request attribution surface: which actor
 /// was admitted, which calls were refused and under exactly which frozen `mcp-re.*`
-/// wire code. It is therefore ON unless a deployment names the opposite — the absent
-/// case must not be the one that leaves an incident unreconstructable — and the
-/// startup line states which posture is in force either way.
+/// wire code. The type has no default: a request built in code names its sink, and the
+/// CLI surface supplies `Stderr` when `--audit-sink` is absent, so the absent option is
+/// never the one that leaves an incident unreconstructable. The startup line states
+/// which posture is in force either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuditSinkKind {
     /// No per-request security record is emitted.
