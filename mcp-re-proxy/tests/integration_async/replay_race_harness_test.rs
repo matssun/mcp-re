@@ -60,9 +60,8 @@ const TEST_ACTOR: &str = "did:example:test-signer";
 
 /// A retain-until far in the future so the store's defensive pre-store staleness
 /// guard (`is_stale_pre_store`, MCPS-08) never rejects the submission before the
-/// race — the vestigial `now_unix = 0` the trait passes means the guard reduces
-/// to "reject a non-positive ABSOLUTE retain-until", so any large positive value
-/// is admissible and the ONLY thing that decides Fresh/Replay is the atomic
+/// race — the store judges it against its own clock, so any value past that
+/// clock is admissible and the ONLY thing that decides Fresh/Replay is the atomic
 /// insert.
 const FAR_FUTURE_RETAIN_UNTIL: i64 = 4_000_000_000;
 
@@ -97,7 +96,7 @@ fn race_one_key(store: &Arc<dyn AtomicReplayStore + Send + Sync>, key: &str) -> 
                 // Every thread parks here; the last arrival releases them all
                 // simultaneously into the atomic insert — maximum contention.
                 barrier.wait();
-                store.insert_if_absent(&key, FAR_FUTURE_RETAIN_UNTIL, 0)
+                store.insert_if_absent(&key, FAR_FUTURE_RETAIN_UNTIL)
             })
         })
         .collect();
@@ -226,7 +225,6 @@ fn store_unavailable_admits_zero_fresh_fail_closed() {
             &self,
             _key: &str,
             _expires_at_unix: i64,
-            _now_unix: i64,
         ) -> Result<ReplayDecision, ReplayStoreError> {
             Err(ReplayStoreError::Unavailable {
                 details: "authoritative replay tier down".to_string(),
@@ -259,16 +257,31 @@ fn store_unavailable_admits_zero_fresh_fail_closed() {
 fn shared_cache_first_is_fresh_then_replay() {
     let cache = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), 30);
     assert_eq!(
-        cache.check_and_insert("did:example:agent", "did:example:server", "nonce-1", 1_000),
+        cache.check_and_insert(
+            "did:example:agent",
+            "did:example:server",
+            "nonce-1",
+            FAR_FUTURE_RETAIN_UNTIL
+        ),
         Ok(ReplayDecision::Fresh),
     );
     assert_eq!(
-        cache.check_and_insert("did:example:agent", "did:example:server", "nonce-1", 1_000),
+        cache.check_and_insert(
+            "did:example:agent",
+            "did:example:server",
+            "nonce-1",
+            FAR_FUTURE_RETAIN_UNTIL
+        ),
         Ok(ReplayDecision::Replay),
     );
     // A different nonce is independently Fresh.
     assert_eq!(
-        cache.check_and_insert("did:example:agent", "did:example:server", "nonce-2", 1_000),
+        cache.check_and_insert(
+            "did:example:agent",
+            "did:example:server",
+            "nonce-2",
+            FAR_FUTURE_RETAIN_UNTIL
+        ),
         Ok(ReplayDecision::Fresh),
     );
 }
@@ -285,12 +298,22 @@ fn shared_cache_cross_replica_admit_via_a_is_replay_via_b() {
     let replica_b = SharedReplayCache::new(Box::new(backend.clone()), 30);
 
     assert_eq!(
-        replica_a.check_and_insert("did:example:agent", "did:example:server", "nonce-x", 1_000),
+        replica_a.check_and_insert(
+            "did:example:agent",
+            "did:example:server",
+            "nonce-x",
+            FAR_FUTURE_RETAIN_UNTIL
+        ),
         Ok(ReplayDecision::Fresh),
         "replica A admits the fresh nonce",
     );
     assert_eq!(
-        replica_b.check_and_insert("did:example:agent", "did:example:server", "nonce-x", 1_000),
+        replica_b.check_and_insert(
+            "did:example:agent",
+            "did:example:server",
+            "nonce-x",
+            FAR_FUTURE_RETAIN_UNTIL
+        ),
         Ok(ReplayDecision::Replay),
         "replica B rejects it as a replay — the authoritative tier is shared",
     );

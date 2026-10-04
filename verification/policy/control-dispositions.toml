@@ -8600,6 +8600,22 @@ proposition = "NP-120"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20318"
+project = "mcp-re-proxy"
+control = "src/lib.rs#shared_replay::tests::a_retain_until_at_or_before_the_stores_clock_is_refused_pre_store"
+decision = "new-proposition"
+proposition = "NP-120"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20319"
+project = "mcp-re-proxy"
+control = "src/lib.rs#shared_replay::tests::a_pre_epoch_clock_refuses_every_insert_rather_than_reading_as_the_epoch"
+decision = "new-proposition"
+proposition = "NP-120"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-17102"
 project = "mcp-re-proxy"
 control = "src/lib.rs#startup_posture::tests::one_startups_declarations_do_not_satisfy_another"

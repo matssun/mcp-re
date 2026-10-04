@@ -92,9 +92,8 @@ pub struct ReplayInsert<'a> {
     pub retain_until: i64,
     /// The instant the VERIFIER used for this request, and never a constant. The DEFAULT
     /// in-memory backend judges an already-past `retain_until` against it (MCPS-08);
-    /// one deriving a server-side TTL reads its own clock and ignores it. The sync
-    /// `AtomicReplayStore` carries a vestigial `0` here and this contract does not, so a
-    /// caller passing one disables that guard in the backend a default build selects.
+    /// one deriving a server-side TTL reads its own clock and ignores it. A caller
+    /// passing a constant disables that guard in the backend a default build selects.
     pub now_unix: i64,
 }
 

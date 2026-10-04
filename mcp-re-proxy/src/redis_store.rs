@@ -38,7 +38,7 @@ use mcp_re_core::ReplayDecision;
 
 /// A monotone-ish source of the CURRENT Unix time (seconds) for deriving the
 /// server-side TTL. This is the proxy's IMPURE edge: `mcp-re-core` carries no
-/// clock (the pure `ReplayCache` trait passes `now_unix = 0`), so the *store*
+/// clock (the pure `ReplayCache` trait has none), so the *store*
 /// owns its clock here. Production injects [`system_clock`]; tests inject a fixed
 /// clock so the TTL arithmetic is deterministic.
 pub type UnixClock = Box<dyn Fn() -> i64 + Send + Sync>;
@@ -248,7 +248,7 @@ pub struct RedisAtomicReplayStore {
     params: ConnectParams,
     conn: Mutex<redis::Connection>,
     /// The store's OWN clock (the proxy's impure edge). Read per op to derive the
-    /// `PX` TTL window, since the pure `ReplayCache` trait passes `now_unix = 0`.
+    /// `PX` TTL window.
     clock: UnixClock,
     /// `Some` for the `REDIS_WAIT_QUORUM` tier — issue `WAIT` after a fresh insert
     /// and fail closed on insufficient acks (ADR-MCPS-020). `None` = `REDIS_ASYNC`
@@ -586,7 +586,6 @@ impl AtomicReplayStore for RedisAtomicReplayStore {
         &self,
         key: &str,
         expires_at_unix: i64,
-        _now_unix: i64,
     ) -> Result<ReplayDecision, ReplayStoreError> {
         // Read the store's OWN clock ONCE (the proxy's impure edge) and reuse it
         // for both the MCPS-08 pre-store staleness guard and the TTL derivation,
@@ -607,8 +606,7 @@ impl AtomicReplayStore for RedisAtomicReplayStore {
         }
 
         // The server-side TTL is the retain-until window relative to the store's OWN
-        // clock — NOT the trait's `now_unix`, which is 0 (the pure `ReplayCache`
-        // carries no clock).
+        // clock.
         let ttl_ms = compute_ttl_ms(expires_at_unix, now_unix);
         // Copied out of `self` so the op closure (Fn) captures a plain value.
         let wait_quorum = self.wait_quorum;
@@ -888,7 +886,7 @@ mod tests {
         let (url, seen) = scripted(noeviction_script("SET", "+OK\r\n"));
         let store = connect_at(&url, retain_until - 600);
 
-        let decision = store.insert_if_absent("k", retain_until, 0);
+        let decision = store.insert_if_absent("k", retain_until);
 
         assert!(matches!(decision, Ok(ReplayDecision::Fresh)));
         assert_eq!(
@@ -920,7 +918,7 @@ mod tests {
         .unwrap_or_else(|e| panic!("connect must succeed: {e:?}"));
 
         assert!(matches!(
-            store.insert_if_absent("k", retain_until, 0),
+            store.insert_if_absent("k", retain_until),
             Ok(ReplayDecision::Fresh)
         ));
 
@@ -977,8 +975,8 @@ mod tests {
             !is_stale_pre_store(1_001, 1_000),
             "a positive window is admitted"
         );
-        // And the historical now=0 vestigial path: a real future retain-until with
-        // now=0 is a huge positive window (NOT stale) — the guard must not over-fire.
+        // An epoch-anchored `now`: a real future retain-until is a huge positive
+        // window (NOT stale) — the guard must not over-fire.
         assert!(
             !is_stale_pre_store(1_779_998_730, 0),
             "future retain-until is not stale"
@@ -997,7 +995,7 @@ mod tests {
 
         for retain_until in [now, now - 1] {
             assert!(matches!(
-                store.insert_if_absent("k", retain_until, 0),
+                store.insert_if_absent("k", retain_until),
                 Err(ReplayStoreError::Unavailable { .. })
             ));
         }
@@ -1007,7 +1005,7 @@ mod tests {
         );
 
         assert!(matches!(
-            store.insert_if_absent("k", now + 600, 0),
+            store.insert_if_absent("k", now + 600),
             Ok(ReplayDecision::Fresh)
         ));
         assert_eq!(recorded(&seen).len(), 1, "the recorder must see a SET");
@@ -1021,7 +1019,7 @@ mod tests {
         let (url, seen) = scripted(noeviction_script("WAIT", ":1\r\n"));
         let store = connect_at(&url, now).with_wait_quorum(2, 100);
 
-        match store.insert_if_absent("k", now + 600, 0) {
+        match store.insert_if_absent("k", now + 600) {
             Err(ReplayStoreError::Unavailable { details }) => {
                 assert!(details.contains("not durably replicated"), "{details}");
             }
@@ -1123,7 +1121,7 @@ mod tests {
         assert!(store.conn.is_poisoned());
 
         assert!(matches!(
-            store.insert_if_absent("k", now + 600, 0),
+            store.insert_if_absent("k", now + 600),
             Ok(ReplayDecision::Replay)
         ));
         assert!(!store.conn.is_poisoned());

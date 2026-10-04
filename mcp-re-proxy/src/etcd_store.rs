@@ -52,7 +52,7 @@ use mcp_re_core::ReplayDecision;
 
 /// A source of the CURRENT Unix time (seconds) for deriving the lease TTL. The
 /// proxy's IMPURE edge: `mcp-re-core` carries no clock (the pure `ReplayCache`
-/// trait passes `now_unix = 0`), so the *store* owns its clock here. Production
+/// trait has none), so the *store* owns its clock here. Production
 /// injects [`system_clock`]; tests inject a fixed clock so the TTL arithmetic is
 /// deterministic. Mirrors `redis_store::UnixClock`.
 pub type UnixClock = Box<dyn Fn() -> i64 + Send + Sync>;
@@ -246,7 +246,7 @@ impl EtcdTransport for UreqEtcdTransport {
 ///
 /// Holds an [`EtcdTransport`] (production: a blocking `ureq` agent over the gateway
 /// base URL with a bounded per-request timeout) and the store's own clock (read per
-/// op to derive the lease TTL — the pure `ReplayCache` trait passes `now_unix = 0`).
+/// op to derive the lease TTL).
 /// Any transport / HTTP-status / JSON-parse failure surfaces as
 /// [`ReplayStoreError::Unavailable`] (fail closed — an outage is NEVER silently
 /// treated as a fresh nonce, and the proxy never serves through).
@@ -254,7 +254,7 @@ pub struct EtcdAtomicReplayStore {
     /// The HTTP seam to etcd's JSON gateway (production `ureq`; scripted in tests).
     transport: Box<dyn EtcdTransport>,
     /// The store's OWN clock (the proxy's impure edge). Read per op to derive the
-    /// lease TTL window, since the pure `ReplayCache` trait passes `now_unix = 0`.
+    /// lease TTL window.
     clock: UnixClock,
 }
 
@@ -320,7 +320,6 @@ impl AtomicReplayStore for EtcdAtomicReplayStore {
         &self,
         key: &str,
         expires_at_unix: i64,
-        _now_unix: i64,
     ) -> Result<ReplayDecision, ReplayStoreError> {
         // One `now` from the store's own clock serves both the pre-store staleness
         // guard and the lease TTL. A retain-until at or before it is already stale
@@ -337,8 +336,7 @@ impl AtomicReplayStore for EtcdAtomicReplayStore {
             });
         }
 
-        // The TTL is `retain_until - now` against the `now` read above, not the
-        // trait's `now_unix`, which is always 0.
+        // The TTL is `retain_until - now` against the `now` read above.
         let ttl_secs = compute_ttl_secs(expires_at_unix, now_unix);
 
         // 1) Grant a lease bounded by that TTL, so the nonce self-evicts after its
@@ -671,7 +669,7 @@ mod tests {
         let store =
             EtcdAtomicReplayStore::with_transport(Box::new(Arc::clone(&transport)), fixed_clock());
         let err = store
-            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_100, 0)
+            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_100)
             .expect_err("a non-positive-TTL request must be rejected, never admitted as Fresh");
         assert!(
             matches!(err, ReplayStoreError::Unavailable { .. }),
@@ -693,7 +691,7 @@ mod tests {
         let store =
             EtcdAtomicReplayStore::with_transport(Box::new(Arc::clone(&transport)), fixed_clock());
         store
-            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0)
+            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700)
             .expect("fresh decision must not error");
         let grant = transport
             .calls
@@ -731,7 +729,7 @@ mod tests {
             bound(7).retention_clock(|| 1_779_998_100),
         );
         store
-            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0)
+            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700)
             .expect("fresh decision must not error");
         assert_eq!(granted_ttl(&transport), json!(607));
 
@@ -742,7 +740,7 @@ mod tests {
             bound(ahead).retention_clock(move || 1_779_998_100 + ahead),
         );
         store
-            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0)
+            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700)
             .expect("fresh decision must not error");
         assert!(
             granted_ttl(&fast).as_i64().expect("integer") >= 600,
@@ -800,7 +798,7 @@ mod tests {
             fixed_clock(),
         )
         .expect("an http endpoint is admitted");
-        let result = store.insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0);
+        let result = store.insert_if_absent("did:example:host|aud|nonce", 1_779_998_700);
         assert!(
             matches!(result, Err(ReplayStoreError::Unavailable { .. })),
             "a redirecting gateway must fail closed, got {result:?}"
@@ -838,7 +836,7 @@ mod tests {
         let store =
             EtcdAtomicReplayStore::with_transport(Box::new(Arc::clone(&transport)), fixed_clock());
         let decision = store
-            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0)
+            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700)
             .expect("replay decision must not error");
         assert_eq!(decision, ReplayDecision::Replay, "key present ⇒ Replay");
         assert_eq!(
@@ -876,7 +874,7 @@ mod tests {
         let store =
             EtcdAtomicReplayStore::with_transport(Box::new(Arc::clone(&transport)), fixed_clock());
         let decision = store
-            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0)
+            .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700)
             .expect("fresh decision must not error");
         assert_eq!(decision, ReplayDecision::Fresh, "key absent ⇒ Fresh");
         assert_eq!(
@@ -894,7 +892,7 @@ mod tests {
         let transport = Arc::new(ScriptedTransport::new(json!({ "succeeded": false }), true));
         let store =
             EtcdAtomicReplayStore::with_transport(Box::new(Arc::clone(&transport)), fixed_clock());
-        let result = store.insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0);
+        let result = store.insert_if_absent("did:example:host|aud|nonce", 1_779_998_700);
         assert_eq!(
             result,
             Ok(ReplayDecision::Replay),
@@ -925,7 +923,6 @@ mod tests {
             &self,
             key: &str,
             _expires_at_unix: i64,
-            _now_unix: i64,
         ) -> Result<ReplayDecision, ReplayStoreError> {
             let mut set = self
                 .seen
@@ -949,7 +946,6 @@ mod tests {
             &self,
             _key: &str,
             _expires_at_unix: i64,
-            _now_unix: i64,
         ) -> Result<ReplayDecision, ReplayStoreError> {
             Err(ReplayStoreError::Unavailable {
                 details: "etcd unreachable".to_string(),

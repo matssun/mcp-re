@@ -86,14 +86,10 @@ impl From<ReplayStoreError> for ReplayCacheError {
 /// the shared store is consulted, fail closed — never recorded and reported
 /// `Fresh`.
 ///
-/// Pure (no clock, no I/O) so the boundary is unit-testable. A store that owns a
-/// real clock (the Redis backend) passes that clock's `now`; a store with no clock
-/// (the in-memory reference) is handed the trait's vestigial `now_unix = 0`, so
-/// the guard there reduces to "a non-positive ABSOLUTE retain-until is rejected" —
-/// a degenerate request expiring at or before the Unix epoch can never legitimately
-/// be `Fresh`. Either way the layer enforces the ADR's explicit pre-store rejection
-/// of a non-positive TTL defensively, instead of depending SOLELY on the upstream
-/// `mcp-re-core` freshness step running before replay.
+/// Pure (no clock, no I/O) so the boundary is unit-testable. Every store passes
+/// its OWN clock's `now`, so the layer enforces the ADR's explicit pre-store
+/// rejection of a non-positive TTL defensively, instead of depending SOLELY on the
+/// upstream `mcp-re-core` freshness step running before replay.
 pub(crate) fn is_stale_pre_store(retain_until_unix: i64, now_unix: i64) -> bool {
     retain_until_unix.saturating_sub(now_unix) <= 0
 }
@@ -151,14 +147,9 @@ pub trait AtomicReplayStore {
     /// `expires_at_unix` (already the skew-folded `retain_until = expires_at +
     /// skew`, mirroring `InMemoryReplayCache`) relative to the CURRENT time.
     ///
-    /// `now_unix` is a VESTIGIAL anchor the caller passes as `0` because the pure
-    /// `ReplayCache` trait carries no clock; an implementor that derives a
-    /// server-side TTL (e.g. Redis `PX`) MUST read its OWN clock for "now" and
-    /// IGNORE this `0`. Trusting the `0` makes the TTL ≈ the absolute Unix epoch
-    /// (~56 years) → unbounded keyspace growth (the H-8/H-9 / MCPS-090 bug). An
-    /// implementor that has no TTL (e.g. the in-memory store, which evicts via an
-    /// explicit `prune`) simply ignores it. Clamp any derived duration to
-    /// non-negative.
+    /// The trait carries no clock: every implementor reads its OWN clock for
+    /// "now", refuses a retain-until at or before it, and derives any server-side
+    /// TTL (e.g. Redis `PX`) from it. Clamp any derived duration to non-negative.
     ///
     /// Returns [`ReplayDecision::Fresh`] if the key was absent and is now
     /// recorded, [`ReplayDecision::Replay`] if it was already present, or
@@ -167,7 +158,6 @@ pub trait AtomicReplayStore {
         &self,
         key: &str,
         expires_at_unix: i64,
-        now_unix: i64,
     ) -> Result<ReplayDecision, ReplayStoreError>;
 
     /// This store's self-declared [`ReplayDurabilityClass`] (issue #78,
@@ -232,16 +222,12 @@ impl ReplayCache for SharedReplayCache {
         let key = SharedReplayCache::composite_key(signer, audience, nonce);
         // Fold the skew into the retain-until instant exactly as
         // InMemoryReplayCache does, then hand that instant to the store as the
-        // absolute retain-until. The pure ReplayCache trait carries NO clock, so
-        // the `now_unix` parameter is passed as 0 and is a vestigial anchor the
-        // store MUST IGNORE: each store derives its TTL from its OWN clock (the
-        // proxy's impure edge), never from this 0. Trusting the 0 was the H-8/H-9
-        // bug (MCPS-090) — it made the Redis `PX` ≈ the absolute Unix epoch
-        // (~56 years), so keys ~never expired → unbounded keyspace growth (DoS).
-        // The decision (Fresh/Replay) does NOT depend on the TTL value; only
+        // absolute retain-until. The pure ReplayCache trait carries NO clock: each
+        // store derives "now" and its TTL from its OWN clock (the proxy's impure
+        // edge). The decision (Fresh/Replay) does NOT depend on the TTL value; only
         // eviction timing does.
         let retain_until = skew_folded_retain_until(expires_at_unix, self.max_clock_skew_secs);
-        Ok(self.store.insert_if_absent(&key, retain_until, 0)?)
+        Ok(self.store.insert_if_absent(&key, retain_until)?)
     }
 
     /// DELEGATES to the backing [`AtomicReplayStore`]'s own
@@ -291,15 +277,19 @@ const MAX_ATOMIC_STORE_ENTRIES: usize = 1_000_000;
 /// ceiling only needs headroom to reappear, not to be exact.
 const PRUNE_EVERY_N_INSERTS: usize = 64;
 
-/// Wall-clock Unix seconds for the inline eviction anchor.
+/// Wall-clock Unix seconds anchoring the pre-store staleness guard and the inline
+/// eviction.
 ///
-/// The `AtomicReplayStore` trait carries no clock — `now_unix` is vestigial and
-/// callers pass `0` — so a store that must expire its own entries reads one.
+/// An unreadable or pre-epoch clock reads as `i64::MAX`, so every insert is
+/// refused pre-store (Unavailable) rather than admitted against a bogus "now".
 fn wall_clock_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    unix_seconds(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH))
+}
+
+/// Whole Unix seconds of a clock reading; a reading before the epoch, or one that
+/// does not fit `i64`, is `i64::MAX`.
+fn unix_seconds(since_epoch: Result<std::time::Duration, std::time::SystemTimeError>) -> i64 {
+    since_epoch.map_or(i64::MAX, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 #[derive(Clone)]
@@ -313,8 +303,9 @@ pub struct InMemoryAtomicReplayStore {
     /// as a field so tests can exercise the ceiling cheaply; production always
     /// uses the default.
     max_entries: usize,
-    /// The inline sweep's anchor. Shared with clones, so every handle onto the same
-    /// map evicts against the same notion of now.
+    /// The anchor of the pre-store staleness guard and the inline sweep. Shared with
+    /// clones, so every handle onto the same map judges against the same notion of
+    /// now.
     clock: UnixClock,
 }
 
@@ -380,21 +371,18 @@ impl AtomicReplayStore for InMemoryAtomicReplayStore {
         &self,
         key: &str,
         expires_at_unix: i64,
-        now_unix: i64,
     ) -> Result<ReplayDecision, ReplayStoreError> {
+        let now = (self.clock)();
         // MCPS-08 defensive pre-store rejection: an already-stale request (a
-        // non-positive remaining window) is rejected fail-closed BEFORE the store
-        // is consulted, never recorded and reported `Fresh`. This reference store
-        // carries no clock, so `now_unix` is the trait's vestigial 0 and the guard
-        // reduces to rejecting a non-positive ABSOLUTE retain-until — a degenerate
-        // request expiring at or before the Unix epoch. It enforces the contract
-        // at this layer rather than relying solely on the upstream `mcp-re-core`
-        // freshness step running before replay.
-        if is_stale_pre_store(expires_at_unix, now_unix) {
+        // non-positive remaining window against this store's own clock) is rejected
+        // fail-closed BEFORE the store is consulted, never recorded and reported
+        // `Fresh`. It enforces the contract at this layer rather than relying solely
+        // on the upstream `mcp-re-core` freshness step running before replay.
+        if is_stale_pre_store(expires_at_unix, now) {
             return Err(ReplayStoreError::Unavailable {
                 details: format!(
                     "replay request already stale: retain_until ({expires_at_unix}) \
-                     is at or before now ({now_unix}) — rejected pre-store (MCPS-08, \
+                     is at or before now ({now}) — rejected pre-store (MCPS-08, \
                      fail closed) rather than recorded as Fresh"
                 ),
             });
@@ -410,7 +398,7 @@ impl AtomicReplayStore for InMemoryAtomicReplayStore {
         if map.contains_key(key) {
             return Ok(ReplayDecision::Replay);
         }
-        // INLINE EVICTION, on a bounded cadence, anchored on the caller's `now_unix`.
+        // INLINE EVICTION, on a bounded cadence, anchored on the store's own `now`.
         //
         // The ceiling below is fail-closed, but nothing scheduled a prune: `prune` is
         // an explicit method no production caller invokes, so once the map filled the
@@ -418,9 +406,6 @@ impl AtomicReplayStore for InMemoryAtomicReplayStore {
         // permanent brick, not a backpressure window, because the expired entries that
         // would have made room were never removed. Evicting here is what makes the
         // ceiling a bound rather than a terminal state.
-        //
-        // The anchor is the store's OWN clock: the trait's `now_unix` is documented as
-        // vestigial (callers pass `0`), and pruning against `0` would evict nothing.
         //
         // The boundary is `>=`, the same one [`Self::prune`] and every other store in
         // the tree apply: an entry is KEPT through its `retain_until` and dropped only
@@ -431,7 +416,6 @@ impl AtomicReplayStore for InMemoryAtomicReplayStore {
             *since = since.saturating_add(1);
             if *since >= PRUNE_EVERY_N_INSERTS {
                 *since = 0;
-                let now = (self.clock)();
                 map.retain(|_, &mut until| until >= now);
             }
         }
@@ -461,7 +445,13 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex;
 
+    use std::sync::atomic::AtomicI64;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+    use std::time::UNIX_EPOCH;
+
     use super::is_stale_pre_store;
+    use super::unix_seconds;
     use super::AtomicReplayStore;
     use super::InMemoryAtomicReplayStore;
     use super::ReplayStoreError;
@@ -474,25 +464,30 @@ mod tests {
     /// nonce got `Unavailable` for the life of the process.
     #[test]
     fn a_full_store_recovers_once_its_entries_expire() {
-        let store = InMemoryAtomicReplayStore::new().with_max_entries(4);
-        // Fill it with entries whose retain-until is already in the past (relative to
-        // the store's own clock, which is what the sweep anchors on). The pre-store
-        // staleness guard only refuses a NON-POSITIVE absolute value here, so a small
-        // positive one records and is then reclaimable.
+        const FILLED_AT: i64 = 1_000;
+        const LATER: i64 = 2_000;
+        let now = Arc::new(AtomicI64::new(FILLED_AT));
+        let clock = Arc::clone(&now);
+        let store = InMemoryAtomicReplayStore::new()
+            .with_max_entries(4)
+            .with_clock(Arc::new(move || clock.load(Ordering::SeqCst)));
+        // Fill it with entries that are live when recorded, then let the store's own
+        // clock pass their retain-until so the sweep can reclaim them.
         for i in 0..4 {
             store
-                .insert_if_absent(&format!("k{i}"), 1, 0)
+                .insert_if_absent(&format!("k{i}"), FILLED_AT + 1)
                 .expect("fills");
         }
         assert!(
-            store.insert_if_absent("overflow", 1, 0).is_err(),
+            store.insert_if_absent("overflow", LATER + 1).is_err(),
             "the ceiling refuses before the sweep has run"
         );
+        now.store(LATER, Ordering::SeqCst);
         // The sweep runs on a bounded cadence, so drive enough attempts to reach it.
         // Every attempt before the pass is refused; none ever admits a replay.
         let mut admitted = None;
         for i in 0..PRUNE_EVERY_N_INSERTS * 2 {
-            if let Ok(decision) = store.insert_if_absent(&format!("later{i}"), 1, 0) {
+            if let Ok(decision) = store.insert_if_absent(&format!("later{i}"), LATER + 1) {
                 admitted = Some(decision);
                 break;
             }
@@ -511,16 +506,21 @@ mod tests {
     #[test]
     fn the_inline_sweep_uses_the_same_boundary_as_the_explicit_prune() {
         const NOW: i64 = 1_000;
-        let store = InMemoryAtomicReplayStore::new().with_clock(std::sync::Arc::new(|| NOW));
-        // Retained until exactly `now` — the instant the two boundaries disagree on.
+        let now = Arc::new(AtomicI64::new(NOW - 1));
+        let clock = Arc::clone(&now);
+        let store = InMemoryAtomicReplayStore::new()
+            .with_clock(Arc::new(move || clock.load(Ordering::SeqCst)));
+        // Retained until exactly `NOW` — the instant the two boundaries disagree on.
         for i in 0..PRUNE_EVERY_N_INSERTS - 1 {
             store
-                .insert_if_absent(&format!("boundary{i}"), NOW, 0)
+                .insert_if_absent(&format!("boundary{i}"), NOW)
                 .expect("records");
         }
-        // The next insert is the one that trips the sweep cadence.
+        // The clock reaches `NOW`; the next insert is the one that trips the sweep
+        // cadence.
+        now.store(NOW, Ordering::SeqCst);
         store
-            .insert_if_absent("trigger", NOW + 5_000, 0)
+            .insert_if_absent("trigger", NOW + 5_000)
             .expect("records");
         assert_eq!(
             store.len(),
@@ -547,6 +547,13 @@ mod tests {
     const NONCE: &str = "nonce-aaaaaaaaaaaaaaaaaaaaaa";
     const EXPIRES: i64 = 1_779_998_700;
     const SKEW: i64 = 30;
+    /// The fixture clock: ten minutes before `EXPIRES`, so every fixture request is live.
+    const FIXTURE_NOW: i64 = EXPIRES - 600;
+
+    /// An in-memory store whose clock reads [`FIXTURE_NOW`].
+    fn fixture_store() -> InMemoryAtomicReplayStore {
+        InMemoryAtomicReplayStore::new().with_clock(Arc::new(|| FIXTURE_NOW))
+    }
 
     /// A store whose every call is an operational failure — exercises the
     /// fail-closed mapping (the in-memory reference store has no failure path
@@ -558,7 +565,6 @@ mod tests {
             &self,
             _key: &str,
             _expires_at_unix: i64,
-            _now_unix: i64,
         ) -> Result<ReplayDecision, ReplayStoreError> {
             Err(ReplayStoreError::Unavailable {
                 details: "shared backend unreachable".to_string(),
@@ -581,7 +587,6 @@ mod tests {
             &self,
             key: &str,
             expires_at_unix: i64,
-            _now_unix: i64,
         ) -> Result<ReplayDecision, ReplayStoreError> {
             let mut map = self
                 .seen
@@ -610,7 +615,7 @@ mod tests {
         // Over the SINGLE-PROCESS in-memory reference store (which does NOT override
         // the conservative default), the cache must declare SingleProcessReference,
         // so it canNOT masquerade as durable nor clear the strict object-level gate.
-        let in_memory = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), SKEW);
+        let in_memory = SharedReplayCache::new(Box::new(fixture_store()), SKEW);
         assert_eq!(
             in_memory.durability_class(),
             ReplayDurabilityClass::SingleProcessReference,
@@ -632,7 +637,7 @@ mod tests {
 
     #[test]
     fn fresh_then_replay_single_instance() {
-        let store = InMemoryAtomicReplayStore::new();
+        let store = fixture_store();
         let cache = SharedReplayCache::new(Box::new(store), SKEW);
         assert_eq!(
             cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
@@ -650,7 +655,7 @@ mod tests {
     /// the property the single-node file cache cannot provide.
     #[test]
     fn cross_instance_insert_via_a_is_replay_via_b() {
-        let store = InMemoryAtomicReplayStore::new();
+        let store = fixture_store();
         // Clone shares the SAME underlying map (Arc<Mutex<..>>).
         let node_a = SharedReplayCache::new(Box::new(store.clone()), SKEW);
         let node_b = SharedReplayCache::new(Box::new(store.clone()), SKEW);
@@ -676,7 +681,7 @@ mod tests {
     /// keeps them distinct.
     #[test]
     fn distinct_tuples_do_not_alias() {
-        let store = InMemoryAtomicReplayStore::new();
+        let store = fixture_store();
         let cache = SharedReplayCache::new(Box::new(store), SKEW);
 
         // Would collide under naive concat: signer|audience boundary moved.
@@ -717,27 +722,41 @@ mod tests {
 
     /// Skew handling matches `InMemoryReplayCache` semantics: the stored
     /// retain-until is `expires_at + max_clock_skew`, and pruning strictly past it
-    /// readmits the nonce while pruning AT it keeps it.
+    /// readmits the nonce while pruning AT it keeps it. The same tuple is driven
+    /// through the core cache and every decision must agree.
     #[test]
     fn skew_folded_into_retain_until_matches_in_memory_semantics() {
-        let store = InMemoryAtomicReplayStore::new();
-        let cache = SharedReplayCache::new(Box::new(store.clone()), SKEW);
-        assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
-            Ok(ReplayDecision::Fresh)
-        );
+        let store = fixture_store();
+        let shared = SharedReplayCache::new(Box::new(store.clone()), SKEW);
+        let core = mcp_re_core::InMemoryReplayCache::new(SKEW);
         let retain_until = EXPIRES + SKEW;
+        assert_eq!(
+            shared.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            core.check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
+        );
         // Pruning AT retain_until keeps the entry (retain_until >= now).
         store.prune(retain_until);
+        core.prune(retain_until);
+        let at_boundary = shared.check_and_insert(SIGNER, AUD, NONCE, EXPIRES);
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            at_boundary,
+            core.check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
+        );
+        assert_eq!(
+            at_boundary,
             Ok(ReplayDecision::Replay),
             "entry is live through its skew-extended retain-until"
         );
         // Pruning strictly past retain_until evicts → fresh again.
         store.prune(retain_until + 1);
+        core.prune(retain_until + 1);
+        let past_boundary = shared.check_and_insert(SIGNER, AUD, NONCE, EXPIRES);
         assert_eq!(
-            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            past_boundary,
+            core.check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
+        );
+        assert_eq!(
+            past_boundary,
             Ok(ReplayDecision::Fresh),
             "past retain-until the nonce is readmitted (it can no longer pass freshness)"
         );
@@ -751,17 +770,19 @@ mod tests {
     #[test]
     fn ceiling_fails_closed_when_full() {
         let cap = 4;
-        let store = InMemoryAtomicReplayStore::new().with_max_entries(cap);
+        let store = InMemoryAtomicReplayStore::new()
+            .with_max_entries(cap)
+            .with_clock(Arc::new(|| 1_000));
         // Fill to capacity (long-lived entries so prune cannot reclaim).
         for i in 0..cap as i64 {
             assert_eq!(
-                store.insert_if_absent(&format!("k{i}"), 1_000_000, 0),
+                store.insert_if_absent(&format!("k{i}"), 1_000_000),
                 Ok(ReplayDecision::Fresh)
             );
         }
         // One more distinct key must be refused, not admitted.
         let err = store
-            .insert_if_absent("overflow", 1_000_000, 0)
+            .insert_if_absent("overflow", 1_000_000)
             .expect_err("at capacity the store must fail closed, never grow unbounded");
         assert!(matches!(err, ReplayStoreError::Unavailable { .. }));
         assert_eq!(
@@ -775,7 +796,7 @@ mod tests {
         store.prune(2_000_000);
         assert_eq!(store.len(), 0);
         assert_eq!(
-            store.insert_if_absent("after-drain", 1_000_000, 0),
+            store.insert_if_absent("after-drain", 1_000_000),
             Ok(ReplayDecision::Fresh)
         );
     }
@@ -809,8 +830,7 @@ mod tests {
     /// MCPS-08 regression (finding #142) — PURE proof of the pre-store staleness
     /// boundary. A non-positive remaining window (`retain_until <= now`) is flagged
     /// stale (→ reject); a strictly-positive window is admitted. At this clock-free
-    /// layer the store receives the trait's vestigial `now_unix = 0`, so the guard
-    /// reduces to rejecting a non-positive ABSOLUTE retain-until.
+    /// layer the guard takes the store's own clock reading as `now`.
     #[test]
     fn nonpositive_window_is_flagged_stale_pre_store() {
         assert!(
@@ -825,9 +845,8 @@ mod tests {
             !is_stale_pre_store(1_001, 1_000),
             "a positive window is admitted"
         );
-        // With the vestigial now=0 the in-memory store actually receives: a real
-        // future retain-until is a huge positive window (NOT stale); a degenerate
-        // non-positive absolute retain-until IS stale.
+        // Against an epoch-anchored `now`: a real future retain-until is a huge
+        // positive window (NOT stale); a non-positive absolute retain-until IS stale.
         assert!(
             !is_stale_pre_store(EXPIRES + SKEW, 0),
             "future retain-until is not stale"
@@ -843,19 +862,18 @@ mod tests {
     }
 
     /// MCPS-08 regression (finding #142) — WIRING proof through the real in-memory
-    /// store, default features. An already-stale request (a non-positive absolute
-    /// retain-until, given the vestigial `now_unix = 0` this clock-free store
-    /// receives) is REJECTED fail-closed PRE-STORE and is NOT recorded: the store
+    /// store, default features. An already-stale request (a retain-until at or
+    /// before the store's own clock) is REJECTED fail-closed PRE-STORE and is NOT recorded: the store
     /// stays empty and a subsequent valid request for the SAME key is still `Fresh`
     /// (the stale attempt left no `Replay`-causing entry). WITHOUT the guard the
     /// store would `insert` the entry and return `Fresh`, recording an already-
     /// expired sighting.
     #[test]
     fn already_stale_request_rejected_pre_store_not_recorded_as_fresh() {
-        let store = InMemoryAtomicReplayStore::new();
-        // retain_until at/before now (now = vestigial 0 the store is handed).
+        let store = fixture_store();
+        // retain_until at/before the store's clock.
         let err = store
-            .insert_if_absent("k", 0, 0)
+            .insert_if_absent("k", FIXTURE_NOW)
             .expect_err("an already-stale request must be rejected, never admitted as Fresh");
         assert!(
             matches!(err, ReplayStoreError::Unavailable { .. }),
@@ -867,7 +885,7 @@ mod tests {
             "a rejected stale request must leave NO entry behind"
         );
         assert_eq!(
-            store.insert_if_absent("k", EXPIRES + SKEW, 0),
+            store.insert_if_absent("k", EXPIRES + SKEW),
             Ok(ReplayDecision::Fresh),
             "the key was never recorded, so a valid request is still Fresh"
         );
@@ -876,16 +894,16 @@ mod tests {
     /// MCPS-08 regression (finding #142) — same guard surfaced through the full
     /// `SharedReplayCache` path, default features: a stale request fails closed as
     /// `ReplayCacheError::Unavailable` → `McpReError::ReplayCacheUnavailable` (never
-    /// `Fresh`, never "allow"). The cache folds skew into `retain_until = expires_at
-    /// + skew`, so to drive a non-positive absolute retain-until (given the store's
-    /// vestigial now=0) we pass an `expires_at` that nets to <= 0 after skew.
+    /// `Fresh`, never "allow"). The cache folds skew into `retain_until =
+    /// expires_at + skew`, so to drive a stale retain-until we pass an `expires_at`
+    /// that nets to the store's clock after skew.
     #[test]
     fn stale_request_via_shared_cache_fails_closed() {
-        let store = InMemoryAtomicReplayStore::new();
+        let store = fixture_store();
         let cache = SharedReplayCache::new(Box::new(store.clone()), SKEW);
-        // retain_until = expires_at + SKEW = -SKEW + SKEW = 0 → non-positive → stale.
+        // retain_until = expires_at + SKEW = FIXTURE_NOW → non-positive window → stale.
         let err = cache
-            .check_and_insert(SIGNER, AUD, NONCE, -SKEW)
+            .check_and_insert(SIGNER, AUD, NONCE, FIXTURE_NOW - SKEW)
             .expect_err("a stale request must fail closed, never be admitted as Fresh");
         assert!(matches!(err, ReplayCacheError::Unavailable { .. }));
         assert_eq!(McpReError::from(err), McpReError::ReplayCacheUnavailable);
@@ -893,5 +911,38 @@ mod tests {
             store.is_empty(),
             "the stale request must not have been recorded"
         );
+    }
+
+    /// A retain-until at or before the store's own clock is refused pre-store; one
+    /// second after it is admitted.
+    #[test]
+    fn a_retain_until_at_or_before_the_stores_clock_is_refused_pre_store() {
+        let store = InMemoryAtomicReplayStore::new().with_clock(Arc::new(|| 1_000));
+        assert!(matches!(
+            store.insert_if_absent("k", 1_000),
+            Err(ReplayStoreError::Unavailable { .. })
+        ));
+        assert!(store.is_empty());
+        assert_eq!(
+            store.insert_if_absent("k", 1_001),
+            Ok(ReplayDecision::Fresh)
+        );
+    }
+
+    /// A pre-epoch clock reads as `i64::MAX`, so every insert is refused rather
+    /// than judged against the epoch.
+    #[test]
+    fn a_pre_epoch_clock_refuses_every_insert_rather_than_reading_as_the_epoch() {
+        let pre_epoch = UNIX_EPOCH.duration_since(UNIX_EPOCH + Duration::from_secs(1));
+        assert!(pre_epoch.is_err());
+        assert_eq!(unix_seconds(pre_epoch), i64::MAX);
+        let store = InMemoryAtomicReplayStore::new().with_clock(Arc::new(|| {
+            unix_seconds(UNIX_EPOCH.duration_since(UNIX_EPOCH + Duration::from_secs(1)))
+        }));
+        assert!(matches!(
+            store.insert_if_absent("k", EXPIRES + SKEW),
+            Err(ReplayStoreError::Unavailable { .. })
+        ));
+        assert!(store.is_empty());
     }
 }
