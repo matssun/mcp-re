@@ -103,9 +103,10 @@ pub use trust_revocation::TrustRevocationState;
 
 /// What layer A recognised: each machine's state, and each guard-only owner's facts.
 ///
-/// Built only by a successful validation, so holding one is evidence that every owner here
-/// was checked against its own required/optional/forbidden/guard columns and that the
-/// cross-machine relations hold between them.
+/// Constructible only inside `config_state`, and its only production producer is
+/// `validation::validate_configuration`, so holding one outside this module is evidence that
+/// every owner here was checked against its own required/optional/forbidden/guard columns
+/// and that the cross-machine relations hold between them.
 ///
 /// It grows one field per owner as the atlas is implemented; an owner that is not here yet
 /// is one whose legality still lives in the residual clause list.
@@ -115,42 +116,42 @@ pub struct DeploymentConfigState {
     /// [`RecognisedStates`]: the two shapes were identical, and a state added to one had to
     /// be transcribed into the other twice — a per-machine cost that bought nothing, since
     /// the only difference between them was ever the claim attached, not the contents.
-    /// Private, so the `pub(crate)` fields of the inner value stay unreachable from here.
+    /// Private, as are the inner value's fields, so only `config_state` and its descendants can reach them.
     states: RecognisedStates,
 }
 
 /// The recognised states, as one argument, so adding a machine is a change in one place
 /// rather than in every signature between the validator and the value.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RecognisedStates {
-    pub(crate) admission: AdmissionState,
-    pub(crate) authorization: AuthorizationState,
-    pub(crate) audit: AuditState,
-    pub(crate) channel_binding: ChannelBindingState,
-    pub(crate) client_credential_window: ClientCredentialWindow,
-    pub(crate) continuation_control: ContinuationControlState,
-    pub(crate) crl_revocation: CrlRevocationState,
-    pub(crate) custody: CustodyState,
-    pub(crate) delegated_signing: DelegatedSigningFacts,
-    pub(crate) freshness: FreshnessWindow,
-    pub(crate) in_flight_limit: InFlightLimitBasis,
-    pub(crate) key_file_access: KeyFileAccessPolicy,
-    pub(crate) mcp_transport_contract: McpTransportContractState,
-    pub(crate) replay: ReplayState,
-    pub(crate) retention: RetentionState,
-    pub(crate) server_identity: server_identity::ServerIdentityFacts,
-    pub(crate) shard_topology: ShardTopologyRequest,
-    pub(crate) channel_credential_custody: ChannelCredentialCustodyState,
-    pub(crate) topology: DeploymentTopology,
-    pub(crate) trust_document: TrustDocumentSource,
-    pub(crate) trust_revocation: TrustRevocationState,
-    pub(crate) verified_context: VerifiedContextState,
+struct RecognisedStates {
+    admission: AdmissionState,
+    authorization: AuthorizationState,
+    audit: AuditState,
+    channel_binding: ChannelBindingState,
+    client_credential_window: ClientCredentialWindow,
+    continuation_control: ContinuationControlState,
+    crl_revocation: CrlRevocationState,
+    custody: CustodyState,
+    delegated_signing: DelegatedSigningFacts,
+    freshness: FreshnessWindow,
+    in_flight_limit: InFlightLimitBasis,
+    key_file_access: KeyFileAccessPolicy,
+    mcp_transport_contract: McpTransportContractState,
+    replay: ReplayState,
+    retention: RetentionState,
+    server_identity: server_identity::ServerIdentityFacts,
+    shard_topology: ShardTopologyRequest,
+    channel_credential_custody: ChannelCredentialCustodyState,
+    topology: DeploymentTopology,
+    trust_document: TrustDocumentSource,
+    trust_revocation: TrustRevocationState,
+    verified_context: VerifiedContextState,
 }
 
 impl DeploymentConfigState {
-    /// Assemble the classified state. Crate-private: the only legitimate producer is the
-    /// validation boundary, because the value's meaning is "these states were checked".
-    pub(crate) fn new(states: RecognisedStates) -> Self {
+    /// Assemble the classified state. Private to `config_state`: the only production producer is
+    /// `validation::validate_configuration`, because the value's meaning is "these states were checked".
+    fn new(states: RecognisedStates) -> Self {
         Self { states }
     }
 
