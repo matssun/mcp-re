@@ -1414,8 +1414,7 @@ a hop it never verified.
 
 ## NP-034 — no command line disables a liveness bound
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (4), `mcp-re-proxy/src/cli/runtime_flags` (2),
-`mcp-re-proxy/src/inner_plane_bound.rs` (1).
+**Controls:** `mcp-re-proxy/src/cli.rs` (4), `mcp-re-proxy/src/cli/runtime_flags` (2).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -4484,3 +4483,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** Beside NP-215: that proposition covers what a refusal says, and this one covers what a printed request value says.
 **Recorded:** 2026-10-04, round-12 remediation of 075ae01ec0c5721d.
+
+## NP-239 — the process-wide inner pool's in-flight bound is never below the fleet admission ceiling, and never below its default
+
+**Controls:** `mcp-re-proxy` `lib#inner_plane_bound::tests::a_fleet_ceiling_above_the_default_raises_the_pool_to_it`, `lib#inner_plane_bound::tests::a_fleet_ceiling_below_the_default_never_lowers_the_pool`.
+**Carrier:** `mcp-re-proxy/src/inner_plane_bound.rs`.
+**Statement.** *`raised_to_fleet_ceiling` returns a pool whose in-flight bound is the fleet admission ceiling when that ceiling exceeds the default, and the default otherwise; it raises the shared pool and never lowers it.*
+**If false.** Requests that passed every admission gate are answered with an `inner server unavailable` at a capacity cliff no configured flag names, or the shared pool is shrunk below its default.
+**Likely owner:** none. startup_plan owns the pure ceiling/raise rule; no unit's paths include inner_plane_bound.rs.
+**Severity:** `high`.
+**Root relationship.** THM-0077: shedding stays at the admission gate an operator configured, not at an unselected core-count cliff.
+**Recorded:** 2026-10-04, round-12 remediation of 057f17b9088815a4.

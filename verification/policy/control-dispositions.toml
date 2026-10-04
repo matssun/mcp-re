@@ -442,6 +442,15 @@ record = "docs/architecture/control-dispositions.md#np-008"
 
 # --- new-proposition dispositions ---
 
+[[proposition]]
+id = "NP-239"
+title = "The process-wide inner pool's in-flight bound is never below the fleet admission ceiling, and never below its default"
+carrier = "mcp-re-proxy/src/inner_plane_bound.rs"
+likely_owner = "none. startup_plan owns the pure ceiling/raise rule; no unit's paths include inner_plane_bound.rs."
+consequence = "high"
+root_relationship = "THM-0077: shedding stays at the admission gate an operator configured, not at an unselected core-count cliff"
+record = "docs/architecture/control-dispositions.md#np-239"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -7968,10 +7977,10 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-17057"
 project = "mcp-re-proxy"
-control = "src/lib.rs#inner_plane_bound::tests::the_ceiling_comes_from_the_basis_and_the_core_count_together"
+control = "src/lib.rs#inner_plane_bound::tests::a_fleet_ceiling_above_the_default_raises_the_pool_to_it"
 decision = "new-proposition"
-proposition = "NP-034"
-recorded = "2026-09-19"
+proposition = "NP-239"
+recorded = "2026-10-04"
 
 [[disposition]]
 id = "CD-17058"
@@ -14129,4 +14138,12 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#deployment_request::storage::shared_store::tests::a_store_payload_debug_print_carries_no_credential"
 decision = "new-proposition"
 proposition = "NP-238"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20218"
+project = "mcp-re-proxy"
+control = "src/lib.rs#inner_plane_bound::tests::a_fleet_ceiling_below_the_default_never_lowers_the_pool"
+decision = "new-proposition"
+proposition = "NP-239"
 recorded = "2026-10-04"
