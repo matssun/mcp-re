@@ -7295,6 +7295,7 @@ tested_symbols = [
   # and the closure named no control over it. The claim rested on a file whose whole content
   # is that arithmetic, measured by nothing.
   "//mcp-re-proxy:proxy_unit_test#transparency::durability::tests::completion_is_never_refused_for_capacity",
+  "//mcp-re-proxy:proxy_unit_test#transparency::durability_bounds::tests::the_queue_is_exactly_twice_the_ceiling_and_saturates_at_the_top",
   "//mcp-re-proxy:proxy_unit_test#transparency::durability::tests::a_full_reservation_queue_is_refused_at_reserve_and_the_slot_returns",
   # r11 R11-644. The capacity refusal is only retry-safe while it is distinguishable from a
   # store that will never accept anything again, and both used to answer `WouldBlock`.

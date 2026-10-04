@@ -15375,3 +15375,20 @@ control = "src/lib.rs#remote_signer_call::tests::a_status_body_cannot_forge_an_o
 decision = "new-proposition"
 proposition = "NP-268"
 recorded = "2026-10-04"
+
+[[proposition]]
+id = "NP-269"
+title = "Every retention fault renders to its own operator sentence, and an unresolved crossing or a retired writer never reads as a retry-safe outage"
+carrier = "mcp-re-proxy/src/transparency/mod.rs (RetentionError Display)"
+likely_owner = "none. proxy.retention_commitment states the stages and the fault classes, not their rendering; NP-145 is the same shape for correspondence refusals."
+consequence = "medium"
+root_relationship = "beside the retention propositions the proxy already states"
+record = "docs/architecture/control-dispositions.md#np-269"
+
+[[disposition]]
+id = "CD-20331"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::tests::every_retention_fault_renders_its_own_operator_sentence"
+decision = "new-proposition"
+proposition = "NP-269"
+recorded = "2026-10-04"

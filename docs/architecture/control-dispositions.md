@@ -4801,3 +4801,12 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none. `proxy.remote_signer_call_aws`/`_gcp` state the failure value and the quota rule, not its rendering; NP-215 is credential non-echo.
 **Root relationship.** Beside NP-215.
 **Severity:** `low`.
+
+## NP-269 — every retention fault renders to its own operator sentence, and an unresolved crossing or a retired writer never reads as a retry-safe outage
+
+**Controls:** `mcp-re-proxy/src/transparency/mod.rs`.
+**Statement.** *The `Display` of `RetentionError` renders each of its five variants as a distinct sentence; the `Unresolved` line states that the retention state could not be established or withdrawn, the `StoreRetired` line states that the writer is retired, and the `Store` line states neither.*
+**If false.** An operator cannot tell a retry-safe store outage from an unresolved pre-dispatch crossing or a dead writer, and answers the latter as an ordinary retry.
+**Likely owner:** none. `proxy.retention_commitment` states the stages and the fault classes, not their rendering; NP-145 is the same shape for correspondence refusals.
+**Root relationship.** Beside the retention propositions the proxy already states.
+**Severity:** `medium`.
