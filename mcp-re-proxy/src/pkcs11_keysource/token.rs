@@ -68,7 +68,9 @@ pub(crate) fn class_name(class: ObjectClass) -> &'static str {
 
 /// Select the slot whose token's label equals `token_label`. Token labels are
 /// stable across reboots (slot ids are not), so this is the primary selector. No
-/// match is [`KeyError::NotFound`].
+/// match is [`KeyError::NotFound`]; more than one present token under the label is
+/// [`KeyError::Malformed`], because this selector decides which device receives the
+/// User PIN and an ambiguity fails closed rather than taking the first match.
 pub(crate) fn find_token_slot(
     context: &Pkcs11Context,
     token_label: &str,
@@ -80,14 +82,30 @@ pub(crate) fn find_token_slot(
     let slots = context
         .token_slots()
         .map_err(|e| KeyError::NotFound(format!("pkcs11: enumerate token slots: {e}")))?;
-    for (slot, label) in slots {
-        if label == token_label.as_bytes() {
-            return Ok(slot);
-        }
+    select_token_slot(slots, token_label)
+}
+
+/// The selection decision over enumerated `(slot, label)` pairs: exactly one
+/// byte-equal label selects its slot, none is `NotFound`, several are `Malformed`.
+fn select_token_slot(
+    slots: Vec<(CK_SLOT_ID, Vec<u8>)>,
+    token_label: &str,
+) -> Result<CK_SLOT_ID, KeyError> {
+    let matching: Vec<CK_SLOT_ID> = slots
+        .into_iter()
+        .filter(|(_, label)| label == token_label.as_bytes())
+        .map(|(slot, _)| slot)
+        .collect();
+    match matching.as_slice() {
+        [] => Err(KeyError::NotFound(format!(
+            "pkcs11: no token with label '{token_label}'"
+        ))),
+        [slot] => Ok(*slot),
+        ids => Err(KeyError::Malformed(format!(
+            "pkcs11: {} present tokens labelled '{token_label}' (slots {ids:?}); refusing to guess which receives the User PIN",
+            ids.len()
+        ))),
     }
-    Err(KeyError::NotFound(format!(
-        "pkcs11: no token with label '{token_label}'"
-    )))
 }
 
 /// Strip a DER `OCTET STRING` wrapper (`0x04 <len> <bytes>`) if present, returning
@@ -133,6 +151,29 @@ pub(crate) fn ed25519_spki_from_ec_point(ec_point: &[u8]) -> Result<Vec<u8>, Key
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_present_tokens_under_the_configured_label_are_refused_not_first_matched() {
+        let slots = vec![(1, b"prod".to_vec()), (2, b"other".to_vec()), (5, b"prod".to_vec())];
+        assert!(matches!(
+            select_token_slot(slots, "prod"),
+            Err(KeyError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn exactly_one_present_token_under_the_label_is_selected() {
+        let slots = vec![(1, b"other".to_vec()), (4, b"prod".to_vec()), (6, b"x".to_vec())];
+        assert!(matches!(select_token_slot(slots, "prod"), Ok(4)));
+        assert!(matches!(
+            select_token_slot(Vec::new(), "prod"),
+            Err(KeyError::NotFound(_))
+        ));
+        assert!(matches!(
+            select_token_slot(vec![(1, b"other".to_vec())], "prod"),
+            Err(KeyError::NotFound(_))
+        ));
+    }
 
     /// The point grammar is exact on purpose: a token may return `CKA_EC_POINT` bare or
     /// wrapped in a DER OCTET STRING, and both are conformant.

@@ -481,7 +481,7 @@ attestations this view cannot see.
 | ASM-0052 | description, justification, scope or mechanism | proxy.pkcs11_adapter | assumption review |
 | ASM-0053 | description, justification, scope or mechanism | proxy.pkcs11_adapter | assumption review |
 | ASM-0054 | description, justification, scope or mechanism | proxy.pkcs11_adapter | assumption review |
-| ASM-0055 | description, justification, scope or mechanism | proxy.pkcs11_adapter | assumption review |
+| ASM-0055 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0056 | description, justification, scope or mechanism | proxy.admission_currency_gate | assumption review |
 | ASM-0057 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.freshness_window | assumption review |
 | ASM-0058 | description, justification, scope or mechanism | proxy.etcd_replay_adapter, proxy.redis_replay_adapter, proxy.replay_admission_gate | assumption review |

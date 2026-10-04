@@ -2087,37 +2087,18 @@ tool_specific_mechanism = "none:trusted-seam"
 
 [[assumption]]
 id = "ASM-0055"
-description = "A token label is unique across the slots present when the proxy starts."
+description = "WITHDRAWN — discharged by find_token_slot's refusal of an ambiguous token label."
 justification = """
-`find_token_slot` compares the trimmed `CK_TOKEN_INFO` label against the operator's
-`--pkcs11-token-label` and takes the FIRST byte-equal match. With two tokens present under
-one label the slot chosen is whichever the module enumerates first, which is the module's
-ordering and not a property the operator controls or the proxy records.
+Was: the operator's token topology presents at most one slot under the configured label, because the selector took the first byte-equal match.
 
-The consequence is a silent one: the proxy would log in and sign against the wrong token,
-producing valid signatures under the wrong key rather than an error. Refusing on ambiguity
-instead of taking the first match would be the stronger design, and is the change this
-premise is a placeholder for; it is registered rather than implemented because the refusal
-belongs with the slot-selection owner and needs its own blast-radius answer for a deployment
-that legitimately has duplicate labels across a token replacement.
+Discharged: `select_token_slot` refuses more than one present token under the configured label, so uniqueness is checked at startup rather than trusted. Kept, marked withdrawn, so earlier attestations of THM-0116 stay explicable.
 """
-scope = [
-  "unit://proxy.pkcs11_adapter",
-  "boundary://boundary.pkcs11",
-]
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "r12 FILE-02 remediation (R12-1200)"
-review_requirement = "Owner review if slot selection changes, or if a deployment can present two tokens under one label."
-premise_class = "external-boundary"
-boundary_owner = """
-The OPERATOR'S TOKEN TOPOLOGY, across slot enumeration: at most one present slot carries the
-token label named by `--pkcs11-token-label`.
-"""
+review_requirement = "None — discharged by code, r12 finding 510bf29483fd1ec5."
 affected_contracts = []
-sites = [
-  "mcp-re-proxy/src/pkcs11_keysource/token.rs#find_token_slot",
-]
-tool_specific_mechanism = "none:trusted-seam"
+tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0056"

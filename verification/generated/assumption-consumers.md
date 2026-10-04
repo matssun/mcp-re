@@ -68,7 +68,7 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0052 | external-boundary | The PKCS#11 token keeps the response-signing and TLS key objects `CKA_SENSITIVE` and non-extractable. | proxy.pkcs11_adapter | THM-0116 |
 | ASM-0053 | external-boundary | The shared object named by `--pkcs11-module` is a trustworthy Cryptoki implementation. | proxy.pkcs11_adapter | THM-0116 |
 | ASM-0054 | external-boundary | The PKCS#11 module is thread-safe, as requested by `CKF_OS_LOCKING_OK` at `C_Initialize`. | proxy.pkcs11_adapter | THM-0116 |
-| ASM-0055 | external-boundary | A token label is unique across the slots present when the proxy starts. | proxy.pkcs11_adapter | THM-0116 |
+| ASM-0055 | _withdrawn_ | WITHDRAWN — discharged by find_token_slot's refusal of an ambiguous token label. | _no unit_ | _no theorem_ |
 | ASM-0056 | external-boundary | `std::time::Instant` readings taken in one process never decrease. | proxy.admission_currency_gate | THM-0132 |
 | ASM-0057 | external-boundary | The per-request wall-clock `now` the serving path hands each verifier operation is the current UTC time, to within the deployment's configured skew of every peer's clock. | http_profile.admission_currency, http_profile.freshness_window | THM-0001, THM-0003, THM-0004, THM-0005, THM-0006, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 |
 | ASM-0058 | external-boundary | Write access to the replay keyspace of the shared replay tier is confined to the fleet's own replicas: the instance is dedicated to the deployment, or an access-control list denies every other principal `DEL`, `UNLINK` and `FLUSH*` on it. | proxy.etcd_replay_adapter, proxy.redis_replay_adapter, proxy.replay_admission_gate | THM-0092, THM-0106, THM-0107 |
