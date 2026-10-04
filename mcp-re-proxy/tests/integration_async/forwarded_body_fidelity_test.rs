@@ -9,11 +9,12 @@
 //! on a body that differs from the one the signature covers, while every signature
 //! check upstream still passes — the alteration happens after verification.
 //!
-//! So the served path refuses those two shapes on the ORIGINAL bytes, at the
-//! request-envelope boundary — before admission burns a nonce, retires an approval or
+//! So the served path refuses those two shapes on the ORIGINAL bytes, at verification and
+//! the request-envelope boundary — before admission burns a nonce, retires an approval or
 //! writes a retention marker, and long before the re-serialization. What these tests assert
-//! is the mechanism: the recording inner backend must never be dispatched at all. The 400
-//! is checked too, because it says whose fault the refusal names.
+//! is the mechanism: the recording inner backend must never be dispatched at all. The 403
+//! is checked too: the evidence extraction refuses the body, so the request fails
+//! verification.
 
 use std::sync::Arc;
 use std::sync::Mutex;
