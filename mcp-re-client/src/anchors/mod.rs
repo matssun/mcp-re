@@ -477,6 +477,8 @@ mod tests {
         let initial = loader.load(NOW).expect("v1 loads");
         let snapshot = AnchorSnapshot::new(initial.issuers);
         let mut expires_at = initial.expires_at;
+        // Every later refresh fails to read, so the refresher's own deadline is what decides.
+        std::fs::remove_file(&trust.manifest_path).expect("unpublish");
 
         let at_deadline = refresh_once(&mut loader, &snapshot, &mut expires_at, NOW + 100);
         assert!(
