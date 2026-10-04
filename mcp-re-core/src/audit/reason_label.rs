@@ -91,14 +91,18 @@ mod tests {
     /// that parses it has built a dependency on text this file is free to reword.
     #[test]
     fn a_label_is_never_a_wire_token() {
-        for e in [
-            McpReError::InvalidSignature,
-            McpReError::ReplayDetected,
-            McpReError::TrustResolverUnavailable,
-        ] {
-            let label = reason_label(&e);
-            assert!(!label.starts_with("mcp-re."), "got: {label}");
-            assert_ne!(label, e.wire_code());
+        let tokens: std::collections::BTreeSet<&'static str> =
+            crate::ALL_ERRORS.iter().map(McpReError::wire_code).collect();
+        for e in crate::ALL_ERRORS {
+            let label = reason_label(e);
+            assert!(
+                !label.starts_with("mcp-re."),
+                "{e:?} label is token-shaped: {label}"
+            );
+            assert!(
+                !tokens.contains(label),
+                "{e:?} label is a wire token: {label}"
+            );
         }
     }
 
