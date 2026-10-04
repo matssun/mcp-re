@@ -11,7 +11,6 @@
 //! the executable rather than about the request (CF-05).
 
 mod aws;
-mod env;
 mod file;
 mod gcp;
 mod pin;
@@ -27,16 +26,12 @@ use crate::key_source::{KeyError, KeySource};
 
 /// The channel material every custody consumes, whatever holds the response-signing key.
 ///
-/// `tls_cert` and `client_ca` belong to no custody machine — all five states consume them,
-/// and shared use is not semantic ownership. They are STRINGS WHOSE INTERPRETATION THE
-/// CUSTODY STATE DECIDES: filesystem paths under every state but
-/// [`CustodyMaterial::EnvSeed`], where they name environment variables. The same is true of
-/// the exported channel-key locator carried by the exported channel-custody state.
+/// `cert` and `client_ca` belong to no custody machine — every state consumes them, and
+/// shared use is not semantic ownership. Under every state they are filesystem paths.
 ///
-/// `key` is a LOCATOR, present only where custody exports the channel key. The environment
-/// arm reads it as a variable name when present; every file-backed
-/// arm takes the key's material from the admission with [`exported_tls_key`] instead, and
-/// no arm reopens it as a path.
+/// `key` is a LOCATOR, present only where custody exports the channel key. Every arm takes
+/// the key's material from the admission with [`exported_tls_key`], and no arm reopens it
+/// as a path.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ChannelMaterial<'a> {
     /// The credential chain this node presents.
@@ -100,7 +95,6 @@ fn open_source(
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     match custody.material() {
         CustodyMaterial::FileSeed { seed_path } => file::open(admitted, seed_path, material),
-        CustodyMaterial::EnvSeed { env_var } => env::open(env_var, material),
         CustodyMaterial::Pkcs11 {
             module,
             pin_file,

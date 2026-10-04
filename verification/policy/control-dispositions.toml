@@ -2399,7 +2399,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-5023"
 project = "mcp-re-proxy"
-control = "src/lib.rs#cli::tests::env_key_source_rejected_in_production_build"
+control = "src/lib.rs#cli::tests::env_is_an_unknown_key_source"
 decision = "new-proposition"
 proposition = "NP-026"
 recorded = "2026-09-19"
@@ -4387,14 +4387,6 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#app::tests::the_fleet_config_carries_the_topology_and_resolves_the_bind"
 decision = "new-proposition"
 proposition = "NP-064"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-10014"
-project = "mcp-re-proxy"
-control = "src/lib.rs#capability_materialization::key_file_custody::covered_files::tests::the_tls_key_is_checked_under_every_custody_mode"
-decision = "new-proposition"
-proposition = "NP-054"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10380,7 +10372,7 @@ record = "docs/architecture/control-dispositions.md#np-163"
 
 [[proposition]]
 id = "NP-164"
-title = "The file and dev key sources' own load and refusal behaviour, and the PKCS#11 token's second key"
+title = "The file key source's own load and refusal behaviour, and the PKCS#11 token's second key"
 carrier = "mcp-re-proxy/tests/key_source_test.rs"
 likely_owner = "none — a composition's source is every unit under it"
 consequence = "critical"
@@ -10486,25 +10478,9 @@ proposition = "NP-158"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19017"
-project = "mcp-re-proxy"
-control = "tests/dev_env_key_source_test.rs#env_key_error_does_not_leak_seed"
-decision = "new-proposition"
-proposition = "NP-164"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19018"
-project = "mcp-re-proxy"
-control = "tests/dev_env_key_source_test.rs#env_source_signs_without_mutating_process_env"
-decision = "new-proposition"
-proposition = "NP-164"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19019"
 project = "mcp-re-proxy"
-control = "tests/dev_env_key_source_test.rs#seed_temporaries_are_zeroizing_typed"
+control = "tests/key_source_test.rs#seed_temporaries_are_zeroizing_typed"
 decision = "new-proposition"
 proposition = "NP-164"
 recorded = "2026-09-19"
@@ -10512,7 +10488,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-19020"
 project = "mcp-re-proxy"
-control = "tests/dev_env_key_source_test.rs#zeroize_on_drop_invokes_zeroize"
+control = "tests/key_source_test.rs#zeroize_on_drop_invokes_zeroize"
 decision = "new-proposition"
 proposition = "NP-164"
 recorded = "2026-09-19"
@@ -12371,22 +12347,6 @@ project = "mcp-re-proxy"
 control = "tests/integration_live/main.rs#gcp_kms_root_rotation_live_test::gcp_kms_root_rotation_live"
 decision = "new-proposition"
 proposition = "NP-149"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19311"
-project = "mcp-re-proxy"
-control = "tests/key_source_test.rs#env_source_loads_all_material"
-decision = "new-proposition"
-proposition = "NP-164"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19312"
-project = "mcp-re-proxy"
-control = "tests/key_source_test.rs#env_source_missing_var_is_not_found"
-decision = "new-proposition"
-proposition = "NP-164"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -14283,14 +14243,6 @@ recorded = "2026-10-04"
 id = "CD-20181"
 project = "mcp-re-proxy"
 control = "src/lib.rs#key_source::tests::a_seed_that_is_not_32_bytes_is_malformed"
-decision = "new-proposition"
-proposition = "NP-164"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20182"
-project = "mcp-re-proxy"
-control = "tests/dev_env_key_source_test.rs#a_non_utf8_seed_var_is_malformed_not_absent"
 decision = "new-proposition"
 proposition = "NP-164"
 recorded = "2026-10-04"

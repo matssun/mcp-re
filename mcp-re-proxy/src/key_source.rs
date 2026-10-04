@@ -3,8 +3,8 @@
 //! A sidecar needs three pieces of material: the Ed25519 **signing key** (for
 //! signing responses), the **TLS server certificate chain + private key** (to
 //! terminate TLS), and the **client-CA trust anchors** (to verify mTLS client
-//! certificates). `FileKeySource` loads them from disk; `EnvKeySource` from
-//! environment variables. The PKCS#11 and KMS adapters keep their keys in a device.
+//! certificates). `FileKeySource` loads them from disk; the PKCS#11 and KMS adapters
+//! keep their keys in a device. No key material is read from the process environment.
 //!
 //! The Ed25519 signing key is a 32-byte seed encoded Base64URL-no-pad (consistent
 //! with the rest of MCP-RE); `mcp-re-core` exposes only seed-based construction. The
@@ -26,7 +26,7 @@ pub use file_key_source::FileKeySource;
 /// Errors loading key material.
 #[derive(Debug, thiserror::Error)]
 pub enum KeyError {
-    /// A source (file/env var) was missing or unreadable.
+    /// A source (file or device) was missing or unreadable.
     #[error("key material not found: {0}")]
     NotFound(String),
     /// Material was present but malformed (bad Base64URL seed, wrong length, no
@@ -53,7 +53,7 @@ pub enum KeyError {
 ///     private key that `sign_response` uses, so a signature produced by
 ///     `sign_response` always verifies under this key.
 ///
-/// In-memory implementations ([`SigningKey`], [`FileKeySource`], [`EnvKeySource`])
+/// In-memory implementations ([`SigningKey`], [`FileKeySource`])
 /// satisfy this by holding the key PRIVATE and signing internally; the HSM/KMS
 /// follow-up satisfies it by forwarding to the device. Either way the trait does
 /// NOT demand export.
@@ -115,7 +115,7 @@ pub trait KeySource: ResponseSigner + Send + Sync {
     /// Ed25519-only.
     ///
     /// The DEFAULT is `None` (no delegation): the proxy uses the existing
-    /// exported-key TLS path verbatim. `FileKeySource` / `EnvKeySource` keep the
+    /// exported-key TLS path verbatim. `FileKeySource` keeps the
     /// default, so the default build is byte-unchanged. A non-exporting backend
     /// (#59–#61: PKCS#11 / AWS-KMS / GCP-KMS) overrides this to return its TLS
     /// signer.
@@ -178,94 +178,6 @@ fn certs_from_pem(pem: &[u8], what: &str) -> Result<Vec<CertificateDer<'static>>
 /// Parse a single PEM private key from bytes.
 fn key_from_pem(pem: &[u8]) -> Result<PrivateKeyDer<'static>, KeyError> {
     PrivateKeyDer::from_pem_slice(pem).map_err(|e| KeyError::Malformed(format!("tls key: {e}")))
-}
-
-/// Loads key material from environment variables. Each field is the NAME of the
-/// env var to read (the signing-key var holds the Base64URL seed; the others hold
-/// PEM text).
-///
-/// MCPS-076 (audit gap G-3): DEV / CI ONLY, and gated behind the NON-DEFAULT
-/// `dev_env_key_source` crate feature — this type does NOT exist in a production
-/// build. Environment variables are visible to the whole process tree, can leak
-/// via crash dumps, `ps e`, `/proc/<pid>/environ`, and container/orchestrator
-/// inspection, and are easy to log accidentally. Production deployments must use
-/// [`FileKeySource`] (read once, scrubbed), or a future stdin/fd-injection or
-/// non-exporting HSM/KMS source. In the dev build the seed value is held in
-/// [`zeroize::Zeroizing`], so it is scrubbed from the heap on drop — but the env
-/// var itself is deliberately NOT removed and stays readable in
-/// `/proc/<pid>/environ` for the process lifetime; see [`EnvKeySource::read`] for
-/// why, and why nothing depended on the removal. `KeyError` values carry only the
-/// env-var NAME and the parse failure — never the secret bytes — so they are safe
-/// to log.
-#[cfg(feature = "dev_env_key_source")]
-#[derive(Debug, Clone)]
-pub struct EnvKeySource {
-    /// Env var holding the Base64URL-no-pad Ed25519 signing-key seed.
-    pub signing_key_seed_var: String,
-    /// Env var holding the PEM TLS server certificate chain.
-    pub tls_cert_var: String,
-    /// Env var holding the PEM TLS server private key.
-    pub tls_key_var: String,
-    /// Env var holding the PEM client-CA trust anchors.
-    pub client_ca_var: String,
-}
-
-#[cfg(feature = "dev_env_key_source")]
-impl EnvKeySource {
-    /// Read an env var's value, returned in [`zeroize::Zeroizing`] so it is
-    /// scrubbed when the caller drops it.
-    ///
-    /// This does NOT mutate the process environment (issue #25). `std::env::remove_var`
-    /// is unsound in a multi-threaded program — the standard library now documents
-    /// it as `unsafe` for exactly this reason (a concurrent `getenv`/`setenv` in
-    /// another thread is a data race). Child-process secret isolation is NOT this
-    /// function's job and never relied on the global removal: the inner server is
-    /// launched with [`crate::inner_launch::InnerLaunchConfig`], which by default
-    /// inherits NO environment and passes only an explicit allowlist, so a key in
-    /// the proxy's own env is never forwarded regardless of whether it is removed
-    /// here. (`EnvKeySource` is `dev_env_key_source`-gated — dev/CI only — and a
-    /// production deployment uses a file/PKCS#11 source.)
-    fn read(&self, var: &str) -> Result<Zeroizing<String>, KeyError> {
-        let value = std::env::var(var).map_err(|e| match e {
-            std::env::VarError::NotPresent => KeyError::NotFound(format!("env var {var}")),
-            std::env::VarError::NotUnicode(_) => KeyError::Malformed(format!("env var {var}")),
-        })?;
-        Ok(Zeroizing::new(value))
-    }
-
-    /// Load the Ed25519 signing key from the seed env var. INHERENT (non-trait)
-    /// helper — see [`FileKeySource::signing_key`] for why key export is not on the
-    /// [`KeySource`]/[`ResponseSigner`] contract. The env source owns the var, so it
-    /// CAN load the key; its [`ResponseSigner`] impl routes through here.
-    fn signing_key(&self) -> Result<SigningKey, KeyError> {
-        signing_key_from_seed_b64url(&self.read(&self.signing_key_seed_var)?)
-    }
-}
-
-/// `EnvKeySource` (dev/CI only) signs internally just like [`FileKeySource`]:
-/// it loads its seed-backed [`SigningKey`] and forwards to that key's signer, so
-/// the seed is never exported across the trait boundary.
-#[cfg(feature = "dev_env_key_source")]
-impl ResponseSigner for EnvKeySource {
-    fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
-        self.signing_key()?.sign_response(preimage)
-    }
-    fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
-        self.signing_key()?.response_public_key()
-    }
-}
-
-#[cfg(feature = "dev_env_key_source")]
-impl KeySource for EnvKeySource {
-    fn tls_server_cert_chain(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
-        certs_from_pem(self.read(&self.tls_cert_var)?.as_bytes(), "tls cert chain")
-    }
-    fn tls_server_key(&self) -> Result<PrivateKeyDer<'static>, KeyError> {
-        key_from_pem(self.read(&self.tls_key_var)?.as_bytes())
-    }
-    fn client_ca_roots(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
-        certs_from_pem(self.read(&self.client_ca_var)?.as_bytes(), "client CA")
-    }
 }
 
 #[cfg(test)]

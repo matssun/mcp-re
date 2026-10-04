@@ -56,10 +56,10 @@ pub use storage::{
 
 pub use signing_source::{
     AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, ChannelCredentialRequest,
-    ChannelKeyRequest, DelegatedChannelKeyRequest, EnvironmentSigningSourceRequest,
-    ExportedChannelKeyRequest, FileSigningSourceRequest, GcpKmsChannelKeyRequest,
-    GcpKmsSigningSourceRequest, Pkcs11ChannelKeyRequest, Pkcs11SigningSourceRequest,
-    ResponseSigningRequest, SigningSourceRequest,
+    ChannelKeyRequest, DelegatedChannelKeyRequest, ExportedChannelKeyRequest,
+    FileSigningSourceRequest, GcpKmsChannelKeyRequest, GcpKmsSigningSourceRequest,
+    Pkcs11ChannelKeyRequest, Pkcs11SigningSourceRequest, ResponseSigningRequest,
+    SigningSourceRequest,
 };
 
 use std::time::Duration;

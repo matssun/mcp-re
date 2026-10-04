@@ -41,7 +41,6 @@ const SOURCE_BINDING: &str = "roots";
 /// deployment validated — which is the defect, whether or not the two agree today.
 const RIVAL_CONSTRUCTORS: &[&str] = &[
     "FileKeySource::",
-    "EnvKeySource::",
     "KmsKeySource::",
     "Pkcs11KeySource::",
     "AwsKmsKeySource::",

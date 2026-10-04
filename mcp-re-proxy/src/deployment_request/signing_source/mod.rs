@@ -27,7 +27,6 @@
 
 mod aws_kms_source;
 mod channel_role;
-mod environment_source;
 mod file_source;
 mod gcp_kms_source;
 mod pkcs11_source;
@@ -38,7 +37,6 @@ pub use channel_role::{
     ChannelCredentialRequest, ChannelKeyRequest, DelegatedChannelKeyRequest,
     ExportedChannelKeyRequest,
 };
-pub use environment_source::EnvironmentSigningSourceRequest;
 pub use file_source::FileSigningSourceRequest;
 pub use gcp_kms_source::{GcpKmsChannelKeyRequest, GcpKmsSigningSourceRequest};
 pub use pkcs11_source::{Pkcs11ChannelKeyRequest, Pkcs11SigningSourceRequest};
@@ -58,8 +56,6 @@ pub use response_role::ResponseSigningRequest;
 pub enum SigningSourceRequest {
     /// A seed file on disk. Private key material is readable by this process.
     File(FileSigningSourceRequest),
-    /// A seed in an environment variable — development and CI only.
-    Environment(EnvironmentSigningSourceRequest),
     /// A PKCS#11 token: the key is exercised via `C_Sign` and never leaves the device.
     Pkcs11(Pkcs11SigningSourceRequest),
     /// AWS KMS: the key is exercised via `Sign` and never leaves KMS.

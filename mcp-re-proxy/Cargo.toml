@@ -105,10 +105,6 @@ http-body-util = { workspace = true }
 bytes = { workspace = true }
 
 [features]
-# MCPS-076 (audit gap G-3): the environment-variable key source is DEV/CI-ONLY and
-# is gated behind this NON-DEFAULT feature. In a default (production) build the
-# `EnvKeySource` type is NOT compiled at all and `--key-source env` fails closed at
-# construction. Build with `--features dev_env_key_source` ONLY for local dev/CI.
 # ADR-MCPRE-054 / #841 G-1: the SCITT registration transport. Gates ONLY the leaf that
 # opens a socket — the capability, the protocol state machine and every one of its typed
 # refusals compile unconditionally and are proved against a hermetic service.
@@ -121,7 +117,6 @@ bytes = { workspace = true }
 # links the flavor that turns it on.
 default = ["scitt_registration"]
 scitt_registration = []
-dev_env_key_source = []
 # MCPS-079 (audit gap G-6, "test of the tests" / fault injection). The
 # `fault_accept_any_client` feature is a DELIBERATE BREAK of the CLIENT-
 # authentication control on the proxy's server side — the symmetric mirror of

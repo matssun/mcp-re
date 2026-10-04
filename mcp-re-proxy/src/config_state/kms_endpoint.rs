@@ -44,9 +44,7 @@ pub(crate) fn kms_endpoint_refusals(config: &DeploymentRequest) -> Vec<String> {
             ("--aws-sts-endpoint", kms.sts_endpoint.as_deref()),
         ],
         SigningSourceRequest::GcpKms(kms) => vec![("--gcp-kms-endpoint", kms.endpoint.as_deref())],
-        SigningSourceRequest::File(_)
-        | SigningSourceRequest::Environment(_)
-        | SigningSourceRequest::Pkcs11(_) => Vec::new(),
+        SigningSourceRequest::File(_) | SigningSourceRequest::Pkcs11(_) => Vec::new(),
     };
     overrides
         .into_iter()

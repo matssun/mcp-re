@@ -3252,16 +3252,14 @@ tested_symbols = [
 #
 # The guard's own doc already states the rule: "the rule follows the files, not the
 # key-source name", written when gating the whole check on `key_source == File` had skipped
-# the one private key that DOES land in the pod. The projection then reintroduced the same
-# shape one level up — an EARLY RETURN on the RESPONSE-signing custody's answer about ITS
-# locators, before the CHANNEL machine's file was appended.
+# the one private key that DOES land in the pod.
 #
-# The two are separate machines (ADR-MCPRE-067 §10) and nothing makes them agree, so an
-# `EnvSeed` response custody beside an exported channel key produced an EMPTY list while
-# `key_source.tls_server_key()` read that file anyway: a TLS server private key at
-# Kubernetes' default 0644 booted silently, with the deployment advertising a hardened
-# key-custody posture. Reachable only in `dev_env_key_source` builds today, because that is
-# the only place `--key-source env` parses — which bounds the exposure, not the defect.
+# The RESPONSE-signing custody and the CHANNEL custody are separate machines
+# (ADR-MCPRE-067 §10) and nothing makes them agree, so the scope is a CONCATENATION of their
+# answers: a response custody whose own answer short-circuited the list would leave the
+# channel machine's exported TLS server private key unchecked while
+# `key_source.tls_server_key()` read it anyway — a key at Kubernetes' default 0644 booting
+# silently, with the deployment advertising a hardened key-custody posture.
 
 # The composition of the three roles, which is its own proposition: the scope can be right
 # and every observation correct while the ROOT forgets to hold the result — which is what
@@ -3293,7 +3291,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.key_file_floor_scope"
 class = "V0"
-description = "WHICH FILES THE STARTUP PERMISSION FLOOR IS ENFORCED AGAINST: every private-key file this configuration causes the proxy to READ, asked of the owner that knows — each custody machine answers for its own locators and no machine's answer suppresses another's file. The PKCS#11 User PIN is included because it unlocks the token holding the keys; an environment-variable seed is excluded because stat'ing a variable NAME as a path is a check that passes for the wrong reason. Says nothing about what the floor then DECIDES about a file's mode, which is `config_state::KeyFileAccessPolicy`'s, and nothing about the group set that decision is taken against, which is `proxy.process_group_set`'s."
+description = "WHICH FILES THE STARTUP PERMISSION FLOOR IS ENFORCED AGAINST: every private-key file this configuration causes the proxy to READ, asked of the owner that knows — each custody machine answers for its own locators and no machine's answer suppresses another's file. The PKCS#11 User PIN is included because it unlocks the token holding the keys. Says nothing about what the floor then DECIDES about a file's mode, which is `config_state::KeyFileAccessPolicy`'s, and nothing about the group set that decision is taken against, which is `proxy.process_group_set`'s."
 paths = [
   "mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs",
 ]
@@ -3305,10 +3303,10 @@ evidence = [
   "mutation://proxy/key_file/floor_scope",
 ]
 tested_symbols = [
-  # THE DEFECT: one machine's answer suppressing another machine's file. The assertion is
-  # on the EXACT vector, so it is simultaneously the other direction — the env-var seed
-  # name is absent, and a fix that checked everything would fail it too.
-  "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_file_custody::covered_files::tests::an_env_seed_response_custody_does_not_suppress_the_channel_key_file",
+  # THE DEFECT: one machine's answer suppressing another machine's file. Every custody
+  # state, the file and PKCS#11 ones included — whose own answer is non-empty — must still
+  # carry the channel key; and the seed is in scope exactly where it is read.
+  "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_file_custody::covered_files::tests::the_tls_key_is_checked_under_every_custody_mode",
   # The PIN file is in scope because it unlocks the token, and is NOT claimed for a source
   # that reads no PIN — the second half is what stops the first from being satisfied by a
   # projection that names every path it can find.

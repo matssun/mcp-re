@@ -270,20 +270,7 @@ fn run_validated(
     // Security posture note. The hard guards (cn_legacy, memory/weak replay,
     // over-ceiling/disabled cert lifetime, lb-assertion, node-local replay under
     // --fleet) are ALL rejected at parse time by
-    // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them. Only
-    // the env key source (a dev/CI-only build, `dev_env_key_source`) is worth a
-    // runtime note, since that build deliberately permits it.
-    // Which custody state this deployment is in is the custody owner's answer, taken
-    // through its material projection rather than re-tested against the raw selector.
-    if matches!(
-        config.state().custody().material(),
-        crate::config_state::CustodyMaterial::EnvSeed { .. }
-    ) {
-        eprintln!(
-            "mcp-re-proxy: WARNING: --key-source env is a dev/CI-only build (dev_env_key_source); \
-             env key material is visible to the process tree. Never use in production."
-        );
-    }
+    // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them.
     // A group/world-readable key file is a HARD error (refuse startup). WHICH files those
     // are, what a mode means and which groups this process is in are all the key-file
     // custody owner's — this root names the two custody states and holds the evidence.

@@ -35,12 +35,6 @@ baseline_sha = "7e184961"
 status = "unreviewed"
 
 [[exclusion]]
-path = "mcp-re-proxy/src/capability_materialization/key_source/env.rs"
-rule = "UC-1"
-baseline_sha = "7e184961"
-status = "unreviewed"
-
-[[exclusion]]
 path = "mcp-re-proxy/src/capability_materialization/key_source/file.rs"
 rule = "UC-1"
 baseline_sha = "7e184961"

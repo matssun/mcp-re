@@ -1544,23 +1544,20 @@ mod tests {
         assert!(parse_args(&a).unwrap_err().contains("Ed25519 public key"));
     }
 
-    // In a production build (no `dev_env_key_source` feature) the env key source does
-    // not exist at all — `--key-source env` is an unknown value, not a togglable
-    // downgrade. The dev feature is the ONLY way to compile it in.
-    #[cfg(not(feature = "dev_env_key_source"))]
+    /// MCPS-076: the process environment carries no key material, so no `--key-source`
+    /// reads it. `env` is refused as an unknown value, exactly like a typo, and the
+    /// refusal does not offer it among the mechanisms that exist.
     #[test]
-    fn env_key_source_rejected_in_production_build() {
+    fn env_is_an_unknown_key_source() {
         let mut a = minimal();
         a.splice(0..0, args(&["--key-source", "env"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("unknown --key-source"), "got: {err}");
-        assert!(err.contains("env"), "got: {err}");
+        assert!(err.contains("unknown --key-source 'env'"), "got: {err}");
+        assert!(
+            err.contains("(file|pkcs11|aws-kms|gcp-kms)"),
+            "the refusal lists exactly the mechanisms that exist, got: {err}"
+        );
     }
-
-    // NOTE: the env key source is never accepted (the `--allow-env-keysource`
-    // opt-out qualifier is rejected and the unconditional strict posture refuses env
-    // key material), so `--key-source env` cannot reach a built key source — the
-    // `env_key_source_requires_explicit_opt_in` guard above is the operative gate.
 
     // --- #4034 PKCS#11 key source (CLI parsing + fail-closed gate) -----------
 
@@ -1665,7 +1662,7 @@ mod tests {
     // not compiled and `build_key_source` must FAIL CLOSED on
     // `KeySourceKind::Pkcs11` with a clear, actionable error — `--key-source
     // pkcs11` still parses so the message is precise, but no token-backed key is
-    // built. Mirrors `default_build_rejects_env_key_source`.
+    // built.
     #[cfg(not(feature = "pkcs11_keysource"))]
     #[test]
     fn default_build_rejects_pkcs11_key_source() {
@@ -2232,7 +2229,7 @@ mod tests {
             assert!(
                 !matches!(
                     config.response_signing.source,
-                    SigningSourceRequest::File(_) | SigningSourceRequest::Environment(_)
+                    SigningSourceRequest::File(_)
                 ),
                 "{source}: a non-exporting selection must not be a seed-bearing one"
             );

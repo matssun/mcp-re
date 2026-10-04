@@ -1,16 +1,15 @@
-//! MCPS-027 — KeySource (File + Env) loads signing key + TLS cert/key + client-CA.
+//! MCPS-027 — `FileKeySource` loads signing key + TLS cert/key + client-CA.
+//!
+//! MCPS-076 secret hygiene: key errors never carry secret bytes, and the seed temporaries
+//! are scrubbed on drop.
 
 use std::fs;
 use std::path::PathBuf;
 
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
-// MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
-// non-default `dev_env_key_source` feature (the `dev_env_key_source_test` target).
 use mcp_re_proxy::capability_materialization::key_file_custody::CheckedKeyFile;
 use mcp_re_proxy::config_state::KeyFileAccessPolicy;
-#[cfg(feature = "dev_env_key_source")]
-use mcp_re_proxy::key_source::EnvKeySource;
 use mcp_re_proxy::key_source::FileKeySource;
 use mcp_re_proxy::key_source::KeyError;
 use mcp_re_proxy::key_source::KeySource;
@@ -109,51 +108,6 @@ fn file_source_bad_seed_is_malformed() {
     let _ = fs::remove_file(seed_p);
 }
 
-#[cfg(feature = "dev_env_key_source")]
-#[test]
-fn env_source_loads_all_material() {
-    let (seed, cert, key, ca) = material();
-    // Unique var names avoid races with other (parallel) tests.
-    let seed_v = "MCP_RE_TEST_SEED_ENV";
-    let cert_v = "MCP_RE_TEST_CERT_ENV";
-    let key_v = "MCP_RE_TEST_KEY_ENV";
-    let ca_v = "MCP_RE_TEST_CA_ENV";
-    std::env::set_var(seed_v, &seed);
-    std::env::set_var(cert_v, &cert);
-    std::env::set_var(key_v, &key);
-    std::env::set_var(ca_v, &ca);
-
-    let source = EnvKeySource {
-        signing_key_seed_var: seed_v.to_string(),
-        tls_cert_var: cert_v.to_string(),
-        tls_key_var: key_v.to_string(),
-        client_ca_var: ca_v.to_string(),
-    };
-
-    assert_eq!(
-        source.response_public_key().unwrap().to_b64url(),
-        expected_pubkey()
-    );
-    assert!(!source.tls_server_cert_chain().unwrap().is_empty());
-    let _ = source.tls_server_key().unwrap();
-    assert!(!source.client_ca_roots().unwrap().is_empty());
-}
-
-#[cfg(feature = "dev_env_key_source")]
-#[test]
-fn env_source_missing_var_is_not_found() {
-    let source = EnvKeySource {
-        signing_key_seed_var: "MCP_RE_TEST_DEFINITELY_UNSET_VAR".to_string(),
-        tls_cert_var: "x".to_string(),
-        tls_key_var: "x".to_string(),
-        client_ca_var: "x".to_string(),
-    };
-    assert!(matches!(
-        source.response_public_key().unwrap_err(),
-        KeyError::NotFound(_)
-    ));
-}
-
 #[test]
 fn key_errors_never_leak_secret_material() {
     // A malformed but secret-looking seed must not appear in the error (Display
@@ -167,4 +121,93 @@ fn key_errors_never_leak_secret_material() {
         "KeyError must not contain the secret seed value; got: {rendered}"
     );
     let _ = fs::remove_file(seed_p);
+}
+
+/// MACHINE-VERIFIED zeroize-on-drop, the SOUND (non-UB) variant.
+///
+/// What is verified vs. trusted:
+///   * No freed memory is read: the "read just-freed heap" idiom is
+///     allocator-dependent and UB-fragile, so the assertion below is the
+///     deterministic, sound one.
+///   * What is MACHINE-VERIFIED here, both through LIVE references (no freed
+///     memory is read): (a) calling `zeroize()` on a live spy zeros its bytes in
+///     place; and (b) dropping a `Zeroizing<T>` invokes `Zeroize::zeroize` on its
+///     payload (the spy's `zeroize()` records into an `AtomicBool` that is observed
+///     set after the drop). Together these prove WE wired `Zeroizing` so that drop
+///     scrubs the value.
+///   * What is TRUSTED-TO-CRATE: that `zeroize` actually overwrites real seed
+///     bytes with a volatile, un-elidable write (the `zeroize` crate's core
+///     guarantee). We assert we invoked it; we do not re-verify the crate's
+///     internal volatile-write correctness.
+///
+/// The companion `seed_temporaries_are_zeroizing_typed` test confirms, at compile
+/// time, that a `Zeroizing<[u8;32]>` deref-coerces into `SigningKey::from_seed_bytes`
+/// — the exact wrapper-to-constructor pattern `key_source` uses. That `key_source`
+/// actually wraps its seed temporaries in `Zeroizing` is a structural property of
+/// the source (verified by reading it / review), not something a runtime test can
+/// observe, since zeroize is invisible at the value level.
+#[test]
+fn zeroize_on_drop_invokes_zeroize() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
+    use zeroize::Zeroize;
+    use zeroize::Zeroizing;
+
+    static ZEROIZED: AtomicBool = AtomicBool::new(false);
+
+    /// A spy payload: `zeroize()` records that it ran and clears its own bytes.
+    struct Spy {
+        bytes: [u8; 32],
+    }
+    impl Zeroize for Spy {
+        fn zeroize(&mut self) {
+            self.bytes.zeroize();
+            ZEROIZED.store(true, Ordering::SeqCst);
+        }
+    }
+
+    // (a) Calling zeroize() on a LIVE spy zeros its bytes in place — observed
+    // through a live reference (the value is NOT dropped/freed here).
+    ZEROIZED.store(false, Ordering::SeqCst);
+    let mut live = Spy { bytes: [0xA5; 32] };
+    assert_eq!(live.bytes, [0xA5; 32], "sentinel set before zeroize");
+    live.zeroize();
+    assert_eq!(
+        live.bytes, [0u8; 32],
+        "zeroize() must zero the bytes in place"
+    );
+    assert!(ZEROIZED.load(Ordering::SeqCst), "zeroize() must have run");
+
+    // (b) Dropping a Zeroizing<T> invokes Zeroize::zeroize on its payload.
+    ZEROIZED.store(false, Ordering::SeqCst);
+    {
+        let spy: Zeroizing<Spy> = Zeroizing::new(Spy { bytes: [0xA5; 32] });
+        // Sanity through a LIVE reference (no freed memory): the sentinel is set.
+        assert_eq!(spy.bytes, [0xA5; 32]);
+        // (spy drops here)
+    }
+    assert!(
+        ZEROIZED.load(Ordering::SeqCst),
+        "dropping Zeroizing<T> did not invoke Zeroize::zeroize on its payload"
+    );
+}
+
+/// COMPILE-LEVEL demonstration of the wrapper-to-constructor contract `key_source`
+/// relies on: a `zeroize::Zeroizing<[u8;32]>` deref-coerces into
+/// `SigningKey::from_seed_bytes(&[u8;32])` and yields the same key as the raw seed.
+///
+/// This does NOT (and cannot at runtime) verify that `key_source` wraps its seed
+/// temporaries in `Zeroizing` — zeroize is invisible at the value level, and
+/// `signing_key_from_seed_b64url` is private. That wrapping is a structural
+/// property of the source. What this pins is that the `Zeroizing` wrapper is a
+/// drop-in for the raw `&[u8;32]` the dalek constructor borrows, so the production
+/// code can wrap without changing behavior. Scrub-on-drop itself is proven by
+/// `zeroize_on_drop_invokes_zeroize`.
+#[test]
+fn seed_temporaries_are_zeroizing_typed() {
+    let seed: zeroize::Zeroizing<[u8; 32]> = zeroize::Zeroizing::new([7u8; 32]);
+    // Deref-coerces to &[u8;32] exactly as `SigningKey::from_seed_bytes` requires,
+    // and produces the same key as the unwrapped seed would.
+    let key = SigningKey::from_seed_bytes(&seed);
+    assert_eq!(key.public_key().to_b64url(), expected_pubkey());
 }

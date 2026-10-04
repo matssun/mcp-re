@@ -17,8 +17,6 @@ use super::SigningSourceFlags;
 fn reads_seed(mechanism: Mechanism) -> bool {
     match mechanism {
         Mechanism::File => true,
-        #[cfg(feature = "dev_env_key_source")]
-        Mechanism::Environment => true,
         Mechanism::Pkcs11 | Mechanism::AwsKms | Mechanism::GcpKms => false,
     }
 }
@@ -35,8 +33,8 @@ impl SigningSourceFlags {
     /// different role and are carried into the request whatever the response-signing
     /// selection, so their mismatch is still refused at the boundary by X2a.
     ///
-    /// The seed is refused by owner set rather than through the table, because more than
-    /// one mechanism reads it.
+    /// The seed is refused through [`reads_seed`] rather than the table, because its
+    /// refusal names the mechanism the command line DID select.
     pub(super) fn stray_value_refusal(&self) -> Result<(), String> {
         for (present, flag, owner) in self.values_by_owner() {
             if present && self.mechanism != owner {

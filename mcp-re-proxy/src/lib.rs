@@ -332,10 +332,6 @@ pub use audit_sink::StderrAuditSink;
 pub use gcp_kms_keysource::GcpKmsConfig;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsEd25519Backend;
-// MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only and exists only when the
-// non-default `dev_env_key_source` feature is enabled.
-#[cfg(feature = "dev_env_key_source")]
-pub use key_source::EnvKeySource;
 pub use key_source::FileKeySource;
 pub use key_source::KeyError;
 pub use key_source::KeySource;

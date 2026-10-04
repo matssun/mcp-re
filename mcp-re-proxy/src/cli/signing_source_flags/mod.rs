@@ -37,8 +37,6 @@ mod stray_value;
 use endpoint_guard::guarded_endpoint;
 use mechanism::{mechanism, Mechanism};
 
-#[cfg(feature = "dev_env_key_source")]
-use crate::deployment_request::EnvironmentSigningSourceRequest;
 use crate::deployment_request::{
     AwsKmsSigningSourceRequest, ChannelKeyRequest, FileSigningSourceRequest,
     GcpKmsSigningSourceRequest, Pkcs11SigningSourceRequest, ResponseSigningRequest,
@@ -150,12 +148,6 @@ impl SigningSourceFlags {
             Mechanism::File => SigningSourceRequest::File(FileSigningSourceRequest {
                 seed_path: self.required_seed()?,
             }),
-            #[cfg(feature = "dev_env_key_source")]
-            Mechanism::Environment => {
-                SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
-                    seed_var: self.required_seed()?,
-                })
-            }
             Mechanism::Pkcs11 => SigningSourceRequest::Pkcs11(self.pkcs11.clone()),
             Mechanism::AwsKms => SigningSourceRequest::AwsKms(self.aws.clone()),
             Mechanism::GcpKms => SigningSourceRequest::GcpKms(self.gcp.clone()),

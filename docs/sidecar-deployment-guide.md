@@ -99,12 +99,12 @@ stdio↔HTTP adapter (below).
 | Flag | Meaning |
 | --- | --- |
 | `--key-source file` (default) | Read material from files on disk. |
-| `--key-source env` | Read from environment variables. **Dev/CI only**, and it exists only in a build with the non-default `dev_env_key_source` cargo feature. A production build rejects `env` as an unknown `--key-source` value. |
 
-Environment variables are visible to the whole process tree and can leak via
-crash dumps, `ps e`, and `/proc/<pid>/environ` — so the option is a build-time
-decision rather than a runtime knob, and the build that has it warns loudly at
-startup. Use `file` with `0600` permissions in
+No key material is read from environment variables: the signing seed, TLS key and
+certificate, and client-CA anchors come only from files (or stay on a PKCS#11/KMS
+device), and `env` is refused as an unknown `--key-source` value. Environment variables
+are visible to the whole process tree and can leak via crash dumps, `ps e`, and `/proc/<pid>/environ`. Use `file` with
+`0600` permissions in
 production (the CLI warns if a key file is group/world-readable). A Cloud-KMS /
 PKCS#11-backed source keeps the signing key off-host — see the Transport
 Hardening Guide and the Helm chart's `keySource: gcpKms` path.

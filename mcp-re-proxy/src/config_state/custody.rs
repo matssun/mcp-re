@@ -2,12 +2,11 @@
 //! The `Custody` configuration machine — `work/CONFIG-STATE-ATLAS.md` §C.3.
 //!
 //! Where the Ed25519 response-signing key lives, and therefore what an operator is
-//! entitled to believe about it. Five states:
+//! entitled to believe about it. Four states:
 //!
 //! | State | Required | Guards |
 //! |---|---|---|
 //! | `FileSeed` | seed | — |
-//! | `EnvSeed` | seed | — |
 //! | `Pkcs11` | module, pin file, token label, key label | — |
 //! | `AwsKms` | region, key id | endpoint authority |
 //! | `GcpKms` | key version | endpoint authority |
@@ -95,7 +94,7 @@ pub struct CustodyState {
     kind: CustodyKind,
 }
 
-/// The five states, as the owner's own representation.
+/// The four states, as the owner's own representation.
 ///
 /// Private to this module: every consumer lives in this crate, so `pub` variants would let
 /// any of them assemble a custody state whose material no validator saw — a PKCS#11 token
@@ -106,11 +105,6 @@ enum CustodyKind {
     FileSeed {
         /// Path to the 32-byte seed.
         seed_path: String,
-    },
-    /// A seed in an environment variable — dev/CI only.
-    EnvSeed {
-        /// Name of the variable holding the seed, NOT a path.
-        env_var: String,
     },
     /// A PKCS#11 token; the key is exercised via `C_Sign` and never leaves the device.
     Pkcs11 {
@@ -158,11 +152,6 @@ pub enum CustodyMaterial<'a> {
         /// Path to the 32-byte seed.
         seed_path: &'a str,
     },
-    /// A seed in an environment variable — dev/CI only.
-    EnvSeed {
-        /// Name of the variable holding the seed, NOT a path.
-        env_var: &'a str,
-    },
     /// A PKCS#11 token; the key is exercised via `C_Sign` and never leaves the device.
     Pkcs11 {
         /// Path to the PKCS#11 provider library.
@@ -205,7 +194,6 @@ impl CustodyState {
     pub fn material(&self) -> CustodyMaterial<'_> {
         match &self.kind {
             CustodyKind::FileSeed { seed_path } => CustodyMaterial::FileSeed { seed_path },
-            CustodyKind::EnvSeed { env_var } => CustodyMaterial::EnvSeed { env_var },
             CustodyKind::Pkcs11 {
                 module,
                 pin_file,
@@ -240,16 +228,6 @@ impl CustodyState {
         }
     }
 
-    /// Whether this state's locators name filesystem paths at all.
-    ///
-    /// False only under the environment-seed state, where every locator this deployment
-    /// carries names an environment variable — the TLS ones included, which is why the
-    /// answer is custody's and not the TLS machine's. A consumer that stat'ed an env-var
-    /// NAME as a path got a check that passed for the wrong reason.
-    pub fn locators_are_filesystem_paths(&self) -> bool {
-        !matches!(self.kind, CustodyKind::EnvSeed { .. })
-    }
-
     /// Every secret this state keeps on local disk.
     ///
     /// The question a permissions floor is enforced against, answered by the machine that
@@ -261,9 +239,7 @@ impl CustodyState {
         match &self.kind {
             CustodyKind::FileSeed { seed_path } => vec![seed_path.as_str()],
             CustodyKind::Pkcs11 { pin_file, .. } => vec![pin_file.as_str()],
-            CustodyKind::EnvSeed { .. }
-            | CustodyKind::AwsKms { .. }
-            | CustodyKind::GcpKms { .. } => Vec::new(),
+            CustodyKind::AwsKms { .. } | CustodyKind::GcpKms { .. } => Vec::new(),
         }
     }
 
@@ -276,9 +252,7 @@ impl CustodyState {
     /// that changes nothing about what it does (ADR-MCPRE-067 §9, §20).
     pub fn exposure(&self) -> PrivateKeyExposure {
         match self.kind {
-            CustodyKind::FileSeed { .. } | CustodyKind::EnvSeed { .. } => {
-                PrivateKeyExposure::ProcessReadable
-            }
+            CustodyKind::FileSeed { .. } => PrivateKeyExposure::ProcessReadable,
             CustodyKind::Pkcs11 { .. }
             | CustodyKind::AwsKms { .. }
             | CustodyKind::GcpKms { .. } => PrivateKeyExposure::NonExporting,
@@ -304,9 +278,6 @@ fn classify(source: &SigningSourceRequest) -> Option<CustodyState> {
     let kind = match source {
         SigningSourceRequest::File(file) => CustodyKind::FileSeed {
             seed_path: named(Some(file.seed_path.as_str()))?,
-        },
-        SigningSourceRequest::Environment(env) => CustodyKind::EnvSeed {
-            env_var: named(Some(env.seed_var.as_str()))?,
         },
         SigningSourceRequest::Pkcs11(token) => CustodyKind::Pkcs11 {
             module: named(token.module.as_deref())?,
@@ -360,10 +331,6 @@ fn required_violations(source: &SigningSourceRequest) -> Vec<String> {
             named(Some(file.seed_path.as_str())).is_some(),
             "--key-source file requires --signing-key-seed <path>: the response-signing key \
              has no other source in this state",
-        ),
-        SigningSourceRequest::Environment(env) => require(
-            named(Some(env.seed_var.as_str())).is_some(),
-            "--key-source env requires --signing-key-seed <env-var-name>",
         ),
         SigningSourceRequest::Pkcs11(token) => {
             require(
@@ -442,8 +409,7 @@ mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
     use crate::deployment_request::{
-        EnvironmentSigningSourceRequest, FileSigningSourceRequest, GcpKmsSigningSourceRequest,
-        Pkcs11SigningSourceRequest,
+        FileSigningSourceRequest, GcpKmsSigningSourceRequest, Pkcs11SigningSourceRequest,
     };
 
     const GCP_KEY_VERSION: &str =
@@ -540,18 +506,6 @@ mod tests {
                 |c: &mut DeploymentRequest| select(c, file_seed("/seed")),
             ),
             (
-                |s| matches!(s.material(), CustodyMaterial::EnvSeed { .. }),
-                "EnvSeed",
-                |c: &mut DeploymentRequest| {
-                    select(
-                        c,
-                        SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
-                            seed_var: "MCP_RE_SEED".to_string(),
-                        }),
-                    );
-                },
-            ),
-            (
                 |s| matches!(s.material(), CustodyMaterial::Pkcs11 { .. }),
                 "Pkcs11",
                 pkcs11,
@@ -582,24 +536,12 @@ mod tests {
             built(|c| select(c, file_seed("/seed"))).exposure(),
             PrivateKeyExposure::ProcessReadable
         );
-        assert_eq!(
-            built(|c| {
-                select(
-                    c,
-                    SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
-                        seed_var: "MCP_RE_SEED".to_string(),
-                    }),
-                );
-            })
-            .exposure(),
-            PrivateKeyExposure::ProcessReadable
-        );
         for mutate in [pkcs11 as fn(&mut DeploymentRequest), aws, gcp] {
             assert_eq!(built(mutate).exposure(), PrivateKeyExposure::NonExporting);
         }
     }
 
-    /// The generic projection control (ADR-MCPRE-067 §21.4): five unrelated mechanisms
+    /// The generic projection control (ADR-MCPRE-067 §21.4): four unrelated mechanisms
     /// establish ONE semantic fact, and the consumer of that fact is written without
     /// naming any of them. A sixth mechanism joins the left-hand column and
     /// [`may_the_key_be_read_here`] is unchanged.
@@ -625,7 +567,7 @@ mod tests {
     /// A mechanism that exists only in this test — a hypothetical threshold signer and a
     /// hypothetical in-process software vault — drives the SAME consumer through the same
     /// semantic projection. The point is not to support a fake provider; it is that
-    /// `may_the_key_be_read_here` cannot be depending on the names of today's five,
+    /// `may_the_key_be_read_here` cannot be depending on the names of today's four,
     /// because it answers correctly for two it has never heard of.
     ///
     /// If the semantic fact were ever replaced by a provider discriminator, this test
@@ -719,14 +661,6 @@ mod tests {
                 gcp(c);
                 gcp_of(c).key_version = Some(String::new());
             }),
-            ("--key-source env requires --signing-key-seed", |c| {
-                select(
-                    c,
-                    SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
-                        seed_var: String::new(),
-                    }),
-                );
-            }),
         ];
         for (flag, mutate) in cases {
             let (_, violations) = run(mutate);
@@ -795,23 +729,6 @@ mod tests {
         assert_eq!(
             seed.as_ref().map(CustodyState::material),
             Some(CustodyMaterial::FileSeed { seed_path: "/seed" })
-        );
-
-        assert_eq!(
-            run(|c| {
-                select(
-                    c,
-                    SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
-                        seed_var: "MCP_RE_SEED".to_string(),
-                    }),
-                );
-            })
-            .0
-            .as_ref()
-            .map(CustodyState::material),
-            Some(CustodyMaterial::EnvSeed {
-                env_var: "MCP_RE_SEED"
-            })
         );
 
         assert_eq!(
@@ -890,14 +807,6 @@ mod tests {
             |c: &mut DeploymentRequest| {
                 gcp(c);
                 gcp_of(c).key_version = Some(String::new());
-            },
-            |c: &mut DeploymentRequest| {
-                select(
-                    c,
-                    SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
-                        seed_var: String::new(),
-                    }),
-                );
             },
         ] {
             let (state, violations) = run(mutate);

@@ -32,9 +32,9 @@ exports_files([
 #     process environment; `manual`, since every case in it is live.
 
 # Single source of truth for the mcp_re_proxy library sources. The default
-# `:mcp_re_proxy` library and the feature-flavored `:mcp_re_proxy_fault` /
-# `:mcp_re_proxy_dev_env` instances (each a full rebuild of the same crate under a
-# `#[cfg(feature = ...)]` fault/dev gate) ALL compile this exact file set — sharing
+# `:mcp_re_proxy` library and the feature-flavored instances such as
+# `:mcp_re_proxy_fault` (each a full rebuild of the same crate under a
+# `#[cfg(feature = ...)]` gate) ALL compile this exact file set — sharing
 # the list here prevents the instances from silently drifting apart.
 _PROXY_LIB_SRCS = [
     # ADR-MCPS-022: explicit authorized server key-set + per-audience response-
@@ -189,7 +189,6 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/secret_string.rs",
     "src/deployment_request/signing_source/aws_kms_source.rs",
     "src/deployment_request/signing_source/channel_role.rs",
-    "src/deployment_request/signing_source/environment_source.rs",
     "src/deployment_request/signing_source/file_source.rs",
     "src/deployment_request/signing_source/gcp_kms_source.rs",
     "src/deployment_request/signing_source/mod.rs",
@@ -206,7 +205,6 @@ _PROXY_LIB_SRCS = [
     "src/capability_materialization/key_file_custody/process_groups.rs",
 "src/capability_materialization/ingress.rs",
     "src/capability_materialization/key_source/aws.rs",
-    "src/capability_materialization/key_source/env.rs",
     "src/capability_materialization/key_source/file.rs",
     "src/capability_materialization/key_source/gcp.rs",
     "src/capability_materialization/key_source/mod.rs",
@@ -660,11 +658,11 @@ _PROXY_ASYNC_CRATES = [
     "@crates_mcp_re//:bytes",
 ]
 
-# Single source of truth for the mcp_re_proxy library deps. All three library
+# Single source of truth for the mcp_re_proxy library deps. Every library
 # instances compile the SAME `_PROXY_LIB_SRCS`, so they MUST link the same crates —
 # they differ ONLY by `crate_features`. Sharing the list here prevents per-instance
-# dep drift (which previously left `:mcp_re_proxy_fault` / `:mcp_re_proxy_dev_env`
-# pointing at a removed `rustls-pemfile` and missing `zeroize`).
+# dep drift (which previously left `:mcp_re_proxy_fault` pointing at a removed
+# `rustls-pemfile` and missing `zeroize`).
 _PROXY_LIB_DEPS = [
     "//mcp-re-core:mcp_re_core",
     # MCPRE-180: the capsule-anchor registration leaf's wire convention is STANDARD
@@ -973,7 +971,7 @@ nt_rust_test(
         "@crates_mcp_re//:zeroize",
     ],
 )
-# MCPS-027: KeySource (File + Env) — signing key + TLS cert/key + client-CA.
+# MCPS-027: FileKeySource — signing key + TLS cert/key + client-CA.
 nt_rust_test(
     name = "key_source_test",
     srcs = ["tests/key_source_test.rs"],
@@ -983,27 +981,10 @@ nt_rust_test(
         "//mcp-re-core:mcp_re_core",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:zeroize",
     ],
 )
 
-# The same file with `dev_env_key_source`: its `env_source_*` tests exist only under the
-# feature, and `:key_source_test` above is the default build that must not have it.
-nt_rust_test(
-    name = "key_source_dev_env_test",
-    srcs = ["tests/key_source_test.rs"],
-    crate_features = ["dev_env_key_source"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_dev_env",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls-pki-types",
-    ],
-)
-
-# MCPS-076 (audit gap G-3): a SEPARATE library instance of mcp-re-proxy built WITH
-# the dev-only `dev_env_key_source` feature, so `EnvKeySource` (and the dev arm of
-# build_key_source) is compiled into the dev test below. The default `:mcp_re_proxy`
 # ADR-MCPRE-051 (MCPRE-118): the async serving path is now UNCONDITIONAL, so the
 # async crates live in `_PROXY_LIB_DEPS` and this flavor is a thin alias of the base
 # (the vestigial `async_serve` feature is a no-op — no code gates on it anymore).
@@ -1442,35 +1423,6 @@ nt_rust_test(
 build_test(
     name = "tls_load_harness_bench_builds",
     targets = [":tls_load_harness_bench"],
-)
-# above is NEVER built with this feature; production and the production CLI link
-# only the env-LESS instance. This instance is built on every `bazel test //...`
-# (NOT `manual`) so it can never silently fail to compile.
-nt_rust_library(
-    name = "mcp_re_proxy_dev_env",
-    srcs = _PROXY_LIB_SRCS,
-    crate_features = ["dev_env_key_source"],
-    crate_name = "mcp_re_proxy",
-    edition = "2021",
-    deps = _PROXY_LIB_DEPS,
-)
-
-# MCPS-076 (audit gap G-3): the dev-only EnvKeySource + secret-hygiene proofs. Built
-# WITH the `dev_env_key_source` feature (so EnvKeySource exists) and linked against
-# the matching `:mcp_re_proxy_dev_env` instance. Runs on EVERY `bazel test //...`
-# (NOT `manual`) so the dev-feature path can never silently rot.
-# Proves: the env source signs + REMOVES the env var after read; KeyError never
-# leaks the seed; and the canonical zeroize-on-drop heap-scrub check.
-nt_rust_test(
-    name = "dev_env_key_source_test",
-    srcs = ["tests/dev_env_key_source_test.rs"],
-    crate_features = ["dev_env_key_source"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_dev_env",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:zeroize",
-    ],
 )
 
 # ===========================================================================

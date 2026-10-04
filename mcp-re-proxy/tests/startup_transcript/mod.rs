@@ -41,8 +41,6 @@ use std::time::Instant;
 pub enum StartupEvent {
     /// Host clock reads at/near the Unix epoch; freshness will fail closed.
     ClockFaultWarning,
-    /// The dev/CI-only environment key source is in use.
-    DevKeySourceWarning,
     /// The declared revocation tier, and whether the trust store itself can change.
     RevocationTier {
         tier: String,
@@ -257,9 +255,6 @@ fn normalize(line: &str) -> Option<StartupEvent> {
 
     if l.contains("the system clock reads at/near the Unix epoch") {
         return Some(StartupEvent::ClockFaultWarning);
-    }
-    if l.contains("--key-source env is a dev/CI-only build") {
-        return Some(StartupEvent::DevKeySourceWarning);
     }
     if l.contains("revocation-tier=") {
         return Some(StartupEvent::RevocationTier {

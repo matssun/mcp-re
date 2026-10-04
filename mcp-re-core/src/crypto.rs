@@ -77,16 +77,14 @@ impl VerificationKey {
 /// NOT a purity violation.
 ///
 /// # Custody boundary (MCPS-076, ADR-MCPS-028)
-/// This is the IN-PROCESS SOFTWARE signer, used by the SEED-BACKED key sources:
+/// This is the IN-PROCESS SOFTWARE signer, used by the SEED-BACKED key source
 /// `--key-source file` (`FileKeySource` — the proxy's default, production-capable
-/// source) and the dev-only, separately-gated `--key-source env`
-/// (`EnvKeySource`, behind `--allow-env-keysource`), plus test/conformance. All
-/// of these reconstruct a seed-backed `SigningKey` via `from_seed_bytes`, so this
-/// type IS on a production path — it is not test-only.
+/// source), plus test/conformance. Each reconstructs a seed-backed `SigningKey` via
+/// `from_seed_bytes`, so this type IS on a production path — it is not test-only.
 ///
 /// The custody property it provides is internal signing with NO export: the
 /// secret scalar stays private (no `to_bytes`/`to_seed`; see Secret hygiene), and
-/// seed-backed sources hold the on-disk/env seed in `Zeroizing` and scrub it. The
+/// seed-backed sources hold the on-disk seed in `Zeroizing` and scrub it. The
 /// STRONGER posture — a non-exporting HSM / cloud-KMS where no raw seed is ever
 /// reconstructed in process — is provided by the `KeySource` seam's PKCS#11 /
 /// AWS-KMS / GCP-KMS backends (signing on the device), tracked as the ADR-MCPS-028

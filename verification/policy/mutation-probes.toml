@@ -6981,14 +6981,10 @@ theorem = "THM-0064"
 conjunct = "the ADR-MCPRE-067 exposure fact read off a custody state — only the device states hold the key off this process"
 path = "mcp-re-proxy/src/config_state/custody.rs"
 anchor = """
-            CustodyKind::FileSeed { .. } | CustodyKind::EnvSeed { .. } => {
-                PrivateKeyExposure::ProcessReadable
-            }
+            CustodyKind::FileSeed { .. } => PrivateKeyExposure::ProcessReadable,
 """
 weakening = """
-            CustodyKind::FileSeed { .. } | CustodyKind::EnvSeed { .. } => {
-                PrivateKeyExposure::NonExporting
-            }
+            CustodyKind::FileSeed { .. } => PrivateKeyExposure::NonExporting,
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::custody::tests::only_the_device_states_hold_the_key_off_this_process",
@@ -7812,36 +7808,29 @@ beside it says why `fs::read(path)` is the defect — and by review, not by this
 id = "M421-proxy-one-custodys-answer-suppresses-anothers-key-file"
 unit = "proxy.key_file_floor_scope"
 conjunct = "each custody machine answers for its own locators, and no machine's answer suppresses another machine's file"
-# The weakening is the defect verbatim: an early return on the RESPONSE-signing custody's
-# answer, before the CHANNEL machine's file is appended. It compiles, every other key-file
-# control stays green, and the TLS server private key stops being permission-checked for a
-# deployment whose response seed comes from the environment.
+# The weakening is the defect's shape: an early return on the RESPONSE-signing custody's
+# answer, before the CHANNEL machine's file is appended. It compiles, and the TLS server
+# private key stops being permission-checked for every deployment whose response custody
+# keeps a secret of its own on disk.
 path = "mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs"
 anchor = """
-    let mut paths = if custody.locators_are_filesystem_paths() {
-        custody.disk_secret_paths()
-    } else {
-        Vec::new()
-    };
-"""
-weakening = """
-    if !custody.locators_are_filesystem_paths() {
-        return Vec::new();
-    }
     let mut paths = custody.disk_secret_paths();
 """
+weakening = """
+    let mut paths = custody.disk_secret_paths();
+    if !paths.is_empty() {
+        return paths;
+    }
+"""
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_file_custody::covered_files::tests::an_env_seed_response_custody_does_not_suppress_the_channel_key_file",
+  "//mcp-re-proxy:proxy_unit_test#capability_materialization::key_file_custody::covered_files::tests::the_tls_key_is_checked_under_every_custody_mode",
 ]
 note = """
 `the_pkcs11_pin_file_is_permission_checked` stays GREEN under this weakening and is in the
-battery for the opposite reason: its custody IS filesystem-backed, so the early return never
-fires for it. That is precisely why the defect survived — every fixture that exercised this
-projection used a custody whose own locators were paths, and the one state that makes the
-two machines disagree had no fixture at all.
-
-MEASURED BOTH WAYS BEFORE THIS PROBE WAS WRITTEN: the fix reverted by hand, the control red;
-restored, green.
+battery for a different clause: it asks only whether the response custody's own file is
+present, and the early return keeps exactly that answer. Only a control that asks for the
+CHANNEL machine's file beside a non-empty response answer tells the two apart, which is what
+`the_tls_key_is_checked_under_every_custody_mode` does for the file and PKCS#11 states.
 """
 
 [[probe]]

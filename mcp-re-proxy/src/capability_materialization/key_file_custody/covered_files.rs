@@ -11,14 +11,10 @@
 //! the pod in precisely the modes advertised as "no key material ever lands in the pod": a
 //! TLS server key mounted with Kubernetes' default 0644 booted silently.
 //!
-//! It then came back one level up (r12 R12-620). An EARLY RETURN on the RESPONSE-signing
-//! custody's answer about ITS OWN locators ran before the CHANNEL machine's file was
-//! appended, so an `EnvSeed` response custody beside an exported channel key produced an
-//! EMPTY list while the TLS key was read anyway. The two are separate machines
-//! (ADR-MCPRE-067 §10) and nothing makes them agree.
-//!
-//! So this role is phrased as a CONCATENATION of per-owner answers, and no owner's answer
-//! is allowed to short-circuit another's contribution.
+//! The response-signing custody and the channel custody are separate machines
+//! (ADR-MCPRE-067 §10) and nothing makes them agree (r12 R12-620). So this role is phrased
+//! as a CONCATENATION of per-owner answers, and no owner's answer is allowed to
+//! short-circuit another's contribution.
 
 use crate::config_state::ChannelCredentialCustodyState;
 use crate::config_state::CustodyState;
@@ -39,14 +35,7 @@ pub(super) fn key_files_read_from_disk<'a>(
     channel_credential_custody: &'a ChannelCredentialCustodyState,
 ) -> Vec<&'a str> {
     // EACH OWNER ANSWERS FOR ITS OWN LOCATORS, and neither can suppress the other's.
-    // `locators_are_filesystem_paths` is the RESPONSE custody's statement about ITS
-    // locators — under `EnvSeed` they name environment variables, and stat'ing a variable
-    // NAME as a path is a check that passes for the wrong reason.
-    let mut paths = if custody.locators_are_filesystem_paths() {
-        custody.disk_secret_paths()
-    } else {
-        Vec::new()
-    };
+    let mut paths = custody.disk_secret_paths();
     // And the handshake key, only where the CHANNEL machine exports one. Non-exporting
     // custody keeps it on the device, and the tagged request carries no file beside it.
     paths.extend(channel_credential_custody.material().exported_key_path());
@@ -58,49 +47,6 @@ mod tests {
     use super::key_files_read_from_disk;
     use crate::config_state::test_support::config_with;
     use crate::config_state::test_support::custody_states;
-
-    /// LOAD-BEARING (r12 R12-620): the RESPONSE-signing custody's answer about ITS
-    /// locators must not suppress the CHANNEL machine's file.
-    ///
-    /// The two are separate machines and nothing makes them agree, so an `EnvSeed`
-    /// response custody — every locator an environment variable — beside an exported
-    /// channel key is representable. The guard's early return on
-    /// `locators_are_filesystem_paths()` then produced an EMPTY check list while
-    /// `key_source.tls_server_key()` read that key file anyway, so a TLS server private
-    /// key mounted at Kubernetes' default 0644 booted silently — with the deployment
-    /// advertising a hardened key-custody posture.
-    ///
-    /// Built by setting `response_signing.source` directly rather than through
-    /// `--key-source env`, which `cli::parse_args` admits only under
-    /// `dev_env_key_source`: the state is what this projection is wrong about, and the
-    /// flag that reaches it is not part of the claim.
-    #[test]
-    fn an_env_seed_response_custody_does_not_suppress_the_channel_key_file() {
-        use crate::deployment_request::EnvironmentSigningSourceRequest;
-        use crate::deployment_request::SigningSourceRequest;
-
-        let mut config = config_with("file", "/seed", "/tls.key");
-        config.response_signing.source =
-            SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
-                seed_var: "MCP_RE_SEED".to_string(),
-            });
-        let (custody, channel_credential_custody) = custody_states(&config);
-        assert!(
-            !custody.locators_are_filesystem_paths(),
-            "the fixture must be the state the defect turned on"
-        );
-        let files = key_files_read_from_disk(&custody, &channel_credential_custody);
-        // EXACT, not `contains`: this is simultaneously the other direction. The fix is
-        // not "check everything always" — the env-var seed name is absent, because
-        // stat'ing a variable NAME as a path is a check that passes for the wrong reason,
-        // which is what the early return was written to prevent.
-        assert_eq!(
-            files,
-            vec!["/tls.key"],
-            "the channel machine's exported key is read from disk whatever the response \
-             custody says about its own locators, and an env-var name is not a path"
-        );
-    }
 
     /// C048: the PKCS#11 PIN file unlocks the token holding the signing keys, so it must
     /// be among the files the startup permission check covers — otherwise the credential
@@ -131,8 +77,6 @@ mod tests {
     /// lands in the pod" — so it must always be among the files checked.
     #[test]
     fn the_tls_key_is_checked_under_every_custody_mode() {
-        // `env` is omitted: it is rejected by the parser outside a
-        // `dev_env_key_source` build, so it cannot be constructed here.
         for source in ["file", "pkcs11", "aws-kms", "gcp-kms"] {
             let config = config_with(
                 source,

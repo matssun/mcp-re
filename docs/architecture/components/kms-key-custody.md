@@ -42,7 +42,7 @@ Establish that this deployment's response-signing key is held by a non-exporting
 
 > *This process can produce Ed25519 signatures under a named key, and — for the KMS implementations — the private key is not in this process's address space.*
 
-The second clause is the whole point of the axis and **the type does not say it.** `KeySource` is implemented by `FileKeySource` (seed on disk, key in memory), `EnvKeySource` (seed in an env var, key in memory) and `KmsKeySource` (key in a KMS). All three satisfy one trait, so a consumer holding a `Box<dyn KeySource>` cannot tell a non-exporting custodian from a seed file — the distinction that the entire ADR-MCPS-028 §B/§C work exists to deliver.
+The second clause is the whole point of the axis and **the type does not say it.** `KeySource` is implemented by `FileKeySource` (seed on disk, key in memory) and `KmsKeySource` (key in a KMS). Both satisfy one trait, so a consumer holding a `Box<dyn KeySource>` cannot tell a non-exporting custodian from a seed file — the distinction that the entire ADR-MCPS-028 §B/§C work exists to deliver.
 
 Today the distinction is carried by `CustodyState`, one layer up, and by the startup posture line. That is a real answer; it is also a *fact about configuration* standing in for a *property of the value*.
 
@@ -165,7 +165,7 @@ Less than anywhere else in this campaign. The products are sealed; the configs a
 
 | lines | unit | authority |
 |---:|---|---|
-| 362 | `key_source.rs` — `KeyError`, `ResponseSigner`, `KeySource`, `FileKeySource`, `EnvKeySource` | A (**no tests**) |
+| 362 | `key_source.rs` — `KeyError`, `ResponseSigner`, `KeySource`, `FileKeySource` | A (**no tests**) |
 | 230 | `kms_keysource.rs` — `KmsEd25519Backend`, `KmsResponseSigner`, `KmsKeySource`, SPKI facade | B |
 | 694 | `aws_kms_keysource.rs` — SigV4 transport, IRSA, wire codec, `quota_verdict` | C |
 | 1149 | `gcp_kms_keysource.rs` — OAuth/metadata token source, wire codec, `quota_verdict` | C |

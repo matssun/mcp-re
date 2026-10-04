@@ -2087,7 +2087,7 @@ role-separation guarantee. That must be preserved explicitly, not by accident.
 > implementations — the private key is not in this process's address space.*
 
 The second clause is the point of the whole axis and **the trait cannot express it**:
-`FileKeySource`, `EnvKeySource` and `KmsKeySource` satisfy one trait, so a consumer holding
+`FileKeySource` and `KmsKeySource` satisfy one trait, so a consumer holding
 a `Box<dyn KeySource>` cannot distinguish a non-exporting custodian from a seed file. The
 distinction is carried by `CustodyState` and the startup posture — a fact about
 configuration standing in for a property of the value.

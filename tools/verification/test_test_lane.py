@@ -87,7 +87,7 @@ def test_output_interleaved_into_a_result_line_does_not_hide_the_status():
     reported a deterministic two-assert test as not having passed.
     """
     ok, detail = run_with(
-        "test a::tests::one ... mcp-re-proxy: WARNING: --key-source env is a dev build ok\n"
+        "test a::tests::one ... mcp-re-proxy: WARNING: the system clock reads at/near the Unix epoch ok\n"
         "test a::tests::two ... ok\n"
         "\ntest result: ok. 2 passed; 0 failed; 0 ignored\n"
     )

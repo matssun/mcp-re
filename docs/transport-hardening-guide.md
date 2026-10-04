@@ -119,19 +119,17 @@ Source: [`key_source.rs`](../mcp-re-proxy/src/key_source.rs).
 
 A sidecar needs three pieces of material: the Ed25519 **signing key** (a 32-byte
 seed, Base64URL-no-pad), the **TLS server certificate chain + key** (PEM), and
-the **client-CA trust anchors** (PEM). Two sources implement the `KeySource`
-trait:
+the **client-CA trust anchors** (PEM). `FileKeySource` reads them from files; the
+PKCS#11 and KMS sources keep the signing key on a device:
 
 - **`FileKeySource`** (`--key-source file`, default) — reads from disk. Use this
   in production with `0600` permissions; the CLI warns about group/world-readable
   key files.
-- **`EnvKeySource`** (`--key-source env`) — reads from environment variables.
-  **Dev/CI only**, and compiled in only under the non-default `dev_env_key_source`
-  cargo feature: a production build has no `env` option at all and rejects the value
-  as unknown. Env vars are visible to the process tree and leak via crash dumps,
-  `ps e`, and `/proc/<pid>/environ`, so this is a build-time decision rather than a
-  runtime one. `KeyError` values carry only the var NAME and the parse
-  failure, never the secret bytes, so they are safe to log.
+- No source reads key material from environment variables, and `--key-source env`
+  is refused as an unknown value: env vars are visible to the process tree and leak
+  via crash dumps, `ps e`, and `/proc/<pid>/environ`. `KeyError` values carry only
+  the file name and the parse failure, never the secret bytes, so they are safe to
+  log.
 
 **HSM/KMS-backed sources** now implement the `KeySource` trait — PKCS#11, AWS
 KMS, and GCP KMS adapters selected with `--key-source` — each behind its own

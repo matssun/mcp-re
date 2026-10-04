@@ -44,7 +44,6 @@ relation has not been represented.
 | field | owner that already decided | evidence |
 |---|---|---|
 | `client_crl_paths` (`.len()`) | `CrlRevocationState::is_enforced()` | `app.rs:415` re-answers "is offline revocation enforced" from the raw list |
-| `key_source` (`== Env`) | `CustodyState` / `CustodyMaterial::EnvSeed` | `app.rs:435` |
 | `identity_source` | `ChannelBindingState` | `app.rs:456`, `startup_plan.rs:145` — derived in both places |
 | `binding` | `ChannelBindingState` | `startup_plan.rs:135` |
 ~~`fleet`~~ and ~~`cores`~~ were listed here on first pass and are **wrong**: four owners

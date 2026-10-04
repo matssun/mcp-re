@@ -1208,12 +1208,12 @@ plaintext KMS endpoint to a remote host is refused*, *an argv PKCS#11 PIN is ref
 the replacement named*.
 
 **A constraint on whoever registers NP-026, recorded here because it is invisible from the
-registry.** Four of NP-026's `cli.rs` controls sit behind NEGATIVE feature gates —
+registry.** Three of NP-026's `cli.rs` controls sit behind NEGATIVE feature gates —
 `default_build_rejects_pkcs11_key_source` under `#[cfg(not(feature = "pkcs11_keysource"))]`,
-and the same shape for `dev_env_key_source`, `aws_kms_keysource` and `gcp_kms_keysource`. They
+and the same shape for `aws_kms_keysource` and `gcp_kms_keysource`. They
 exist only in the DEFAULT-feature lane. A unit declaring
 `test_features = ["aws_kms_keysource", "gcp_kms_keysource"]` — which the neighbouring
-`proxy.kms_endpoint_authority` already declares — compiles all four to zero tests and reports
+`proxy.kms_endpoint_authority` already declares — compiles all three to zero tests and reports
 green, which is this repository's standing false-green shape. **The argv key-source unit must
 declare no `test_features`.**
 
@@ -1278,7 +1278,8 @@ misspelling reads as an absent declaration rather than as an error.
 **Severity:** `critical`.
 
 *A key source reaches a deployment only from a build that carries it — the
-default build refuses AWS KMS, GCP KMS, PKCS#11 and the env source — and only with every
+default build refuses AWS KMS, GCP KMS and PKCS#11, and no build has an environment key
+source, so `--key-source env` is an unknown value — and only with every
 flag that source cannot operate without; a TLS key named through a KMS may not also be
 exported; and the withdrawn argv PKCS#11 PIN is refused with its replacement named.* If
 false, a deployment signs under a key source nobody built for, or under a half-configured
@@ -1705,10 +1706,12 @@ registry edit.
 ## NP-054 — key-file access policy
 
 **Controls:** `config_state/key_file_access.rs` (7), and
-`mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs` (2): which key
+`mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs` (1): which key
 files the policy is applied to. Batch 12 recorded ten `app.rs` controls here; the r12 file-11
 extraction moved key-file custody into `capability_materialization::key_file_custody`, where
-the rest are claimed by that owner's battery, and these two remain. What the ten established: A world-readable key file is refused; a group-readable one is refused
+the rest are claimed by that owner's battery, and this one remains.
+`the_tls_key_is_checked_under_every_custody_mode` is a `tested_symbol` of
+`unit://proxy.key_file_floor_scope`, whose concatenation clause it falsifies (M421). What the ten established: A world-readable key file is refused; a group-readable one is refused
 without the opt-in and accepted with it only when the process is in that group; group write
 is refused even with the opt-in; an owner-only file is accepted; an absent file is not an
 error; a file whose posture cannot be established is refused; the PKCS#11 PIN file is
@@ -3520,10 +3523,10 @@ binding form produces no authorization at all and is outside this claim"* — so
 control proves impossible is one the theorem already declines to reason about. Packet at
 `verification/reviews/packets/adr069-np-163-np-191-ratification-2026-09-20.md`.
 
-## NP-164 — the file and dev key sources' own load and refusal behaviour, and the PKCS#11 token's second key
+## NP-164 — the file key source's own load and refusal behaviour, and the PKCS#11 token's second key
 
-**Controls:** `mcp-re-proxy/tests/key_source_test.rs` (6), `mcp-re-proxy/tests/dev_env_key_source_test.rs` (5), `mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs` (7), `mcp-re-proxy/src/key_source/file_key_source.rs` (2), `mcp-re-proxy/src/pkcs11_keysource/mod.rs` (1), `mcp-re-proxy/src/key_source.rs` (1).
-**Statement.** *Each source opened DIRECTLY, not through the materializer: the file source loads the signing seed, the channel credential and the client anchors and tells a missing file from a malformed seed; the dev-only environment source does the same without mutating the process and scrubs its seed temporaries; neither source's error carries the secret; and the token's SECOND object — the delegated TLS handshake key — is established at `open` or the deployment does not start.*
+**Controls:** `mcp-re-proxy/tests/key_source_test.rs` (6), `mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs` (7), `mcp-re-proxy/src/key_source/file_key_source.rs` (2), `mcp-re-proxy/src/pkcs11_keysource/mod.rs` (1), `mcp-re-proxy/src/key_source.rs` (1).
+**Statement.** *Each source opened DIRECTLY, not through the materializer: the file source loads the signing seed, the channel credential and the client anchors and tells a missing file from a malformed seed, and its seed temporaries are scrubbed on drop; the source's error never carries the secret; and the token's SECOND object — the delegated TLS handshake key — is established at `open` or the deployment does not start.*
 **If false.** A source reports material it did not load, or names the wrong failure, and an operator debugs the wrong half of a deployment; or a secret seed reaches a log through an error value; or the proxy serves a handshake under a token key nobody established, which is the one case where the delegated-TLS correspondence gate compares a key the signer did not actually sign with.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
@@ -3533,6 +3536,8 @@ control proves impossible is one the theorem already declines to reason about. P
 **Packet:** [`verification/reviews/packets/adr069-np-164-ratification-2026-09-20.md`](../../verification/reviews/packets/adr069-np-164-ratification-2026-09-20.md).
 
 **Extended 2026-09-29.** The file source now lives at `mcp-re-proxy/src/key_source/file_key_source.rs`; its in-crate controls (`the_signing_key_is_the_admitted_seed`, `malformed_material_refuses_construction_without_leaking_it`) and the e2e refusal of a TLS label equal to the response label (`pkcs11_tls_label_equal_to_response_label_is_refused`, the token's second-key clause) cite this record. So does `tls_spki_is_well_formed_rfc8410_and_round_trips`, the encoding guard the second key's SPKI is built through, which `proxy.pkcs11_adapter` carried under THM-0116 until the owner ruling of 2026-09-29 read that theorem as the response signer's.
+
+**Environment key source RETIRED with its subject, owner Ruling 13.4 (finding 13dac28c).** Environment configuration carries no key material: the response-signing seed is long-lived secret key material and channel material is file-backed, so no key source reads the process environment and `--key-source env` is an unknown value (NP-026, `cli::tests::env_is_an_unknown_key_source`). The five controls that drove `EnvKeySource` — `env_source_loads_all_material`, `env_source_missing_var_is_not_found`, `env_source_signs_without_mutating_process_env`, `env_key_error_does_not_leak_seed`, `a_non_utf8_seed_var_is_malformed_not_absent` — are retired with it, and their dispositions `CD-19311`, `CD-19312`, `CD-19018`, `CD-19017` and `CD-20182` with them rather than left pointing at controls that no longer exist. The secret-leak clause is carried for the one remaining seed source by `key_errors_never_leak_secret_material`. The two zeroize controls, `zeroize_on_drop_invokes_zeroize` and `seed_temporaries_are_zeroizing_typed`, are about the seed temporaries every seed-backed source shares, not about the environment: they run in `mcp-re-proxy/tests/key_source_test.rs` and keep `CD-19020` and `CD-19019`.
 
 ## NP-166 — the verified-context carrier is attached only where the inner channel is trusted
 

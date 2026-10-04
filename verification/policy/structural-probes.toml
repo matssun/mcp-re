@@ -519,7 +519,7 @@ construction = "// ADR-MCPRE-068 structural probe S17. Injected into a scratch c
 
 [probe.producer_paths]
 module-tree-visibility = "`kind` is bare-private to `config_state::custody`, and its type `CustodyKind` is a private enum in the same module \u2014 two layers, and the probe attacks the field, which is the one this unit claims. The parent re-exports `CustodyState` only"
-alternate-constructors = "the classifier in this module is the only producer. The four projections \u2014 `material`, `locators_are_filesystem_paths`, `disk_secret_paths`, `exposure` \u2014 read the private enum and return named semantic answers or borrows, never the representation; `material` returns a `CustodyMaterial<'_>` view rather than the kind. There is no `new`, `From`, `Default` or builder taking a kind"
+alternate-constructors = "the classifier in this module is the only producer. The three projections \u2014 `material`, `disk_secret_paths`, `exposure` \u2014 read the private enum and return named semantic answers or borrows, never the representation; `material` returns a `CustodyMaterial<'_>` view rather than the kind. There is no `new`, `From`, `Default` or builder taking a kind"
 generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 custody is classified from a deployment request, never decoded, so no decoder fills the field positionally"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through the classifier; no test-gated constructor and no test-gated field or enum visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
 
