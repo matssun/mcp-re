@@ -21,6 +21,18 @@ use crate::startup_transcript;
 
 use serving_fixtures::Material;
 
+/// `extra` appended to `base`, each single-valued flag stated once: a flag `extra` states is
+/// dropped from `base` first, because a repeated single-valued flag is refused at parse.
+fn stated_once(mut base: Vec<String>, extra: Vec<String>) -> Vec<String> {
+    for flag in extra.iter().filter(|a| a.starts_with("--")) {
+        while let Some(at) = base.iter().position(|a| a == flag) {
+            base.drain(at..=(at + 1).min(base.len() - 1));
+        }
+    }
+    base.extend(extra);
+    base
+}
+
 /// The flags every case below shares: enough to get through parsing and preflight, with
 /// a replay tier that cannot be opened — either because the backend is not compiled into
 /// this build, or because nothing answers on `127.0.0.1:1`. Startup therefore always
@@ -563,8 +575,7 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
         .iter()
         .map(|s| s.to_string())
         .collect();
-        v.extend(case.iter().map(|s| s.to_string()));
-        v
+        stated_once(v, case.iter().map(|s| s.to_string()).collect())
     };
     let app_err = |argv: Vec<String>| -> String {
         let config = mcp_re_proxy::cli::parse_args(&argv).expect("args parse");
@@ -1283,8 +1294,7 @@ fn pdp_flags(trust: &std::path::Path) -> Vec<String> {
 fn a_deployment_can_install_the_authorization_authority_and_the_transcript_declares_it() {
     let m = serving_fixtures::write_material();
     let trust = trust_with_authority(&m, true);
-    let mut args = base_args(&m);
-    args.extend(pdp_flags(&trust));
+    let args = stated_once(base_args(&m), pdp_flags(&trust));
     let t = startup_transcript::capture(&args);
     let _ = std::fs::remove_file(&trust);
 
@@ -1323,8 +1333,7 @@ fn a_configured_profile_with_no_enrolled_authority_refuses_to_start() {
     // The same key, enrolled for the REQUEST slot: present in the file, and not an
     // authority. This is the shape that would silently "work" if the slot were ignored.
     let trust = trust_with_authority(&m, false);
-    let mut args = base_args(&m);
-    args.extend(pdp_flags(&trust));
+    let args = stated_once(base_args(&m), pdp_flags(&trust));
     let t = startup_transcript::capture(&args);
     let _ = std::fs::remove_file(&trust);
 
