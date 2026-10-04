@@ -15,6 +15,8 @@ What is pinned here, each refusal beside its positive control:
   check.py
     3. a red change is saved as a patch and reverted — tracked edits and new
        files — so the next writer starts clean
+       and each touched .rs file is formatted, through stdin so no `mod` child
+       the writer did not touch is rewritten
   finalize.py
     4. commit only what review accepted: `anchor`/`scope` rejections leave no
        diff and commit; `wrong-fix`, an unordered change or a reject revert
@@ -414,6 +416,29 @@ def test_prepare_finds_integration_tests_through_root_reexports() -> None:
         assert got == ["alpha/tests/live.rs [every test #[ignore]d — measures nothing in a local gate]",
                        "alpha/tests/suite/signer_test.rs [--it //alpha:suite]"], got
     print("  prepare: integration tests found through root re-exports, target named, all-ignored flagged  OK")
+
+
+def test_check_formats_only_the_touched_files() -> None:
+    """A writer is not failed for formatting: check.py post formats each touched .rs file.
+    The file goes through stdin, so a `mod child;` it declares is never reformatted, and a
+    file rustfmt cannot parse is left for the rustfmt gate part to blame."""
+    with tempfile.TemporaryDirectory() as td:
+        def write(name: str, body: str) -> str:
+            p = os.path.join(td, name)
+            open(p, "w").write(body)
+            return p
+        parent = write("lib.rs", "mod child;\nfn  f( ){let x=1;}\n")
+        child = write("child.rs", "fn  g( ){}\n")
+        broken = write("broken.rs", "fn f( {\n")
+        clean = write("clean.rs", "fn h() {}\n")
+        python = write("tool.py", "x  =  1\n")
+        changed = check._format([parent, broken, clean, python])
+        assert changed == [parent], changed
+        assert open(parent).read() == "mod child;\nfn f() {\n    let x = 1;\n}\n", open(parent).read()
+        assert open(child).read() == "fn  g( ){}\n", "an untouched child module was reformatted"
+        assert open(broken).read() == "fn f( {\n"
+        assert open(python).read() == "x  =  1\n"
+    print("  check: touched .rs files formatted, children / unparsable / non-Rust untouched  OK")
 
 
 def main() -> int:

@@ -19,7 +19,8 @@ Two phases, because a baseline is only honest if it is taken BEFORE the edit:
         AFTER the edit, so any failure the edit caused was recorded as baseline
         debt and could never show up as `new-failures`.
 
-  post  append `fix` with the worker's counts, then run
+  post  append `fix` with the worker's counts, format every touched .rs file with
+        rustfmt (formatting is mechanical, so a writer is never failed for it), then run
           1. prescan over every touched file's src root — only hits naming a
              touched or related file are reported; the rest of the root is not
              this change's business
@@ -262,6 +263,7 @@ def cmd_post(a) -> int:
         counts="applied=%d,not_applied=%d,tests_added=%d" % (a.applied, a.not_applied, a.tests_added),
         note=(a.note or "")))
 
+    _format(touched)
     writer_patch.capture(a.store, a.file, touched)
     pre = _prescan(a, touched, related)
     parts: list[dict] = []
@@ -302,6 +304,29 @@ def cmd_post(a) -> int:
                       "reverted_patch": reverted},
                      indent=1))
     return 0
+
+
+def _format(touched: list[str], rustfmt: str | None = None) -> list[str]:
+    """Format each touched .rs file in place and return the ones that changed.
+
+    Each file goes through stdin, so rustfmt formats exactly that file and never follows its
+    `mod` declarations into files the writer did not touch. A file rustfmt cannot parse is
+    left as it is: the rustfmt gate part reports it, blamed on this writer."""
+    rustfmt = rustfmt or shutil.which("rustfmt")
+    if not rustfmt:
+        return []
+    changed = []
+    for path in touched:
+        if not path.endswith(".rs") or not os.path.isfile(path):
+            continue
+        src = open(path, encoding="utf-8").read()
+        proc = subprocess.run([rustfmt, "--edition", "2021", "--emit", "stdout"], input=src,
+                              capture_output=True, text=True)
+        if proc.returncode == 0 and proc.stdout and proc.stdout != src:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(proc.stdout)
+            changed.append(path)
+    return changed
 
 
 def gate_summary(p: dict) -> str:
