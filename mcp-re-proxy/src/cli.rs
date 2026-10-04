@@ -427,6 +427,17 @@ mod tests {
         a
     }
 
+    /// `minimal()` for a command line whose custody mechanism never reads a seed.
+    fn minimal_without_seed() -> Vec<String> {
+        let mut a = minimal();
+        let at = a
+            .iter()
+            .position(|arg| arg == "--signing-key-seed")
+            .expect("minimal names a seed");
+        a.drain(at..at + 2);
+        a
+    }
+
     fn minimal() -> Vec<String> {
         args(&[
             "--bind",
@@ -1571,7 +1582,7 @@ mod tests {
 
     #[test]
     fn parses_pkcs11_key_source_flags() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, pkcs11_flags());
         let config = parse_args(&a).expect("parse");
         let token = token_payload(&config);
@@ -1622,7 +1633,7 @@ mod tests {
         // is still recognised so the refusal explains WHY and what to use instead —
         // falling through to "unknown flag" would report a secret-handling decision as
         // a typo.
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, pkcs11_flags());
         a.extend(args(&["--pkcs11-pin", "1234"]));
         let err = parse_args(&a).unwrap_err();
@@ -1658,7 +1669,7 @@ mod tests {
     #[cfg(not(feature = "pkcs11_keysource"))]
     #[test]
     fn default_build_rejects_pkcs11_key_source() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, pkcs11_flags());
         let config = parse_args(&a).expect("parse");
         assert!(matches!(
@@ -1769,7 +1780,7 @@ mod tests {
 
     #[test]
     fn parses_aws_kms_key_source_flags() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, aws_kms_flags());
         let config = parse_args(&a).expect("parse");
         let kms = aws_payload(&config);
@@ -1817,8 +1828,6 @@ mod tests {
             "us-east-1",
             "--aws-kms-key-id",
             "alias/mcp-re-response-signing",
-            "--signing-key-seed",
-            "/unused-seed",
             "--tls-cert",
             "/cert",
             "--client-ca",
@@ -1871,12 +1880,12 @@ mod tests {
             "redis-wait-quorum:1:100",
         ]);
 
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, durable.clone());
         a.splice(0..0, aws_kms_flags());
         assert!(!aws_payload(&parse_args(&a).unwrap()).use_web_identity);
 
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, durable);
         a.splice(0..0, aws_kms_flags());
         a.splice(0..0, args(&["--aws-kms-use-web-identity"]));
@@ -1899,7 +1908,7 @@ mod tests {
     /// while nothing consulted it.
     #[test]
     fn aws_sts_endpoint_without_web_identity_fails_closed() {
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, aws_kms_flags());
         a.splice(
             0..0,
@@ -1915,7 +1924,7 @@ mod tests {
     fn aws_kms_tls_key_id_plus_exported_tls_key_fails_closed() {
         // minimal() carries an exported `--tls-key`; adding a delegated TLS key id
         // alongside it must be rejected.
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, aws_kms_flags());
         a.splice(0..0, args(&["--aws-kms-tls-key-id", "alias/mcp-re-tls"]));
         let err = parse_args(&a).unwrap_err();
@@ -1940,7 +1949,7 @@ mod tests {
 
     #[test]
     fn parses_gcp_kms_key_source_flags() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, gcp_kms_flags());
         let config = parse_args(&a).expect("parse");
         let kms = gcp_payload(&config);
@@ -1954,7 +1963,7 @@ mod tests {
 
     #[test]
     fn gcp_kms_requires_key_version() {
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, args(&["--key-source", "gcp-kms"]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--gcp-kms-key-version"), "got: {err}");
@@ -1985,8 +1994,6 @@ mod tests {
             "gcp-kms",
             "--gcp-kms-key-version",
             "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
-            "--signing-key-seed",
-            "/unused-seed",
             "--tls-cert",
             "/cert",
             "--client-ca",
@@ -2039,7 +2046,7 @@ mod tests {
     fn gcp_kms_tls_key_version_plus_exported_tls_key_fails_closed() {
         // minimal() carries an exported `--tls-key`; adding a delegated TLS key
         // version alongside it must be rejected.
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, gcp_kms_flags());
         a.splice(
             0..0,
@@ -2091,7 +2098,7 @@ mod tests {
     #[cfg(not(feature = "aws_kms_keysource"))]
     #[test]
     fn default_build_rejects_aws_kms_key_source() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, aws_kms_flags());
         let config = parse_args(&a).expect("parse");
         assert!(matches!(
@@ -2111,7 +2118,7 @@ mod tests {
     #[cfg(not(feature = "gcp_kms_keysource"))]
     #[test]
     fn default_build_rejects_gcp_kms_key_source() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, gcp_kms_flags());
         let config = parse_args(&a).expect("parse");
         assert!(matches!(
@@ -3294,8 +3301,6 @@ mod tests {
             "mcp-re-test",
             "--pkcs11-key-label",
             "mcp-re-response-signing",
-            "--signing-key-seed",
-            "/unused-seed",
             "--tls-cert",
             "/cert",
             "--client-ca",

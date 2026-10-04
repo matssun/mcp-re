@@ -134,7 +134,11 @@ mod tests {
         // `env` is omitted: it is rejected by the parser outside a
         // `dev_env_key_source` build, so it cannot be constructed here.
         for source in ["file", "pkcs11", "aws-kms", "gcp-kms"] {
-            let config = config_with(source, "/seed", "/tls.key");
+            let config = config_with(
+                source,
+                if source == "file" { "/seed" } else { "" },
+                "/tls.key",
+            );
             let (custody, channel_credential_custody) = custody_states(&config);
             let checked = key_files_read_from_disk(&custody, &channel_credential_custody);
             assert!(

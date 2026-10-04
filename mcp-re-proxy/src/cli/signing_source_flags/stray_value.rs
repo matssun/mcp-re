@@ -12,6 +12,17 @@
 use super::mechanism::Mechanism;
 use super::SigningSourceFlags;
 
+/// Whether the mechanism reads `--signing-key-seed`. Exhaustive, so a new mechanism must
+/// state its answer.
+fn reads_seed(mechanism: Mechanism) -> bool {
+    match mechanism {
+        Mechanism::File => true,
+        #[cfg(feature = "dev_env_key_source")]
+        Mechanism::Environment => true,
+        Mechanism::Pkcs11 | Mechanism::AwsKms | Mechanism::GcpKms => false,
+    }
+}
+
 impl SigningSourceFlags {
     /// Refuse a value belonging to a mechanism this command line did not select.
     ///
@@ -23,6 +34,9 @@ impl SigningSourceFlags {
     /// Only RESPONSE-SIGNING payload values are here. The channel key objects are a
     /// different role and are carried into the request whatever the response-signing
     /// selection, so their mismatch is still refused at the boundary by X2a.
+    ///
+    /// The seed is refused by owner set rather than through the table, because more than
+    /// one mechanism reads it.
     pub(super) fn stray_value_refusal(&self) -> Result<(), String> {
         for (present, flag, owner) in self.values_by_owner() {
             if present && self.mechanism != owner {
@@ -34,6 +48,15 @@ impl SigningSourceFlags {
                     owner_spelling = owner.spelling()
                 ));
             }
+        }
+        if self.seed.is_some() && !reads_seed(self.mechanism) {
+            return Err(format!(
+                "--signing-key-seed belongs to --key-source file and this configuration \
+                 selects --key-source {selected}, which never reads a seed; the value would be \
+                 ignored, leaving an Ed25519 root seed provisioned for a deployment that does \
+                 not use it. Remove --signing-key-seed, or select --key-source file",
+                selected = self.mechanism.spelling()
+            ));
         }
         Ok(())
     }
@@ -196,6 +219,21 @@ mod tests {
                 &[("--key-source", "aws-kms")],
                 &["--gcp-kms-use-metadata"],
             ),
+            (
+                "--signing-key-seed",
+                &[("--key-source", "aws-kms"), ("--signing-key-seed", "/seed")],
+                &[],
+            ),
+            (
+                "--signing-key-seed",
+                &[("--key-source", "gcp-kms"), ("--signing-key-seed", "/seed")],
+                &[],
+            ),
+            (
+                "--signing-key-seed",
+                &[("--key-source", "pkcs11"), ("--signing-key-seed", "/seed")],
+                &[],
+            ),
         ];
         for (flag, pairs, switches) in cases {
             let err = parse(pairs, switches)
@@ -233,6 +271,11 @@ mod tests {
             &[],
         )
         .expect("a PKCS#11 command line naming only PKCS#11 values is coherent");
+        parse(
+            &[("--key-source", "file"), ("--signing-key-seed", "/seed")],
+            &[],
+        )
+        .expect("file custody reads the seed, so naming it is coherent");
     }
 
     /// A channel key object is NOT refused here, whatever the response-signing selection.

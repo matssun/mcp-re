@@ -583,24 +583,33 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
         mcp_re_proxy::app::run(config, sd).expect_err("config must be refused before serving")
     };
 
+    // A non-file custody never reads a seed, so the argv names none.
+    let without_seed = |mut argv: Vec<String>| -> Vec<String> {
+        let at = argv
+            .iter()
+            .position(|a| a == "--signing-key-seed")
+            .expect("the base names a seed");
+        argv.drain(at..at + 2);
+        argv
+    };
     // Cloud/HSM key sources that are not compiled into this build fail closed.
-    assert!(app_err(mk(&[
+    assert!(app_err(without_seed(mk(&[
         "--key-source",
         "aws-kms",
         "--aws-kms-region",
         "r",
         "--aws-kms-key-id",
         "k"
-    ]))
+    ])))
     .contains("aws_kms"));
-    assert!(app_err(mk(&[
+    assert!(app_err(without_seed(mk(&[
         "--key-source",
         "gcp-kms",
         "--gcp-kms-key-version",
         "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
-    ]))
+    ])))
     .contains("gcp_kms"));
-    assert!(app_err(mk(&[
+    assert!(app_err(without_seed(mk(&[
         "--key-source",
         "pkcs11",
         "--pkcs11-module",
@@ -611,7 +620,7 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
         "t",
         "--pkcs11-key-label",
         "k",
-    ]))
+    ])))
     .to_lowercase()
     .contains("pkcs11"));
     // The linearizable (CP) tier needs a cpstore_etcd build. The Redis replay locator is
