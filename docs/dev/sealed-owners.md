@@ -61,7 +61,7 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ClientRevocationPlan` | `config_state/transport.rs` | `paths()`, `reload_cadence_secs()`, `is_enforced()` |
 | `ChannelCredentialCustodyState` | `config_state/channel_credential_custody.rs` | `exposure()`, `material()` |
 | `CustodyState` | `config_state/custody.rs` | `material() -> CustodyMaterial<'_>`, `disk_secret_paths()`, `locators_are_filesystem_paths()`, `is_non_exporting_device()` |
-| `FreshnessWindow` | `config_state/freshness.rs` | `verifier_skew_secs()`, `replay_retain_until()`, `verifier_accepts_until()` |
+| `FreshnessWindow` | `config_state/freshness.rs` | `verifier_skew_secs()`, `replay_retain_until()` |
 | `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
 | `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()`, `shards_or_auto()`, `workers_per_shard_or_auto()` |

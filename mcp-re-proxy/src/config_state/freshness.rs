@@ -94,15 +94,6 @@ impl FreshnessWindow {
     pub fn replay_retain_until(&self, expires_at_unix: i64) -> i64 {
         expires_at_unix.saturating_add(self.max_clock_skew_secs)
     }
-
-    /// The last instant the verifier may still accept a request that expires at
-    /// `expires_at_unix`.
-    ///
-    /// The upper edge of the acceptance window, named so the relation between the two
-    /// projections is assertable rather than implied by both calling `saturating_add`.
-    pub fn verifier_accepts_until(&self, expires_at_unix: i64) -> i64 {
-        expires_at_unix.saturating_add(self.max_clock_skew_secs)
-    }
 }
 
 /// Bound the skew and resolve the fact.
@@ -142,7 +133,8 @@ mod tests {
         classify_and_validate(&config).0
     }
 
-    /// THE invariant, stated as the relation rather than as today's equality.
+    /// THE invariant, stated as the relation rather than as today's equality, and asserted
+    /// against the verifier's own §5.1 predicate rather than a local formula.
     ///
     /// A replay record that expires before the verifier stops accepting the request it
     /// stands for leaves a window in which the nonce is forgotten and the request is still
@@ -151,14 +143,32 @@ mod tests {
     /// `retention = window + propagation_margin` must keep this passing.
     #[test]
     fn retention_never_ends_before_the_verifier_stops_accepting() {
-        let w = window(300).expect("a bounded skew resolves");
-        for expires in [0_i64, 1, 1_000, 1_787_000_000, i64::MAX - 1] {
-            assert!(
-                w.replay_retain_until(expires) >= w.verifier_accepts_until(expires),
-                "retention {} < acceptance {} at expires={expires}",
-                w.replay_retain_until(expires),
-                w.verifier_accepts_until(expires)
-            );
+        for skew in [0_i64, 1, 45, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND] {
+            let w = window(skew).expect("a bounded skew resolves");
+            let policy = mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], w.verifier_skew_secs())
+                .expect("a resolved skew is within the verifier's bound");
+            for expires in [1_i64, 1_000, 1_787_000_000, i64::MAX - 1, i64::MAX] {
+                let created = expires.checked_sub(1).expect("expires is at least 1");
+                let retain = w.replay_retain_until(expires);
+                assert!(
+                    mcp_re_http_profile::verify::window_admits(
+                        created,
+                        expires,
+                        created,
+                        policy.max_clock_skew()
+                    ),
+                    "the verifier refuses inside its own window at skew={skew} expires={expires}"
+                );
+                assert!(
+                    !mcp_re_http_profile::verify::window_admits(
+                        created,
+                        expires,
+                        retain,
+                        policy.max_clock_skew()
+                    ),
+                    "verifier still accepts at retention horizon {retain} (skew={skew}, expires={expires})"
+                );
+            }
         }
     }
 
@@ -168,7 +178,6 @@ mod tests {
         let w = window(45).expect("a bounded skew resolves");
         assert_eq!(w.verifier_skew_secs(), 45);
         assert_eq!(w.replay_retain_until(1_000), 1_045);
-        assert_eq!(w.verifier_accepts_until(1_000), 1_045);
     }
 
     /// The horizon saturates rather than wrapping: a wrapped horizon is a retain_until in
