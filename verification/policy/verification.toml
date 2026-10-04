@@ -4110,7 +4110,7 @@ tested_symbols = [
   # R11-481, the freshness precondition. The arithmetic first — a window that does not
   # cover the budget, one that does, an UNSTATED bound refused rather than assumed, the
   # sub-second rounding that must not claim an earlier finish, and the far end asked
-  # through `mcp_re_http_profile::window_admits` so a signer cannot quietly disagree with
+  # through `mcp_re_http_profile::verify::window_is_fresh` so a signer cannot quietly disagree with
   # the floor it is signing for.
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::a_credential_shorter_than_the_dispatch_budget_does_not_cover_it",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::a_credential_longer_than_the_dispatch_budget_covers_it",

@@ -157,7 +157,7 @@ mod tests {
                 let created = expires.checked_sub(1).expect("expires is at least 1");
                 let retain = w.replay_retain_until(expires);
                 assert!(
-                    mcp_re_http_profile::verify::window_admits(
+                    mcp_re_http_profile::verify::window_is_fresh(
                         created,
                         expires,
                         created,
@@ -166,7 +166,7 @@ mod tests {
                     "the verifier refuses inside its own window at skew={skew} expires={expires}"
                 );
                 assert!(
-                    !mcp_re_http_profile::verify::window_admits(
+                    !mcp_re_http_profile::verify::window_is_fresh(
                         created,
                         expires,
                         retain,

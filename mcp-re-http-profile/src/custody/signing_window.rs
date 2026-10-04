@@ -63,7 +63,7 @@ impl SigningWindow {
     /// Would a conforming verifier still admit a response advertising this window, at
     /// `instant`?
     ///
-    /// Asked through [`crate::verify::window_admits`] — the §5.1 rule ITSELF, the same
+    /// Asked through [`crate::verify::window_is_fresh`] — the §5.1 rule ITSELF, the same
     /// function the request floor applies — rather than through a formula written here that
     /// agrees with it. A signer and a verifier disagreeing about freshness is precisely the
     /// failure this asks about, so the two must not be two statements.
@@ -72,7 +72,7 @@ impl SigningWindow {
     /// know the client's policy, and a verifier configured with any tolerance at all admits
     /// everything a zero-tolerance one does.
     pub fn admissible_at(&self, instant: i64) -> bool {
-        crate::verify::window_admits(self.created, self.expires, instant, 0)
+        crate::verify::window_is_fresh(self.created, self.expires, instant, 0)
     }
 
     /// The credential this window authorizes signing under.

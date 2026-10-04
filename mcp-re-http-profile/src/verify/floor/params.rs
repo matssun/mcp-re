@@ -59,7 +59,7 @@ use crate::sigbase::SignatureParams;
         },
 ))]
 #[must_use]
-pub fn window_admits(created: i64, expires: i64, now: i64, skew: i64) -> bool {
+pub fn window_is_fresh(created: i64, expires: i64, now: i64, skew: i64) -> bool {
     created.saturating_sub(skew) <= now && now < expires.saturating_add(skew) && created < expires
 }
 
@@ -119,7 +119,7 @@ pub(crate) fn check_params(
     // will still be acceptable when its exchange completes asks the SAME function, so the
     // two cannot drift into a pair of agreeing formulas.
     let skew = policy.max_clock_skew();
-    if !window_admits(created, expires, now, skew) {
+    if !window_is_fresh(created, expires, now, skew) {
         return Err(HttpProfileError::StaleWindow);
     }
     // Bound how WIDE the signer may declare its own window (§5.1). Freshness above
