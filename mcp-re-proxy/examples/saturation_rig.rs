@@ -355,6 +355,8 @@ fn spawn_proxy(
             &m.trust.to_string_lossy(),
             "--target-uri",
             TARGET_URI,
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--trust-domain",
             TRUST_DOMAIN,
             "--transport-binding",

@@ -8,7 +8,7 @@
   "created": 1700000000,
   "dpop_token": "access-token-xyz",
   "exchange": {
-    "body_b64url": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVzcG9uc2UiOnsicHJvZmlsZSI6Im1jcC1yZS1odHRwLXYxIiwicmVxdWVzdF9ldmlkZW5jZSI6eyJkaWdlc3RfYWxnIjoic2hhMjU2IiwiZGlnZXN0X3ZhbHVlIjoibThQOHF5dWw3SXdvRlNuLXVuUFpFNy1UTVVqOEVGdXpQampmSHBVZjVqbyJ9LCJzZXJ2ZXJfZGVsZWdhdGlvbiI6ImV5SjBlWEFpT2lKdFkzQXRjbVV0WkdWc1pXZGhkR2x2Yml0cWQzUWlMQ0poYkdjaU9pSkZaRVJUUVNJc0ltdHBaQ0k2SW5KdmIzUXRhMmxrSW4wLmV5SnBjM01pT2lKa2FXUTZaWGhoYlhCc1pUcHpaWEoyWlhJaUxDSnBZWFFpT2pFM01EQXdNREF4TURBc0ltNWlaaUk2TVRjd01EQXdNREV3TUN3aVpYaHdJam94TnpBd01EQXdOREF3TENKcWRHa2lPaUp5YjI5MExXdHBaQ05IV21sNk5rcEVOMnhyT0dsQ1pVdEJjRnBuTnpNeVoxWlBlR1EyZVdac1ZYWjJSRzFvVmkxeloxRnpJekVpTENKaGRXUWlPaUoyWlhKcFptbGxjaTB4SWl3aWJXTndYM0psWDNCeWIyWnBiR1VpT2lKdFkzQXRjbVV0YUhSMGNDMTJNU0lzSW0xamNGOXlaVjloZFdScFpXNWpaVjlvWVhOb0lqb2lZWFZrTFhOamIzQmxMVEVpTENKdFkzQmZjbVZmYzJWeWRtVnlYM05wWjI1bGNpSTZJbk5sY25abGNqcGxlR0Z0Y0d4bExtTnZiVHBrYVdRbE0wRmxlR0Z0Y0d4bEpUTkJjMlZ5ZG1WeU9rZGFhWG8yU2tRM2JHczRhVUpsUzBGd1dtYzNNekpuVms5NFpEWjVabXhWZG5aRWJXaFdMWE5uVVhNaUxDSnRZM0JmY21WZmEyVjVYM1Z6WlNJNkluSmxjM0J2Ym5ObExYTnBaMjVwYm1jaUxDSmtaV3hsWjJGMFpXUmZhMmxrSWpvaVIxcHBlalpLUkRkc2F6aHBRbVZMUVhCYVp6Y3pNbWRXVDNoa05ubG1iRlYyZGtSdGFGWXRjMmRSY3lJc0ltbHpjM1ZsY2w5cmFXUWlPaUp5YjI5MExXdHBaQ0lzSW5SeWRYTjBYMlZ3YjJOb0lqb2laWEJ2WTJndE1TSXNJbU51WmlJNmV5SnFkMnNpT25zaWEzUjVJam9pVDB0UUlpd2lZM0oySWpvaVJXUXlOVFV4T1NJc0ltdHBaQ0k2SWtkYWFYbzJTa1EzYkdzNGFVSmxTMEZ3V21jM016Sm5Wazk0WkRaNVpteFZkblpFYldoV0xYTm5VWE1pTENKNElqb2lNV2s0UW1Gb056bElhMTltWlZRMk1FeE9hRVZqWlVjMmJuZDZkMVJTUzBoMFkzaDRPV2haYjJaTVp5SjlmWDAuaFpCWHdTb2tsSVBhLV9sS05RZHVQX250RzBJR29kelBXYk1ROFM2WG44MGRiZmlRcTVlV004QU55VE43VUJ1bWd5NVZIekI5Wm42REJvdnRQU0w4RFEiLCJzZXJ2ZXJfc2lnbmVyIjp7ImtleWlkIjoiR1ppejZKRDdsazhpQmVLQXBaZzczMmdWT3hkNnlmbFV2dkRtaFYtc2dRcyIsInJvbGUiOiJzZXJ2ZXIiLCJzdWJqZWN0IjoiZGlkOmV4YW1wbGU6c2VydmVyIiwidHJ1c3RfZG9tYWluIjoiZXhhbXBsZS5jb20ifX19LCJpZCI6MSwianNvbnJwYyI6IjIuMCIsInJlc3VsdCI6eyJyZXN1bHRUeXBlIjoiY29tLmV4YW1wbGUvZGVmZXJyZWQifX0",
+    "body_b64url": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVzcG9uc2UiOnsicHJvZmlsZSI6Im1jcC1yZS1odHRwLXYxIiwicmVxdWVzdF9ldmlkZW5jZSI6eyJkaWdlc3RfYWxnIjoic2hhMjU2IiwiZGlnZXN0X3ZhbHVlIjoiRGlIU2QteDVOb1lobUliSTFIVHVTRE1LMGl4X0taTzBzbnlnc2Z3MDRSQSJ9LCJzZXJ2ZXJfZGVsZWdhdGlvbiI6ImV5SjBlWEFpT2lKdFkzQXRjbVV0WkdWc1pXZGhkR2x2Yml0cWQzUWlMQ0poYkdjaU9pSkZaRVJUUVNJc0ltdHBaQ0k2SW5KdmIzUXRhMmxrSW4wLmV5SnBjM01pT2lKa2FXUTZaWGhoYlhCc1pUcHpaWEoyWlhJaUxDSnBZWFFpT2pFM01EQXdNREF4TURBc0ltNWlaaUk2TVRjd01EQXdNREV3TUN3aVpYaHdJam94TnpBd01EQXdOREF3TENKcWRHa2lPaUp5YjI5MExXdHBaQ05IV21sNk5rcEVOMnhyT0dsQ1pVdEJjRnBuTnpNeVoxWlBlR1EyZVdac1ZYWjJSRzFvVmkxeloxRnpJekVpTENKaGRXUWlPaUoyWlhKcFptbGxjaTB4SWl3aWJXTndYM0psWDNCeWIyWnBiR1VpT2lKdFkzQXRjbVV0YUhSMGNDMTJNU0lzSW0xamNGOXlaVjloZFdScFpXNWpaVjlvWVhOb0lqb2lZWFZrTFhOamIzQmxMVEVpTENKdFkzQmZjbVZmYzJWeWRtVnlYM05wWjI1bGNpSTZJbk5sY25abGNqcGxlR0Z0Y0d4bExtTnZiVHBrYVdRbE0wRmxlR0Z0Y0d4bEpUTkJjMlZ5ZG1WeU9rZGFhWG8yU2tRM2JHczRhVUpsUzBGd1dtYzNNekpuVms5NFpEWjVabXhWZG5aRWJXaFdMWE5uVVhNaUxDSnRZM0JmY21WZmEyVjVYM1Z6WlNJNkluSmxjM0J2Ym5ObExYTnBaMjVwYm1jaUxDSmtaV3hsWjJGMFpXUmZhMmxrSWpvaVIxcHBlalpLUkRkc2F6aHBRbVZMUVhCYVp6Y3pNbWRXVDNoa05ubG1iRlYyZGtSdGFGWXRjMmRSY3lJc0ltbHpjM1ZsY2w5cmFXUWlPaUp5YjI5MExXdHBaQ0lzSW5SeWRYTjBYMlZ3YjJOb0lqb2laWEJ2WTJndE1TSXNJbU51WmlJNmV5SnFkMnNpT25zaWEzUjVJam9pVDB0UUlpd2lZM0oySWpvaVJXUXlOVFV4T1NJc0ltdHBaQ0k2SWtkYWFYbzJTa1EzYkdzNGFVSmxTMEZ3V21jM016Sm5Wazk0WkRaNVpteFZkblpFYldoV0xYTm5VWE1pTENKNElqb2lNV2s0UW1Gb056bElhMTltWlZRMk1FeE9hRVZqWlVjMmJuZDZkMVJTUzBoMFkzaDRPV2haYjJaTVp5SjlmWDAuaFpCWHdTb2tsSVBhLV9sS05RZHVQX250RzBJR29kelBXYk1ROFM2WG44MGRiZmlRcTVlV004QU55VE43VUJ1bWd5NVZIekI5Wm42REJvdnRQU0w4RFEiLCJzZXJ2ZXJfc2lnbmVyIjp7ImtleWlkIjoiR1ppejZKRDdsazhpQmVLQXBaZzczMmdWT3hkNnlmbFV2dkRtaFYtc2dRcyIsInJvbGUiOiJzZXJ2ZXIiLCJzdWJqZWN0IjoiZGlkOmV4YW1wbGU6c2VydmVyIiwidHJ1c3RfZG9tYWluIjoiZXhhbXBsZS5jb20ifX19LCJpZCI6MSwianNvbnJwYyI6IjIuMCIsInJlc3VsdCI6eyJyZXN1bHRUeXBlIjoiY29tLmV4YW1wbGUvZGVmZXJyZWQifX0",
     "headers": [
       [
         "Content-Type",
@@ -16,7 +16,7 @@
       ],
       [
         "Content-Digest",
-        "sha-256=:vweydmz1Af1iF3T68zRbgXGzoBgMeCWAi5WH7ZWLTa4=:"
+        "sha-256=:FTT7VH552cDHouyOyMm5ffvOf7fVgKooXwQ1NRvGmWs=:"
       ],
       [
         "Signature-Input",
@@ -24,12 +24,12 @@
       ],
       [
         "Signature",
-        "mcp-re-response=:d639m881WBfwljMvu/0eVywZniG2sTKFUhBAxJl7Xvk2gHti40NL3Nn8UpTwHFy69NbpMiAsdE3riP4dNjBiAA==:"
+        "mcp-re-response=:qDzUhHbsRrQyrD9uS4Z47H9LNFjicXvJ/6WyxOV8QzyD0tMvxHdCwMomFhz0B1yqZIoU/9/yRbhoLaBywBgVAg==:"
       ]
     ],
     "request_body_b64url": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IjRtSXRXMzloTHV1TUQwYWN6eVZuNGVBRFRHaTdrZWExa2FtRDVKcUhyOEEifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoidmVyaWZpZXItMSIsInJvdXRlIjoiYSIsInRhcmdldF91cmkiOiJodHRwczovL21jcC5leGFtcGxlLmNvbS9tY3A_cm91dGU9YSJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvY2FsbCIsInBhcmFtcyI6eyJhcmd1bWVudHMiOnt9LCJuYW1lIjoiY29uZmlybV9hY3Rpb24ifX0",
     "request_evidence_digest_alg": "sha256",
-    "request_evidence_digest_value": "m8P8qyul7IwoFSn-unPZE7-TMUj8EFuzPjjfHpUf5jo",
+    "request_evidence_digest_value": "DiHSd-x5NoYhmIbI1HTuSDMK0ix_KZO0snygsfw04RA",
     "request_headers": [
       [
         "Content-Type",
@@ -40,16 +40,28 @@
         "Bearer access-token-xyz"
       ],
       [
+        "Mcp-Method",
+        "tools/call"
+      ],
+      [
+        "Mcp-Name",
+        "confirm_action"
+      ],
+      [
+        "MCP-Protocol-Version",
+        "2026-07-28"
+      ],
+      [
         "Content-Digest",
         "sha-256=:q5AEB/KsnQAWTYBm3oG9yaS0spTTAcWSB4nc1uXxu7k=:"
       ],
       [
         "Signature-Input",
-        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-sdk-unrecognized\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-name\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-sdk-unrecognized\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
       ],
       [
         "Signature",
-        "mcp-re=:3bZucAjfC+Fm74IZmiXdVH6ExUrh6YcN/ntAnInDoya7+RTO38w4t3bTORqtBi1TUGAUJdvyUMTRhtmvYHz2Cw==:"
+        "mcp-re=:l+Ux8PO71hbNtxqcqBkBPD6RiUyHk7xBtrJZrRK11xSvVYtUGcNhgSYZWkjylNc1m2qWWiwnfhe86+Tu0Mv9Dg==:"
       ]
     ],
     "request_method": "POST",

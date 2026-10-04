@@ -153,11 +153,12 @@ clientCrl:
   # which the connection-age bound above forces within maxConnectionAgeSeconds.
   reloadSeconds: 300
 
-# §4.1 MCP transport contract (RQ-06). Each entry adds an accepted
-# `Mcp-Protocol-Version`; with none declared there is NO transport contract, so
-# required-header presence and Mcp-Name/params.name agreement are not asserted.
-mcpProtocolVersions: []
-#  - "2026-07-28"
+# §4.1 MCP transport contract (RQ-06), mandatory: each entry adds an accepted
+# `Mcp-Protocol-Version`, and at least one is required. Every request must carry the
+# transport headers and `Mcp-Name` must agree with `params.name`; there is no setting
+# that turns the contract off.
+mcpProtocolVersions:
+  - "2026-07-28"
 
 # ADR-MCPS-035 per-request security record: `none` | `stderr`. `none` means this
 # deployment keeps NO per-request attribution — which actor was admitted, which calls

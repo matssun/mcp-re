@@ -48,6 +48,8 @@ fn legal() -> DeploymentRequest {
         "http://127.0.0.1:8080/mcp",
         "--target-uri",
         "https://mcp.example.com/mcp",
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--delegated-trust-epoch",
         "epoch-min",
         "--trust-domain",

@@ -1,75 +1,59 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `McpTransportContract` machine — `work/CONFIG-STATE-ATLAS.md` §C.12.
+//! The MCP transport/version contract this deployment enforces (#415 rev 2 §4.1).
 //!
-//! Whether this deployment enforces the MCP transport/version contract (#415 rev 2 §4.1).
-//! Two states:
+//! The contract is mandatory. Every request carries `Mcp-Method` and `MCP-Protocol-Version`,
+//! `Mcp-Name` for `tools/call` and `resources/read` agrees with the protected body, and a
+//! version header naming a value outside the accepted set is refused. A deployment chooses
+//! the accepted set; it cannot choose to have no contract, because without one a signed
+//! request may name one tool in its header and invoke another in its body.
 //!
-//! | State | Required | Forbidden | Guards |
-//! |---|---|---|---|
-//! | `Unconstrained` | — | — | — |
-//! | `Enforced` | at least one accepted protocol version | — | — |
-//!
-//! **The twelfth machine, and it was found by looking outward rather than inward.** The
-//! atlas named eleven because eleven were reachable from the fields the validation boundary
-//! already read. This one was reachable only from a capability seam:
-//! `serving_capabilities::mcp_transport_contract` tested `mcp_protocol_versions.is_empty()`
-//! and branched on it, which is a classification — made below layer A, by the code that
-//! consumes it.
-//!
-//! **The two states differ in what is required of every request, not in a parameter.**
-//! Under `Enforced`, `Mcp-Method` and `MCP-Protocol-Version` are mandatory on every POST,
-//! `Mcp-Name` is mandatory for `tools/call` and `resources/read` and must agree with the
-//! protected body, legacy header omission is off, and a version header naming a value
-//! outside the accepted set is refused. Under `Unconstrained` none of that is asserted.
-//! That is a posture, which is what makes this a machine rather than a flag.
-//!
-//! **The accepted set is the DEPLOYMENT's, and this machine does not narrow it.** No value
-//! is refused here, and none is parsed. The set is compared by exact string equality at
-//! request time, there is no canonical protocol-version type anywhere in the workspace, and
-//! `McpTransportPolicy::mcp_2026_07_28` takes the set as a parameter precisely so the
-//! deployment chooses it — "its consent, not the client's claim". A set that no ordinary
-//! client can satisfy is therefore an operator's decision, however unusual, and inventing a
-//! refusal for it here would narrow a vocabulary the product deliberately delegates.
-//! Whether it SHOULD be narrowed is a product question, and a different commit.
+//! **The accepted set is the DEPLOYMENT's, and this owner does not narrow it.** No value is
+//! refused here beyond emptiness, and none is parsed. The set is compared by exact string
+//! equality at request time, there is no canonical protocol-version type anywhere in the
+//! workspace, and `McpTransportPolicy::mcp_2026_07_28` takes the set as a parameter
+//! precisely so the deployment chooses it — "its consent, not the client's claim". A set no
+//! ordinary client can satisfy is an operator's decision, however unusual. Whether it SHOULD
+//! be narrowed is a product question, and a different commit.
 
 use crate::deployment_request::DeploymentRequest;
 
-/// Which MCP transport-contract state a configuration requests.
-/// The representation is private to this module and [`classify`] is the only producer.
-/// Emptiness is what selects the unconstrained posture, so the enforcing state carries the
-/// set that made it so and nothing downstream re-asks whether there is one.
+/// The protocol versions a configuration declares. The representation is private and
+/// [`classify`] is the only producer; [`violations`] refuses the empty set before a
+/// configuration state exists, so a state that is held names at least one version.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpTransportContractState {
-    /// The versions this deployment serves. Empty means no contract is asserted: the
-    /// transport headers are not required and `Mcp-Name` is not checked against the body,
-    /// so a signed request may name one tool in its header and invoke another in its body.
     versions: Vec<String>,
 }
 
 impl McpTransportContractState {
-    /// Whether the transport contract is asserted at all.
-    ///
-    /// Named here so a consumer reads the posture rather than re-testing the collection it
-    /// happens to be carrying.
-    pub fn is_enforced(&self) -> bool {
-        !self.versions.is_empty()
-    }
-
-    /// The versions the contract is enforced for, or `None` when no contract is asserted.
-    ///
-    /// One answer rather than two: a consumer cannot report the contract enforced while
-    /// holding an empty set, because the posture IS the set's non-emptiness.
-    pub fn enforced_versions(&self) -> Option<&[String]> {
-        (!self.versions.is_empty()).then_some(&self.versions)
+    /// The versions the contract is enforced for.
+    pub fn versions(&self) -> &[String] {
+        &self.versions
     }
 }
 
-/// Recognise the requested state. Total: every `DeploymentRequest` names one, and neither state has
-/// a column to check.
+/// Recognise the declared set. Total: emptiness is [`violations`]' to refuse, not a state.
 pub fn classify(config: &DeploymentRequest) -> McpTransportContractState {
     McpTransportContractState {
         versions: config.mcp_protocol_versions.clone(),
     }
+}
+
+/// The contract is mandatory: at least one accepted protocol version, none of them blank.
+pub fn violations(config: &DeploymentRequest) -> Vec<String> {
+    let blank = config
+        .mcp_protocol_versions
+        .iter()
+        .any(|v| v.trim().is_empty());
+    if config.mcp_protocol_versions.is_empty() || blank {
+        return vec![
+            "the MCP transport contract is mandatory: pass --mcp-protocol-version <version> \
+             (repeatable) naming each protocol version this deployment serves, for example \
+             2026-07-28"
+                .to_string(),
+        ];
+    }
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -77,57 +61,33 @@ mod tests {
     use super::*;
     use crate::config_state::test_support::legal_config;
 
-    fn state_of(mutate: impl FnOnce(&mut DeploymentRequest)) -> McpTransportContractState {
+    fn request_with(versions: &[&str]) -> DeploymentRequest {
         let mut config = legal_config();
-        mutate(&mut config);
-        classify(&config)
+        config.mcp_protocol_versions = versions.iter().map(|v| (*v).to_string()).collect();
+        config
     }
 
+    /// The declared set is carried verbatim, in the order given.
     #[test]
-    fn every_legal_state_form_is_classified() {
-        assert_eq!(
-            state_of(|c| c.mcp_protocol_versions.clear()).enforced_versions(),
-            None
-        );
-        assert_eq!(
-            state_of(|c| c.mcp_protocol_versions = vec!["2026-07-28".to_string()])
-                .enforced_versions(),
-            Some(["2026-07-28".to_string()].as_slice())
-        );
+    fn the_state_carries_the_set_the_operator_declared() {
+        let state = classify(&request_with(&["2026-07-28", "2025-11-05"]));
+        assert_eq!(state.versions(), ["2026-07-28", "2025-11-05"]);
     }
 
-    /// `Unconstrained` is a posture the operator chose, not configuration that is missing.
-    /// Nothing is refused for its absence.
+    /// The contract is not optional: no version, or a blank one, is a refusal.
     #[test]
-    fn the_absent_contract_is_a_state_and_not_a_defect() {
-        assert!(!state_of(|c| c.mcp_protocol_versions.clear()).is_enforced());
+    fn declaring_no_version_is_refused_not_a_posture() {
+        assert_eq!(violations(&request_with(&[])).len(), 1);
+        assert_eq!(violations(&request_with(&["2026-07-28", " "])).len(), 1);
+        assert!(violations(&request_with(&["2026-07-28"])).is_empty());
     }
 
-    /// The enforced state carries the set that selected it, so the seam has no emptiness
-    /// left to re-test. Asserted with versions the fixture does not name.
-    #[test]
-    fn the_enforced_state_carries_the_set_that_selected_it() {
-        let state = state_of(|c| {
-            c.mcp_protocol_versions = vec!["2026-07-28".to_string(), "2025-11-05".to_string()];
-        });
-        let versions = state
-            .enforced_versions()
-            .expect("a declared version selects the enforced state");
-        assert_eq!(versions, ["2026-07-28", "2025-11-05"]);
-        assert!(!versions.is_empty(), "non-empty by construction");
-    }
-
-    /// The set is the deployment's own. This machine parses nothing and refuses nothing:
-    /// comparison is exact string equality at request time, and the accepted set is the
-    /// deployment's consent rather than a protocol constant. A set no ordinary client can
-    /// satisfy is an operator's decision, and whether the product should narrow that
-    /// vocabulary is not this machine's question.
+    /// The set is the deployment's own: this owner parses nothing and refuses nothing but
+    /// emptiness. A set no ordinary client can satisfy is an operator's decision.
     #[test]
     fn an_unusual_accepted_set_is_classified_rather_than_refused() {
-        assert_eq!(
-            state_of(|c| c.mcp_protocol_versions = vec!["not-a-version".to_string()])
-                .enforced_versions(),
-            Some(["not-a-version".to_string()].as_slice())
-        );
+        let config = request_with(&["not-a-version"]);
+        assert!(violations(&config).is_empty());
+        assert_eq!(classify(&config).versions(), ["not-a-version"]);
     }
 }

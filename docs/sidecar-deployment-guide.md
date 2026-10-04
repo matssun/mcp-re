@@ -66,6 +66,7 @@ shown are the real defaults from that parser.
 | `--signing-key-seed`, `--tls-cert`, `--tls-key`, `--client-ca` | Key-material locations (paths for `file`, env-var names for `env`). |
 | `--trust` | Path to the JSON trust file (request signers + authorization issuers). |
 | `--target-uri <uri>` | **Required.** The URI a signed request must name. With `--audience` and `--route` it forms the audience TUPLE the verifier compares against, so it must equal what the client signs as `@target-uri` — not merely resemble it. |
+| `--mcp-protocol-version <version>` | **Required, repeatable.** Each occurrence adds an accepted `MCP-Protocol-Version` (for example `2026-07-28`). The MCP transport contract is mandatory: every request must carry `Mcp-Method` and `MCP-Protocol-Version`, `Mcp-Name` for `tools/call` and `resources/read` must agree with the protected body, and a version outside the accepted set is refused. There is no way to run without it. |
 | `--trust-domain <domain>` | **Required.** The trust domain the server actor identity is scoped to. It must agree with what clients sign; a mismatch is an actor-resolution failure, not a warning. |
 | `--inner-http-url <url>` | The Streamable-HTTP inner MCP backend the PEP forwards to. **Required.** Repeat or comma-separate for a backend fleet (round-robin). |
 
@@ -275,6 +276,7 @@ bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --client-ca /etc/mcp-re/client-ca.pem \
   --trust /etc/mcp-re/trust.json \
   --target-uri https://mcp.example.com/mcp \
+  --mcp-protocol-version 2026-07-28 \
   --trust-domain example.com \
   --transport-binding exact \
   --transport-identity-source uri_san \

@@ -130,6 +130,8 @@ fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "http://127.0.0.1:9",
         "--target-uri",
         TARGET,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--route",
         "a",
         "--replay-redis-url",
@@ -303,7 +305,10 @@ fn serve_one_full(proxy: &HttpProfileProxy, nonce: &str) -> (u16, Option<String>
     let signed = mcp_re_client_core::build_signed_request(
         &serde_json::json!(1),
         "tools/call",
-        serde_json::Map::new(),
+        serde_json::json!({"name": "read"})
+            .as_object()
+            .cloned()
+            .unwrap_or_default(),
         TARGET,
         &inputs,
         &client_key(),
@@ -825,7 +830,8 @@ async fn a_retention_failure_after_execution_is_indeterminate_and_leaves_its_res
         method: "POST".to_owned(),
         target_uri: TARGET.to_owned(),
         headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     let response = mcp_re_http_profile::HttpResponse {
         status: 200,

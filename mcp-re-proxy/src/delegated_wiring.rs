@@ -199,6 +199,8 @@ mod tests {
             "http://127.0.0.1:9",
             "--target-uri",
             "https://mcp.example.com/mcp?route=a",
+            "--mcp-protocol-version",
+            "2026-07-28",
             // A durable replay selection so parse-time unsafe-config checks pass; the
             // path is not opened at parse (this builder reads config fields only).
             "--replay-redis-url",

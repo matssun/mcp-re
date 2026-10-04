@@ -233,6 +233,8 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // scheme-less `--target-uri` does not weaken the request-target reconstruction check,
     // it disables it for every request.
     violations.extend(residue::target_uri_violations(config));
+    // The transport contract is mandatory: the accepted version set must name a version.
+    violations.extend(crate::config_state::mcp_transport_contract::violations(config));
     // Seventh, and it arrives here from the TRUST plane, where it had no business being:
     // whether a deployment names an inner server is a statement about the request, not
     // about trust, and refusing it there meant the trust plane could reject a

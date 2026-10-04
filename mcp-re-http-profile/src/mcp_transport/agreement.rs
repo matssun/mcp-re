@@ -9,9 +9,8 @@
 //! direction.
 //!
 //! Two questions are asked of each header, and they are different questions: **must it be
-//! here** and **does it tell the truth**. `allow_legacy_header_omission` gates the first
-//! only. A deployment serving pre-2026-07-28 clients waives *you must send it*; it never
-//! waives *it may lie*, which is why `legacy` appears in the absence arms and nowhere else.
+//! here** and **does it tell the truth**. Both are answered for every request: the contract
+//! is not optional for a deployment, and no waiver lets a request omit a header it requires.
 
 use serde_json::Value;
 
@@ -26,30 +25,23 @@ use super::McpTransportPolicy;
 
 /// What the request said about itself in the three transport headers.
 ///
-/// Read once, together, because *carries none of them* is a fact about the SET rather than
-/// about any one header: a request with none is a candidate for legacy treatment, while one
-/// carrying some but not all is not legacy — it is malformed for its own version.
+/// Read once, together, so each check sees the same three values.
 struct TransportHeaders {
     method: Option<String>,
     version: Option<String>,
     name: Option<String>,
-    /// The deployment allows omission AND this request omitted all three.
-    legacy: bool,
 }
 
 impl TransportHeaders {
-    fn read(policy: &McpTransportPolicy, request: &HttpRequest) -> Result<Self, HttpProfileError> {
+    fn read(request: &HttpRequest) -> Result<Self, HttpProfileError> {
         let method = single_header(&request.headers, MCP_METHOD_HEADER)?.map(str::to_owned);
         let version =
             single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)?.map(str::to_owned);
         let name = single_header(&request.headers, MCP_NAME_HEADER)?.map(str::to_owned);
-        let carries_any = method.is_some() || version.is_some() || name.is_some();
-        let legacy = policy.allow_legacy_header_omission && !carries_any;
         Ok(TransportHeaders {
             method,
             version,
             name,
-            legacy,
         })
     }
 }
@@ -66,7 +58,7 @@ impl McpTransportPolicy {
         body_method: Option<&str>,
     ) -> Result<(), HttpProfileError> {
         let Some(h) = headers.method.as_deref() else {
-            if self.require_mcp_method && !headers.legacy {
+            if self.require_mcp_method {
                 return Err(HttpProfileError::McpTransportHeaderMissing(
                     MCP_METHOD_HEADER,
                 ));
@@ -96,7 +88,7 @@ impl McpTransportPolicy {
         params: Option<&Value>,
     ) -> Result<(), HttpProfileError> {
         let Some(h) = headers.version.as_deref() else {
-            if self.require_protocol_version_header && !headers.legacy {
+            if self.require_protocol_version_header {
                 return Err(HttpProfileError::McpTransportHeaderMissing(
                     MCP_PROTOCOL_VERSION_HEADER,
                 ));
@@ -121,8 +113,7 @@ impl McpTransportPolicy {
     /// `Mcp-Name`: required for the methods that name a target, and agreeing with the params
     /// member that carries it.
     ///
-    /// Agreement is checked whenever the header is present, even under legacy omission — the
-    /// flag never licenses a lie. And when the method is one that REQUIRES this header, the
+    /// Agreement is checked whenever the header is present. And when the method is one that REQUIRES this header, the
     /// params value it mirrors must exist: without it there is nothing for the signed header
     /// to agree with and its value would be unconstrained, so an absent `params.name` /
     /// `params.uri` fails closed rather than licensing an arbitrary covered name.
@@ -137,10 +128,7 @@ impl McpTransportPolicy {
             return Ok(());
         };
         let Some(h) = headers.name.as_deref() else {
-            if !headers.legacy {
-                return Err(HttpProfileError::McpTransportHeaderMissing(MCP_NAME_HEADER));
-            }
-            return Ok(());
+            return Err(HttpProfileError::McpTransportHeaderMissing(MCP_NAME_HEADER));
         };
         let Some(expected) = params.and_then(|p| source.extract(p)) else {
             return Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER));
@@ -162,7 +150,7 @@ impl McpTransportPolicy {
             .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
         let body_method = body.get("method").and_then(Value::as_str);
         let params = body.get("params");
-        let headers = TransportHeaders::read(self, request)?;
+        let headers = TransportHeaders::read(request)?;
         self.check_method(&headers, body_method)?;
         self.check_protocol_version(&headers, &body, params)?;
         self.check_name(&headers, body_method, params)
@@ -190,32 +178,6 @@ mod tests {
     }
 
     const CALL: &str = r#"{"method":"tools/call","params":{"name":"deploy"}}"#;
-
-    /// Legacy omission waives *you must send it*, never *it may lie*. A request that omits
-    /// every transport header is served; one that carries a header contradicting the
-    /// protected body is refused whether or not the flag is set.
-    #[test]
-    fn legacy_omission_waives_presence_and_never_agreement() {
-        let lenient = policy().with_legacy_header_omission(true);
-        assert!(lenient.enforce(&request(&[], CALL)).is_ok());
-        assert!(matches!(
-            lenient.enforce(&request(&[(MCP_METHOD_HEADER, "tools/list")], CALL)),
-            Err(HttpProfileError::McpMethodDivergence)
-        ));
-    }
-
-    /// Carrying SOME of the headers is not legacy — it is malformed for its own version. The
-    /// candidate-for-legacy fact is about the SET, which is why the three are read together.
-    #[test]
-    fn a_partially_headered_request_is_not_a_legacy_client() {
-        let lenient = policy().with_legacy_header_omission(true);
-        assert!(matches!(
-            lenient.enforce(&request(&[(MCP_METHOD_HEADER, "tools/call")], CALL)),
-            Err(HttpProfileError::McpTransportHeaderMissing(
-                MCP_PROTOCOL_VERSION_HEADER
-            ))
-        ));
-    }
 
     /// A method that REQUIRES `Mcp-Name` and a body with nothing for it to mirror fails
     /// closed. Otherwise an absent `params.name` would license an arbitrary covered name.

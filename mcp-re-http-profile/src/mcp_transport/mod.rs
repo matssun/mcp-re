@@ -25,11 +25,9 @@
 //! consent to serve it. That is why the supported-version set lives here and not
 //! on the wire.
 //!
-//! **`allow_legacy_header_omission` gates ABSENCE only, never agreement.** A
-//! deployment that still serves pre-2026-07-28 clients sets it: a request that
-//! omits these headers is then treated as a legacy client rather than rejected.
-//! Whatever headers such a request DOES carry are still validated in full — the
-//! flag waives "you must send it", never "it may lie".
+//! **The contract is mandatory.** A deployment cannot opt out of it and no waiver lets a
+//! request omit a header it requires: presence, version and agreement are checked for every
+//! request the verifier admits.
 
 use serde_json::Value;
 
@@ -43,14 +41,16 @@ use crate::message::HttpRequest;
 /// The bodied contract: three covered headers, each checked against the protected body it
 /// claims to describe.
 mod agreement;
+/// The producer's half: the three headers a signed request carries, derived from its body.
+mod request_headers;
+pub(crate) use request_headers::add_contract_headers;
+pub use request_headers::MCP_PROTOCOL_VERSION;
 
 /// The verifier-local MCP transport contract (§4.1).
 ///
 /// [`McpTransportPolicy::mcp_2026_07_28`] is the only constructor; it takes the
-/// deployment's accepted protocol-version set. The only waiver is
-/// [`McpTransportPolicy::with_legacy_header_omission`], which waives header absence for a
-/// request carrying none of the three headers and never agreement. All fields are
-/// private and read-only after construction.
+/// deployment's accepted protocol-version set. All fields are private and read-only after
+/// construction.
 #[derive(Debug, Clone)]
 pub struct McpTransportPolicy {
     supported_protocol_versions: Vec<String>,
@@ -59,7 +59,6 @@ pub struct McpTransportPolicy {
     /// `(method, where its Mcp-Name must agree)` — the methods for which `Mcp-Name`
     /// is mandatory and what it binds to.
     mcp_name_required: Vec<(String, McpNameSource)>,
-    allow_legacy_header_omission: bool,
     /// The `_meta` key carrying the protocol version in the body, checked under
     /// top-level `_meta` and under `params._meta`.
     protocol_version_body_key: String,
@@ -68,8 +67,8 @@ pub struct McpTransportPolicy {
 impl McpTransportPolicy {
     /// The strict 2026-07-28 per-request contract: `Mcp-Method` and
     /// `MCP-Protocol-Version` mandatory on every POST, `Mcp-Name` mandatory for
-    /// `tools/call` (→ `params.name`) and `resources/read` (→ `params.uri`), no
-    /// legacy omission. `supported_versions` is the deployment's accepted set —
+    /// `tools/call` (→ `params.name`) and `resources/read` (→ `params.uri`).
+    /// `supported_versions` is the deployment's accepted set —
     /// its consent, not the client's claim.
     pub fn mcp_2026_07_28(supported_versions: &[&str]) -> Self {
         McpTransportPolicy {
@@ -85,17 +84,14 @@ impl McpTransportPolicy {
                 .into_iter()
                 .filter_map(|m| mcp_name_source(m).map(|s| (m.to_owned(), s)))
                 .collect(),
-            allow_legacy_header_omission: false,
             protocol_version_body_key: "io.modelcontextprotocol/protocolVersion".to_owned(),
         }
     }
 
-    /// A mixed-version deployment: the same contract, but a request omitting the
-    /// transport headers is served as a legacy client rather than rejected.
-    /// Present headers are still validated in full.
-    pub fn with_legacy_header_omission(mut self, allow: bool) -> Self {
-        self.allow_legacy_header_omission = allow;
-        self
+    /// The contract a [`VerifierPolicy`](crate::VerifierPolicy) carries until a deployment
+    /// names its accepted versions: this profile's own protocol version.
+    pub fn profile_default() -> Self {
+        Self::mcp_2026_07_28(&[MCP_PROTOCOL_VERSION])
     }
 
     /// Override the accepted protocol-version set.
@@ -205,16 +201,6 @@ mod tests {
         );
         assert_eq!(
             strict().enforce(&r).unwrap_err(),
-            HttpProfileError::McpTransportHeaderMissing("mcp-protocol-version"),
-        );
-
-        // Carrying SOME transport headers is not legacy: the same request is
-        // refused by a deployment that permits legacy omission.
-        assert_eq!(
-            strict()
-                .with_legacy_header_omission(true)
-                .enforce(&r)
-                .unwrap_err(),
             HttpProfileError::McpTransportHeaderMissing("mcp-protocol-version"),
         );
     }
@@ -363,30 +349,5 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"},"params":{"name":"read","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#,
         );
         assert!(strict().enforce(&agreeing).is_ok());
-    }
-
-    #[test]
-    fn legacy_omission_waives_absence_but_never_agreement() {
-        let policy = strict().with_legacy_header_omission(true);
-
-        // A request with NONE of the headers is served as legacy.
-        let bare = req(
-            vec![],
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
-        );
-        policy
-            .enforce(&bare)
-            .expect("legacy client omitting all headers is accepted");
-
-        // But a legacy-eligible deployment still rejects a PRESENT header that lies.
-        let lying = req(
-            vec![("Mcp-Method", "tools/list")],
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
-        );
-        assert_eq!(
-            policy.enforce(&lying).unwrap_err(),
-            HttpProfileError::McpMethodDivergence,
-            "the flag waives 'must send', never 'may lie'"
-        );
     }
 }

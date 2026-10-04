@@ -215,7 +215,7 @@ fn hop_with_bad_window(created: i64, expires: i64, nonce: &str) -> RetainedHop {
         method: "POST".into(),
         target_uri: TARGET.into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
     };
     let req_evidence = sign_request_full(
         &mut request,
@@ -262,7 +262,7 @@ fn hop_at(
         method: "POST".into(),
         target_uri: TARGET.into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
     };
     let req_evidence = sign_request_full(
         &mut request,
@@ -997,7 +997,7 @@ fn hop_with_block(nonce: &str, blk: &HttpRequestEvidenceBlock, body: &str) -> Re
         method: "POST".into(),
         target_uri: TARGET.into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
     };
     let req_evidence = sign_request_full(
         &mut request,
@@ -1086,7 +1086,7 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
         method: "POST".into(),
         target_uri: TARGET.into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
     };
     let req_evidence = mcp_re_http_profile::sign_request(
         &mut request,

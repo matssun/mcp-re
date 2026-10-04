@@ -8232,10 +8232,10 @@ theorem = "THM-0042"
 conjunct = "the committed bytes are compared against a fresh generation rather than trusted, and a tampered retained body no longer corresponds"
 path = "mcp-re-conformance/tests/vectors/scitt/retained/retained-hops.json"
 anchor = """
-          "sha-256=:CpSwyc8gK8crCz3K6Zp7XrzFubjZK3chS7T+rjLBlAs=:"
+          "sha-256=:xUQ/F0iWNHbU2kM+qstXQkH+aTCGihUCrXu89Tl4Bas=:"
 """
 weakening = """
-          "sha-256=:CpSwyc8gK8crCz3K6Zp7XrzFubjZK3chS7T+rjLBlAt=:"
+          "sha-256=:xUQ/F0iWNHbU2kM+qstXQkH+aTCGihUCrXu89Tl4BaA:"
 """
 expect_red = [
   "//mcp-re-conformance:scitt_retained_corpus_test#the_committed_bytes_are_the_ones_this_implementation_produces",
@@ -9058,24 +9058,24 @@ command line writes down.
 id = "M317-proxy-the-enforced-contract-carries-the-set-that-selected-it"
 unit = "proxy.mcp_transport_contract_state"
 theorem = "THM-0077"
-conjunct = "a deployment that named accepted protocol versions holds the ENFORCING state, and the state carries the set that selected it"
+conjunct = "a deployment that names no accepted protocol version is refused at the configuration boundary rather than served with no transport contract"
 path = "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
-anchor = "        (!self.versions.is_empty()).then_some(&self.versions)\n"
-weakening = "        None\n"
+anchor = "    if config.mcp_protocol_versions.is_empty() || blank {\n"
+weakening = "    if false {\n"
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::every_legal_state_form_is_classified",
+  "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::declaring_no_version_is_refused_not_a_posture",
 ]
 note = """
-THE CONTRACT IS WHAT MAKES `Mcp-Name` AGREE WITH THE PROTECTED BODY. Under `Enforced`,
-`Mcp-Method` and `MCP-Protocol-Version` are mandatory on every POST, `Mcp-Name` is mandatory
-for `tools/call` and `resources/read` and must match the body, and a version outside the
-accepted set is refused. Under `Unconstrained` none of that is asserted — so a signed request
-may name one tool in its header and invoke another in its body.
+THE CONTRACT IS WHAT MAKES `Mcp-Name` AGREE WITH THE PROTECTED BODY. `Mcp-Method` and
+`MCP-Protocol-Version` are mandatory on every POST, `Mcp-Name` is mandatory for `tools/call`
+and `resources/read` and must match the body, and a version outside the accepted set is
+refused. With no accepted set none of that can be asserted, so a signed request could name one
+tool in its header and invoke another in its body.
 
-The weakening makes the enforcing projection answer `None` for every deployment. The state is
-still built, the versions are still carried, and nothing errors: the seam simply reads the
-posture as unconstrained and stops asserting the contract the operator selected. That is a
-posture nobody chose, reached without a single refusal being deleted.
+The weakening deletes the refusal of an empty (or blank) set. The state is still built from
+whatever the request says and nothing errors at this boundary: a deployment that named no
+version reaches the serving seam, which has a contract to assert and nothing to assert it
+against. That is a posture nobody chose, reached by deleting one guard.
 """
 
 [[probe]]

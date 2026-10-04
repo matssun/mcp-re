@@ -1,43 +1,43 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
   "verify_at_unix": 1700000100,
-  "corpus_digest": "fd2dc4599086d2c7c50b15a90504e202967fc0dfdf973f58438059e6a11fb1cc",
+  "corpus_digest": "899b752474c67735514643a18633192702aa4b31e4b943bdb9779da633d16488",
   "fixtures": [
     {
       "file": "h01_request_valid.json",
-      "sha256": "cedcd75b2dfaacba7bdda5c8ba98d16980e7b444185ab6896caf96a334e6b79e"
+      "sha256": "f951cd01e11eeda541997cf3005c06307976c4b3504af3e8e9542611d321aa0f"
     },
     {
       "file": "h02_request_body_tamper.json",
-      "sha256": "df7f015860bef88877173912f76ea6a8dc77b4857ec2476fc7676fcfdd9bcd95"
+      "sha256": "ac0b304f611ff7199b0c11ef23b098aa9ec482c6b962d835a21c29abe20fb0db"
     },
     {
       "file": "h03_request_missing_covered_component.json",
-      "sha256": "4ba66d91b887e5e297a14e18af68bac293b2465ebd8816833f4e89ed0ce244c6"
+      "sha256": "6b1f1efa8890287be3eab63639992eb7c4fbf66a5640c2f4fefde77d6c44a779"
     },
     {
       "file": "h04_request_foreign_tag.json",
-      "sha256": "cf87cf69316b9d85290c4add1b122af51580ef26a7ab69999cdce0633bd497f1"
+      "sha256": "3b9b6cd45f3737e27d5ee397429bad7503be1f60c13a118769f3ed34201af4e1"
     },
     {
       "file": "h23_request_alg_not_allowlisted.json",
-      "sha256": "a204d2b5c17b015ee2f06ae44af64e1e54d412f778503fb4249b8dde6a5f4e77"
+      "sha256": "2ebd38f56401beda4e42df66c872f33206f94806baa2d0dde35646c72f65bfa7"
     },
     {
       "file": "h05_request_stale_window.json",
-      "sha256": "cbd1e41620663f8ad8874f9519248c82fa12f7882fef0fd634954070ea88ab26"
+      "sha256": "542d62b88b84c7720a44f77b5400fb10d1fca7d8cc89c252845878198be660eb"
     },
     {
       "file": "h06_request_wrong_keyid.json",
-      "sha256": "2f2c102b1a327c94acf4736c28da76865fab1983d4f053b068a5cc826b1393ee"
+      "sha256": "58fcdb95131642f915001f1f0dad1dddde0332b554b10fad9aff2a4999efee38"
     },
     {
       "file": "h07_response_valid.json",
-      "sha256": "df7a0dcace0088f9b5fdd4a97e8945f4dfe211cabd38583f67b38210e6df9b03"
+      "sha256": "4b19197cefdc786e7ff1a3334746424ce7165346d5e874046d961ffce8e35526"
     },
     {
       "file": "h08_response_splice.json",
-      "sha256": "5e88fbd5b0237a2b35b236228b76cb1cf9a23129392b904eca293dc324d40371"
+      "sha256": "6321f5356888b20440e0379654472895669fbf80003f43891fc4b8f0f6fcbbbf"
     },
     {
       "file": "h09_artifact_dpop_ath_valid.json",
@@ -77,35 +77,35 @@
     },
     {
       "file": "h34_bodyless_202_valid.json",
-      "sha256": "655a318938c241f9d85e6f2810aacb647f61ab419a97a342e4f949f0a9424800"
+      "sha256": "79f1146bd50df9cbdcc4b0cd51d87ba7cc1801ab27e34d692bada3f053df25dc"
     },
     {
       "file": "h35_bodyless_202_content_type_present.json",
-      "sha256": "482877be512c694aea7193ddd2fa600f22b938b7625e4ff1199e6125f99f8734"
+      "sha256": "3b4cea6bd071ec81d9e226fd60467bcd5a94b857be8ffd3a9e56d3ed77d5f90a"
     },
     {
       "file": "h36_bodyless_202_content_injected.json",
-      "sha256": "f1b1dbba514ab7d11e5c8bb9569d905205a81cfb155dba5940dfed67702079ba"
+      "sha256": "2a5f6f9ac1324f9152f12aafa0b3de2a13f9d369421409eebafd301b4b79a788"
     },
     {
       "file": "h37_bodyless_202_splice.json",
-      "sha256": "8fb759a96d4a3fb7979b1b3b27d76385fcd62889b569ca45b549b865f750154e"
+      "sha256": "2c7bda230f2e7487a5d45cd6f3f4ba5d494914fbd6ce6d890c6e40fc7b6004fc"
     },
     {
       "file": "h50_bodyless_202_retransmission.json",
-      "sha256": "691db3b1cb7114e211c6bd7d028d9cf62fa069bff25ad8ddcd395060569649d7"
+      "sha256": "7c9ec894781ad3ca84cd57dd6e7d51b3b51fc3e39aa6a1a7725fd6393e934149"
     },
     {
       "file": "h31_mcp_headers_covered_valid.json",
-      "sha256": "7dd845cfc2e2baccd9aa90002b0826b69d2959e190c4b85a8724c788711fe5af"
+      "sha256": "7ef4c52ae3350989e41faeaac87f98775b51f937b050fe966292474eb72cf850"
     },
     {
       "file": "h32_mcp_method_present_but_uncovered.json",
-      "sha256": "0a1ab57f3305b69ca91a8dfd9430aa6ce2254086853273f92110ad426b41b047"
+      "sha256": "7d0375fdf0663589b3c201dfc254910396ed8a6b77e817e81cd2eebb971baae7"
     },
     {
       "file": "h33_mcp_method_body_divergence.json",
-      "sha256": "f8c985169153a950d232f422face5f02aa95dbbc6552ee42c6ab7e2102305920"
+      "sha256": "b4b308740b41d73c7b48e958de7c5a87df0f8cd19256e1f28f9ff265c6ada81b"
     },
     {
       "file": "h38_transport_contract_valid.json",
@@ -125,15 +125,15 @@
     },
     {
       "file": "h47_delegated_202_valid.json",
-      "sha256": "b6acf095c225d14b751e72e99e81cc675fe8e9905b93dace7da71ca3ae0b12a7"
+      "sha256": "772a49b0070b7b10a929630108935e9a7e9a79872c57e75ae87eacc85417e669"
     },
     {
       "file": "h48_delegated_202_credential_uncovered.json",
-      "sha256": "b60e3afc53711568564ac9b6668fbf47f29d7de3b7be8ef816ca6a4cf88215a4"
+      "sha256": "8b4823b1664b71bad4b09c1de448dc2e5357fba70444cba2a71961e035d455ad"
     },
     {
       "file": "h49_delegated_202_revoked.json",
-      "sha256": "0ce20bf5e3f8f410adb2081a5532c6579533150be08e6053b1af9e5a9cac74eb"
+      "sha256": "61952c6bc477fb2474cbbad489903c76fe102b08bb174ffbc7d4a0428277a13a"
     },
     {
       "file": "h42_admission_current_admitted.json",
@@ -157,39 +157,39 @@
     },
     {
       "file": "h30_response_sse_on_covered_exchange.json",
-      "sha256": "281018701a1624ac29b0a1bbca50febdadfd8985db2da76090a847bb908745ab"
+      "sha256": "5bca3cbf0c7b2af3872f578d4f457bfbae76350faac82cd364fa40cb1d830b6e"
     },
     {
       "file": "h24_chain_multi_hop_complete.json",
-      "sha256": "cf194821cf0f2f52bd7ea715606f683da974b81d054af356f14c70dbcd3513b8"
+      "sha256": "5d79baa51db28120af1fcc5c9995f3c6b8fe64ef948b89659cb505149d8865fe"
     },
     {
       "file": "h25_chain_missing_middle_hop_incomplete.json",
-      "sha256": "93debf9e6d8e7fa29fdae5491b9d6dd1c4f000641718c91549c783d36f67c40b"
+      "sha256": "cf8eadc54dc97e8c27780868a6b2a1788981b413f3a71bd8a6ca95893c6421ca"
     },
     {
       "file": "h26_chain_truncated_incomplete.json",
-      "sha256": "65e6dd3f0ec9b398d075e23b60e4e1d38e9b99c0357b936e0c0efe97c36b3ef6"
+      "sha256": "805db0dfab08ffb10c63be9eec7bfb6135a38166ea711bf0defe7f12e728aae3"
     },
     {
       "file": "h27_chain_foreign_continuation_incomplete.json",
-      "sha256": "d648e688e740a2a532eb66cbd14dd27fe885f399ed781547e1ae771b31569917"
+      "sha256": "e7cb4c48c8fccc8fcb8e7f623ef5ae2386e6c2f122f834c9fec28cfe11b1f6ec"
     },
     {
       "file": "h28_chain_role_swapped_handles_incomplete.json",
-      "sha256": "3478d8f0e8d8f22d647a45d0478646682c6f163617b58cd49a1d8c73fd2b59d4"
+      "sha256": "1231c8efd0fa667174e25c893ca5175ba70d0a1d6cba42acdfba6b5b927e114c"
     },
     {
       "file": "h29_chain_terminal_spliced_incomplete.json",
-      "sha256": "9e1b0bcc10adb72e8e56d56046737e19637483de17a3bba0c79af26567394ea7"
+      "sha256": "52db4a9cce78aa48e640817b7fe854db7f3099dbd31c01406f50920d9334a3a4"
     },
     {
       "file": "h51_chain_unrecognized_result_type_incomplete.json",
-      "sha256": "0fd4faeb9e7fd195684211b3307de036eccc295675c448f50895bea78305839f"
+      "sha256": "ccdc94e4903a39e57683858537c11bdb4ffccb729c25e80179fded37ccc93471"
     },
     {
       "file": "h18_rejection_bound_valid.json",
-      "sha256": "3c673582547b11721e7bfe16186244836f96a00a326c01a158d6f9dd472ac675"
+      "sha256": "daffa416a8c8635a02df634e4c1f39ca6ba568792cc856c847c021aa0bc1fd17"
     },
     {
       "file": "h19_rejection_unbound_valid.json",
@@ -197,15 +197,15 @@
     },
     {
       "file": "h20_rejection_body_tamper.json",
-      "sha256": "463ac1243c878ad8478f070577d2fd6e477ac1caef2b2d0dadc52cb91c3d5c65"
+      "sha256": "c85429113d2f70fbf10787b1adc8c272571bd434097e564ac4c18b47b0d3c8cd"
     },
     {
       "file": "h21_rejection_splice.json",
-      "sha256": "41863640451e2f2ea9716855ff9d42c46ea07640a4fe14a4afb441346713a6f9"
+      "sha256": "1e3c1d0be3e62657c2ba4d5dd2df78161f30c944b7f48e9fb2fe4e678b4ec3e0"
     },
     {
       "file": "h22_rejection_unsigned.json",
-      "sha256": "a1e0691ad15916168aad2cdcf17413f3d2c330b974fae358f21ab565857a9fab"
+      "sha256": "68e57565a3b6ae884bf5a0b74f86bcbc49344b4f13ee2053591214eb1309bb3d"
     },
     {
       "file": "external_kat.json",

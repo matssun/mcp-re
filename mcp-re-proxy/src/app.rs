@@ -659,11 +659,8 @@ fn run_validated(
     })?;
     let (mcp_transport, transport_state) = crate::serving_capabilities::mcp_transport_contract(
         config.state().mcp_transport_contract(),
-    )
-    .into_parts();
-    if let Some(policy) = mcp_transport {
-        verifier_policy = verifier_policy.with_mcp_transport(policy);
-    }
+    );
+    verifier_policy = verifier_policy.with_mcp_transport(mcp_transport);
     posture.declare(Seam::McpTransportContract, transport_state);
     eprintln!(
         "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",

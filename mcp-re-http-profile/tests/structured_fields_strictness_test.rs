@@ -275,7 +275,8 @@ fn a_string_parameter_that_rfc_8941_cannot_carry_is_never_signed() {
             method: "POST".into(),
             target_uri: "https://mcp.example.com/mcp".into(),
             headers: vec![("Content-Type".into(), "application/json".into())],
-            body: b"{}".to_vec(),
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+                .to_vec(),
         };
         let err = sign_request(
             &mut req,
@@ -398,7 +399,8 @@ fn ordinary_string_parameters_still_sign_and_verify() {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: b"{}".to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     sign_request(
         &mut req,

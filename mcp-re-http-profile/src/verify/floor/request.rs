@@ -128,15 +128,12 @@ pub(crate) fn floor_request<R: Into<ResolverOutcome>>(
     //    present `mcp-*` header is covered (the closed-allowlist gate enforced
     //    present ⇒ covered) and the body is covered via `content-digest`.
     //
-    //    The `mcp-method`/body agreement is ALWAYS checked — a covered header must
-    //    never lie about the signed body, regardless of policy. Required-header
-    //    presence, the supported-version set, and `mcp-name` agreement are the
-    //    configurable part, enforced only when the deployment attached a transport
-    //    policy.
+    //    The whole contract is enforced on every request: a covered header never lies
+    //    about the signed body, required headers are present, and the version is one
+    //    the deployment accepts. The deployment chooses the accepted set, never whether
+    //    there is a contract.
     reject_mcp_method_divergence(request)?;
-    if let Some(transport) = policy.mcp_transport() {
-        transport.enforce(request)?;
-    }
+    policy.mcp_transport().enforce(request)?;
 
     // 6. Derive the handle from the exact verified base and return the full
     //    verified evidence context.
@@ -185,7 +182,7 @@ mod tests {
             method: "POST".into(),
             target_uri: "https://mcp.example.com/mcp".into(),
             headers,
-            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
         };
         sign_request(&mut r, &key(), KEY_ID, CREATED, EXPIRES, "n-floor")
             .expect("signing succeeds");
@@ -245,11 +242,10 @@ mod tests {
     }
 
     #[test]
-    fn a_covered_mcp_method_contradicting_the_body_is_refused_without_a_transport_policy() {
+    fn a_covered_mcp_method_contradicting_the_body_is_refused() {
         let (calls, seen) = (Cell::new(0), Cell::new(None));
         let req = signed(&[("Mcp-Method", "tools/list")]);
         let policy = VerifierPolicy::default();
-        assert!(policy.mcp_transport().is_none());
         let err = floor_request(&req, &resolver(&calls, &seen), &policy, NOW)
             .map(|_| ())
             .unwrap_err();

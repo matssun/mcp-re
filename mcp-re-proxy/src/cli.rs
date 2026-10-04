@@ -469,6 +469,8 @@ mod tests {
             // tautology, so it is refused at parse.
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             // Delegated-signing is the only response mode; the trust epoch is required
             // for every config (ADR-MCPRE-052 §7).
             "--delegated-trust-epoch",
@@ -506,6 +508,8 @@ mod tests {
             "/trust.json",
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--delegated-trust-epoch",
             "epoch-min",
             "--trust-domain",
@@ -1087,10 +1091,9 @@ mod tests {
     }
 
     #[test]
-    fn mcp_protocol_version_is_repeatable_and_absent_by_default() {
+    fn mcp_protocol_version_is_repeatable_and_required() {
+        // `minimal_durable` declares one; each further occurrence adds an accepted version.
         let mut a = minimal_durable();
-        a.push("--mcp-protocol-version".into());
-        a.push("2026-07-28".into());
         a.push("--mcp-protocol-version".into());
         a.push("2025-06-18".into());
         let config = parse_args(&a).expect("parse");
@@ -1098,6 +1101,16 @@ mod tests {
             config.mcp_protocol_versions,
             vec!["2026-07-28", "2025-06-18"]
         );
+
+        // The transport contract is mandatory: with no version there is nothing to start.
+        let mut bare = minimal_durable();
+        let at = bare
+            .iter()
+            .position(|x| x == "--mcp-protocol-version")
+            .expect("the fixture declares one");
+        bare.drain(at..at + 2);
+        let err = parse_args(&bare).expect_err("no protocol version is not a posture");
+        assert!(err.contains("--mcp-protocol-version"), "got: {err}");
     }
 
     // --- ADR-MCPRE-052 (MCPRE-122) delegated-signing (the only mode) -----------
@@ -1153,7 +1166,7 @@ mod tests {
             config.max_clock_skew,
             mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW
         );
-        assert!(config.mcp_protocol_versions.is_empty());
+        assert_eq!(config.mcp_protocol_versions, vec!["2026-07-28"]);
         assert!(matches!(
             config.response_signing.source,
             SigningSourceRequest::File(_)
@@ -1829,6 +1842,8 @@ mod tests {
             "/trust.json",
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--delegated-trust-epoch",
             "epoch-min",
             "--trust-domain",
@@ -1995,6 +2010,8 @@ mod tests {
             "/trust.json",
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--delegated-trust-epoch",
             "epoch-min",
             "--trust-domain",
@@ -3302,6 +3319,8 @@ mod tests {
             "/trust.json",
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--delegated-trust-epoch",
             "epoch-min",
             "--trust-domain",

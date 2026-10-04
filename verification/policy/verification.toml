@@ -333,6 +333,7 @@ paths = [
   "mcp-re-http-profile/src/verified_request/mod.rs",
   "mcp-re-http-profile/src/mcp_transport/mod.rs",
   "mcp-re-http-profile/src/mcp_transport/agreement.rs",
+  "mcp-re-http-profile/src/mcp_transport/request_headers.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -355,6 +356,13 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#pdp_decision::binding::tests::a_different_document_does_not",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::full::request::tests::audience_mismatch_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::tests::a_params_meta_version_contradicting_an_agreeing_top_level_meta_is_rejected",
+  # The producer's half: the routing headers a signed request carries are derived from the
+  # body its signature protects, a caller's own header is left for the verifier to refuse, and
+  # a body that is not a request implies none.
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::request_headers::tests::the_headers_are_derived_from_the_protected_body",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::request_headers::tests::mcp_name_follows_the_method_that_names_a_target",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::request_headers::tests::a_header_the_caller_set_is_not_overwritten",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::request_headers::tests::a_body_that_is_not_a_request_implies_no_headers",
 ]
 
 # Stated once for three operations, because it IS one proposition: the three differ in what
@@ -6521,6 +6529,7 @@ class = "V0"
 description = "What an emitted response signature binds: the `;req` components resolved against the request being answered, and the response evidence block's request-evidence handle over that same request."
 paths = [
   "mcp-re-http-profile/src/sign.rs",
+  "mcp-re-http-profile/src/sign/request.rs",
   # ADR-MCPRE-052 cleanup: five of the eight controls below sign through the PRE-052
   # root emitter, which now lives here rather than in `sign.rs`. Recorded, not repaired —
   # that those five measure the emission binding over a REMOVED mode, while only the
@@ -10968,7 +10977,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.mcp_transport_contract_state"
 class = "V0"
-description = "WHETHER THIS DEPLOYMENT ASSERTS THE MCP TRANSPORT/VERSION CONTRACT: every legal state form is classified, the ABSENT contract is a posture the operator chose and not a defect the classifier reports, the enforcing state carries the accepted set that selected it so the seam has no emptiness left to re-test, and an unusual accepted set is classified rather than refused because the set is the deployment's own consent and this machine neither parses nor narrows it. Says nothing about what the contract requires of a request at serving time, which is the transport policy's."
+description = "THE MCP TRANSPORT/VERSION CONTRACT IS MANDATORY: a deployment that names no accepted protocol version (or a blank one) is REFUSED at the configuration boundary rather than served with no contract, the state carries the accepted set the operator declared, and an unusual accepted set is classified rather than refused because the set is the deployment's own consent, not a vocabulary this owner narrows."
 paths = ["mcp-re-proxy/src/config_state/mcp_transport_contract.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -10979,9 +10988,8 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::an_unusual_accepted_set_is_classified_rather_than_refused",
-  "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::every_legal_state_form_is_classified",
-  "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::the_absent_contract_is_a_state_and_not_a_defect",
-  "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::the_enforced_state_carries_the_set_that_selected_it",
+  "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::declaring_no_version_is_refused_not_a_posture",
+  "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::the_state_carries_the_set_the_operator_declared",
 ]
 
 [[unit]]

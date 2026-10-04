@@ -82,8 +82,9 @@ fn accepted_verdict_is_identical_across_all_methods() {
     ];
     let material = |_b: &ArtifactBinding| None;
     for (i, method) in methods.iter().enumerate() {
-        let body =
-            format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":{{"name":"x"}}}}"#);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":{{"name":"x","uri":"file:///x"}}}}"#
+        );
         let mut req = HttpRequest {
             method: "POST".into(),
             target_uri: TARGET.into(),

@@ -241,7 +241,8 @@ fn hop(
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), "Bearer tok".into()),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     let req_evidence = mcp_re_http_profile::sign_request_full(
         &mut request,

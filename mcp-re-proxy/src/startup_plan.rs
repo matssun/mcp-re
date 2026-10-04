@@ -461,6 +461,8 @@ mod tests {
             "/nonexistent/trust",
             "--target-uri",
             "https://localhost/",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--trust-domain",
             "example.org",
             "--inner-http-url",

@@ -908,6 +908,8 @@ mod handle_lifetime_tests {
             "/nonexistent/ca",
             "--target-uri",
             "https://localhost/",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--trust-domain",
             "example.org",
             "--replay-redis-url",

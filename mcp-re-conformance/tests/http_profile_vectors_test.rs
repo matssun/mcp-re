@@ -1104,7 +1104,7 @@ fn build_fixtures() -> Vec<Fixture> {
             headers: hs,
             body: body.to_vec(),
         };
-        sign_request(
+        mcp_re_http_profile::sign::sign_request_as_given(
             &mut r,
             &client_key(),
             CLIENT_KEY_ID,
@@ -1479,7 +1479,8 @@ fn chain_hop(
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), "Bearer tok".into()),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     let req_evidence = sign_request_full(
         &mut request,

@@ -128,32 +128,20 @@ pub(crate) fn online_ocsp() -> Established<std::convert::Infallible> {
     Established::off(OCSP_OFF)
 }
 
-/// §4.1 — the MCP transport/version contract.
-///
-/// Enforced only when the operator declares the protocol versions this deployment
-/// serves. Absent the flag there is no contract to enforce, so required-header presence
-/// and `Mcp-Name`/`params.name` agreement are not asserted — an explicit decision rather
-/// than a default, because the failure it prevents is a signed request that names one
-/// tool in its header and invokes another in its body.
+/// §4.1 — the MCP transport/version contract, enforced for the protocol versions the
+/// operator declares. There is no state without it: the failure it prevents is a signed
+/// request that names one tool in its header and invokes another in its body.
 pub(crate) fn mcp_transport_contract(
     state: &crate::config_state::McpTransportContractState,
-) -> Established<mcp_re_http_profile::McpTransportPolicy> {
-    let Some(versions) = state.enforced_versions() else {
-        return Established::off(
-            "MCP transport contract = OFF (no --mcp-protocol-version): the required \
-             transport headers are not asserted and Mcp-Name is not checked against \
-             params.name, so a signed request may name one tool in its header and invoke \
-             another in its body. Declare the protocol version(s) this deployment serves \
-             to enforce the contract.",
-        );
-    };
+) -> (mcp_re_http_profile::McpTransportPolicy, SeamState) {
+    let versions = state.versions();
     let accepted: Vec<&str> = versions.iter().map(String::as_str).collect();
-    Established::on(
+    (
         mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&accepted),
-        format!(
+        SeamState::on(format!(
             "MCP transport contract ENFORCED for protocol version(s) {versions:?} \
              (required transport headers covered; Mcp-Name must equal params.name)"
-        ),
+        )),
     )
 }
 

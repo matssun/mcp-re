@@ -13,16 +13,28 @@
         "application/json"
       ],
       [
+        "Mcp-Method",
+        "tools/call"
+      ],
+      [
+        "Mcp-Name",
+        "read"
+      ],
+      [
+        "MCP-Protocol-Version",
+        "2026-07-28"
+      ],
+      [
         "Content-Digest",
         "sha-256=:qXDbbSbAIAqtTp/paFTD5GK3FpDPUyMfdw3M+BeWpWw=:"
       ],
       [
         "Signature-Input",
-        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-r\";keyid=\"rogue-key-9\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"mcp-method\" \"mcp-name\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-r\";keyid=\"rogue-key-9\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
       ],
       [
         "Signature",
-        "mcp-re=:ilyATRxZkrL6K1ueKfMYb+ByPiBFE+5aJ1SLqR6gcLtCIdlLdpxIHUoUrLz7pAi3EuvzidRlIxS1gIXhNZRuDw==:"
+        "mcp-re=:fqY6KYe4HE7vIuSlEqEypZ2Nu5/tZSgWsPL97dp2x0KDeia8B3/UoaRGEIGGT0ORfXSUSW9txMhK1Exqbw/cDw==:"
       ]
     ],
     "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"read\"}}"

@@ -189,6 +189,9 @@ spec:
             - "--client-crl-reload-secs"
             - "{{ .Values.clientCrl.reloadSeconds }}"
             {{- end }}
+            {{- if not .Values.mcpProtocolVersions }}
+            {{- fail "mcpProtocolVersions must name at least one MCP protocol version: the transport contract is mandatory" }}
+            {{- end }}
             {{- range .Values.mcpProtocolVersions }}
             - "--mcp-protocol-version"
             - {{ . | quote }}

@@ -39,10 +39,8 @@ use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
-use mcp_re_http_profile::McpTransportPolicy;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
-use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_policy::PolicyError;
@@ -405,33 +403,34 @@ async fn a_deployment_with_no_policy_serves_and_claims_nothing() {
 #[tokio::test]
 async fn a_covered_routing_header_naming_another_tool_does_not_reach_the_policy() {
     // LAW A-1. The signer covered `Mcp-Name: delete` and signed a body asking for `read`.
-    // The default deployment does NOT enforce `Mcp-Name` agreement — the transport contract
-    // is `Unconstrained` until a protocol version is declared — so the request verifies.
-    // The policy must still decide over the BODY.
+    // The transport contract is mandatory, so the verifier refuses the self-contradicting
+    // request before authorization runs: the header neither revokes what the body was
+    // granted nor reaches the policy at all.
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = grants_only("read");
     let p = proxy(Some(policy.clone()), Arc::clone(&calls));
     let req = signed_call_with_headers("read", "n-a1-grant", &[("Mcp-Name", "delete")]);
     let (status, body) = serve(&p, req).await;
     assert_eq!(
-        status, 200,
-        "a header cannot revoke what the body was granted: {body}"
+        status, 403,
+        "a divergent header is refused by the contract: {body}"
     );
-    assert_eq!(policy.only_seen().target.as_deref(), Some("read"));
+    assert!(policy.never_consulted());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
 async fn a_covered_routing_header_cannot_carry_a_grant_the_signed_body_does_not_have() {
     // The other direction, and the one that is an attack: a body asking for `delete` must
-    // not be authorized because a covered header claims `read`. Same deployment, same
-    // absence of a transport contract.
+    // not be authorized because a covered header claims `read`. The contract refuses it
+    // before the policy is consulted, so the header cannot stand in for the body.
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = grants_only("read");
     let p = proxy(Some(policy.clone()), Arc::clone(&calls));
     let req = signed_call_with_headers("delete", "n-a1-deny", &[("Mcp-Name", "read")]);
     let (status, body) = serve(&p, req).await;
     assert_eq!(status, 403, "{body}");
-    assert_eq!(policy.only_seen().target.as_deref(), Some("delete"));
+    assert!(policy.never_consulted());
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
@@ -455,17 +454,13 @@ async fn an_uncovered_routing_header_never_reaches_the_policy_at_all() {
 
 #[tokio::test]
 async fn enforcing_the_transport_contract_does_not_change_which_action_is_authorized() {
-    // Law A-1's point stated as a measurement. With the contract ENFORCED the same
-    // divergent request is refused by the verifier and never reaches a policy; with it
-    // Unconstrained the policy sees the BODY. What must never happen is the third
-    // behaviour — the policy seeing the HEADER — because then switching an unrelated
-    // consistency policy on or off would silently change authorization semantics.
+    // Law A-1's point stated as a measurement. The contract refuses the divergent request
+    // before it reaches a policy, so the policy never sees the HEADER: the one behaviour that
+    // must not exist is authorization reading `Mcp-Name`, because then the consistency
+    // contract would silently carry authorization semantics.
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = grants_only("read");
-    let p = proxy(Some(policy.clone()), Arc::clone(&calls)).with_verifier_policy(
-        VerifierPolicy::default()
-            .with_mcp_transport(McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"])),
-    );
+    let p = proxy(Some(policy.clone()), Arc::clone(&calls));
     let req = signed_call_with_headers(
         "delete",
         "n-a1-enforced",
@@ -482,15 +477,6 @@ async fn enforcing_the_transport_contract_does_not_change_which_action_is_author
         "the contract refused the self-contradictory request before authorization ran"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-
-    // And with the contract off, the same body reaches the policy as `delete`.
-    let calls2 = Arc::new(AtomicUsize::new(0));
-    let policy2 = grants_only("read");
-    let p2 = proxy(Some(policy2.clone()), Arc::clone(&calls2));
-    let req2 = signed_call_with_headers("delete", "n-a1-unenforced", &[("Mcp-Name", "read")]);
-    let (status2, _) = serve(&p2, req2).await;
-    assert_eq!(status2, 403);
-    assert_eq!(policy2.only_seen().target.as_deref(), Some("delete"));
 }
 
 #[tokio::test]

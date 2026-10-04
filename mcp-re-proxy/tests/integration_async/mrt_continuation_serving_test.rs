@@ -2716,10 +2716,19 @@ async fn a_body_that_is_not_a_json_rpc_request_never_reaches_the_backend() {
         );
         assert_ne!(served.status, 202, "{name}: acknowledged as a notification");
         assert_ne!(served.status, 200, "{name}: served as a successful reply");
-        assert_eq!(served.status, 400, "{name}");
-        assert_eq!(
-            wire_code_of(&served.body),
-            "mcp-re.malformed_envelope",
+        // Refused before dispatch either way. A body the mandatory transport contract cannot
+        // be satisfied by (no method, or a target-naming method with no name) is refused by
+        // the verifier (403); the rest are refused as malformed MCP messages (400).
+        assert!(
+            matches!(served.status, 400 | 403),
+            "{name}: {}",
+            served.status
+        );
+        assert!(
+            matches!(
+                wire_code_of(&served.body).as_str(),
+                "mcp-re.malformed_envelope" | "mcp-re.missing_envelope"
+            ),
             "{name}"
         );
         // Refused before admission: nothing ran and nothing was spent.

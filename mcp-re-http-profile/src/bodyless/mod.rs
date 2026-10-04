@@ -399,8 +399,6 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     // A configured contract that simply did not apply to this shape was the defect —
     // a deployment believed its version contract covered every request while one
     // shape was exempt.
-    if let Some(transport) = policy.mcp_transport() {
-        transport.enforce_bodyless(request)?;
-    }
+    policy.mcp_transport().enforce_bodyless(request)?;
     Ok((actor, RequestEvidence::from_signature_base(&base)))
 }

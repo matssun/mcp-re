@@ -44,8 +44,8 @@ pub(super) struct RequestAdmission {
     /// `target_uri` must equal the request `@target-uri` (enforced in verify).
     expected_audience: AudienceTuple,
     /// The verifier-local acceptance policy: algorithm registry, bounded skew, and the
-    /// optional MCP transport/version contract (§4.1, §5.1, §13.1). Default is
-    /// `VerifierPolicy::default()` — Ed25519, 30 s skew, no transport contract.
+    /// MCP transport/version contract (§4.1, §5.1, §13.1). Default is
+    /// `VerifierPolicy::default()` — Ed25519, 30 s skew, this profile's own protocol version.
     policy: VerifierPolicy,
 }
 

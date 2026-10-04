@@ -12,13 +12,13 @@
 //!
 //! `Mcp-Method` and `Mcp-Name` carry the same values and are far easier to read. They are
 //! routing hints, and MCP-RE never trusts one for a security decision. The reason is not
-//! fastidiousness — they *need not agree with the body*. The MCP transport contract that
-//! makes `Mcp-Name` mandatory for `tools/call` / `resources/read` and requires it to match
-//! `params.name` is `Unconstrained` by default, becoming `Enforced` only when a deployment
-//! declares a protocol version.
+//! fastidiousness — a header is a routing claim, and the body is what the signature protects.
+//! The MCP transport contract that makes `Mcp-Name` mandatory for `tools/call` /
+//! `resources/read` and requires it to match `params.name` refuses a disagreeing header
+//! before authorization runs, in every deployment.
 //!
-//! So a coordinate read from a header would make authorization semantics depend on whether
-//! an unrelated transport-consistency policy happened to be switched on: the same signed
+//! So a coordinate read from a header would make authorization semantics depend on the
+//! transport-consistency policy rather than on the signed body: the same signed
 //! request would be authorized against one action with the contract enforced, and against a
 //! header-chosen action without it. The contract exists to stop a header and a body
 //! disagreeing in front of a human or a router. It is not what makes the coordinate

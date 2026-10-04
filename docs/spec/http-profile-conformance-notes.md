@@ -365,15 +365,13 @@ string's value — proves nothing. After it, a present header is covered (the
 closed-allowlist gate enforced present ⇒ covered), so a required header that is
 present is signed, and a disagreement is the *signer* contradicting itself.
 
-**`allow_legacy_header_omission` gates ABSENCE only.** A deployment still serving
-pre-2026-07-28 clients sets it: a request carrying *none* of these headers is
-served as legacy rather than rejected. Any header it *does* carry is still validated
-in full — the flag waives "you must send it", never "it may lie".
-
-**Opt-in and additive.** The default `VerifierPolicy` attaches no transport policy,
-so a deployment that has not opted in behaves exactly as before (present-header
-integrity only, absence allowed). Supported versions are a constructor input rather
-than hardcoded, so the policy does not bake in a spec that is not yet final.
+**Mandatory.** There is no waiver for absence and no state without a transport policy:
+every `VerifierPolicy` carries one, the request floor enforces it on every request, and
+a request omitting a required header is refused. The signer derives the three headers
+from the body it protects and covers them, so a request signed through the profile
+satisfies the contract. Supported versions are a constructor input rather than
+hardcoded (`--mcp-protocol-version`, required), so the policy does not bake in a spec
+that is not yet final.
 
 **Proven by.** `mcp_transport_headers_test` — the full contract through the real
 verify path (`a_required_header_absent_is_rejected_through_verify`,

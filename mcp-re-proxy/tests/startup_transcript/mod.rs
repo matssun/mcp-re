@@ -338,7 +338,6 @@ fn normalize(line: &str) -> Option<StartupEvent> {
         return Some(StartupEvent::McpTransportContract {
             enforced: match () {
                 () if l.contains("contract ENFORCED") => true,
-                () if l.contains("contract = OFF") => false,
                 () => unknown_state("MCP transport contract", &l),
             },
         });
@@ -477,10 +476,6 @@ mod normalize_tests {
             (
                 "MCP transport contract ENFORCED for protocol version(s) [\"2026-07-28\"]",
                 StartupEvent::McpTransportContract { enforced: true },
-            ),
-            (
-                "MCP transport contract = OFF (no --mcp-protocol-version)",
-                StartupEvent::McpTransportContract { enforced: false },
             ),
             (
                 "verified-context carrier = TRUSTED (#415 §10)",

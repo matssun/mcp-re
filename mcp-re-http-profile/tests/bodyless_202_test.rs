@@ -737,8 +737,11 @@ fn a_configured_transport_contract_is_refused_rather_than_ignored() {
     verify_bodyless_request(&ok_req, &Verifier::new(&strict, &resolver()), NOW)
         .expect("a supported version must verify under the same contract");
 
-    // Without a transport contract there is nothing to enforce, and the message
-    // verifies exactly as before.
-    verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW)
-        .expect("no transport contract configured, so nothing is bypassed");
+    // There is no policy without a contract: the default carries this profile's own
+    // version, so the same message is refused there too.
+    assert_eq!(
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        HttpProfileError::McpProtocolVersionUnsupported,
+        "a policy that names no versions still has a contract",
+    );
 }

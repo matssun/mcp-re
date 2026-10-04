@@ -36,7 +36,7 @@ impl ProtocolFlags {
         match flag {
             "--target-uri" => self.target_uri = Some(value.to_string()),
             // §4.1 MCP transport contract. Repeatable; each occurrence adds an accepted
-            // `Mcp-Protocol-Version`. Absent = no transport contract.
+            // `Mcp-Protocol-Version`. At least one is required.
             "--mcp-protocol-version" => self.versions.push(value.to_string()),
             _ => {
                 self.max_clock_skew = Some(
@@ -51,12 +51,17 @@ impl ProtocolFlags {
 
     /// The contract, or the coordinate this command line did not give.
     ///
-    /// `--target-uri` is REQUIRED; what shape it must have is the configuration boundary's.
+    /// `--target-uri` and at least one `--mcp-protocol-version` are REQUIRED; what shape the
+    /// target must have is the configuration boundary's.
     /// The skew keeps its historical default, because an omitted tolerance has always meant
     /// the default one rather than none.
     pub(super) fn finish(self, default_skew: i64) -> Result<ProtocolContract, String> {
+        let target_uri = super::require(self.target_uri, "--target-uri")?;
+        if self.versions.is_empty() {
+            return Err("missing required --mcp-protocol-version".to_string());
+        }
         Ok(ProtocolContract {
-            target_uri: super::require(self.target_uri, "--target-uri")?,
+            target_uri,
             versions: self.versions,
             max_clock_skew: self.max_clock_skew.unwrap_or(default_skew),
         })
@@ -67,9 +72,9 @@ impl ProtocolFlags {
 mod tests {
     use super::*;
 
-    /// The target URI is required; the other two have meanings for their own absence.
+    /// The target URI and a protocol version are required; the skew has a default.
     #[test]
-    fn the_target_uri_is_required_and_the_others_default() {
+    fn the_target_uri_and_a_version_are_required_and_the_skew_defaults() {
         let err = ProtocolFlags::default()
             .finish(300)
             .expect_err("no target uri");
@@ -79,9 +84,18 @@ mod tests {
         flags
             .take("--target-uri", "https://mcp/x")
             .expect("a value");
-        let contract = flags.finish(300).expect("a target uri");
+        let err = flags.finish(300).expect_err("no protocol version");
+        assert!(err.contains("--mcp-protocol-version"), "{err}");
+
+        let mut flags = ProtocolFlags::default();
+        flags
+            .take("--target-uri", "https://mcp/x")
+            .expect("a value");
+        flags
+            .take("--mcp-protocol-version", "2026-07-28")
+            .expect("a value");
+        let contract = flags.finish(300).expect("a complete contract");
         assert_eq!(contract.max_clock_skew, 300);
-        assert!(contract.versions.is_empty(), "no contract is a posture");
     }
 
     /// The version flag is repeatable, and the order it was given in is preserved.

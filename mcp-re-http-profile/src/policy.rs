@@ -93,12 +93,11 @@ pub struct VerifierPolicy {
     /// until `expires + skew`, so an unbounded window would let ONE client pin store
     /// keys for as long as it likes.
     max_signature_validity: i64,
-    /// The MCP transport/version contract (§4.1). `None` = no transport policy,
-    /// which is today's behavior: `Mcp-Method` divergence is still always checked
-    /// (a covered header must not lie about the body), but required-header
-    /// presence, supported-version policy, and `Mcp-Name` agreement are enforced
-    /// only when a deployment opts in with [`VerifierPolicy::with_mcp_transport`].
-    mcp_transport: Option<crate::mcp_transport::McpTransportPolicy>,
+    /// The MCP transport/version contract (§4.1), enforced on every request: required-header
+    /// presence, the supported-version set, and `Mcp-Method`/`Mcp-Name` agreement with the
+    /// protected body. A deployment chooses the accepted version set with
+    /// [`VerifierPolicy::with_mcp_transport`]; it cannot choose to have no contract.
+    mcp_transport: crate::mcp_transport::McpTransportPolicy,
 }
 
 impl VerifierPolicy {
@@ -157,7 +156,7 @@ impl VerifierPolicy {
             algorithms: resolved,
             max_clock_skew,
             max_signature_validity: Self::DEFAULT_MAX_SIGNATURE_VALIDITY,
-            mcp_transport: None,
+            mcp_transport: crate::mcp_transport::McpTransportPolicy::profile_default(),
         })
     }
 
@@ -167,13 +166,13 @@ impl VerifierPolicy {
         mut self,
         transport: crate::mcp_transport::McpTransportPolicy,
     ) -> Self {
-        self.mcp_transport = Some(transport);
+        self.mcp_transport = transport;
         self
     }
 
-    /// The active MCP transport policy, if any.
-    pub fn mcp_transport(&self) -> Option<&crate::mcp_transport::McpTransportPolicy> {
-        self.mcp_transport.as_ref()
+    /// The active MCP transport policy.
+    pub fn mcp_transport(&self) -> &crate::mcp_transport::McpTransportPolicy {
+        &self.mcp_transport
     }
 
     /// Resolve a wire `alg` token to an accepted algorithm, or `None`.
@@ -232,7 +231,7 @@ impl Default for VerifierPolicy {
             algorithms: vec![ProfileAlgorithm::Ed25519],
             max_clock_skew: Self::DEFAULT_MAX_CLOCK_SKEW,
             max_signature_validity: Self::DEFAULT_MAX_SIGNATURE_VALIDITY,
-            mcp_transport: None,
+            mcp_transport: crate::mcp_transport::McpTransportPolicy::profile_default(),
         }
     }
 }
@@ -309,7 +308,6 @@ mod tests {
         assert_eq!(d.algorithms, built.algorithms);
         assert_eq!(d.max_clock_skew(), built.max_clock_skew());
         assert_eq!(d.max_signature_validity(), built.max_signature_validity());
-        assert!(d.mcp_transport().is_none());
     }
 
     /// THE algorithm-confusion guard. A registered algorithm with no verifier in
