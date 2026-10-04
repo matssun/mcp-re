@@ -28,6 +28,7 @@ use mcp_re_http_profile::VerifierPolicy;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::refusal::Refusal;
+use crate::refusal::RefusalCause;
 
 use super::ActorResolver;
 
@@ -77,7 +78,7 @@ impl RequestAdmission {
     ///
     /// ```text
     /// ensures   Ok  => the signature verified and an actor is resolved
-    ///           Err => 403, signed UNBOUND (no trustworthy request hash exists yet)
+    ///           Err => the cause of the verification failure
     /// forbids   any effect on the request's behalf
     /// refusal   free — nothing has happened
     /// ```
@@ -88,7 +89,7 @@ impl RequestAdmission {
         &self,
         http_req: &HttpRequest,
         now: i64,
-    ) -> Result<Established<VerifiedMcpRequest>, Refusal> {
+    ) -> Result<Established<VerifiedMcpRequest>, RefusalCause> {
         let no_material = |_b: &ArtifactBinding| None;
         // Scoped so the timer covers the verification and nothing after it.
         let verify_result = {
@@ -104,7 +105,7 @@ impl RequestAdmission {
         // and no resolved actor to attribute the denial to.
         verify_result
             .map(|v| Established::new(v, ExchangeEvent::SignatureVerified))
-            .map_err(|e| Refusal::preflight(e, 403))
+            .map_err(RefusalCause::from)
     }
 
     /// REQUEST-ENVELOPE-VALIDATED — is this body a legal JSON-RPC request at all?

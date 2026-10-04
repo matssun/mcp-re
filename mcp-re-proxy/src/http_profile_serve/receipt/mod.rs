@@ -123,12 +123,8 @@ impl ResponseSigning {
         refusal: Refusal,
         execution: ExecutionDisposition,
     ) -> ServedHttpResponse {
-        let (bound, actor) = match refusal.posture {
-            // An unverified request has no trustworthy hash to bind to and no resolved actor
-            // to attribute the denial to.
-            RefusalPosture::Preflight => (None, None),
-            _ => (Some(ex.verified.evidence()), Some(ex.actor_id.to_owned())),
-        };
+        let bound = Some(ex.verified.evidence());
+        let actor = Some(ex.actor_id.to_owned());
         if refusal.posture == RefusalPosture::AfterAdmission {
             return self.response_rejection(
                 audit,

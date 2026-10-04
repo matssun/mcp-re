@@ -54,7 +54,7 @@ impl HttpProfileProxy {
     /// ```text
     /// ensures   Ok  => the message is signed by a key this deployment trusts for the
     ///                  request slot, and is addressed to this audience
-    ///           Err => the configured status, signed but NOT bound to an exchange
+    ///           Err => 403, signed UNBOUND (no trustworthy request hash exists yet)
     /// forbids   any effect on the request's behalf
     /// refusal   free
     /// ```
@@ -69,11 +69,11 @@ impl HttpProfileProxy {
     ) -> Result<VerifiedMcpRequest, ServedHttpResponse> {
         match self.requests.verify(http_req, now) {
             Ok(verified) => Ok(progress.establish(verified)),
-            Err(refusal) => Err(self.responses.rejection(
+            Err(cause) => Err(self.responses.rejection(
                 &self.audit,
                 http_req,
-                &refusal.cause,
-                refusal.status,
+                &cause,
+                403,
                 now,
                 None,
                 None,

@@ -73,14 +73,12 @@ pub(crate) use cause::RefusalCause;
 
 /// How a refusal must be signed and recorded.
 ///
-/// Not a detail of presentation: each posture is a different claim. Preflight says no
-/// trustworthy request hash exists; the other two say one does, and differ on whether the
-/// request had already been ADMITTED — which decides whether the fault is attributed to the
-/// caller or to the response side (ADR-MCPS-035 §9).
+/// Not a detail of presentation: each posture is a different claim. Both say a trustworthy
+/// request hash exists, and differ on whether the request had already been ADMITTED — which
+/// decides whether the fault is attributed to the caller or to the response side
+/// (ADR-MCPS-035 §9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RefusalPosture {
-    /// The request never verified. Signed response-only, no actor to attribute it to.
-    Preflight,
     /// The request verified but was not yet admitted. Bound via `;req`, recorded as
     /// `mcp-re.request.rejected`.
     BeforeAdmission,
@@ -124,16 +122,6 @@ pub(crate) struct Refusal {
 }
 
 impl Refusal {
-    /// The request never verified.
-    pub(crate) fn preflight(cause: impl Into<RefusalCause>, status: u16) -> Self {
-        Refusal {
-            cause: cause.into(),
-            status,
-            posture: RefusalPosture::Preflight,
-            execution_refinement: None,
-        }
-    }
-
     /// The request verified but had not been admitted.
     pub(crate) fn before_admission(cause: impl Into<RefusalCause>, status: u16) -> Self {
         Refusal {
@@ -171,7 +159,7 @@ mod tests {
 
     #[test]
     fn the_posture_is_independent_of_the_cause() {
-        let a = Refusal::preflight(McpReError::MissingEnvelope, 400);
+        let a = Refusal::before_admission(McpReError::MissingEnvelope, 400);
         let b = Refusal::after_admission(McpReError::MissingEnvelope, 500);
         assert_eq!(a.cause, b.cause);
         assert_ne!(a.posture, b.posture);
