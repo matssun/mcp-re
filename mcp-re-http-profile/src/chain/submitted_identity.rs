@@ -68,7 +68,7 @@ use super::RetainedHop;
 /// submissions whose retained bytes differ are two submissions.
 pub(super) fn submitted_commitment(hops: &[RetainedHop]) -> String {
     let mut h = Sha256::new();
-    h.update(SUBMITTED_COMMITMENT_DOMAIN.len().to_be_bytes());
+    h.update((SUBMITTED_COMMITMENT_DOMAIN.len() as u64).to_be_bytes());
     h.update(SUBMITTED_COMMITMENT_DOMAIN);
     h.update((hops.len() as u64).to_be_bytes());
     for hop in hops {
@@ -110,6 +110,10 @@ pub(super) fn submitted_commitment(hops: &[RetainedHop]) -> String {
 
 /// Domain separator for [`submitted_commitment`], so its digests can never be confused
 /// with any other SHA-256 this profile takes over evidence.
+///
+/// The `v3` here versions the submitted-chain preimage layout alone. It is independent of
+/// `EVIDENCE_PROFILE` (in `crate::scitt`), which versions the receipt/statement contract
+/// and the position commitment; the two move independently and neither derives from the other.
 const SUBMITTED_COMMITMENT_DOMAIN: &[u8] = b"mcp-re-evidence/v3:submitted-chain";
 #[cfg(test)]
 mod tests {
