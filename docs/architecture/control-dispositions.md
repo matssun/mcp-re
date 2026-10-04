@@ -3521,7 +3521,7 @@ control proves impossible is one the theorem already declines to reason about. P
 
 ## NP-164 — the file and dev key sources' own load and refusal behaviour, and the PKCS#11 token's second key
 
-**Controls:** `mcp-re-proxy/tests/key_source_test.rs` (6), `mcp-re-proxy/tests/dev_env_key_source_test.rs` (5), `mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs` (6), `mcp-re-proxy/src/key_source/file_key_source.rs` (2), `mcp-re-proxy/src/pkcs11_keysource/mod.rs` (1), `mcp-re-proxy/src/key_source.rs` (1).
+**Controls:** `mcp-re-proxy/tests/key_source_test.rs` (6), `mcp-re-proxy/tests/dev_env_key_source_test.rs` (5), `mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs` (7), `mcp-re-proxy/src/key_source/file_key_source.rs` (2), `mcp-re-proxy/src/pkcs11_keysource/mod.rs` (1), `mcp-re-proxy/src/key_source.rs` (1).
 **Statement.** *Each source opened DIRECTLY, not through the materializer: the file source loads the signing seed, the channel credential and the client anchors and tells a missing file from a malformed seed; the dev-only environment source does the same without mutating the process and scrubs its seed temporaries; neither source's error carries the secret; and the token's SECOND object — the delegated TLS handshake key — is established at `open` or the deployment does not start.*
 **If false.** A source reports material it did not load, or names the wrong failure, and an operator debugs the wrong half of a deployment; or a secret seed reaches a log through an error value; or the proxy serves a handshake under a token key nobody established, which is the one case where the delegated-TLS correspondence gate compares a key the signer did not actually sign with.
 **Likely owner:** none — a composition's source is every unit under it.

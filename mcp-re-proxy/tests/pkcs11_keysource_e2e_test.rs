@@ -42,6 +42,7 @@ use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::FileKeySource;
 use mcp_re_proxy::KeyError;
 use mcp_re_proxy::KeySource;
+use mcp_re_proxy::RawEd25519TlsSigner;
 use mcp_re_proxy::Pkcs11KeySource;
 use mcp_re_proxy::ResponseSigner;
 use mcp_re_proxy::ServerOptions;
@@ -231,6 +232,37 @@ fn pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify() {
     .expect("startup reads only the public point");
 
     match source.sign_response(b"mcp-re-misbound-preimage") {
+        Err(KeyError::Malformed(m)) => assert!(
+            m.contains("did NOT verify"),
+            "the refusal must name the verification failure, got {m:?}"
+        ),
+        Err(_) => panic!("an unverifiable token signature must be Malformed"),
+        Ok(_) => panic!("an unverifiable token signature must never be emitted"),
+    }
+}
+
+/// A TLS key object whose `C_Sign` result does not verify against its own advertised
+/// public key is refused before the signature is returned.
+#[test]
+fn pkcs11_tls_signer_refuses_a_token_signature_that_does_not_verify() {
+    let module = mock_module();
+    let _guard = provisioning_lock();
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcp-re-response-signing", "01");
+    token.keygen("ed25519-misbound", "mcp-re-tls", "02");
+
+    let source = Pkcs11KeySource::open(
+        &module,
+        &token.pin,
+        &token.token_label,
+        "mcp-re-response-signing",
+        placeholder_tls(),
+        Some("mcp-re-tls"),
+    )
+    .expect("startup reads only the public point");
+    let signer = source.tls_delegated_signer().expect("delegated signer");
+
+    match signer.sign_tls_ed25519(b"tls handshake transcript") {
         Err(KeyError::Malformed(m)) => assert!(
             m.contains("did NOT verify"),
             "the refusal must name the verification failure, got {m:?}"
