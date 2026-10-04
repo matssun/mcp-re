@@ -120,6 +120,14 @@ clock. The gate is therefore split by what can be attributed to one writer:
 | per batch (`batch_gate.py`) | clippy ratchet, module-size, bazel-srcs, unit-closure, verification-trigger, mutation-lane self-test, the ADR-MCPRE-069 control-census ratchet and `control-census --gate`; the touched closure — every Rust target that depends on a touched file, under `--config=lint`, and every non-manual test target in it |  minutes, and the same answer after one fix or six |
 | pre-handover (`scripts/local_gate.sh`) | `bazel test //...` (the only lane that runs the `async_serve` drain tests), the SLO lane | not claimed by this skill |
 
+**Size is recorded, not blocking** (owner direction, 2026-10-04). A module grown past
+its baseline, a new file past 200 lines or a `too_many_lines` count above its baseline is
+`size-debt` in both gates: the fix lands, and `size_debt.py` writes each growth to
+`docs/security/remediation-size-debt.jsonl` with the commit that grew it. The repository
+gates stay strict, so that register is settled — refactored, or growth-authorized by the
+owner — before the remediation branch is integrated. Nesting depth and every other lint
+stay hard.
+
 A red per-file gate saves the change as a patch and reverts it, so the next writer
 starts on a clean tree and its failures are its own. The `platform` tier (>50
 importers) gates like `wide`; pass `platform_needs_ruling: true` to hold such

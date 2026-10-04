@@ -45,6 +45,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ledger  # noqa: E402
+import size_debt  # noqa: E402
 import writer_patch  # noqa: E402
 from _persist import exclusive  # noqa: E402
 
@@ -161,6 +162,7 @@ def main() -> int:
         if a.dry_run or action != "revert":
             continue
         tag = os.path.basename(row["file"]).replace(".", "-")
+        size_debt.drop(a.work_dir, row["file"])
         try:
             entry["patch"] = _revert(paths, a.work_dir, tag, store, row["file"])
         except RevertConflict as e:
@@ -207,16 +209,18 @@ def main() -> int:
                     by_id[fid]["status"] = "fixed"
                     by_id[fid]["verified"] = {"method": "review-accepted", "commit": sha}
             ledger._save(a.ledger, by_id)
-        entry.update(commit=sha, fixed=fixed)
+        grew = size_debt.settle(a.work_dir, row["file"], sha, findings=fixed)
+        entry.update(commit=sha, fixed=fixed, **({"size_debt_rows": grew} if grew else {}))
         report.append(entry)
-    if not a.dry_run and _git("status", "--porcelain", "--", a.ledger).stdout.strip():
+    tracked = [a.ledger] + ([size_debt.REGISTER] if os.path.exists(size_debt.REGISTER) else [])
+    if not a.dry_run and _git("status", "--porcelain", "--", *tracked).stdout.strip():
         # Every disposition the batch wrote — the evaluators' closures and the
         # `fixed` above — in one commit of its own, after the code it describes.
         msg = "ledger: %d file(s) of a lane batch dispositioned\n" % len(report)
         if a.trailer:
             msg += "\n" + "\n".join(a.trailer) + "\n"
-        _git("add", "--", a.ledger)
-        subprocess.run(["git", "commit", "-q", "-F", "-", "--", a.ledger], input=msg,
+        _git("add", "--", *tracked)
+        subprocess.run(["git", "commit", "-q", "-F", "-", "--", *tracked], input=msg,
                        capture_output=True, text=True)
         report.append({"ledger_commit": _git("rev-parse", "--short", "HEAD").stdout.strip()})
     print(json.dumps(report, indent=1))

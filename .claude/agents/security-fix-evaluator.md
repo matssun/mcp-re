@@ -162,12 +162,15 @@ judgment — that is where the turns belong.
    owner could make the state unrepresentable is the band-aid the standards
    name — order the seal, or say why it cannot be one.
 
-   **Module size is part of the remedy.** `prepare.py` prints the file's
-   production lines and its headroom against the module-size ratchet. A fix that
-   grows a file past its registered baseline FAILS the gate and is reverted; the
-   baseline is never raised to make room. Order a fix that fits, or one that
-   moves an authority out along a real seam — and if neither exists, that is a
-   ruling (group it under `module-size-headroom-<file>`), not a patch.
+   **Size never holds a fix back (owner direction, 2026-10-04).** `prepare.py`
+   prints the file's production lines and its headroom. Prefer a fix that fits, or
+   one that moves an authority out along a real seam when that seam is obvious —
+   but when the natural fix grows the file past its baseline, or a new file past
+   200 lines, or a function past 60, ORDER IT ANYWAY. The gate reports that as
+   `size-debt`, not a failure: the fix lands and the growth is written to
+   `docs/security/remediation-size-debt.jsonl`, to be reviewed or refactored in a
+   separate project after the run. Size is never a ruling and never a reason to
+   escalate, defer or shrink a remedy. Do not refactor unrelated code for room.
 
 6. **For everything left, write an EXECUTABLE work package.** Each item must be
    specific enough that a worker who has not read your reasoning cannot get it

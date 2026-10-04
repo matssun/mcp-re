@@ -23,8 +23,9 @@ configurations it is compiled in.
 The verdict rests on the lane invariant, not on a stored baseline: the writer lane starts on
 a tree `batch_gate.py` measured green, and every writer leaves it green or reverted.
 
-Verdicts: `new-failures` (a lint, a compile error, a failed test or a grown module),
-`infra` (Bazel could not judge: analysis failed, or no test ran), `ok`.
+Verdicts: `new-failures` (a lint, a compile error, a failed test), `infra` (Bazel could not
+judge: analysis failed, or no test ran), `size-debt` (the only problem is size growth, which
+a remediation run records and does not block on — `size_debt.py`), `ok`.
 
 Usage:
   rust_gate.py --file F [--related a,b] [--touched a,b] [--it //pkg:target,...] --work-dir DIR
@@ -41,6 +42,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rust_resolver import RustResolver  # noqa: E402
+import size_debt  # noqa: E402
 
 SIZE_GATE = "scripts/module_size_gate.py"
 RUST_RULES = "rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro"
@@ -194,8 +196,11 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
                       gate="rustfmt", targets=fmt_scope))
 
     rc, out = _run([sys.executable, SIZE_GATE], os.path.join(work_dir, "size-%s.log" % tag))
-    parts.append({"gate": "module-size", "verdict": "ok" if rc == 0 else "new-failures",
-                  "exit": rc, **({} if rc == 0 else {"head": out.strip().splitlines()[-5:]})})
+    soft, debt = size_debt.classify("module-size", out) if rc else (False, [])
+    parts.append({"gate": "module-size",
+                  "verdict": "ok" if rc == 0 else "size-debt" if soft else "new-failures",
+                  "exit": rc, **({} if rc == 0 else {"head": out.strip().splitlines()[-5:]}),
+                  **({"debt": debt} if soft else {})})
 
     if any(p["verdict"] == "new-failures" for p in parts):
         return parts          # a tree that does not compile has no test result to add

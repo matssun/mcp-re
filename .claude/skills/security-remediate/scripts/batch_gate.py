@@ -38,8 +38,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rust_gate  # noqa: E402
+import size_debt  # noqa: E402
 
 RATCHET = "scripts/clippy_ratchet_gate.py"
+# Gates whose size-only failures are recorded, not blocking, during a remediation run.
+SIZE_GATES = {"scripts/module_size_gate.py", RATCHET}
 STRUCTURAL = [
     [RATCHET],
     ["scripts/module_size_gate.py"],
@@ -84,8 +87,20 @@ def main() -> int:
             continue
         log = os.path.join(a.work_dir, "batch-%s.log" % os.path.basename(cmd[0]))
         rc = _run([sys.executable, *cmd], log)
-        results.append({"gate": cmd[0], "verdict": "ok" if rc == 0 else "new-failures",
-                        "log": log, **({} if rc == 0 else {"tail": _tail(log)})})
+        verdict, debt = "ok" if rc == 0 else "new-failures", []
+        if rc and cmd[0] in SIZE_GATES:
+            soft, debt = size_debt.classify(cmd[0], open(log, encoding="utf-8",
+                                                         errors="replace").read())
+            if soft:
+                # Recorded, not blocking (size_debt.py); a row no writer registered — a hand
+                # commit — joins the register under HEAD.
+                verdict = "size-debt"
+                head = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                                      capture_output=True, text=True).stdout.strip()
+                size_debt.register_rows(debt, head)
+        results.append({"gate": cmd[0], "verdict": verdict, "log": log,
+                        **({} if rc == 0 else {"tail": _tail(log)}),
+                        **({"debt": debt} if verdict == "size-debt" else {})})
 
     files = [f.strip() for f in a.files.split(",") if f.strip()]
     labels = [lbl for lbl in (rust_gate.file_label(f) for f in files) if lbl]
@@ -110,7 +125,9 @@ def main() -> int:
     worst = "new-failures" if any(r["verdict"] == "new-failures" for r in results) else \
         "infra" if any(r["verdict"] == "infra" for r in results) else "ok"
     skipped = [r["gate"] for r in results if r["verdict"] == "skipped"]
-    print(json.dumps({"verdict": worst, "skipped": skipped, "gates": results}, indent=1))
+    debt = [d for r in results for d in r.get("debt", [])]
+    print(json.dumps({"verdict": worst, "skipped": skipped, "size_debt": debt,
+                      "gates": results}, indent=1))
     return {"ok": 0, "new-failures": 1}.get(worst, 2)
 
 

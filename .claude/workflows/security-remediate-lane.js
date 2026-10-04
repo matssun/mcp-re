@@ -163,7 +163,7 @@ const WORK_SCHEMA = {
     // `undefined !== 0` is true. Every one of those changes was fine.
     gate_verdict: {
       type: 'string',
-      description: 'ok | new-failures | infra | no-baseline | not-run',
+      description: 'ok | size-debt | new-failures | infra | no-baseline | not-run',
     },
     files_touched: { type: 'array', items: { type: 'string' } },
     problem: { type: 'string', description: 'ONLY when something went wrong that the other fields cannot say: one line' },
@@ -284,7 +284,7 @@ function workPrompt(item, i, model) {
       (item.file.endsWith('.py') ? ' --pyright-baseline-errors ' + PYRIGHT_BASELINE : '') +
       ' --touched <comma-separated files you edited> --applied <n> --not-applied <n> --tests-added <n>' +
       (item.file.endsWith('.rs') ? ' --it <comma-separated integration-test targets (tests/<name>.rs) your accept criteria name; omit when none>' : ''),
-    '  It prints `gate_verdict` (new-failures > infra > no-baseline > ok), each gate\'s result, and any prescan hit on a touched or related file. Judge a prescan hit yourself: it may predate your change.',
+    '  It prints `gate_verdict` (new-failures > infra > no-baseline > size-debt > ok), each gate\'s result, and any prescan hit on a touched or related file. Judge a prescan hit yourself: it may predate your change.',
     '  Do NOT call `progress.py`, `bazel_gate.py`, `rust_gate.py`, Bazel, pyright or prescan separately.',
     '  On `new-failures` check.py has ALREADY saved your change as a patch and reverted it; the tree is clean. Report and stop — do not re-apply.',
     '',

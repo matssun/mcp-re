@@ -68,13 +68,14 @@ sys.path.insert(0, HERE)
 import bazel_gate  # noqa: E402
 import rust_gate  # noqa: E402
 import progress  # noqa: E402
+import size_debt  # noqa: E402
 import writer_patch  # noqa: E402
 
 GATE_SCRIPT = os.path.join(HERE, "bazel_gate.py")
 PRESCAN_SCRIPT = os.path.join(HERE, "prescan.py")
 PYRIGHT_SUMMARY = re.compile(r"(\d+) errors?, (\d+) warnings?")
 # Worst first. `no-baseline` outranks `ok` because an unmeasured tree is not a pass.
-RANK = {"new-failures": 0, "infra": 1, "no-baseline": 2, "ok": 3, "not-run": 4}
+RANK = {"new-failures": 0, "infra": 1, "no-baseline": 2, "size-debt": 3, "ok": 4, "not-run": 5}
 
 
 def _ids(spec: str) -> list[str]:
@@ -274,6 +275,10 @@ def cmd_post(a) -> int:
             parts.append(dict(_bazel(a, t), gate="bazel"))
     verdict = min((p["verdict"] for p in parts), key=lambda v: RANK.get(v, 1)) if parts else "not-run"
     raw_exit = max((p.get("exit") or 0 for p in parts), default=0)
+    debt = [r for p in parts if p.get("verdict") == "size-debt" for r in p.get("debt", [])]
+    if debt:
+        # Not blocking: the fix lands and the growth is registered when it is committed.
+        size_debt.record(a.work_dir, a.file, debt)
 
     note = "; ".join(gate_summary(p) for p in parts) + "; prescan %s" % (
         pre["state"] if pre["state"] == "clean" else "%d hit(s)" % len(pre["hits"]))
@@ -304,7 +309,7 @@ def gate_summary(p: dict) -> str:
     if p["gate"] in ("clippy", "rustfmt", "test", "module-size", "targets"):
         what = p.get("lane") or p.get("target") or ""
         bad = (p.get("errors_head") or p.get("unformatted") or p.get("failed")
-               or p.get("head") or p.get("why") or "")
+               or p.get("debt") or p.get("head") or p.get("why") or "")
         return "%s%s %s%s" % (p["gate"], (":" + what) if what else "", p["verdict"],
                               (" — " + str(bad)[:200]) if bad and p["verdict"] != "ok" else "")
     if p["gate"] == "pyright":

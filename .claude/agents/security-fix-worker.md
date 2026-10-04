@@ -77,7 +77,8 @@ What you pass it and must get right:
 
 | verdict | meaning | terminal event |
 |---|---|---|
-| `new-failures` | a lint, a compile error, a failed test, or a module grown past its ratchet baseline | `gate-failed`, written by `check.py`; your change is reverted, the patch path is in the output; the reviewer is skipped |
+| `new-failures` | a lint, a compile error, or a failed test | `gate-failed`, written by `check.py`; your change is reverted, the patch path is in the output; the reviewer is skipped |
+| `size-debt` | only size grew (a module past its baseline, a new file past 200 lines, a function past 60) — recorded, not blocking | none — the reviewer closes the attempt; finalize registers the growth |
 | `infra` | Bazel never judged the code (analysis, fetch or toolchain failure; a selection that ran 0 tests although the file has tests) | none — the reviewer closes the attempt |
 | `ok` | every gate passed | none — the reviewer closes the attempt |
 
