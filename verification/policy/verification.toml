@@ -4479,6 +4479,7 @@ tested_symbols = [
   "//mcp-re-client:mcp_re_client_test#config::bind_scope::tests::an_off_host_bind_needs_the_operators_declaration",
   "//mcp-re-client:mcp_re_client_test#config::bind_scope::tests::a_loopback_bind_needs_nothing_and_the_flag_does_not_change_it",
   "//mcp-re-client:mcp_re_client_test#config::bind_scope::tests::an_exposed_bind_names_one_further_authority_and_no_more",
+  "//mcp-re-client:mcp_re_client_test#config::bind_scope::tests::a_wildcard_bind_names_no_authority_and_is_refused_even_when_declared",
   # ADR-MCPRE-069 `register`: the COMPOSITION control, and the one that distinguishes "the
   # guard refused" from "the bind failed" without opening a socket on every interface. It
   # lived in a file this unit's predecessor already owned and was claimed by nothing.

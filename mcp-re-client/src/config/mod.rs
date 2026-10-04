@@ -438,7 +438,7 @@ mod tests {
         );
 
         let declared = document(
-            r#"{ "bind": "0.0.0.0:8640", "allow_non_loopback": true }"#,
+            r#"{ "bind": "198.51.100.7:8640", "allow_non_loopback": true }"#,
             ROUTE,
         );
         ClientConfig::from_json(declared.as_bytes()).expect("an explicit opt-in is honoured");

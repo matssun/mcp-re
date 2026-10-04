@@ -31,7 +31,9 @@ use super::ConfigError;
 pub struct BindScope {
     address: SocketAddr,
     /// True only for an address off this host, which [`BindScope::decide`] admits only
-    /// against an explicit operator declaration.
+    /// against an explicit operator declaration. An admitted address is never
+    /// unspecified, so [`BindScope::exposed_authority`] always names an address a `Host`
+    /// can carry.
     exposed: bool,
 }
 
@@ -45,6 +47,14 @@ impl BindScope {
                  unauthenticated, so binding it off-host offers this client's signing \
                  key as a service to the network. Set local.allow_non_loopback if that \
                  is genuinely intended."
+            )));
+        }
+        if address.ip().to_canonical().is_unspecified() {
+            return Err(err(format!(
+                "local.bind {address} is a wildcard address: it names every interface and \
+                 no single authority, so no Host a caller sends can name this listener and \
+                 every off-host request would be refused 421. Bind the interface address \
+                 the local clients will name."
             )));
         }
         Ok(Self { address, exposed })
@@ -72,9 +82,22 @@ mod tests {
 
     #[test]
     fn an_off_host_bind_needs_the_operators_declaration() {
-        let exposed: SocketAddr = "0.0.0.0:8640".parse().expect("an address");
+        let exposed: SocketAddr = "198.51.100.7:8640".parse().expect("an address");
         assert!(BindScope::decide(exposed, false).is_err());
         assert!(BindScope::decide(exposed, true).is_ok());
+    }
+
+    #[test]
+    fn a_wildcard_bind_names_no_authority_and_is_refused_even_when_declared() {
+        for text in ["0.0.0.0:8640", "[::]:8640"] {
+            let address: SocketAddr = text.parse().expect("an address");
+            assert!(BindScope::decide(address, false).is_err());
+            let refusal = BindScope::decide(address, true).expect_err("a wildcard is refused");
+            assert!(
+                refusal.to_string().contains("wildcard"),
+                "{text}: {refusal}"
+            );
+        }
     }
 
     #[test]
