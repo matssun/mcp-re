@@ -4,8 +4,8 @@
 //! with a *different* revocation-propagation guarantee:
 //!
 //! - **Tier 1 — bounded-cache eventual.** A verifier may serve cached *active*
-//!   trust state for at most the trust-propagation window `T`; revocation is
-//!   enforced fleet-wide within `T`, then fails closed. This is the default
+//!   trust state for at most the trust-propagation window `T`; cached active
+//!   state lives at most `T`, then fails closed. This is the default
 //!   posture and is implemented by [`BoundedTrustCache`](crate::BoundedTrustCache).
 //! - **Tier 2 — live strong check.** The resolver consults the shared store on
 //!   *every* verification (no positive-trust caching) — near-zero propagation
@@ -42,7 +42,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RevocationTier {
     /// **Tier 1.** Bounded-cache eventual trust: cached *active* state lives at
-    /// most `T` seconds; revocation enforced fleet-wide within `T`, then fail
+    /// most `T` seconds; cached active state lives at most `T`, then fail
     /// closed. The default posture.
     BoundedCache {
         /// The trust-propagation window `T` (seconds): the max age of cached
@@ -143,7 +143,8 @@ impl RevocationTier {
     pub fn guarantee(&self) -> &'static str {
         match self {
             RevocationTier::BoundedCache { .. } => {
-                "revocation enforced fleet-wide within the bounded window T; on \
+                "cached trust state lives at most the bounded window T: T bounds CACHING, \
+                 not how fast --trust itself changes (see store-change-cadence); on \
                  store outage cached active state is usable only until T, then \
                  fail closed; NOT zero-window / NOT live / NOT push"
             }
@@ -259,6 +260,8 @@ mod tests {
         // Tier 1 explicitly disclaims the stronger postures.
         assert!(bounded.contains("NOT zero-window"));
         assert!(bounded.contains("NOT live"));
+        assert!(!bounded.contains("fleet-wide"));
+        assert!(bounded.contains("CACHING"));
     }
 
     #[test]

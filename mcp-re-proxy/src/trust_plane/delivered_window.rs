@@ -24,7 +24,7 @@ use crate::revocation_tier::RevocationTier;
 /// Every tier's window is a claim about how quickly a key removed from `--trust` stops
 /// resolving, and nothing resolves faster than the file is re-read. The default tier
 /// (`bounded-cache`) is accepted without a cadence — unlike `live`/`push`, whose claims
-/// are refused outright without one — so its "enforced fleet-wide within T" line is the
+/// are refused outright without one — so its tier line is the
 /// one an operator gets by omission. The correction therefore rides on the SAME line as
 /// the claim: as a separate line further down it was read as being about something else,
 /// and the tier line was quoted on its own.

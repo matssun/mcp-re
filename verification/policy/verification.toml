@@ -2915,6 +2915,12 @@ tested_symbols = [
   # "which witnesses each state form requires": the state projects back to the tier the
   # resolver is built from, so the witness a consumer reads is the one the state named.
   "//mcp-re-proxy:proxy_unit_test#config_state::trust_revocation::tests::the_state_projects_back_to_the_tier_the_resolver_is_built_from",
+  # "which witnesses each state form requires": a state built beside its ceiling violation
+  # does not hold the rules of its state form.
+  "//mcp-re-proxy:proxy_unit_test#config_state::trust_revocation::tests::a_refused_request_yields_no_state",
+  # "each state holds its cadence to the window it claims": a state over a non-positive
+  # window claims nothing, so it is refused on the runtime type.
+  "//mcp-re-proxy:proxy_unit_test#config_state::trust_revocation::tests::a_non_positive_window_is_refused_on_the_runtime_type",
 ]
 
 # THM-0036's owner. A PAIRED locator and key, or not at all — the epoch source is what splits
@@ -3765,6 +3771,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::retained::tests::a_verified_receipt_does_not_imply_the_evidence_is_retained",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::commitment::tests::the_two_evidence_roles_are_not_interchangeable",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::commitment::tests::a_record_with_no_verified_hop_has_no_identity",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::commitment::tests::incomplete_label_tokens_are_a_frozen_vocabulary",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::commitment::correspondence::tests::a_statement_over_a_verified_call_does_not_bind_a_reconstruction_that_verified_nothing",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::commitment::correspondence::tests::the_submission_only_verdict_still_compares_label_and_artifacts",
 ]
@@ -4600,6 +4607,7 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#response::delegated_tests::unbound_signature_is_not_accepted_as_success",
   "//mcp-re-client-core:mcp_re_client_core_test#response::delegated_tests::a_preflight_receipt_for_another_request_is_not_an_answer_to_this_one",
   "//mcp-re-client-core:mcp_re_client_core_test#response::delegated_tests::a_preflight_receipt_about_no_request_answers_nothing",
+  "//mcp-re-client-core:mcp_re_client_core_test#response::delegated_tests::a_response_failing_both_paths_is_refused_with_the_bound_verdict",
   "//mcp-re-client-core:mcp_re_client_core_test#response_expectation::tests::the_projection_reports_the_request_the_expectation_was_built_from",
 ]
 

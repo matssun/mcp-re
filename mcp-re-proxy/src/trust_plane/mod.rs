@@ -569,8 +569,8 @@ mod store_cadence_tests {
     }
 
     /// R7-C129: `bounded-cache` is the tier a deployment gets by omission, and it is
-    /// accepted with no `--trust-reload-secs` while still printing "revocation enforced
-    /// fleet-wide within T". Without a reload the base store is frozen for the process
+    /// accepted with no `--trust-reload-secs` while its tier line states only a window T.
+    /// Without a reload the base store is frozen for the process
     /// lifetime, so the qualifier has to be ON that line — not a separate one further
     /// down that an operator quoting the tier line never reads.
     #[test]
