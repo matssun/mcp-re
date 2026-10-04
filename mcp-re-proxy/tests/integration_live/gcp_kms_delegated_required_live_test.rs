@@ -446,7 +446,8 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
             .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
             .expect("served response verifies via the KMS-rooted attestation chain");
         assert_eq!(
-            verified.signature_facts.accepted_signer.identity.keyid, first_kid,
+            verified.signature_facts().accepted_signer.identity.keyid,
+            first_kid,
             "signed by the delegated key, not the KMS root"
         );
     }
@@ -516,7 +517,8 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
         .verify_delegated_bound_response(&resp2, &req2, &expectations(&[EPOCH]), &|_| false, after)
         .expect("post-rotation response verifies");
     assert_eq!(
-        verified2.signature_facts.accepted_signer.identity.keyid, second_kid,
+        verified2.signature_facts().accepted_signer.identity.keyid,
+        second_kid,
         "post-rotation responses are signed by the successor delegated key"
     );
 }
