@@ -4800,7 +4800,7 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **If false.** An attacker-influenced error body ends an operator log line and forges the next one, or hides text behind a bidirectional override.
 **Likely owner:** none. `proxy.remote_signer_call_aws`/`_gcp` state the failure value and the quota rule, not its rendering; NP-215 is credential non-echo.
 **Root relationship.** Beside NP-215.
-**Severity:** `low`.
+**Severity:** `medium`.
 
 ## NP-269 — every retention fault renders to its own operator sentence, and an unresolved crossing or a retired writer never reads as a retry-safe outage
 
