@@ -25,10 +25,10 @@ use crate::exchange_state::OpenLeg;
 use crate::refusal::Refusal;
 use crate::request_stages::RetentionDisposition;
 
+use super::receipt::Accepted;
 use super::reply::ReplyClass;
 use super::reply::ValidatedReply;
 use super::signing_window::SigningWindow;
-use super::Answerable;
 use super::HttpProfileProxy;
 
 /// The bodyless 202 terminal a one-way message reaches.
@@ -57,7 +57,7 @@ impl HttpProfileProxy {
     /// verified instruction to continue an exchange that cannot be continued.
     async fn record_continuation_leg(
         &self,
-        ans: &Answerable<'_>,
+        acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
         class: &ReplyClass,
         response_base: Vec<u8>,
@@ -68,7 +68,12 @@ impl HttpProfileProxy {
         };
         match self
             .continuations
-            .record_open_leg(&ans.ex, self.requests.audience_id(), state, response_base)
+            .record_open_leg(
+                acc.exchange(),
+                self.requests.audience_id(),
+                state,
+                response_base,
+            )
             .await
         {
             Ok(recorded) => {
@@ -76,7 +81,7 @@ impl HttpProfileProxy {
                 progress.establish(recorded);
                 Ok(())
             }
-            Err(refusal) => Err(self.refuse_answerable(ans, refusal, progress)),
+            Err(refusal) => Err(self.refuse_accepted(acc, refusal, progress)),
         }
     }
 
@@ -96,7 +101,7 @@ impl HttpProfileProxy {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn assemble_reply(
         &self,
-        ans: &Answerable<'_>,
+        acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
         outcome: DispatchedOutcome,
         outstanding: &OutstandingId,
@@ -107,7 +112,7 @@ impl HttpProfileProxy {
             Ok(bytes) => progress.establish(bytes),
             Err(refusal) => {
                 return Err(self
-                    .refuse_retained(ans, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, progress, retention)
                     .await)
             }
         };
@@ -120,19 +125,19 @@ impl HttpProfileProxy {
             Ok(read) => read,
             Err(refusal) => {
                 return Err(self
-                    .refuse_retained(ans, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, progress, retention)
                     .await)
             }
         };
-        let (response, response_base) = match self.responses.sign_reply(&ans.ex, validated, window)
-        {
-            Ok((response, base)) => (response, progress.establish(base)),
-            // SIGNING failed, so there is no signed terminal to retain. The marker stays,
-            // and it is the true statement: this exchange crossed and no durable retained
-            // terminal discharges it.
-            Err(refusal) => return Err(self.refuse_answerable(ans, refusal, progress)),
-        };
-        self.record_continuation_leg(ans, progress, &class, response_base)
+        let (response, response_base) =
+            match self.responses.sign_reply(acc.exchange(), validated, window) {
+                Ok((response, base)) => (response, progress.establish(base)),
+                // SIGNING failed, so there is no signed terminal to retain. The marker stays,
+                // and it is the true statement: this exchange crossed and no durable retained
+                // terminal discharges it.
+                Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+            };
+        self.record_continuation_leg(acc, progress, &class, response_base)
             .await?;
         Ok(SignedReply { response, class })
     }

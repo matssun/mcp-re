@@ -84,10 +84,7 @@ impl HttpProfileProxy {
         };
         let subject = verified_request_subject(ex.verified.resolved_actor());
         let Ok(bound) = binding.bind(peer, subject) else {
-            return Err(Refusal::before_admission(
-                McpReError::TransportBindingFailed,
-                403,
-            ));
+            return Err(Refusal::new(McpReError::TransportBindingFailed, 403));
         };
         Ok(Established::new(Some(bound), checked))
     }
@@ -155,7 +152,7 @@ impl HttpProfileProxy {
             Ok(facet) => Ok((admitted(), facet)),
             Err(denied) => Err(AdmissionDenied {
                 class: denied.class(),
-                refusal: Refusal::before_admission(denied.into_error(), 403),
+                refusal: Refusal::new(denied.into_error(), 403),
             }),
         }
     }

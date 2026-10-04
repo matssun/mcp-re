@@ -61,7 +61,7 @@ impl ContinuationPlane {
     /// [`McpReError::ReplayCacheUnavailable`] at 503 means the tier could not answer and a
     /// retry may well work. [`McpReError::ContinuationConflict`] at 409 means it answered,
     /// correctly, that the key is taken — so a retry finds the same thing, and 503's
-    /// "try again" would be advice that cannot come true. Both are `after_admission`: the
+    /// "try again" would be advice that cannot come true. Both are served past the accepted record: the
     /// backend produced the elicitation before either could be reached, so the exchange
     /// machine's `possibly_executed` disposition stands over both and neither token may be
     /// read as "nothing ran".
@@ -81,16 +81,13 @@ impl ContinuationPlane {
         // The dependent leg does fail closed either way. What it cannot do is fail closed
         // in TIME, which is why the refusal belongs here.
         let Some(store) = &self.store else {
-            return Err(Refusal::after_admission(
-                McpReError::ReplayCacheUnavailable,
-                503,
-            ));
+            return Err(Refusal::new(McpReError::ReplayCacheUnavailable, 503));
         };
         let bases = RetainedHandles::over(ex.verified.request_signature_base(), &response_base);
         let key = continuation_key(audience_id, ex.actor_id, state.as_bytes());
         // Named so the arm below stays an EXPRESSION: a block arm is a nesting level, and
         // this function is inside a loop inside a method already.
-        let conflict = || Refusal::after_admission(McpReError::ContinuationConflict, 409);
+        let conflict = || Refusal::new(McpReError::ContinuationConflict, 409);
         // Arms as expressions, not blocks: `Err` spends an attempt (the transient case the
         // budget exists for), `Collision` stops immediately (a taken key answers the same
         // way every time), `Stored` is the only way out with an answerable leg.
@@ -101,10 +98,7 @@ impl ContinuationPlane {
                 Err(e) => report(Fault::ContinuationRecord, "record the open leg", &e),
             }
         }
-        Err(Refusal::after_admission(
-            McpReError::ReplayCacheUnavailable,
-            503,
-        ))
+        Err(Refusal::new(McpReError::ReplayCacheUnavailable, 503))
     }
 }
 
@@ -253,10 +247,6 @@ mod tests {
         assert_eq!(refusal.status, 409);
         // Past the execution threshold, so the exchange machine's disposition stands: the
         // token must not be readable as "the backend did not run".
-        assert_eq!(
-            refusal.posture,
-            crate::refusal::RefusalPosture::AfterAdmission
-        );
         assert_eq!(refusal.execution_refinement, None);
         assert_eq!(
             store.0.load(Ordering::SeqCst),
@@ -292,10 +282,6 @@ mod tests {
     fn assert_unavailable_after_admission(refusal: &crate::refusal::Refusal) {
         assert_eq!(refusal.cause.wire_code(), "mcp-re.replay_cache_unavailable");
         assert_eq!(refusal.status, 503);
-        assert_eq!(
-            refusal.posture,
-            crate::refusal::RefusalPosture::AfterAdmission
-        );
         assert_eq!(refusal.execution_refinement, None);
     }
 

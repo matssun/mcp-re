@@ -138,41 +138,6 @@ impl HttpProfileProxy {
             authorized,
         })
     }
-
-    /// ADR-MCPS-035: the request is now ADMITTED.
-    ///
-    /// Emitted here rather than at signature verification so `accepted` and `rejected` are
-    /// MUTUALLY EXCLUSIVE per request: a signature-valid request that then loses replay
-    /// admission is a rejection, and a record claiming both would make the surface useless
-    /// for attribution.
-    ///
-    /// Every exit AFTER this records `mcp-re.response.rejected` instead — the request was
-    /// admitted, so a `request.rejected` record would contradict this one, and the fault is
-    /// on the response side anyway.
-    pub(super) fn record_request_accepted(
-        &self,
-        admitted: &AdmittedRequest,
-        admission: Option<AdmissionFacet>,
-        actor_id: &str,
-        now: i64,
-    ) {
-        crate::audit_record::record_to(
-            &self.audit,
-            // The live product, asked for its own projection. Nothing here reconstructs an
-            // authorization fact, and an unconfigured deployment says so rather than reading
-            // as an allow (ADR-MCPRE-066 §1.1, invariant 5).
-            crate::audit_record::AuditSubject::request_accepted(
-                &admitted.authorized,
-                // Read back from the exchange, never re-derived from the fact that nothing
-                // refused. `None` cannot occur on this path — an accepted request reached
-                // the gate — and `NotReached` is the honest reading if it ever did.
-                admission.unwrap_or(AdmissionFacet::NotReached),
-            ),
-            Some(actor_id.to_owned()),
-            200,
-            now,
-        );
-    }
 }
 
 #[cfg(test)]

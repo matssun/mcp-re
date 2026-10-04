@@ -378,12 +378,17 @@ impl HttpProfileProxy {
     /// tried. WHICH receipt that becomes belongs to [`receipt::ResponseSigning`].
     fn refuse(
         &self,
-        ex: &Exchange<'_>,
+        ex: &mut Exchange<'_>,
         refusal: Refusal,
         progress: &ExchangeProgress,
     ) -> ServedHttpResponse {
         let owed = Self::disposition(progress, refusal.execution_refinement);
-        self.responses.refuse(&self.audit, ex, refusal, owed, None)
+        self.responses.refuse(
+            &self.audit,
+            receipt::RefusalPoint::Request(ex, None),
+            refusal,
+            owed,
+        )
     }
 
     /// What the exchange machine's cross-machine state means on the wire.
@@ -467,8 +472,8 @@ impl HttpProfileProxy {
             Ok(answered) => answered,
             Err(rejection) => return rejection,
         };
-        self.record_request_accepted(&admitted, ans.ex.verdicts.admission(), &actor_id, now);
-        let commitment = self.commit_to_dispatch(&ans, admitted.authorized, &window, &mut progress);
+        let acc = receipt::Accepted::record(&self.audit, &admitted, ans);
+        let commitment = self.commit_to_dispatch(&acc, admitted.authorized, &window, &mut progress);
         let (prepared, retention) = match commitment.await {
             Ok(committed) => committed,
             Err(rejection) => return rejection,
@@ -493,18 +498,18 @@ impl HttpProfileProxy {
         // from the REQUEST, which is where the fact lives.
         if matches!(admitted.outstanding, OutstandingId::Notification) {
             return self
-                .answer_notification_terminal(&ans, &mut progress, &outcome, &window, &owed)
+                .answer_notification_terminal(&acc, &mut progress, &outcome, &window, &owed)
                 .await;
         }
         let outstanding = &admitted.outstanding;
         let reply = match self
-            .assemble_reply(&ans, &mut progress, outcome, outstanding, &window, &owed)
+            .assemble_reply(&acc, &mut progress, outcome, outstanding, &window, &owed)
             .await
         {
             Ok(reply) => reply,
             Err(rejection) => return rejection,
         };
-        self.serve_retained(&ans, &mut progress, reply, &owed).await
+        self.serve_retained(&acc, &mut progress, reply, &owed).await
     }
 }
 

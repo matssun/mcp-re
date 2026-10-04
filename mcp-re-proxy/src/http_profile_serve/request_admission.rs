@@ -140,7 +140,7 @@ impl RequestAdmission {
         http_req: &HttpRequest,
     ) -> Result<OutstandingId, Refusal> {
         mcp_re_http_profile::validate_request_envelope(&http_req.body)
-            .map_err(|e| Refusal::before_admission(e, 400))
+            .map_err(|e| Refusal::new(e, 400))
     }
 }
 

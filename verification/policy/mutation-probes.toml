@@ -2644,12 +2644,12 @@ conjunct = "the notification terminal is decided before the 202 is signed, and t
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
 anchor = """
         if progress.establish_terminal(acknowledged).is_err() {
-            let refusal = crate::refusal::Refusal::after_admission(
+            let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
             );
             return self
-                .refuse_retained(ans, refusal, progress, retention)
+                .refuse_retained(acc, refusal, progress, retention)
                 .await;
         }
 """
@@ -2671,12 +2671,12 @@ conjunct = "the success terminal is decided before retention discharges and befo
 path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs"
 anchor = """
         if progress.may_publish(success).is_err() {
-            let refusal = crate::refusal::Refusal::after_admission(
+            let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
             );
             return self
-                .refuse_retained(ans, refusal, progress, retention)
+                .refuse_retained(acc, refusal, progress, retention)
                 .await;
         }
 """
@@ -3030,7 +3030,7 @@ anchor = """
             "read the approval this answer leg names",
             &e,
         );
-        Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503)
+        Refusal::new(McpReError::ReplayCacheUnavailable, 503)
     })
 """
 weakening = """
@@ -8569,7 +8569,7 @@ conjunct = "an inbound exchange that fails to establish a required pre-dispatch 
 path = "mcp-re-proxy/src/http_profile_serve/request_admission.rs"
 anchor = """
         mcp_re_http_profile::validate_request_envelope(&http_req.body)
-            .map_err(|e| Refusal::before_admission(e, 400))
+            .map_err(|e| Refusal::new(e, 400))
 """
 weakening = """
         Ok(mcp_re_http_profile::validate_request_envelope(&http_req.body)

@@ -110,7 +110,7 @@ fn peeked_or_refusal(
             "read the approval this answer leg names",
             &e,
         );
-        Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503)
+        Refusal::new(McpReError::ReplayCacheUnavailable, 503)
     })
 }
 
@@ -127,7 +127,7 @@ fn peeked_or_refusal(
 ///
 /// Free, like every refusal above the retirement: nothing was peeked and nothing spent.
 fn capability_absent() -> Refusal {
-    Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503)
+    Refusal::new(McpReError::ReplayCacheUnavailable, 503)
 }
 
 /// What CONTINUATION-PREPARED recovered.

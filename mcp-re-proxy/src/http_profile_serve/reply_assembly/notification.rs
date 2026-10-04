@@ -22,9 +22,9 @@ use crate::exchange_state::ExchangeProgress;
 use crate::refusal::RefusalCause;
 use crate::request_stages::RetentionDisposition;
 
+use super::super::receipt::Accepted;
 use super::super::served;
 use super::super::signing_window::SigningWindow;
-use super::super::Answerable;
 use super::super::HttpProfileProxy;
 
 impl HttpProfileProxy {
@@ -101,7 +101,7 @@ impl HttpProfileProxy {
     /// commits to a dispatch at all.
     pub(in crate::http_profile_serve) async fn answer_notification_terminal(
         &self,
-        ans: &Answerable<'_>,
+        acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
         outcome: &DispatchedOutcome,
         window: &SigningWindow,
@@ -117,7 +117,7 @@ impl HttpProfileProxy {
             // cannot reach here; it is refused before the exchange commits.
             Err(refusal) => {
                 return self
-                    .refuse_retained(ans, refusal, progress, retention)
+                    .refuse_retained(acc, refusal, progress, retention)
                     .await
             }
         };
@@ -125,20 +125,20 @@ impl HttpProfileProxy {
         // model may not mint one — and the decision is taken before the acknowledgement is
         // committed, while the exchange can still reach a post-dispatch refusal instead.
         if progress.establish_terminal(acknowledged).is_err() {
-            let refusal = crate::refusal::Refusal::after_admission(
+            let refusal = crate::refusal::Refusal::new(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
             );
             return self
-                .refuse_retained(ans, refusal, progress, retention)
+                .refuse_retained(acc, refusal, progress, retention)
                 .await;
         }
         self.answer_notification(
-            ans.ex.http_req,
+            acc.exchange().http_req,
             window,
-            ans.ex.now,
-            ans.ex.verified,
-            ans.ex.actor_id.to_owned(),
+            acc.exchange().now,
+            acc.exchange().verified,
+            acc.exchange().actor_id.to_owned(),
             retention,
             Self::disposition(progress, None),
         )

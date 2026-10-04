@@ -286,7 +286,10 @@ def check(overrides: dict[str, str] | None = None) -> list[str]:
         )
 
     # 4. no token rendered into a Refusal constructor
-    for m in re.finditer(r"Refusal::(preflight|before_admission|after_admission)\(", serving):
+    constructors = list(re.finditer(r"\bRefusal::(new)\(", serving))
+    if not constructors:
+        problems.append("no `Refusal::new(` call site in the serving path — check 4 measures nothing")
+    for m in constructors:
         tail = serving[m.end() : m.end() + 200]
         head = tail.split(")")[0]
         if ".wire_code()" in head or re.search(r'"\s*mcp-re\.', head):
@@ -445,7 +448,7 @@ SELFTEST = [
         "the authorization stage renders its refusal again (poison pill 1)",
         {
             SERVING: "fn authorization_stage(&self) -> u8 {\n"
-            "    self.authorization.decide().map_err(|r| Refusal::before_admission(r.wire_code(), 403))\n}\n"
+            "    self.authorization.decide().map_err(|r| Refusal::new(r.wire_code(), 403))\n}\n"
         },
         1,
     ),

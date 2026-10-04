@@ -48,7 +48,7 @@ impl HttpProfileProxy {
     ) -> Result<AuthorizationPosture, Refusal> {
         self.authorization
             .decide(ex.verified, &ex.http_req.body, decided_over.binding())
-            .map_err(|refusal| Refusal::before_admission(refusal, 403))
+            .map_err(|refusal| Refusal::new(refusal, 403))
     }
 }
 

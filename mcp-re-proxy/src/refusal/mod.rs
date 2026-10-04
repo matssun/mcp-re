@@ -26,7 +26,7 @@
 //! separation the receipt owner itself depends on.
 //!
 //! `receipt::ResponseSigning` consumes a refusal and decides how it is REPRESENTED and
-//! SIGNED — which credential, which posture, which audit event. It does not own the
+//! SIGNED — which credential, which audit event. It does not own the
 //! semantic fact that some other authority refused, and it is not the only consumer:
 //! admission, authorization, transport binding, the continuation plane, the inner plane and
 //! the retention obligation all name refusals, and none of them signs one. Forcing refusal
@@ -71,23 +71,6 @@ mod cause;
 
 pub(crate) use cause::RefusalCause;
 
-/// How a refusal must be signed and recorded.
-///
-/// Not a detail of presentation: each posture is a different claim. Both say a trustworthy
-/// request hash exists, and differ on whether the request had already been ADMITTED — which
-/// decides whether the fault is attributed to the caller or to the response side
-/// (ADR-MCPS-035 §9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RefusalPosture {
-    /// The request verified but was not yet admitted. Bound via `;req`, recorded as
-    /// `mcp-re.request.rejected`.
-    BeforeAdmission,
-    /// The request was admitted, so the fault is on the response side. Bound, recorded as
-    /// `mcp-re.response.rejected` — a `request.rejected` here would contradict the
-    /// `accepted` record already emitted for the same request.
-    AfterAdmission,
-}
-
 /// What a stage DECIDED, before anything is signed.
 ///
 /// A stage names its refusal; it does not produce one. Two reasons, and the second is the
@@ -105,7 +88,6 @@ pub(crate) struct Refusal {
     /// Which authority refused, in its own vocabulary. Not a rendered token.
     pub(crate) cause: RefusalCause,
     pub(crate) status: u16,
-    pub(crate) posture: RefusalPosture,
     /// What the REFUSING OWNER established about effects that the exchange machine has no
     /// representation for.
     ///
@@ -122,12 +104,12 @@ pub(crate) struct Refusal {
 }
 
 impl Refusal {
-    /// The request verified but had not been admitted.
-    pub(crate) fn before_admission(cause: impl Into<RefusalCause>, status: u16) -> Self {
+    /// A stage's decision: WHAT was refused. Which record it becomes is decided by the entry
+    /// it is served from (`receipt::RefusalPoint`), never by the stage.
+    pub(crate) fn new(cause: impl Into<RefusalCause>, status: u16) -> Self {
         Refusal {
             cause: cause.into(),
             status,
-            posture: RefusalPosture::BeforeAdmission,
             execution_refinement: None,
         }
     }
@@ -140,16 +122,6 @@ impl Refusal {
         self.execution_refinement = Some(execution);
         self
     }
-
-    /// The request was admitted; the fault is on the response side.
-    pub(crate) fn after_admission(cause: impl Into<RefusalCause>, status: u16) -> Self {
-        Refusal {
-            cause: cause.into(),
-            status,
-            posture: RefusalPosture::AfterAdmission,
-            execution_refinement: None,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -158,19 +130,11 @@ mod tests {
     use mcp_re_core::McpReError;
 
     #[test]
-    fn the_posture_is_independent_of_the_cause() {
-        let a = Refusal::before_admission(McpReError::MissingEnvelope, 400);
-        let b = Refusal::after_admission(McpReError::MissingEnvelope, 500);
-        assert_eq!(a.cause, b.cause);
-        assert_ne!(a.posture, b.posture);
-    }
-
-    #[test]
     fn a_refusal_renders_only_at_the_presentation_boundary() {
         // The refusal itself holds no token and no longer offers one: the serving path
         // asks the CAUSE, at the one point that presents a public code. A convenience
         // delegation here would be a second place a token appears to come from.
-        let r = Refusal::before_admission(McpReError::ReplayDetected, 409);
+        let r = Refusal::new(McpReError::ReplayDetected, 409);
         assert_eq!(r.cause.wire_code(), "mcp-re.replay_detected");
     }
 }

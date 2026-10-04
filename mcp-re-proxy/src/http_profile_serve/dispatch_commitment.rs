@@ -34,13 +34,27 @@ use crate::refusal::Refusal;
 use crate::request_stages::RetentionDisposition;
 
 use super::body_boundary::ForwardedBody;
+use super::receipt::Accepted;
+use super::receipt::RefusalPoint;
 use super::signing_window;
 use super::signing_window::SigningWindow;
-use super::Answerable;
 use super::Exchange;
 use super::HttpProfileProxy;
 
 impl HttpProfileProxy {
+    /// Serve a refusal past the accepted record: every one is `mcp-re.response.rejected`,
+    /// signed under the exchange's own key snapshot.
+    pub(super) fn refuse_accepted(
+        &self,
+        acc: &Accepted<'_>,
+        refusal: Refusal,
+        progress: &ExchangeProgress,
+    ) -> ServedHttpResponse {
+        let owed = Self::disposition(progress, refusal.execution_refinement);
+        self.responses
+            .refuse(&self.audit, RefusalPoint::Response(acc), refusal, owed)
+    }
+
     /// FORWARDED — strip the proxy-owned `_meta` so the backend sees clean MCP.
     ///
     /// ```text
@@ -61,7 +75,7 @@ impl HttpProfileProxy {
             self.verified_context_policy,
             ex.now,
         )
-        .map_err(|e| Refusal::after_admission(e, 500))?;
+        .map_err(|e| Refusal::new(e, 500))?;
         Ok(Established::new(
             forwarded.into_bytes_for_inner(ex.actor_id),
             ExchangeEvent::ForwardBodyPrepared,
@@ -87,37 +101,37 @@ impl HttpProfileProxy {
     /// refuse.
     pub(super) async fn commit_to_dispatch<'p>(
         &'p self,
-        ans: &Answerable<'_>,
+        acc: &Accepted<'_>,
         authorized: AuthorizationPosture,
         window: &SigningWindow,
         progress: &mut ExchangeProgress,
     ) -> Result<(PreparedInnerDispatch<'p>, RetentionDisposition), ServedHttpResponse> {
-        let forwarded = match self.forward_body_stage(&ans.ex) {
+        let forwarded = match self.forward_body_stage(acc.exchange()) {
             Ok(body) => progress.establish(body),
-            Err(refusal) => return Err(self.refuse_answerable(ans, refusal, progress)),
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
         };
         let prepared = match self.inner_async.prepare(authorized.release(forwarded)) {
             Ok(prepared) => progress.establish(prepared),
-            Err(refusal) => return Err(self.refuse_answerable(ans, refusal, progress)),
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
         };
         // The signing window must still be admissible at the worst instant this dispatch
         // can complete at — asked HERE because this is the first point where the bound
         // exists and the last where refusing is free. The capability is already held, so a
         // refusal drops it and returns everything it took.
         if !signing_window::covers(window, prepared.completion_bound()) {
-            return Err(self.refuse_answerable(
-                ans,
-                Refusal::after_admission(McpReError::DelegatedSigningUnavailable, 503),
+            return Err(self.refuse_accepted(
+                acc,
+                Refusal::new(McpReError::DelegatedSigningUnavailable, 503),
                 progress,
             ));
         }
-        let accepted = match self.retention.reserve(ans.ex.http_req).await {
+        let accepted = match self.retention.reserve(acc.exchange().http_req).await {
             Ok(accepted) => accepted,
-            Err(refusal) => return Err(self.refuse_answerable(ans, refusal, progress)),
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
         };
         let retention = match self.retention.commit(accepted).await {
             Ok(disposition) => progress.establish(disposition),
-            Err(refusal) => return Err(self.refuse_answerable(ans, refusal, progress)),
+            Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
         };
         Ok((prepared, retention))
     }

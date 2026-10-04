@@ -4254,7 +4254,6 @@ evidence = [
 # separation `PolicyError` may never acquire a route across.
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#refusal::tests::a_refusal_renders_only_at_the_presentation_boundary",
-  "//mcp-re-proxy:proxy_unit_test#refusal::tests::the_posture_is_independent_of_the_cause",
   "//mcp-re-proxy:proxy_unit_test#refusal::cause::tests::every_core_producer_names_a_verdict_and_the_token_follows_from_it",
   "//mcp-re-proxy:proxy_unit_test#refusal::cause::tests::every_core_producer_renders_a_token_its_own_authority_owns",
   "//mcp-re-proxy:proxy_unit_test#refusal::cause::tests::a_carrier_failure_arrives_as_a_core_verdict_that_remembers_its_producer",
@@ -6547,6 +6546,7 @@ evidence = [
 # to clamp. The last-resort controls are the other half — what an UNSIGNED receipt may still
 # state when no valid credential exists.
 tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::receipt::audit_event::tests::the_posture_is_independent_of_the_cause",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_spent_approval_last_resort_receipt_names_the_consumed_continuation",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_retention_indeterminate_last_resort_receipt_still_names_the_failed_obligation",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_ordinary_post_dispatch_failure_claims_no_retention_status",

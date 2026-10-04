@@ -90,7 +90,7 @@ impl InnerPlane {
         self.inner
             .prepare(forwarded.bytes())
             .map(|prepared| Established::new(prepared, ExchangeEvent::InnerPlaneAccepted))
-            .map_err(|_| Refusal::after_admission(McpReError::InnerPlaneUnavailable, 503))
+            .map_err(|_| Refusal::new(McpReError::InnerPlaneUnavailable, 503))
     }
 
     /// RESPONSE-OBSERVED — what did the inner plane actually manage to do?
@@ -116,12 +116,9 @@ impl InnerPlane {
             }
             DispatchedOutcome::Indeterminate(_) => {
                 progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
-                Err(Refusal::after_admission(
-                    McpReError::InnerDispatchIndeterminate,
-                    504,
-                ))
+                Err(Refusal::new(McpReError::InnerDispatchIndeterminate, 504))
             }
-            DispatchedOutcome::InvalidUpstream(clause) => Err(Refusal::after_admission(
+            DispatchedOutcome::InvalidUpstream(clause) => Err(Refusal::new(
                 HttpProfileError::UpstreamResponseInvalid(clause),
                 502,
             )),
@@ -168,10 +165,7 @@ impl InnerPlane {
             }
             DispatchedOutcome::Indeterminate(_) => {
                 progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
-                Err(Refusal::after_admission(
-                    McpReError::InnerDispatchIndeterminate,
-                    504,
-                ))
+                Err(Refusal::new(McpReError::InnerDispatchIndeterminate, 504))
             }
         }
     }

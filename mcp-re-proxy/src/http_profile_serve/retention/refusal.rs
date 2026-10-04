@@ -19,8 +19,7 @@ use crate::transparency::RetentionError;
 /// read as a threshold an exchange never crossed (R9-C099), so it carries the disposition
 /// that says so.
 pub(super) fn pre_dispatch(error: &RetentionError, attempted: &str) -> Refusal {
-    let unavailable =
-        |status| Refusal::after_admission(McpReError::EvidenceRetentionUnavailable, status);
+    let unavailable = |status| Refusal::new(McpReError::EvidenceRetentionUnavailable, status);
     let (fault, refusal) = match error {
         RetentionError::Unresolved(_) => (
             Fault::Unresolved,
@@ -98,10 +97,9 @@ mod tests {
 
     /// Every pre-dispatch refusal is free, whichever fault produced it.
     ///
-    /// `after_admission` is the posture that says the fault is on the response side and
-    /// records `mcp-re.response.rejected`; all three arms must take it, because the backend
-    /// has NOT run in any of them and a `request.rejected` would contradict the accepted
-    /// record for the same request.
+    /// All three are served past the accepted record, so they record
+    /// `mcp-re.response.rejected`; the backend has NOT run in any of them and a
+    /// `request.rejected` would contradict the accepted record for the same request.
     #[test]
     fn no_pre_dispatch_fault_claims_the_backend_ran() {
         for error in [

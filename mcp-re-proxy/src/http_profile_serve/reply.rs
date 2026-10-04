@@ -69,7 +69,7 @@ impl ValidatedReply {
         match validate_response_envelope(&parsed, outstanding) {
             Ok(_) => Ok(ValidatedReply { parsed, response }),
             Err(HttpProfileError::UpstreamResponseInvalid(clause)) => Err(invalid(clause)),
-            Err(e) => Err(Refusal::after_admission(e, 502)),
+            Err(e) => Err(Refusal::new(e, 502)),
         }
     }
 
@@ -97,16 +97,15 @@ impl ValidatedReply {
         let result = self.parsed.get("result");
         match classify_result_type(result) {
             ResultTypeClass::Complete => Ok(ReplyClass::Terminal),
-            ResultTypeClass::Unrecognized => Err(Refusal::after_admission(
-                HttpProfileError::UnrecognizedResultType,
-                502,
-            )),
+            ResultTypeClass::Unrecognized => {
+                Err(Refusal::new(HttpProfileError::UnrecognizedResultType, 502))
+            }
             ResultTypeClass::InputRequired => match input_required_state_of(result) {
                 Ok(Some(state)) => Ok(ReplyClass::Open(state)),
                 // Classified as non-terminal and then failed to yield its state: the two
                 // arms cannot both be right, and the only safe reading is that the message
                 // is invalid.
-                _ => Err(Refusal::after_admission(
+                _ => Err(Refusal::new(
                     HttpProfileError::UpstreamResponseInvalid("input_required requestState"),
                     502,
                 )),
@@ -120,7 +119,7 @@ impl ValidatedReply {
 /// A bad gateway is what every arm here means: the enforcement boundary is intact and the
 /// message behind it is not.
 fn invalid(clause: &'static str) -> Refusal {
-    Refusal::after_admission(HttpProfileError::UpstreamResponseInvalid(clause), 502)
+    Refusal::new(HttpProfileError::UpstreamResponseInvalid(clause), 502)
 }
 
 /// Which MCP lifecycle transition a validated reply is.
