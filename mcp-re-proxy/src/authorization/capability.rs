@@ -59,13 +59,14 @@ pub(crate) fn evaluator(
     }
     let line = format!(
         "authorization = PDP-DECISION enforced ({} trusted authority key(s) from {}, \
-         accepted scope {}, decisions accepted up to {}s old). A request carrying no \
+         accepted scope {}, decisions accepted up to {}s old plus the {}s --max-clock-skew tolerance). A request carrying no \
          applicable decision is REFUSED. Authority keys are read ONCE at startup: a --trust \
          reload does not refresh them, so withdrawing an authority needs a restart.",
         issuers.len(),
         trust.path(),
         scope_name(enforced.accepted_scope()),
         enforced.max_decision_age_secs(),
+        max_clock_skew,
     );
     let max_decision_age = i64::try_from(enforced.max_decision_age_secs().get()).map_err(|_| {
         format!(
@@ -222,6 +223,10 @@ mod tests {
         assert!(
             line.contains("read ONCE at startup"),
             "the ON line must admit its refresh window: {line}"
+        );
+        assert!(
+            line.contains("plus the 30s --max-clock-skew tolerance"),
+            "the ON line must state the skew-inclusive staleness bound: {line}"
         );
     }
 

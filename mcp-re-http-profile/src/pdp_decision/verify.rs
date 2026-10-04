@@ -56,7 +56,9 @@ pub struct PdpDecisionFreshness {
     pub max_clock_skew: i64,
     /// The verifier's own cap on how old a decision it will act on, independent of the
     /// issuer's chosen `exp`. A long-lived decision is the issuer's choice; how long this
-    /// enforcement point is willing to act on one is not.
+    /// enforcement point is willing to act on one is not. The cap is applied before skew: a
+    /// decision is refused as stale when `now - iat` exceeds `max_decision_age + max_clock_skew`,
+    /// so the oldest decision acted on is this value plus `max_clock_skew`.
     pub max_decision_age: i64,
 }
 
