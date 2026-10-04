@@ -57,8 +57,74 @@ pub(super) fn reject_mcp_method_divergence(request: &HttpRequest) -> Result<(), 
     let Some(body_method) = body.get("method").and_then(|m| m.as_str()) else {
         return Err(HttpProfileError::McpMethodDivergence);
     };
-    if header_method.trim() != body_method {
+    // Only OWS (SP/HTAB) is stripped: the field-value boundary `sigbase` signs.
+    if header_method.trim_matches([' ', '\t']) != body_method {
         return Err(HttpProfileError::McpMethodDivergence);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CALL: &str = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#;
+    const RESULT: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#;
+
+    fn request(headers: &[(&str, &str)], body: &str) -> HttpRequest {
+        HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers: headers
+                .iter()
+                .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
+                .collect(),
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_header_differing_from_the_body_only_by_non_ows_whitespace_is_refused() {
+        let r = request(&[("Mcp-Method", "\u{00A0}tools/call")], CALL);
+        assert!(matches!(
+            reject_mcp_method_divergence(&r),
+            Err(HttpProfileError::McpMethodDivergence)
+        ));
+    }
+
+    #[test]
+    fn ows_around_the_header_value_is_not_part_of_it() {
+        let r = request(&[("Mcp-Method", " tools/call\t")], CALL);
+        assert!(reject_mcp_method_divergence(&r).is_ok());
+    }
+
+    #[test]
+    fn a_header_naming_a_different_method_than_the_body_is_refused() {
+        let r = request(&[("Mcp-Method", "tools/list")], CALL);
+        assert!(matches!(
+            reject_mcp_method_divergence(&r),
+            Err(HttpProfileError::McpMethodDivergence)
+        ));
+    }
+
+    #[test]
+    fn a_header_with_no_body_method_to_mirror_is_refused() {
+        let r = request(&[("Mcp-Method", "tools/call")], RESULT);
+        assert!(matches!(
+            reject_mcp_method_divergence(&r),
+            Err(HttpProfileError::McpMethodDivergence)
+        ));
+    }
+
+    #[test]
+    fn an_agreeing_header_is_admitted() {
+        let r = request(&[("Mcp-Method", "tools/call")], CALL);
+        assert!(reject_mcp_method_divergence(&r).is_ok());
+    }
+
+    #[test]
+    fn an_absent_header_constrains_nothing() {
+        let r = request(&[], RESULT);
+        assert!(reject_mcp_method_divergence(&r).is_ok());
+    }
 }

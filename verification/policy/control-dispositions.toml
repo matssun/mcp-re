@@ -13565,6 +13565,15 @@ consequence = "medium"
 root_relationship = "Observability premise of the operator's trust-epoch kill switch (ADR-MCPRE-052 §7)."
 record = "docs/architecture/control-dispositions.md#np-233"
 
+[[proposition]]
+id = "NP-234"
+title = "A private-key PEM parse failure is reported as a fixed classification, never the parser's text"
+carrier = "mcp-re-transport/src/tls_config.rs (ClientTlsConfig::from_pem)"
+likely_owner = "none. client.transport_server_identity holds the carrier but states server authentication, which a key-error rendering test does not falsify."
+consequence = "high"
+root_relationship = "Secret-hygiene premise beside THM-0109: the client mTLS key never leaves through error text."
+record = "docs/architecture/control-dispositions.md#np-234"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -13948,4 +13957,60 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#signing_plane::rotation::tests::an_unreadable_epoch_is_recorded_when_first_seen_not_when_the_window_opens"
 decision = "new-proposition"
 proposition = "NP-233"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20200"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::transport_headers::tests::a_header_differing_from_the_body_only_by_non_ows_whitespace_is_refused"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20201"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::transport_headers::tests::ows_around_the_header_value_is_not_part_of_it"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20202"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::transport_headers::tests::a_header_naming_a_different_method_than_the_body_is_refused"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20203"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::transport_headers::tests::a_header_with_no_body_method_to_mirror_is_refused"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20204"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::transport_headers::tests::an_agreeing_header_is_admitted"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20205"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verify::floor::transport_headers::tests::an_absent_header_constrains_nothing"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20206"
+project = "mcp-re-transport"
+control = "src/lib.rs#tls_config::tests::a_private_key_pem_failure_is_a_fixed_classification_never_parser_text"
+decision = "new-proposition"
+proposition = "NP-234"
 recorded = "2026-10-04"
