@@ -192,7 +192,7 @@ mod tests {
             connections: Arc::new(AtomicUsize::new(0)),
             drain_signal: Arc::new(watch::channel(false).0),
             body_budget: Arc::new(BodyByteBudget::new(16)),
-            handshakes: None,
+            handshakes: Some(Arc::new(tokio::sync::Semaphore::new(1))),
         };
         let per_connection = admission.clone();
         let held = per_connection
@@ -205,5 +205,36 @@ mod tests {
         );
         drop(held);
         assert!(admission.body_budget.charge(16).is_some());
+
+        let in_flight = per_connection
+            .in_flight
+            .as_ref()
+            .and_then(|semaphore| semaphore.try_acquire().ok())
+            .expect("the one in-flight permit");
+        assert_eq!(
+            admission.in_flight.as_ref().map(|s| s.available_permits()),
+            Some(0),
+            "the clone's in-flight permit is held against the core's one semaphore"
+        );
+        drop(in_flight);
+
+        let handshake = per_connection
+            .handshakes
+            .as_ref()
+            .and_then(|semaphore| semaphore.try_acquire().ok())
+            .expect("the one handshake permit");
+        assert_eq!(
+            admission.handshakes.as_ref().map(|s| s.available_permits()),
+            Some(0),
+            "the clone's handshake permit is held against the core's one semaphore"
+        );
+        drop(handshake);
+
+        per_connection.connections.fetch_add(1, Ordering::AcqRel);
+        assert_eq!(admission.connections.load(Ordering::Acquire), 1);
+
+        let observer = admission.drain_signal.subscribe();
+        per_connection.drain_signal.send_replace(true);
+        assert!(*observer.borrow(), "the clone signals the core's one drain");
     }
 }
