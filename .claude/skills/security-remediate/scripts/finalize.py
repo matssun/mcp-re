@@ -162,6 +162,12 @@ def main() -> int:
                          undispositioned=held)
             action = "revert"
         plan.append((row, entry, action, paths))
+    # Writer order, not report order: a writer's patch is a diff against the tree the
+    # writers before it left, so it stages onto the index only after theirs. Writers with
+    # no snapshot (committed whole) sort first, in reported order.
+    position = {id(item[0]): i for i, item in enumerate(plan)}
+    plan.sort(key=lambda item: (writer_patch.started(store, item[0]["file"]) or 0,
+                                position[id(item[0])]))
     # Reverts first, newest writer first, so each reverse-applies onto the tree it left.
     blocked: set[str] = set()
     for row, entry, action, paths in reversed(plan):

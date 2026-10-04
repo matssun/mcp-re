@@ -129,6 +129,49 @@ def test_finalize_reverts_and_commits_per_writer() -> None:
     print("  finalize: rejected writer's hunk and new file leave (saved); accepted commit is its own  OK")
 
 
+def test_finalize_commits_in_the_order_the_writers_ran() -> None:
+    """Batch 79: the lane ran time/mod.rs before time/format.rs and reported them the other
+    way round. Committing in report order, format.rs's patch (whose context holds mod.rs's
+    hunk) failed to stage, the whole-file fallback committed both writers' hunks under
+    format.rs, and mod.rs's finding was never marked fixed."""
+    with tempfile.TemporaryDirectory() as td:
+        root = _repo(td)
+        with _in(root):
+            store = "w/gates"
+            os.makedirs("w", exist_ok=True)
+            writer_patch.snapshot(store, "first.rs")
+            _append(SHARED, "[first]\n")
+            writer_patch.capture(store, "first.rs", [SHARED])
+            writer_patch.snapshot(store, "second.rs")
+            _append(SHARED, "[second]\n")
+            writer_patch.capture(store, "second.rs", [SHARED])
+            results = {"results": [
+                {"file": "second.rs", "verdict": "accept", "accepted": ["w2"],
+                 "files_touched": [SHARED]},
+                {"file": "first.rs", "verdict": "accept", "accepted": ["w1"],
+                 "files_touched": [SHARED]}]}
+            json.dump(results, open("w/results.json", "w"))
+            open("w/ledger.jsonl", "w").close()
+            saved = finalize.residue_by_carrier, sys.argv
+            finalize.residue_by_carrier = lambda: {}  # type: ignore[assignment]
+            sys.argv = ["finalize.py", "--results", "w/results.json", "--ledger", "w/ledger.jsonl",
+                        "--work-dir", "w"]
+            try:
+                import contextlib
+                import io
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = finalize.main()
+            finally:
+                finalize.residue_by_carrier, sys.argv = saved  # type: ignore[assignment]
+            assert rc == 0
+            log = _git(root, "log", "--format=%s", "-3").splitlines()
+            assert log[0].startswith("security: second.rs") and log[1].startswith(
+                "security: first.rs"), log
+            assert _git(root, "show", "HEAD~1:" + SHARED) == "[base]\n[first]\n"
+            assert _git(root, "show", "HEAD:" + SHARED) == "[base]\n[first]\n[second]\n"
+    print("  finalize: writers commit in the order they ran, each with its own hunk  OK")
+
+
 def test_a_writer_that_touched_nothing_reverts_nothing() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = _repo(td)

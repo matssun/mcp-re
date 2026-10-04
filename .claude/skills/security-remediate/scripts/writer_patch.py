@@ -10,7 +10,8 @@ then refused the accepted writer for undispositioned controls.
 So the unit of revert and commit is the writer's own diff:
 
   snapshot(store, file)          `check.py pre`: the whole working tree, untracked files
-                                 included, written as a git tree object
+                                 included, written as a git tree object, with the time
+  started(store, file)           that time: finalize commits and reverts in writer order
   capture(store, file, touched)  `check.py post`: diff(pre tree, current tree) over the
                                  touched paths, saved as the writer's patch
   restore(store, file, touched)  a red gate: the touched paths go back to the pre tree —
@@ -30,6 +31,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 
 
 def _git(*args: str, env: dict | None = None, stdin: str | None = None) -> subprocess.CompletedProcess:
@@ -63,8 +65,15 @@ def snapshot(store: str, file: str) -> str:
     meta, _ = _paths(store, file)
     tree = tree_of_worktree()
     with open(meta, "w", encoding="utf-8") as fh:
-        json.dump({"file": file, "pre_tree": tree}, fh)
+        json.dump({"file": file, "pre_tree": tree, "started_ns": time.time_ns()}, fh)
     return tree
+
+
+def started(store: str, file: str) -> int | None:
+    """When this writer took its snapshot. Writers land on top of each other in the order
+    they RAN, which is not the order the batch reports them in, so a later writer's patch
+    applies only on top of every earlier one."""
+    return _meta(store, file).get("started_ns")
 
 
 def _meta(store: str, file: str) -> dict:
