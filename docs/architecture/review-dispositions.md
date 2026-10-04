@@ -2723,6 +2723,10 @@ states that whether ND-005 still declines over `EXTENSION_ID` and `DIGEST_ALG_SH
 re-derivation and an owner decision rather than a rewrite"*. The now-zero-reader fact is recorded
 for that re-derivation; the deletion is not pre-executed.
 
+*Annotation, 2026-10-04:* owner Ruling 13.6 deleted `SIG_ALG_ED25519`, its crate-root re-export
+and its assertion in `frozen_profile_agnostic_constants`; NP-108 now states the two constants
+that remain. No compatibility alias.
+
 The NP-106 ratification packet is **annotated, not rewritten** — a review record states what was
 decided on the day it was decided.
 
