@@ -43,7 +43,7 @@ pub struct Receipt {
     /// as [`Receipt::tree_size`].
     leaf_index: u64,
     /// Sibling hashes from leaf to root.
-    inclusion_path: Vec<Vec<u8>>,
+    inclusion_path: Vec<[u8; 32]>,
     /// The protected position commitment, when the receipt carries one.
     ///
     /// Present means the issuing service bound `(profile, log identity, vds, tree_size,
@@ -95,7 +95,7 @@ impl Receipt {
     /// `pub(super)`, not `pub`: this is the raw proof, and it means nothing without the
     /// index and the size it is folded against. [`super::offline`] is the one consumer
     /// that has all three, and the widening exists so it does not have to hold a copy.
-    pub(super) fn inclusion_path(&self) -> &[Vec<u8>] {
+    pub(super) fn inclusion_path(&self) -> &[[u8; 32]] {
         &self.inclusion_path
     }
 
@@ -123,7 +123,7 @@ impl Receipt {
     /// tamper is worth testing — and exactly why there is no production constructor for
     /// it: `from_cose` is the only way a receipt enters the process.
     #[cfg(test)]
-    pub(super) fn with_forged_inclusion_path(&self, inclusion_path: Vec<Vec<u8>>) -> Self {
+    pub(super) fn with_forged_inclusion_path(&self, inclusion_path: Vec<[u8; 32]>) -> Self {
         Receipt {
             inclusion_path,
             ..self.clone()

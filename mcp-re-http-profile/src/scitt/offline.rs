@@ -312,7 +312,7 @@ mod tests {
         // The proof lives in the UNPROTECTED header, so this is exactly the tamper a
         // receipt must survive — forging it cannot forge inclusion, it can only make
         // the derived root fail to match the one the service signed.
-        let receipt = receipt.with_forged_inclusion_path(vec![vec![9u8; 32]]);
+        let receipt = receipt.with_forged_inclusion_path(vec![[9u8; 32]]);
         assert!(matches!(
             verify_receipt_offline(&st, &receipt, ir(), tr()).unwrap_err(),
             HttpProfileError::ReceiptInclusionInvalid | HttpProfileError::ReceiptInvalid,
@@ -357,7 +357,7 @@ mod tests {
         // The honest legacy receipt verifies, so the refusal below is about the path.
         verify_receipt_offline(&st, &legacy, ir(), tr_unbound()).expect("the honest legacy claim");
 
-        let forged = legacy.with_forged_inclusion_path(vec![vec![9u8; 32]]);
+        let forged = legacy.with_forged_inclusion_path(vec![[9u8; 32]]);
         assert_eq!(
             verify_receipt_offline(&st, &forged, ir(), tr_unbound()).unwrap_err(),
             HttpProfileError::ReceiptInclusionInvalid,

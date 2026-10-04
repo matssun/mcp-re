@@ -3512,6 +3512,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::merkle::tests::an_empty_inclusion_path_is_only_valid_for_a_single_leaf_tree",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::offline::tests::a_forged_inclusion_path_fails",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::merkle::tests::the_tree_size_determines_the_leaf_index_within_every_ambiguity_class",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::merkle::tests::every_leaf_of_every_log_up_to_33_leaves_folds_to_its_tree_hash",
 ]
 
 # M78 attacks this one — the fold's output compared against the root the receipt commits to.

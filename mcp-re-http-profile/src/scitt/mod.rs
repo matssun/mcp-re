@@ -270,7 +270,7 @@ mod fixtures {
                 receipt
                     .inclusion_path()
                     .iter()
-                    .map(|h| Value::Bytes(h.clone()))
+                    .map(|h| Value::Bytes(h.to_vec()))
                     .collect(),
             ),
         ]);
@@ -320,7 +320,7 @@ mod fixtures {
                 receipt
                     .inclusion_path()
                     .iter()
-                    .map(|h| Value::Bytes(h.clone()))
+                    .map(|h| Value::Bytes(h.to_vec()))
                     .collect(),
             ),
         ]);

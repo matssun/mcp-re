@@ -33,7 +33,7 @@ use super::Receipt;
 struct InclusionProof {
     tree_size: u64,
     leaf_index: u64,
-    path: Vec<Vec<u8>>,
+    path: Vec<[u8; 32]>,
 }
 
 /// Every critical label must be one this verifier understands.
@@ -141,9 +141,11 @@ fn read_inclusion_proof(sign1: &CoseSign1) -> Result<InclusionProof, HttpProfile
         .ok_or(HttpProfileError::MalformedEvidence("scitt inclusion path"))?
         .iter()
         .map(|h| {
-            h.as_bytes().filter(|b| b.len() == 32).cloned().ok_or(
-                HttpProfileError::MalformedEvidence("scitt inclusion path node"),
-            )
+            h.as_bytes()
+                .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+                .ok_or(HttpProfileError::MalformedEvidence(
+                    "scitt inclusion path node",
+                ))
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(InclusionProof {
