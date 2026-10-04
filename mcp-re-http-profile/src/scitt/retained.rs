@@ -39,7 +39,16 @@ use super::commitment::RetainedCorrespondence;
 /// object store role-agnostic is what lets the same bytes be retained once and
 /// referenced from whichever role committed to them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String")]
 pub struct EvidenceDigest(String);
+
+impl TryFrom<String> for EvidenceDigest {
+    type Error = &'static str;
+
+    fn try_from(token: String) -> Result<Self, Self::Error> {
+        Self::from_token(&token).map_err(|_| "evidence digest is not a sha-256 base64url token")
+    }
+}
 
 impl EvidenceDigest {
     /// The digest of `evidence` — SHA-256, base64url, matching the commitment form.
@@ -286,7 +295,8 @@ mod tests {
     /// The UNVERIFIED tail of an Incomplete record. Every field derived from the
     /// verified prefix matches — same hop 0, same shape digest, same
     /// `incomplete:1:<reason>` label — so only the submission identity separates the
-    /// bytes the statement was issued over from an archivist's substitute.
+    /// bytes the statement was issued over from an archivist's substitute. The tail is
+    /// modelled as a differing submission identity.
     #[test]
     fn a_substituted_unverified_tail_is_refused_even_though_the_verified_prefix_matches() {
         let issued = recon(
@@ -305,8 +315,14 @@ mod tests {
         verify_retained_evidence(&commitment, &issued, None, None)
             .expect("the retained bytes are the ones the statement was issued over");
 
-        // A different hop 1 — different bytes, failing at the same index for the same
-        // reason. The verified prefix is untouched.
+        // The unverified tail exists at this layer only as the submission identity
+        // (`hop_evidence` holds the verified prefix, identical on both sides), so a
+        // substituted tail is modelled as a different submission identity. That changing
+        // any tail byte changes the identity is established by `reconstruct_chain`'s
+        // battery: `chain_reconstruction_test::every_retained_field_of_a_hop_is_part_of_its_identity`
+        // (`//mcp-re-http-profile:chain_reconstruction_test`) and the `submitted_identity.rs`
+        // unit tests. This test establishes that a differing identity is refused while
+        // every verified-prefix field matches.
         let substituted = ChainReconstruction::with_authored_submission_identity(
             issued.label().clone(),
             issued.hop_evidence().to_vec(),
@@ -504,43 +520,63 @@ mod tests {
             "not base64url!",                                 // not the alphabet
             "c2hvcnQ",                                        // legal base64url, 5 bytes
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // legal base64url, 33 bytes
+            "../../etc/passwd",                               // a path, not a digest
         ] {
             assert!(
                 EvidenceDigest::from_token(token).is_err(),
                 "{token:?} must not become a digest",
             );
+            let quoted = serde_json::to_string(token).expect("a string serializes");
+            assert!(
+                serde_json::from_str::<EvidenceDigest>(&quoted).is_err(),
+                "{token:?} must not deserialize into a digest",
+            );
         }
+
+        let wire = serde_json::to_string(&computed).expect("a digest serializes");
+        assert_eq!(
+            serde_json::from_str::<EvidenceDigest>(&wire).expect("its own wire form"),
+            computed,
+        );
     }
 
     /// One digest, one spelling: an alternative encoding of the same 32 bytes never
     /// becomes a second `EvidenceDigest`.
     ///
     /// The store addresses objects BY the token, so two strings naming one digest would
-    /// mean a value that names real bytes and looks up a file that is not there. Both
-    /// mechanisms that prevent it are asserted, because they are independent: the decoder
-    /// refuses a non-canonical spelling outright, and `from_token` re-encodes what it
-    /// accepted, so the canonical form does not depend on the decoder staying strict.
+    /// mean a value that names real bytes and looks up a file that is not there. The
+    /// decoder's refusal of a non-canonical spelling is what this test asserts; the
+    /// re-encode in `from_token` is a construction property that no input distinguishes
+    /// from keeping the caller's string while the decoder refuses aliases, so it is not
+    /// measured here.
     #[test]
     fn one_digest_has_one_spelling() {
+        const ALPHABET: &str =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        for input in [&b"a hop"[..], b"another hop", b"retained"] {
+            let computed = EvidenceDigest::of(input);
+            let canonical = computed.as_str();
+
+            // The final character of a 43-character token carries 4 significant bits and
+            // 2 padding bits, so three of its four spellings differ only in bits nobody
+            // reads.
+            let last = canonical.chars().last().expect("a non-empty token");
+            let index = ALPHABET.find(last).expect("a base64url character");
+            assert_eq!(index % 4, 0, "the padding bits are clear in a canonical spelling");
+            let alias_last = ALPHABET
+                .chars()
+                .nth(index | 1)
+                .expect("an alphabet character");
+            let alias = format!("{}{alias_last}", &canonical[..canonical.len() - 1]);
+            assert_ne!(alias, canonical, "the alias is a different string");
+            assert!(
+                EvidenceDigest::from_token(&alias).is_err(),
+                "a non-canonical spelling is refused, not normalized silently",
+            );
+        }
+
         let computed = EvidenceDigest::of(b"a hop");
         let canonical = computed.as_str();
-
-        // The final character of a 43-character token carries 2 significant bits, so
-        // three of its four spellings differ only in bits nobody reads.
-        let alias = format!(
-            "{}{}",
-            &canonical[..canonical.len() - 1],
-            if canonical.ends_with('A') { 'B' } else { 'A' },
-        );
-        assert_ne!(
-            alias,
-            canonical.to_owned(),
-            "the alias is a different string"
-        );
-        assert!(
-            EvidenceDigest::from_token(&alias).is_err(),
-            "a non-canonical spelling is refused, not normalized silently",
-        );
 
         // And what a legal token produces is the canonical spelling, re-derived here
         // rather than carried over from the caller's string.

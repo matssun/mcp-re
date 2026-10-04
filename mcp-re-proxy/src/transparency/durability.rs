@@ -724,12 +724,7 @@ mod tests {
 
     #[test]
     fn a_marker_path_refuses_a_digest_that_is_not_a_token() {
-        let dir = TempDir::new("marker-hostile");
-        let retention = EvidenceRetention::open(&dir.0).expect("open");
-        let hostile: EvidenceDigest =
-            serde_json::from_str("\"../../etc/passwd\"").expect("deserializes");
-
-        assert!(retention.marker_path(&hostile, RESERVED_EXTENSION).is_err());
+        assert!(serde_json::from_str::<EvidenceDigest>("\"../../etc/passwd\"").is_err());
     }
 
     #[test]
