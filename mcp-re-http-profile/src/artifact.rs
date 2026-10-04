@@ -35,10 +35,14 @@ use verus_builtin_macros::{verus_spec, verus_verify};
 use vstd::prelude::*;
 
 /// Extract the bearer credential from an `Authorization` header value. Only the
-/// `Bearer` scheme is recognized; the token bytes are the ASCII characters
-/// after the single space. Returns `None` for any other scheme/shape.
+/// `Bearer` scheme is recognized, matched ASCII-case-insensitively; the token
+/// bytes are the ASCII characters after the scheme's space. Returns `None` for
+/// any other scheme/shape.
 pub fn bearer_token(authorization_header: &str) -> Option<&str> {
-    let rest = authorization_header.strip_prefix("Bearer ")?;
+    let (scheme, rest) = authorization_header.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("Bearer") {
+        return None;
+    }
     let token = rest.trim();
     if token.is_empty() {
         None
@@ -244,7 +248,9 @@ mod tests {
     #[test]
     fn bearer_token_extraction() {
         assert_eq!(bearer_token("Bearer abc123"), Some("abc123"));
-        assert_eq!(bearer_token("bearer abc123"), None); // scheme is case-sensitive here
+        assert_eq!(bearer_token("bearer abc123"), Some("abc123"));
+        assert_eq!(bearer_token("BEARER abc123"), Some("abc123"));
+        assert_eq!(bearer_token("BearerX abc123"), None);
         assert_eq!(bearer_token("Basic Zm9v"), None);
         assert_eq!(bearer_token("Bearer   "), None);
     }

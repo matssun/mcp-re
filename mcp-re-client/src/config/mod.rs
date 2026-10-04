@@ -16,6 +16,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use mcp_re_client_core::bearer_token;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
@@ -276,21 +277,6 @@ fn err(message: impl Into<String>) -> ConfigError {
 
 /// The header the profile's verifier reads a DPoP access token from.
 const AUTHORIZATION: &str = "Authorization";
-
-/// The bearer credential inside an `Authorization` header value, or `None`.
-///
-/// Byte-identical to the verifier's own extraction
-/// (`mcp_re_http_profile::authorization_bearer_bytes`), pinned by
-/// `a_dpop_binding_digests_what_the_verifier_digests`: the digest must cover the token,
-/// not the `Bearer ` scheme in front of it, or the binding cannot verify anywhere.
-fn bearer_token(authorization_header: &str) -> Option<&str> {
-    let token = authorization_header.strip_prefix("Bearer ")?.trim();
-    if token.is_empty() {
-        None
-    } else {
-        Some(token)
-    }
-}
 
 mod bind_scope;
 mod local;

@@ -102,6 +102,9 @@ pub use verified_delegated_response::VerifiedDelegatedResponse;
 
 // Re-export the RFC 9421 carrier types callers construct/consume, so the proxy and
 // SDK depend on ONE evidence vocabulary through this seam.
+/// The verifier's own `Authorization: Bearer` extraction, so a client binding a DPoP token
+/// digests exactly the bytes the verifier will.
+pub use mcp_re_http_profile::bearer_token;
 pub use mcp_re_http_profile::result_class::INPUT_REQUIRED_RESULT_TYPE;
 pub use mcp_re_http_profile::ActorIdentity;
 pub use mcp_re_http_profile::ArtifactBinding;
