@@ -92,6 +92,7 @@ on:
       - "mcp-re-proxy/src/async_redis_store.rs"
       - "mcp-re-proxy/src/etcd_store.rs"
       - "mcp-re-proxy/src/async_etcd_store.rs"
+      - "mcp-re-proxy/src/async_etcd_store/**"
       # The provider-agnostic Ed25519 KMS seam (THM-0108). The provider adapters beneath it
       # are unowned and are their own slice.
       - "mcp-re-proxy/src/kms_keysource/**"
@@ -485,6 +486,7 @@ on:
       - "mcp-re-proxy/src/async_redis_store.rs"
       - "mcp-re-proxy/src/etcd_store.rs"
       - "mcp-re-proxy/src/async_etcd_store.rs"
+      - "mcp-re-proxy/src/async_etcd_store/**"
       # The provider-agnostic Ed25519 KMS seam (THM-0108). The provider adapters beneath it
       # are unowned and are their own slice.
       - "mcp-re-proxy/src/kms_keysource/**"
