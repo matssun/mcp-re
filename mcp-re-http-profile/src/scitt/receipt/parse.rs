@@ -183,6 +183,10 @@ fn read_root(sign1: &CoseSign1) -> Result<Option<Vec<u8>>, HttpProfileError> {
 }
 
 impl Receipt {
+    /// Parse a tagged `COSE_Sign1` receipt WITHOUT verifying it.
+    ///
+    /// Parsing is not acceptance: the result carries no trust until the signature and
+    /// inclusion proof are verified.
     pub fn from_cose(bytes: &[u8]) -> Result<Self, HttpProfileError> {
         let sign1 = CoseSign1::from_tagged_slice(bytes)
             .map_err(|_| HttpProfileError::MalformedEvidence("scitt receipt cose"))?;

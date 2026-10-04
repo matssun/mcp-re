@@ -89,7 +89,6 @@ impl Receipt {
     pub fn leaf_index(&self) -> u64 {
         self.leaf_index
     }
-    /// Whether this receipt carries a protected position commitment.
     /// The inclusion path, as the fold consumes it.
     ///
     /// `pub(super)`, not `pub`: this is the raw proof, and it means nothing without the
@@ -112,11 +111,11 @@ impl Receipt {
         self.position_commitment.as_deref()
     }
 
+    /// Whether this receipt carries a protected position commitment.
     pub fn is_position_bound(&self) -> bool {
         self.position_commitment.is_some()
     }
 
-    /// Parse a tagged `COSE_Sign1` receipt WITHOUT verifying it.
     /// This receipt with a different inclusion path, leaving the signed bytes untouched.
     ///
     /// `#[cfg(test)]`. The proof rides in the UNPROTECTED header, which is exactly why the
