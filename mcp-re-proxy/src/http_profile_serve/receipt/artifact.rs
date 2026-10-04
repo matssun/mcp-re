@@ -69,7 +69,7 @@ impl ResponseSigning {
         let resp = match window {
             Some(w) => {
                 let built = match bound {
-                    Some(ev) => build_delegated_rejection(request, ev, &reason, status, &w),
+                    Some(_) => build_delegated_rejection(request, &reason, status, &w),
                     None => build_delegated_rejection_preflight(Some(request), &reason, status, &w),
                 };
                 built.unwrap_or_else(|_| unsigned_error(status, wire_code, execution))

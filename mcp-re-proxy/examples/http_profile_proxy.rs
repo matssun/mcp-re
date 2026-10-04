@@ -398,7 +398,6 @@ async fn handle(
     match sign_delegated_response_full_with_owned_key(
         &mut response,
         &http_req,
-        verified.evidence(),
         &hpp_common::delegated_server_identity(),
         &hpp_common::delegation_credential(now),
         &hpp_common::delegated_key(),
@@ -482,9 +481,8 @@ fn rejection(
     );
     let credential = hpp_common::delegation_credential(now);
     match (request, evidence) {
-        (Some(req), Some(ev)) => build_delegated_rejection_with_owned_key(
+        (Some(req), Some(_)) => build_delegated_rejection_with_owned_key(
             req,
-            ev,
             &reason,
             status,
             &hpp_common::delegated_server_identity(),

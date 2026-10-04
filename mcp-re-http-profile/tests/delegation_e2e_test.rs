@@ -11,12 +11,14 @@
 //! `delegation.rs`.
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::body::insert_meta_block;
 use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
 use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
 use mcp_re_http_profile::sign::sign_delegated_response_unbound_with_owned_key;
 use mcp_re_http_profile::sign_request_full;
+use mcp_re_http_profile::sign_response_with_signer;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -33,7 +35,9 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::HttpResponseEvidenceBlock;
 use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestEvidenceDigest;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -45,6 +49,7 @@ use mcp_re_http_profile::JWK_CRV_ED25519;
 use mcp_re_http_profile::JWK_KTY_OKP;
 use mcp_re_http_profile::KEY_USE_RESPONSE_SIGNING;
 use mcp_re_http_profile::PROFILE_TAG;
+use mcp_re_http_profile::RESPONSE_EVIDENCE_BLOCK_KEY;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const ROOT_SEED: [u8; 32] = [33u8; 32];
@@ -212,7 +217,7 @@ fn response_body() -> Vec<u8> {
 
 #[test]
 fn valid_delegated_response_verifies_under_cnf_key() {
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -221,7 +226,6 @@ fn valid_delegated_response_verifies_under_cnf_key() {
     sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
-        &ev,
         &server_signer(),
         &valid_credential(),
         &delegated_key(),
@@ -292,7 +296,7 @@ fn direct_root_signed_response_is_rejected_credential_missing() {
 fn response_keyid_not_delegated_kid_is_key_mismatch() {
     // The credential authorizes DELEGATED_KID, but the response signature is made
     // under a different RFC 9421 keyid.
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -301,7 +305,6 @@ fn response_keyid_not_delegated_kid_is_key_mismatch() {
     sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
-        &ev,
         &server_signer(), // block server_signer.keyid == DELEGATED_KID
         &valid_credential(),
         &delegated_key(),
@@ -320,7 +323,7 @@ fn response_keyid_not_delegated_kid_is_key_mismatch() {
 fn response_signed_by_key_other_than_cnf_is_key_mismatch() {
     // The response is signed by an ATTACKER key while claiming DELEGATED_KID; the
     // signature does not verify under cnf.jwk.
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let attacker = SigningKey::from_seed_bytes(&[99u8; 32]);
     let mut rsp = HttpResponse {
         status: 200,
@@ -330,7 +333,6 @@ fn response_signed_by_key_other_than_cnf_is_key_mismatch() {
     sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
-        &ev,
         &server_signer(),
         &valid_credential(),
         &attacker,
@@ -349,7 +351,7 @@ fn response_signed_by_key_other_than_cnf_is_key_mismatch() {
 
 #[test]
 fn body_tamper_is_caught_by_content_digest() {
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -358,7 +360,6 @@ fn body_tamper_is_caught_by_content_digest() {
     sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
-        &ev,
         &server_signer(),
         &valid_credential(),
         &delegated_key(),
@@ -380,7 +381,7 @@ fn body_tamper_is_caught_by_content_digest() {
 
 #[test]
 fn stale_epoch_rejected_end_to_end() {
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -389,7 +390,6 @@ fn stale_epoch_rejected_end_to_end() {
     sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
-        &ev,
         &server_signer(),
         &valid_credential(), // minted under EPOCH
         &delegated_key(),
@@ -427,7 +427,7 @@ fn custody_cfg() -> CustodyConfig {
 /// root, and the root was touched exactly once (issuance), never per request.
 #[test]
 fn custody_signed_response_verifies_via_attestation_chain() {
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -445,7 +445,7 @@ fn custody_signed_response_verifies_via_attestation_chain() {
         body: response_body(),
     };
     custody
-        .sign_response(NOW, &mut rsp, &req, &ev)
+        .sign_response(NOW, &mut rsp, &req)
         .expect("custody signs");
 
     let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
@@ -471,7 +471,7 @@ fn custody_signed_response_verifies_via_attestation_chain() {
 
 #[test]
 fn revoked_delegated_key_rejected_end_to_end() {
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -480,7 +480,6 @@ fn revoked_delegated_key_rejected_end_to_end() {
     sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
-        &ev,
         &server_signer(),
         &valid_credential(),
         &delegated_key(),
@@ -621,6 +620,37 @@ fn another_request() -> (HttpRequest, RequestEvidence) {
 /// direct full path makes, and it is load-bearing there too. The `;req` floor cannot
 /// substitute for it: here the `;req` binding is to `req_a` and verifies, while the block
 /// advertises a different exchange's handle.
+/// What only a hand-built emitter can produce: `;req` resolves over `request` while the
+/// evidence block advertises `advertised`'s handle.
+fn sign_with_forged_request_evidence(
+    rsp: &mut HttpResponse,
+    request: &HttpRequest,
+    advertised: &RequestEvidence,
+) {
+    let block = HttpResponseEvidenceBlock {
+        profile: PROFILE_TAG.to_owned(),
+        server_signer: server_signer(),
+        server_delegation: Some(valid_credential()),
+        request_evidence: RequestEvidenceDigest {
+            digest_alg: advertised.digest_alg.clone(),
+            digest_value: advertised.digest_value.clone(),
+        },
+    };
+    rsp.body = insert_meta_block(&rsp.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block).expect("insert");
+    sign_response_with_signer(
+        rsp,
+        request,
+        |b| {
+            mcp_re_core::b64url_decode(&delegated_key().sign(b))
+                .map_err(|_| HttpProfileError::InvalidSignature)
+        },
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign");
+}
+
 #[test]
 fn a_delegated_response_advertising_another_requests_evidence_is_refused() {
     let (req_a, _ev_a, verified_a) = signed_request();
@@ -635,18 +665,7 @@ fn a_delegated_response_advertising_another_requests_evidence_is_refused() {
         body: response_body(),
     };
     // ;req is bound to req_a; the block advertises req_b's handle.
-    sign_delegated_response_full_with_owned_key(
-        &mut rsp,
-        &req_a,
-        &ev_b,
-        &server_signer(),
-        &valid_credential(),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("sign");
+    sign_with_forged_request_evidence(&mut rsp, &req_a, &ev_b);
 
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_delegated_bound_response(&rsp, &req_a, &expectations(&[EPOCH]), &|_| false, NOW)
@@ -689,7 +708,7 @@ fn an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch() {
 /// request to resolve the reference against.
 #[test]
 fn a_req_component_is_refused_on_the_delegated_unbound_path() {
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -698,7 +717,6 @@ fn a_req_component_is_refused_on_the_delegated_unbound_path() {
     sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
-        &ev,
         &server_signer(),
         &valid_credential(),
         &delegated_key(),
@@ -847,7 +865,7 @@ fn credential_scoped_to_another_keyid() -> (String, ActorIdentity) {
 
 #[test]
 fn a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch() {
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let (credential, disowned) = credential_scoped_to_another_keyid();
     let mut rsp = HttpResponse {
         status: 200,
@@ -857,7 +875,6 @@ fn a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch() {
     sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
-        &ev,
         &disowned, // block keyid == the credential's subject binding, not its cnf kid
         &credential,
         &delegated_key(),
@@ -939,7 +956,7 @@ fn an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch(
 // --- the delegated preamble gates, on both delegated paths -------------------
 
 fn signed_delegated_bound() -> (HttpRequest, HttpResponse) {
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -948,7 +965,6 @@ fn signed_delegated_bound() -> (HttpRequest, HttpResponse) {
     sign_delegated_response_full_with_owned_key(
         &mut rsp,
         &req,
-        &ev,
         &server_signer(),
         &valid_credential(),
         &delegated_key(),
@@ -1073,18 +1089,7 @@ fn a_delegated_bound_response_whose_req_binding_is_to_another_request_is_refused
     };
     // ;req resolves over req_a while the block carries req_b's handle, and the response is
     // verified against req_b: the block-handle comparison agrees, only ;req can refuse.
-    sign_delegated_response_full_with_owned_key(
-        &mut rsp,
-        &req_a,
-        &ev_b,
-        &server_signer(),
-        &valid_credential(),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("sign");
+    sign_with_forged_request_evidence(&mut rsp, &req_a, &ev_b);
     assert_eq!(
         verify_bound_at(&rsp, &req_b, NOW).unwrap_err(),
         HttpProfileError::DelegationKeyMismatch

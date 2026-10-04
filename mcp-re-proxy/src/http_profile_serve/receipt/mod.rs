@@ -104,12 +104,7 @@ impl ResponseSigning {
         // Scoped so the timer covers the signature and nothing after it.
         let sign_result = {
             let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Sign);
-            mcp_re_http_profile::sign_delegated_response_full(
-                &mut response,
-                ex.http_req,
-                ex.verified.evidence(),
-                window,
-            )
+            mcp_re_http_profile::sign_delegated_response_full(&mut response, ex.http_req, window)
         };
         sign_result
             .map(|base| {

@@ -555,7 +555,7 @@ fn kms_custody(
 
 fn run_kms_authority_flip(root: KmsResponseSigner) {
     let root_pub = root.response_public_key().expect("KMS root public key");
-    let (req, ev, _verified_req) = signed_request("nonce-flip", NOW);
+    let (req, _, _verified_req) = signed_request("nonce-flip", NOW);
 
     // --- Flip 1: the PRE-052 authority (KMS signs the response DIRECTLY) is
     // rejected by a delegated-required verifier — no downgrade. The SAME KMS key
@@ -596,7 +596,7 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
 
     let mut delegated = fresh_response();
     custody
-        .sign_response(NOW, &mut delegated, &req, &ev)
+        .sign_response(NOW, &mut delegated, &req)
         .expect("KMS-rooted custody signs");
     let first_kid = custody.active_kid().expect("a key is active").to_owned();
     assert_eq!(
@@ -641,13 +641,13 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
     // both keys are simultaneously within their TTL at the overlap instant.
     let mut predecessor = fresh_response();
     custody
-        .sign_response(NOW, &mut predecessor, &req, &ev)
+        .sign_response(NOW, &mut predecessor, &req)
         .expect("predecessor signs");
 
     let after = NOW + TTL - OVERLAP + 10;
     let mut successor = fresh_response();
     custody
-        .sign_response(after, &mut successor, &req, &ev)
+        .sign_response(after, &mut successor, &req)
         .expect("KMS issues the successor");
     let second_kid = custody.active_kid().expect("successor active").to_owned();
     assert_ne!(

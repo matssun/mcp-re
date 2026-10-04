@@ -1503,7 +1503,6 @@ fn chain_hop(
     mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
-        &req_evidence,
         &chain_server_signer(),
         &chain_credential(),
         &chain_delegated_key(),

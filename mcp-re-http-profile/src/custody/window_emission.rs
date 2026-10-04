@@ -30,14 +30,12 @@ use super::SigningWindow;
 pub fn sign_delegated_response_full(
     response: &mut HttpResponse,
     request: &HttpRequest,
-    request_evidence: &RequestEvidence,
     window: &SigningWindow,
 ) -> Result<Vec<u8>, HttpProfileError> {
     let a = window.key();
     sign_delegated_response_full_with_owned_key(
         response,
         request,
-        request_evidence,
         a.server_signer(),
         a.credential(),
         a.key(),
@@ -89,7 +87,6 @@ pub fn sign_delegated_accepted_202(
 /// enough to trust its hash but failed a later gate.
 pub fn build_delegated_rejection(
     request: &HttpRequest,
-    request_evidence: &RequestEvidence,
     reason: &RejectionReason,
     status: u16,
     window: &SigningWindow,
@@ -97,7 +94,6 @@ pub fn build_delegated_rejection(
     let a = window.key();
     build_delegated_rejection_with_owned_key(
         request,
-        request_evidence,
         reason,
         status,
         a.server_signer(),

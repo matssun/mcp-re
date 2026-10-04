@@ -218,7 +218,7 @@ fn hop_with_bad_window(created: i64, expires: i64, nonce: &str) -> RetainedHop {
         body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
             .to_vec(),
     };
-    let req_evidence = sign_request_full(
+    sign_request_full(
         &mut request,
         &block(None),
         &client_key(),
@@ -237,7 +237,6 @@ fn hop_with_bad_window(created: i64, expires: i64, nonce: &str) -> RetainedHop {
     sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
-        &req_evidence,
         &server_signer(),
         &credential(created, expires),
         &delegated_key(),
@@ -285,7 +284,6 @@ fn hop_at(
     sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
-        &req_evidence,
         &server_signer(),
         &credential(created, expires),
         &delegated_key(),
@@ -1002,7 +1000,7 @@ fn hop_with_block(nonce: &str, blk: &HttpRequestEvidenceBlock, body: &str) -> Re
         body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
             .to_vec(),
     };
-    let req_evidence = sign_request_full(
+    sign_request_full(
         &mut request,
         blk,
         &client_key(),
@@ -1013,17 +1011,13 @@ fn hop_with_block(nonce: &str, blk: &HttpRequestEvidenceBlock, body: &str) -> Re
     )
     .expect("request signs");
     RetainedHop {
-        response: signed_answer(&request, &req_evidence, body),
+        response: signed_answer(&request, body),
         request,
     }
 }
 
 /// The delegated response answering `request`, signed over the same window.
-fn signed_answer(
-    request: &HttpRequest,
-    req_evidence: &RequestEvidence,
-    body: &str,
-) -> HttpResponse {
+fn signed_answer(request: &HttpRequest, body: &str) -> HttpResponse {
     let mut response = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
@@ -1032,7 +1026,6 @@ fn signed_answer(
     sign_delegated_response_full_with_owned_key(
         &mut response,
         request,
-        req_evidence,
         &server_signer(),
         &credential(CREATED, EXPIRES),
         &delegated_key(),
@@ -1092,7 +1085,7 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
         body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
             .to_vec(),
     };
-    let req_evidence = mcp_re_http_profile::sign_request(
+    mcp_re_http_profile::sign_request(
         &mut request,
         &client_key(),
         CLIENT_KEY_ID,
@@ -1101,7 +1094,7 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
         "n-blockless",
     )
     .expect("request signs");
-    let response = signed_answer(&request, &req_evidence, DONE);
+    let response = signed_answer(&request, DONE);
 
     mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request_floor(&request, NOW)

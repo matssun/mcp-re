@@ -400,7 +400,6 @@ fn from_wire_response(w: &WireMessage) -> HttpResponse {
 /// `server_signer.keyid == block_signer_kid`.
 fn delegated_response(
     req: &HttpRequest,
-    ev: &RequestEvidence,
     credential: &str,
     delegated_signing_key: &SigningKey,
     keyid: &str,
@@ -414,7 +413,6 @@ fn delegated_response(
     sign_delegated_response_full_with_owned_key(
         &mut rsp,
         req,
-        ev,
         &server_signer_for(block_signer_kid),
         credential,
         delegated_signing_key,
@@ -458,7 +456,6 @@ fn build_fixtures() -> Vec<Fixture> {
     // --- 1. valid → accept -------------------------------------------------
     let valid_rsp = delegated_response(
         &req,
-        &ev,
         &valid_credential(),
         &delegated_key(),
         DELEGATED_KID,
@@ -478,7 +475,6 @@ fn build_fixtures() -> Vec<Fixture> {
     c.exp = CREATED - 10_000;
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(&root_key(), &good_header(), &c),
         &delegated_key(),
         DELEGATED_KID,
@@ -498,7 +494,6 @@ fn build_fixtures() -> Vec<Fixture> {
     c.exp = NOW + 20_000;
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(&root_key(), &good_header(), &c),
         &delegated_key(),
         DELEGATED_KID,
@@ -517,7 +512,6 @@ fn build_fixtures() -> Vec<Fixture> {
     c.mcp_re_key_use = "request-signing".into();
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(&root_key(), &good_header(), &c),
         &delegated_key(),
         DELEGATED_KID,
@@ -536,7 +530,6 @@ fn build_fixtures() -> Vec<Fixture> {
     c.mcp_re_profile = "some-other-profile".into();
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(&root_key(), &good_header(), &c),
         &delegated_key(),
         DELEGATED_KID,
@@ -636,7 +629,6 @@ fn build_fixtures() -> Vec<Fixture> {
     // --- 7. substituted key: RFC 9421 keyid ≠ delegated_kid ----------------
     let rsp = delegated_response(
         &req,
-        &ev,
         &valid_credential(),
         &delegated_key(),
         "some-other-kid",
@@ -653,7 +645,6 @@ fn build_fixtures() -> Vec<Fixture> {
     // --- 7'. substituted key: signed by a key other than cnf.jwk -----------
     let rsp = delegated_response(
         &req,
-        &ev,
         &valid_credential(),
         &attacker_key(),
         DELEGATED_KID,
@@ -705,7 +696,6 @@ fn build_fixtures() -> Vec<Fixture> {
     );
     let rsp = delegated_response(
         &req,
-        &ev,
         &foreign,
         &delegated_key(),
         DELEGATED_KID,
@@ -726,7 +716,6 @@ fn build_fixtures() -> Vec<Fixture> {
     c.issuer_kid = "untrusted-root".into();
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(&root_key(), &h, &c),
         &delegated_key(),
         DELEGATED_KID,
@@ -745,7 +734,6 @@ fn build_fixtures() -> Vec<Fixture> {
     h.alg = "none".into();
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(
             &root_key(),
             &h,
@@ -771,7 +759,6 @@ fn build_fixtures() -> Vec<Fixture> {
     );
     let rsp = delegated_response(
         &req,
-        &ev,
         &forged,
         &delegated_key(),
         DELEGATED_KID,
@@ -802,7 +789,6 @@ fn build_fixtures() -> Vec<Fixture> {
     );
     let rsp_b = delegated_response(
         &req,
-        &ev,
         &cred_b,
         &delegated2_key(),
         DELEGATED2_KID,
@@ -817,7 +803,7 @@ fn build_fixtures() -> Vec<Fixture> {
     ));
 
     // --- 12. response body tamper (content-digest floor) -------------------
-    let mut tampered = valid_rsp_clone(&req, &ev);
+    let mut tampered = valid_rsp_clone(&req);
     let last = tampered.body.len() - 2;
     tampered.body[last] ^= 0x01;
     fx.push(fixture(
@@ -829,7 +815,7 @@ fn build_fixtures() -> Vec<Fixture> {
     ));
 
     // --- 12'. response signature-bytes tamper (verify under cnf fails) ------
-    let mut sig_tampered = valid_rsp_clone(&req, &ev);
+    let mut sig_tampered = valid_rsp_clone(&req);
     tamper_response_signature(&mut sig_tampered);
     fx.push(fixture(
         "d22_response_signature_tamper",
@@ -844,10 +830,9 @@ fn build_fixtures() -> Vec<Fixture> {
 
 /// A fresh copy of the valid delegated response (its own signed bytes) so a
 /// post-signing tamper does not disturb the shared `valid_rsp`.
-fn valid_rsp_clone(req: &HttpRequest, ev: &RequestEvidence) -> HttpResponse {
+fn valid_rsp_clone(req: &HttpRequest) -> HttpResponse {
     delegated_response(
         req,
-        ev,
         &valid_credential(),
         &delegated_key(),
         DELEGATED_KID,

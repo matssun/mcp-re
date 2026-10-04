@@ -189,7 +189,7 @@ fn mint_under(
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
     custody
-        .sign_response(now, &mut resp, signed.request(), signed.evidence())
+        .sign_response(now, &mut resp, signed.request())
         .expect("mint a delegated response under the root");
     resp
 }

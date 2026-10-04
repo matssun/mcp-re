@@ -1144,7 +1144,7 @@ mod tests {
             body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
         };
         custody()
-            .sign_response(NOW, &mut response, signed.request(), signed.evidence())
+            .sign_response(NOW, &mut response, signed.request())
             .expect("server delegated-signs the reply");
         response
     }
@@ -1174,7 +1174,6 @@ mod tests {
         let window = SigningWindow::over(Arc::new(key), NOW, 300).expect("a live window");
         let response = mcp_re_http_profile::build_delegated_rejection(
             signed.request(),
-            signed.evidence(),
             &mcp_re_http_profile::RejectionReason::new("mcp-re.replay_detected", "replayed"),
             409,
             &window,

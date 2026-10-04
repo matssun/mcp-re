@@ -539,7 +539,7 @@ mod delegated_tests {
             body: success_body(),
         };
         custody
-            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .sign_response(NOW, &mut resp, signed.request())
             .expect("server delegated-signs the success response");
         let out = verify_delegated_response(
             &resp,
@@ -575,7 +575,7 @@ mod delegated_tests {
             body: success_body(),
         };
         custody
-            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .sign_response(NOW, &mut resp, signed.request())
             .expect("server delegated-signs the success response");
 
         // No pin: verifies exactly as before (no behaviour change for the normal path).
@@ -641,7 +641,6 @@ mod delegated_tests {
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
-            signed.evidence(),
             &reason,
             409,
             &mcp_re_http_profile::custody::SigningWindow::over(
@@ -680,7 +679,6 @@ mod delegated_tests {
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
-            signed.evidence(),
             &reason,
             409,
             &mcp_re_http_profile::custody::SigningWindow::over(
@@ -881,7 +879,6 @@ mod delegated_tests {
             .with_execution(mcp_re_http_profile::ExecutionDisposition::PossiblyExecuted);
         let resp = build_delegated_rejection(
             signed.request(),
-            signed.evidence(),
             &reason,
             503,
             &mcp_re_http_profile::custody::SigningWindow::over(
@@ -916,7 +913,6 @@ mod delegated_tests {
             );
         let resp = build_delegated_rejection(
             signed.request(),
-            signed.evidence(),
             &reason,
             503,
             &mcp_re_http_profile::custody::SigningWindow::over(
@@ -987,7 +983,6 @@ mod delegated_tests {
         );
         let resp = build_delegated_rejection(
             signed.request(),
-            signed.evidence(),
             &reason,
             500,
             &mcp_re_http_profile::custody::SigningWindow::over(
@@ -1144,7 +1139,6 @@ mod delegated_tests {
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             theirs.request(),
-            theirs.evidence(),
             &reason,
             409,
             &mcp_re_http_profile::custody::SigningWindow::over(
@@ -1200,7 +1194,7 @@ mod delegated_tests {
             body: success_body(),
         };
         custody
-            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .sign_response(NOW, &mut resp, signed.request())
             .expect("server delegated-signs the success response");
         let kid = custody
             .active_snapshot()
@@ -1230,7 +1224,7 @@ mod delegated_tests {
             body: success_body(),
         };
         custody
-            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .sign_response(NOW, &mut resp, signed.request())
             .expect("sign");
         let revoked = StaticRevocationList::new().revoke(ROOT_KID);
         let err = verify_delegated_response(
@@ -1258,7 +1252,7 @@ mod delegated_tests {
             body: success_body(),
         };
         custody
-            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .sign_response(NOW, &mut resp, signed.request())
             .expect("server delegated-signs the success response");
         let jti = custody
             .audit()
@@ -1291,7 +1285,7 @@ mod delegated_tests {
             body: success_body(),
         };
         custody
-            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .sign_response(NOW, &mut resp, signed.request())
             .expect("sign");
         let revoked = StaticRevocationList::from_identifiers([
             "some-other/delegated/9".to_string(),
@@ -1321,7 +1315,6 @@ mod delegated_tests {
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
-            signed.evidence(),
             &reason,
             409,
             &mcp_re_http_profile::custody::SigningWindow::over(
@@ -1395,7 +1388,6 @@ mod delegated_tests {
         let stale_key = SigningKey::from_seed_bytes(&[101u8; 32]);
         let resp = mcp_re_http_profile::rejection::build_delegated_rejection_with_owned_key(
             signed.request(),
-            signed.evidence(),
             &reason,
             409,
             snap.server_signer(),
@@ -1449,7 +1441,7 @@ mod delegated_tests {
             body: success_body(),
         };
         custody
-            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .sign_response(NOW, &mut resp, signed.request())
             .expect("server delegated-signs the success response");
 
         let root = ResolvedActor {
@@ -1621,7 +1613,7 @@ mod delegated_tests {
             body: success_body(),
         };
         custody
-            .sign_response(rot, &mut resp, signed.request(), signed.evidence())
+            .sign_response(rot, &mut resp, signed.request())
             .expect("server signs with the rotated key");
         let kid2 = custody
             .active_snapshot()

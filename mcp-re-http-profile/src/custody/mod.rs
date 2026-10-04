@@ -43,7 +43,6 @@ use crate::delegation::JWK_CRV_ED25519;
 use crate::delegation::JWK_KTY_OKP;
 use crate::delegation::KEY_USE_RESPONSE_SIGNING;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::sign::sign_delegated_response_full_with_owned_key;
@@ -346,7 +345,6 @@ where
         now: i64,
         response: &mut HttpResponse,
         request: &HttpRequest,
-        request_evidence: &RequestEvidence,
     ) -> Result<(), CustodyError> {
         self.ensure_active(now)?;
         // `ensure_active` returns `Ok` only through the arm matching `Some(a)` with
@@ -358,7 +356,6 @@ where
         sign_delegated_response_full_with_owned_key(
             response,
             request,
-            request_evidence,
             a.server_signer(),
             a.credential(),
             a.key(),
@@ -826,7 +823,7 @@ mod tests {
             headers: vec![("Content-Type".into(), "application/json".into())],
             body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
         };
-        let evidence = crate::sign::sign_request(
+        crate::sign::sign_request(
             &mut request,
             &SigningKey::from_seed_bytes(&[77u8; 32]),
             "client-key-1",
@@ -841,7 +838,7 @@ mod tests {
             headers: vec![("Content-Type".into(), "application/json".into())],
             body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
         };
-        c.sign_response(now, &mut response, &request, &evidence)
+        c.sign_response(now, &mut response, &request)
             .expect("response signs");
 
         let input = response

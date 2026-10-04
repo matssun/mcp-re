@@ -96,7 +96,6 @@ pub(crate) fn local_sig(key: &SigningKey, base: &[u8]) -> Result<Vec<u8>, HttpPr
 pub fn sign_delegated_response_full_with_owned_key(
     response: &mut HttpResponse,
     request: &HttpRequest,
-    request_evidence: &RequestEvidence,
     server_signer: &ActorIdentity,
     server_delegation: &str,
     delegated_key: &SigningKey,
@@ -104,6 +103,7 @@ pub fn sign_delegated_response_full_with_owned_key(
     created: i64,
     expires: i64,
 ) -> Result<Vec<u8>, HttpProfileError> {
+    let request_evidence = crate::verify::bound_request::request_evidence_of(request)?;
     let block = HttpResponseEvidenceBlock {
         profile: PROFILE_TAG.to_owned(),
         server_signer: server_signer.clone(),
@@ -344,6 +344,85 @@ mod tests {
             matching(&response, "Content-Digest")[0],
             content_digest_sha256(&response.body)
         );
+    }
+
+    fn bound_signer_inputs() -> (HttpRequest, HttpResponse, ActorIdentity, SigningKey) {
+        let request = HttpRequest {
+            method: "POST".to_owned(),
+            target_uri: "https://mcp.example.test/mcp".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        };
+        let response = HttpResponse {
+            status: 200,
+            headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
+            body: br#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_vec(),
+        };
+        let signer = ActorIdentity {
+            role: "server".to_owned(),
+            trust_domain: "example.test".to_owned(),
+            subject: "srv-1".to_owned(),
+            keyid: KID.to_owned(),
+        };
+        (
+            request,
+            response,
+            signer,
+            SigningKey::from_seed_bytes(&[0x11; 32]),
+        )
+    }
+
+    #[test]
+    fn a_bound_response_advertises_the_handle_of_the_request_it_answers() {
+        let (mut request, mut response, signer, key) = bound_signer_inputs();
+        let handle = sign_request(
+            &mut request,
+            &SigningKey::from_seed_bytes(&[0x22; 32]),
+            "client-key-1",
+            1_700_000_000,
+            1_700_000_300,
+            "nonce-1",
+        )
+        .expect("request signs");
+        sign_delegated_response_full_with_owned_key(
+            &mut response,
+            &request,
+            &signer,
+            "credential",
+            &key,
+            KID,
+            1_700_000_000,
+            1_700_000_300,
+        )
+        .expect("response signs");
+        let body: serde_json::Value = serde_json::from_slice(&response.body).expect("body is JSON");
+        assert_eq!(
+            body["_meta"][RESPONSE_EVIDENCE_BLOCK_KEY]["request_evidence"]["digest_value"],
+            handle.digest_value
+        );
+    }
+
+    #[test]
+    fn an_unsigned_request_cannot_be_answered_with_a_bound_response() {
+        let (request, mut response, signer, key) = bound_signer_inputs();
+        let before = response.clone();
+        let err = sign_delegated_response_full_with_owned_key(
+            &mut response,
+            &request,
+            &signer,
+            "credential",
+            &key,
+            KID,
+            1_700_000_000,
+            1_700_000_300,
+        )
+        .expect_err("a request with no signature has no handle");
+        assert_eq!(
+            err,
+            HttpProfileError::MissingEvidence("request signature-input")
+        );
+        assert_eq!(response.body, before.body);
+        assert_eq!(response.headers, before.headers);
     }
 
     #[test]

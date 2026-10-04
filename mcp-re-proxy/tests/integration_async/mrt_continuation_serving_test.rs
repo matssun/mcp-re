@@ -1269,7 +1269,7 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
     };
     let window = mcp_re_http_profile::custody::SigningWindow::over(active, NOW, TTL)
         .expect("a live signing window");
-    sign_delegated_response_full(&mut response, &request, &req_evidence, &window)
+    sign_delegated_response_full(&mut response, &request, &window)
         .expect("the reply signs — signing does not classify");
 
     // Precondition: this fixture is only meaningful if the response is otherwise

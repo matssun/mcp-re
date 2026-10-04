@@ -6671,6 +6671,8 @@ tested_symbols = [
   # the caller supplied, and the delegated evidence block is inside the digested body.
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::caller_supplied_digest_and_signature_headers_do_not_survive_emission",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::the_delegated_response_block_is_inside_the_digested_body",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_bound_response_advertises_the_handle_of_the_request_it_answers",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::an_unsigned_request_cannot_be_answered_with_a_bound_response",
 ]
 
 # ---------------------------------------------------------------------------------------

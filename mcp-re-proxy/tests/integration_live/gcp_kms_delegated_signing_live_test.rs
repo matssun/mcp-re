@@ -260,7 +260,7 @@ fn fresh_response() -> HttpResponse {
 /// attestation chain to the KMS root, rotation overlap (no verification gap), and a
 /// fail-closed body tamper.
 fn run_delegated_custody_lane(signer: KmsResponseSigner) {
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let root_pub = signer.response_public_key().expect("KMS root public key");
 
     // Count REAL KMS invocations: the issuer closure is the ONLY place the KMS is
@@ -295,14 +295,14 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
     // Keep one predecessor-signed response to re-verify across the rotation.
     let mut predecessor_rsp = fresh_response();
     custody
-        .sign_response(NOW, &mut predecessor_rsp, &req, &ev)
+        .sign_response(NOW, &mut predecessor_rsp, &req)
         .expect("custody signs (issuance)");
     let first_kid = custody.active_kid().expect("a key is active").to_owned();
 
     for _ in 1..RESPONSES_PER_KEY {
         let mut rsp = fresh_response();
         custody
-            .sign_response(NOW, &mut rsp, &req, &ev)
+            .sign_response(NOW, &mut rsp, &req)
             .expect("custody signs (hot path)");
         Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
             .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
@@ -342,7 +342,7 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
     let after = NOW + TTL - OVERLAP + 10;
     let mut successor_rsp = fresh_response();
     custody
-        .sign_response(after, &mut successor_rsp, &req, &ev)
+        .sign_response(after, &mut successor_rsp, &req)
         .expect("custody signs (rotation)");
     let second_kid = custody
         .active_kid()
@@ -393,7 +393,7 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
     // --- Negative: a body tamper on a delegated response fails closed ---------
     let mut tampered = fresh_response();
     custody
-        .sign_response(after, &mut tampered, &req, &ev)
+        .sign_response(after, &mut tampered, &req)
         .expect("custody signs");
     let last = tampered.body.len() - 2;
     tampered.body[last] ^= 0x01;

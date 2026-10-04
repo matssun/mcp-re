@@ -289,7 +289,7 @@ mod tests {
             body: body.to_vec(),
         };
         custody
-            .sign_response(NOW, &mut response, signed.request(), signed.evidence())
+            .sign_response(NOW, &mut response, signed.request())
             .expect("server delegated-signs the reply");
         let revoked = StaticRevocationList::new();
         let resolve = resolver();
@@ -404,7 +404,6 @@ mod tests {
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let response = mcp_re_http_profile::build_delegated_rejection(
             signed.request(),
-            signed.evidence(),
             &reason,
             409,
             &mcp_re_http_profile::custody::SigningWindow::over(

@@ -145,7 +145,6 @@ fn request_id(request: &HttpRequest) -> Value {
 #[allow(clippy::too_many_arguments)]
 pub fn build_delegated_rejection_with_owned_key(
     request: &HttpRequest,
-    request_evidence: &RequestEvidence,
     reason: &RejectionReason,
     status: u16,
     server_signer: &ActorIdentity,
@@ -163,7 +162,6 @@ pub fn build_delegated_rejection_with_owned_key(
     sign_delegated_response_full_with_owned_key(
         &mut response,
         request,
-        request_evidence,
         server_signer,
         server_delegation,
         delegated_key,
