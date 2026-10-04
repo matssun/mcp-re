@@ -23,11 +23,11 @@
 //! is never softened to a serve-through, because there is no cache to serve from
 //! and Tier 2's whole point is that the live answer is authoritative).
 //!
-//! Optionally, a policy-layer [`RevocationSource`] (ADR-MCPS-013) is consulted as
-//! a SECOND, independent revocation authority: even if the trust store still
-//! resolves a key as `Active`, a `Revoked` revocation-id rejects it, and a
-//! [`RevocationUnavailable`] fails closed. This composes the two revocation
-//! signals (key-status binding + grant deny-list) under one live check.
+//! A policy-layer [`RevocationSource`] (ADR-MCPS-013) is consulted as a SECOND,
+//! independent revocation authority by `GrantRevocationGatedResolver`: even if the
+//! trust store still resolves a key as `Active`, a `Revoked` revocation-id rejects
+//! it, and a [`RevocationUnavailable`] fails closed. That type is deliberately not a
+//! [`TrustResolver`] and has no production producer.
 //!
 //! This wrapper lives in `mcp-re-proxy`, not `mcp-re-core`: it composes the pure
 //! `TrustResolver` trait but performs no networking itself — the store round-trip
@@ -43,10 +43,8 @@ use mcp_re_policy::RevocationStatus;
 
 /// A [`TrustResolver`] implementing ADR-MCPS-021 **Tier 2 (live strong check)**.
 ///
-/// `resolve` consults the inner resolver on EVERY call (no positive-trust cache),
-/// then — if a [`RevocationSource`] and a `revocation_id` are wired — consults the
-/// revocation source as a second authority. Any operational failure on either
-/// path (`Unavailable` / `RevocationUnavailable`) fails closed.
+/// `resolve` consults the inner resolver on EVERY call (no positive-trust cache).
+/// An outage (`Unavailable`) fails closed.
 ///
 /// Nothing active is ever cached, so a store-side revocation is visible on the next
 /// request and this wrapper contributes no window of its own; what a deployment
@@ -55,46 +53,48 @@ use mcp_re_policy::RevocationStatus;
 /// serve-through).
 pub struct LiveTrustResolver {
     inner: Box<dyn TrustResolver + Send + Sync>,
-    /// Optional second revocation authority (ADR-MCPS-013 grant deny-list),
-    /// consulted live alongside the key-status binding when a `revocation_id` is
-    /// supplied to [`resolve_with_revocation_id`](LiveTrustResolver::resolve_with_revocation_id).
-    /// **NOT WIRED.** No production path installs one, so Tier 2's revocation check is
-    /// whatever the inner store answers — which is the freshness guarantee the tier is
-    /// actually sold on (a key removed from the store stops resolving on the next
-    /// request), not an identifier denylist. Retained rather than deleted: the seam is the
-    /// ADR-MCPS-021 elaboration a networked revocation feed would use, and the composition
-    /// root having never installed one is a deployment fact rather than evidence the seam
-    /// is wrong.
-    #[allow(dead_code)]
-    revocation: Option<Box<dyn RevocationSource + Send + Sync>>,
 }
 
 impl LiveTrustResolver {
-    /// Wrap `inner` as a live (no-cache) resolver with no separate revocation
-    /// source. Every `resolve` round-trips the inner store.
+    /// Wrap `inner` as a live (no-cache) resolver. Every `resolve` round-trips the
+    /// inner store.
     pub fn new(inner: Box<dyn TrustResolver + Send + Sync>) -> Self {
-        LiveTrustResolver {
-            inner,
-            revocation: None,
-        }
+        LiveTrustResolver { inner }
     }
+}
 
-    /// Wrap `inner` and additionally consult `revocation` (ADR-MCPS-013) as a
-    /// second live revocation authority via
-    /// [`resolve_with_revocation_id`](LiveTrustResolver::resolve_with_revocation_id).
+/// A [`LiveTrustResolver`] composed with a [`RevocationSource`] (ADR-MCPS-013) as a
+/// second live revocation authority.
+///
+/// Deliberately not a [`TrustResolver`]: the trait carries no `revocation_id`, so the
+/// only resolution entry point is
+/// [`resolve_with_revocation_id`](GrantRevocationGatedResolver::resolve_with_revocation_id),
+/// and holding one means the revocation source is always consulted.
+///
+/// **NOT WIRED, and for want of an input.** The serving path has no `revocation_id` to
+/// supply and nothing in production produces one, so no production code constructs
+/// this. Retained rather than deleted: it is the ADR-MCPS-013 seam a networked
+/// revocation feed would use, and a missing input is not evidence the seam is wrong.
+#[allow(dead_code)]
+pub(super) struct GrantRevocationGatedResolver {
+    live: LiveTrustResolver,
+    revocation: Box<dyn RevocationSource + Send + Sync>,
+}
+
+impl GrantRevocationGatedResolver {
+    /// Gate `live` on `revocation`. Not wired: no production producer of a
+    /// `revocation_id` exists.
     #[allow(dead_code)]
-    pub(super) fn with_revocation_source(
-        inner: Box<dyn TrustResolver + Send + Sync>,
+    pub(super) fn new(
+        live: LiveTrustResolver,
         revocation: Box<dyn RevocationSource + Send + Sync>,
     ) -> Self {
-        LiveTrustResolver {
-            inner,
-            revocation: Some(revocation),
-        }
+        GrantRevocationGatedResolver { live, revocation }
     }
 
-    /// Live-resolve `(signer, key_id)`, then — if a revocation source is wired —
-    /// also check `revocation_id` against it as a second authority.
+    /// Live-resolve `(signer, key_id)`, then also check `revocation_id` against the
+    /// revocation source as a second authority. Not wired: no production producer of
+    /// a `revocation_id` exists.
     ///
     /// Fail-closed composition: a store-side binding failure short-circuits; an
     /// `Active` binding is then gated on the revocation source. `Revoked` maps to
@@ -110,20 +110,18 @@ impl LiveTrustResolver {
         // 1. Live key-status binding — authoritative, never cached. A binding
         //    failure (Revoked/NotFound/Malformed) or an outage (Unavailable) is
         //    returned verbatim; both fail closed.
-        let key = self.inner.resolve(signer, key_id)?;
+        let key = self.live.resolve(signer, key_id)?;
 
-        // 2. Second live revocation authority (ADR-MCPS-013), if wired.
-        if let Some(revocation) = &self.revocation {
-            match revocation.revocation_status(revocation_id) {
-                Ok(RevocationStatus::NotRevoked) => {}
-                Ok(RevocationStatus::Revoked) => return Err(TrustResolverError::Revoked),
-                // Operational failure: distinct from a determinate deny, still
-                // fail closed (never a stale "active" allow).
-                Err(unavailable) => {
-                    return Err(TrustResolverError::Unavailable {
-                        details: format!("revocation source unavailable: {}", unavailable.details),
-                    })
-                }
+        // 2. Second live revocation authority (ADR-MCPS-013).
+        match self.revocation.revocation_status(revocation_id) {
+            Ok(RevocationStatus::NotRevoked) => {}
+            Ok(RevocationStatus::Revoked) => return Err(TrustResolverError::Revoked),
+            // Operational failure: distinct from a determinate deny, still
+            // fail closed (never a stale "active" allow).
+            Err(unavailable) => {
+                return Err(TrustResolverError::Unavailable {
+                    details: format!("revocation source unavailable: {}", unavailable.details),
+                })
             }
         }
 
@@ -132,11 +130,8 @@ impl LiveTrustResolver {
 }
 
 impl TrustResolver for LiveTrustResolver {
-    /// Live key-status resolution with NO positive caching. Equivalent to
-    /// [`resolve_with_revocation_id`](LiveTrustResolver::resolve_with_revocation_id)
-    /// with no `revocation_id`: only the live key-status binding is consulted (the
-    /// `TrustResolver` trait carries no revocation-id, so the second authority is
-    /// reached only through the inherent method).
+    /// Live key-status resolution with NO positive caching: only the live key-status
+    /// binding is consulted.
     fn resolve(&self, signer: &str, key_id: &str) -> Result<VerificationKey, TrustResolverError> {
         self.inner.resolve(signer, key_id)
     }
@@ -144,6 +139,7 @@ impl TrustResolver for LiveTrustResolver {
 
 #[cfg(test)]
 mod tests {
+    use super::GrantRevocationGatedResolver;
     use super::LiveTrustResolver;
 
     use crate::reloading_trust::ReloadingTrustStore;
@@ -292,8 +288,8 @@ mod tests {
         }
         let mut revocation = InMemoryRevocationSource::new();
         revocation.revoke("grant-1");
-        let live = LiveTrustResolver::with_revocation_source(
-            Box::new(Shared(inner.clone())),
+        let live = GrantRevocationGatedResolver::new(
+            LiveTrustResolver::new(Box::new(Shared(inner.clone()))),
             Box::new(revocation),
         );
 
@@ -335,8 +331,8 @@ mod tests {
                 self.0.resolve(signer, key_id)
             }
         }
-        let live = LiveTrustResolver::with_revocation_source(
-            Box::new(Shared(inner)),
+        let live = GrantRevocationGatedResolver::new(
+            LiveTrustResolver::new(Box::new(Shared(inner))),
             Box::new(AlwaysUnavailableRevocation),
         );
         assert!(
