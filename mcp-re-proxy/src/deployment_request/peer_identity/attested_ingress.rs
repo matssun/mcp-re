@@ -12,9 +12,12 @@ pub struct AttestedIngressRequest {
     /// form reads no certificate — but the provenance stamped on the identity the
     /// assertion yields, which is why it lives here and not beside the form.
     pub asserted_identity_kind: crate::transport::IdentityPolicy,
-    /// `(key_id, base64url-ed25519-pub)` of the attestors this node verifies.
+    /// `(key_id, base64url-ed25519-pub)` of the attestors this node verifies. An empty set
+    /// verifies nothing, which the boundary refuses.
     pub attestor_keys: Vec<(String, String)>,
-    /// The ingress identities whose assertions this node trusts.
+    /// The ingress identities whose assertions this node trusts. An empty set rejects every
+    /// assertion and an empty-string identity matches an assertion that names none; the
+    /// boundary refuses both.
     pub identities: Vec<String>,
     /// The audience an assertion must name — this node's own route. Empty binds an
     /// assertion to every node that also named none, which the boundary refuses.
@@ -55,20 +58,48 @@ impl PinnedChannelAcknowledgement {
 mod tests {
     use super::*;
 
-    /// The acknowledgement has to be written. There is no `Default`, no `From`, and no
-    /// public field, so a Mode-C request cannot come into existence beside a silence.
+    /// Whether `T` implements `Default`, read at run time so the assertion below is not a
+    /// constant: an inherent method on the probe wins method resolution exactly when
+    /// `T: Default`, and the trait fallback answers `false` otherwise.
+    struct DefaultProbe<T>(std::marker::PhantomData<T>);
+
+    trait NoDefault {
+        fn implements_default(&self) -> bool {
+            false
+        }
+    }
+
+    impl<T> NoDefault for DefaultProbe<T> {}
+
+    // The inherent method deliberately shadows the trait method of the same name: that
+    // shadowing is how the probe tells `T: Default` from its absence at method resolution.
+    #[allow(clippy::same_name_method)]
+    impl<T: Default> DefaultProbe<T> {
+        fn implements_default(&self) -> bool {
+            true
+        }
+    }
+
+    /// The acknowledgement has to be written: neither it nor the attested form has a
+    /// `Default`, so no request comes into existence with an acknowledgement nobody wrote.
+    /// The positive control proves the probe can answer `true`.
     #[test]
     fn an_attested_form_cannot_exist_without_the_acknowledgement() {
-        let request = AttestedIngressRequest {
-            asserted_identity_kind: crate::transport::IdentityPolicy::UriSan,
-            attestor_keys: vec![("a".to_string(), "k".to_string())],
-            identities: vec!["ingress-1".to_string()],
-            audience: "https://node/mcp".to_string(),
-            pinned_channel: PinnedChannelAcknowledgement::acknowledged(),
+        let probe = |_: std::marker::PhantomData<String>| {
+            DefaultProbe::<String>(std::marker::PhantomData).implements_default()
         };
-        assert_eq!(
-            request.pinned_channel,
-            PinnedChannelAcknowledgement::acknowledged()
+        assert!(
+            probe(std::marker::PhantomData),
+            "the probe can see a Default"
+        );
+        assert!(
+            !DefaultProbe::<PinnedChannelAcknowledgement>(std::marker::PhantomData)
+                .implements_default(),
+            "the acknowledgement must not be defaultable"
+        );
+        assert!(
+            !DefaultProbe::<AttestedIngressRequest>(std::marker::PhantomData).implements_default(),
+            "the attested form must not be defaultable"
         );
     }
 }
