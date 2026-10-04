@@ -97,6 +97,8 @@ asn1-rs = { workspace = true }
 # ServerConfig the blocking path builds.
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
+tower-service = { workspace = true }
+rustls-native-certs = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 http-body-util = { workspace = true }

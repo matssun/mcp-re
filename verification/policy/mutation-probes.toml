@@ -3020,7 +3020,14 @@ conjunct = "A continuation store that does not answer is refused as a deployment
 # blips, and hides a genuine splice attempt inside an outage.
 path = "mcp-re-proxy/src/http_profile_serve/continuation/answer_leg.rs"
 anchor = """
-    peeked.map_err(|_| Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503))
+    peeked.map_err(|e| {
+        fault_report::report(
+            Fault::ContinuationPeek,
+            "read the approval this answer leg names",
+            &e,
+        );
+        Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503)
+    })
 """
 weakening = """
     Ok(peeked.unwrap_or(None))

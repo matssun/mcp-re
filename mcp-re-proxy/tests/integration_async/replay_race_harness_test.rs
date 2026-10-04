@@ -464,7 +464,8 @@ fn cross_core_same_key_admits_exactly_one_fresh_etcd_async() {
         // `connect` is infallible (it only records the endpoint); a wrong/unreachable
         // gateway surfaces as a per-request `Unavailable`, i.e. ZERO Fresh — never a
         // false Fresh — which the exact count below would catch.
-        let store = Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint));
+        let store =
+            Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint).expect("etcd endpoint"));
         // Salt read ONCE so this lane's keys are disjoint from the sync etcd lane's
         // on this shared live store (see the Redis lane above).
         let salt = unique_salt("etcd-async");
@@ -873,7 +874,8 @@ mod http_profile_full_stack {
         };
         rt().block_on(async {
             let now = now();
-            let store = Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint));
+            let store =
+                Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint).expect("etcd endpoint"));
             let proxy = Arc::new(proxy_over(store, 100, now));
             let prefix = unique_prefix("etcd");
             for round in 0..ROUNDS {

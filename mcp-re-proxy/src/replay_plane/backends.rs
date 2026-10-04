@@ -49,7 +49,8 @@ pub(super) fn establish_etcd(
                 freshness
                     .replica_clock_divergence()
                     .retention_clock(crate::etcd_store::system_clock()),
-            ),
+            )
+            .map_err(|e| e.to_string())?,
         );
         Ok((
             AsyncReplayTier::new(store, freshness),

@@ -23,6 +23,7 @@ use crate::continuation_store::ContinuationStoreError;
 use crate::continuation_store::RetainedHandles;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
+use crate::http_profile_serve::retention::fault_report::{self, Fault};
 use crate::http_profile_serve::Exchange;
 use crate::refusal::Refusal;
 
@@ -97,11 +98,20 @@ impl ContinuationPlane {
 /// than about the caller: flattening the two would report a forged continuation every time
 /// the shared tier blips, and would hide a genuine splice attempt inside an outage.
 ///
+/// The outage is reported through the paced operator reporter.
+///
 /// Neither outcome proceeds unbound, which is the property this exists to make checkable.
 fn peeked_or_refusal(
     peeked: Result<Option<RetainedHandles>, ContinuationStoreError>,
 ) -> Result<Option<RetainedHandles>, Refusal> {
-    peeked.map_err(|_| Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503))
+    peeked.map_err(|e| {
+        fault_report::report(
+            Fault::ContinuationPeek,
+            "read the approval this answer leg names",
+            &e,
+        );
+        Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503)
+    })
 }
 
 /// The refusal for a leg that needs correlation in a deployment that holds no correlation

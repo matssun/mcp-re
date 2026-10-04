@@ -1556,10 +1556,10 @@ for it.
 
 ## NP-043 — the auditor's artifact is its own schema and round-trips its verdicts
 
-**Controls:** `auditor/artifact/mod.rs` (3), `artifact/verdict.rs` (1).
+**Controls:** `auditor/artifact/mod.rs` (3), `artifact/document.rs` (3), `artifact/verdict.rs` (1).
 **Statement.** *An artifact round-trips its verdicts; a foreign schema is refused; a
 statement that is not base64url is refused on the way IN; and every incomplete reason has
-its own token.*
+its own token; and a read-back document carries a receipt and its registration protocol together or is refused.*
 **If false.** An audit artifact is read as this schema when it is another's, or an
 incomplete audit reports a reason indistinguishable from a different one — which is the
 bare-boolean failure `http_profile.retained_chain_record` exists to prevent, arriving in the
@@ -4145,7 +4145,7 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-215 — a refusal about an operator-configured locator never carries its credential or the configured string
 
-**Controls:** `mcp-re-proxy` `lib#async_etcd_store::tests::a_request_build_failure_leaks_neither_the_credential_nor_the_configured_url`; `mcp-re-proxy` `lib#async_redis_store::tests::a_credentialled_url_never_reaches_a_refusal`; `mcp-re-proxy` `lib#aws_kms_keysource::tests::a_path_refusal_names_the_authority_not_the_configured_endpoint`; `mcp-re-proxy` `lib#config_state::admission::tests::the_locator_refusal_names_a_credential_bearing_value_without_echoing_it`; `mcp-re-proxy` `lib#config_state::continuation_control::tests::the_locator_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#config_state::replay::tests::the_locator_shape_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#config_state::trust_revocation::tests::the_epoch_locator_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#config_state::validation::residue::tests::the_target_uri_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#kms_endpoint_policy::tests::the_query_refusal_names_neither_the_token_nor_the_configured_endpoint`; `mcp-re-proxy` `lib#kms_endpoint_policy::tests::the_userinfo_refusal_names_the_effective_host_and_not_the_credential`; `mcp-re-proxy` `lib#redis_admission_source::tests::a_connect_diagnostic_names_the_endpoint_without_its_credentials`; `mcp-re-transport` `lib#remote::tests::the_refusal_names_the_operation_and_never_the_configured_target`; `mcp-re-proxy` `lib#transparency::auditor::registration::endpoint::tests::a_register_to_refusal_leaks_neither_the_credential_nor_the_configured_url`; `mcp-re-proxy` `lib#trust_epoch::tests::an_open_failure_names_the_store_without_the_credential_or_the_configured_url`; `mcp-re-proxy` `lib#async_etcd_store::tests::a_well_formed_credential_bearing_endpoint_still_reaches_the_transport`.
+**Controls:** `mcp-re-proxy` `lib#async_etcd_store::tests::a_request_build_failure_leaks_neither_the_credential_nor_the_configured_url`; `mcp-re-proxy` `lib#async_redis_store::tests::a_credentialled_url_never_reaches_a_refusal`; `mcp-re-proxy` `lib#aws_kms_keysource::tests::a_path_refusal_names_the_authority_not_the_configured_endpoint`; `mcp-re-proxy` `lib#config_state::admission::tests::the_locator_refusal_names_a_credential_bearing_value_without_echoing_it`; `mcp-re-proxy` `lib#config_state::continuation_control::tests::the_locator_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#config_state::replay::tests::the_locator_shape_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#config_state::trust_revocation::tests::the_epoch_locator_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#config_state::validation::residue::tests::the_target_uri_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#kms_endpoint_policy::tests::the_query_refusal_names_neither_the_token_nor_the_configured_endpoint`; `mcp-re-proxy` `lib#kms_endpoint_policy::tests::the_userinfo_refusal_names_the_effective_host_and_not_the_credential`; `mcp-re-proxy` `lib#redis_admission_source::tests::a_connect_diagnostic_names_the_endpoint_without_its_credentials`; `mcp-re-transport` `lib#remote::tests::the_refusal_names_the_operation_and_never_the_configured_target`; `mcp-re-proxy` `lib#transparency::auditor::registration::endpoint::tests::a_register_to_refusal_leaks_neither_the_credential_nor_the_configured_url`; `mcp-re-proxy` `lib#trust_epoch::tests::an_open_failure_names_the_store_without_the_credential_or_the_configured_url`; `mcp-re-proxy` `lib#async_etcd_store::tests::a_well_formed_credential_bearing_endpoint_still_reaches_the_transport`; `mcp-re-proxy` `lib#async_etcd_store::gateway::tests::a_scheme_outside_http_and_https_is_refused_at_construction_without_echoing_it`.
 **Carrier:** the refusal sites of operator-configured locators across mcp-re-proxy (config_state/{admission,continuation_control,replay,trust_revocation,validation/residue}.rs, kms_endpoint_policy/mod.rs, aws_kms_keysource.rs, gcp_kms_keysource.rs, async_etcd_store.rs, async_redis_store.rs, redis_admission_source/mod.rs, trust_epoch.rs, transparency/auditor/registration/endpoint/mod.rs) and mcp-re-transport/src/remote.rs.
 **Statement.** *Every refusal or operational diagnostic produced on a path that receives an operator-configured locator reports the locator only by the flag that supplied it, or by a credential-free projection of it (scheme, host and port, with removed components named by COMPONENT and never by content). This covers store URLs (replay redis/etcd, admission redis, continuation redis, trust-epoch redis), KMS and metadata endpoints, --register-to, and the client --target-uri. The rule holds on every refusal branch, including those reached by a WELL-FORMED credential-bearing URL and those reached by a scheme-less typo. Such a refusal never contains the userinfo, password, path secret or query token it held, nor the complete configured string, and redaction changes only what a refusal says, never which locators are admitted. The statement is false if any such site interpolates the raw configured value, or an error that embeds it, into a message an operator or log pipeline receives.*
 **If false.** A store password, a KMS access token or a transparency-service credential reaches operator transcripts and the log pipeline behind them on a startup or connect failure. The replay-store credential is enough to delete nonces and so re-open replay. The failure path is the one a credential-bearing typo takes, so the leak occurs exactly when an operator is least careful.
@@ -4699,3 +4699,33 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none. `proxy.trust_resolution_window` states the window `T`, and THM-0097 disclaims liveness.
 **Root relationship.** Beside NP-134: that proposition covers the cache stopping caching before it stops answering.
 **Severity:** `medium`.
+
+## NP-259 — a verified refusal of a notification reaches the local client as an HTTP error with an id-less JSON-RPC error, never as a gateway failure or a reply
+
+**Controls:** `mcp-re-client` `serve::render::tests::a_rejected_notification_is_rendered_as_an_http_error_with_no_id`.
+**Carrier:** `mcp-re-client/src/serve/render.rs`.
+**Statement.** *A verified rejection receipt for a one-way notification is rendered as HTTP 400 carrying the JSON-RPC error without an `id`, and is neither rendered as a 502 gateway failure nor as a 2xx reply.*
+**If false.** A signed refusal of a notification reads to the local client as a channel failure that invites a retry, or as an accepted message.
+**Likely owner:** none. `client.local_serving_pipeline` states only the pause rendering.
+**Root relationship.** Beside `client.proxy_reply_disposition`: that unit states the rejection path for a reply.
+**Severity:** `medium`.
+
+## NP-260 — the inner plane bounds the response bytes it buffers and does not charge its own refusal to the backend
+
+**Controls:** `mcp-re-proxy` `http_inner::response_budget::tests::a_response_past_the_process_budget_is_refused_and_its_charge_returned`, `http_inner::response_budget::tests::a_charge_held_elsewhere_bounds_the_next_read_and_is_returned_after_it`, `http_inner::response_budget::tests::the_per_response_cap_still_refuses_as_unreadable`, `http_inner::tests::a_budget_refusal_is_answered_invalid_upstream_and_does_not_eject_the_backend`.
+**Statement.** *The inner plane charges each response data frame to a process-wide byte budget before buffering it, refuses a read the budget cannot cover and returns the charge when the read ends; a refusal by that budget is answered `InvalidUpstream` and is not recorded against the backend's breaker.*
+**If false.** The memory bound degrades to in-flight count times the per-response cap, or a process-local shortage ejects healthy backends and shrinks the fleet under load.
+**Likely owner:** none. No unit's paths hold `http_inner/`, and NP-139 and NP-141 state different propositions.
+**Severity:** `high`.
+
+## NP-261 — the async etcd gateway speaks TLS to an https endpoint and never serves a scheme its connector was not built for
+
+**Controls:** `mcp-re-proxy` `async_etcd_store::gateway::tests::an_https_endpoint_opens_a_tls_handshake_never_plaintext`, `async_etcd_store::gateway::tests::a_connector_never_serves_a_scheme_it_was_not_built_for`.
+**Carrier:** `mcp-re-proxy/src/async_etcd_store/gateway.rs`.
+**Statement.** *The connector for an `https` etcd endpoint opens a TLS handshake against the native root store before any request byte is written, and the connector for an `http` endpoint is plaintext; a connector asked for a scheme it was not built for fails without opening a connection, so there is neither a downgrade nor plaintext to an `https` URI.*
+**If false.** Replay-tier nonces and the lease grants that retain them cross the network unauthenticated and unencrypted to an endpoint the operator configured as TLS, or an `https` endpoint is unusable and every insert fails closed.
+**Likely owner:** none. `proxy.etcd_replay_adapter` defers what a txn acknowledgement establishes to ASM-0041 and states nothing about the channel.
+**Root relationship.** The channel premise beneath ASM-0041 under THM-0092.
+**Severity:** `high`.
+
+**Lanes.** Only the `cpstore_etcd` lane (`proxy_ext_unit_test`) compiles these controls; the default lane compiles them to zero tests.

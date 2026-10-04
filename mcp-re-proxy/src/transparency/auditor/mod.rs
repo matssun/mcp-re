@@ -100,8 +100,10 @@ mod run;
 mod registration;
 
 pub use artifact::AttestationArtifact;
+pub use artifact::AttestationDocument;
 pub use artifact::AttestedService;
 pub use artifact::ChainVerdict;
+pub use artifact::ClaimedRegistration;
 pub use artifact::CorrespondenceVerdict;
 pub use artifact::IncompleteAt;
 pub use invocation::AuditInvocation;

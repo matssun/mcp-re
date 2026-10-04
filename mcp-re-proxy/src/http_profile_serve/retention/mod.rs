@@ -164,7 +164,8 @@ impl Retention {
     }
 }
 
-mod fault_report;
+// The continuation plane reports its store faults through the same paced reporter.
+pub(in crate::http_profile_serve) mod fault_report;
 mod nothing_retained;
 mod outcome;
 mod refusal;

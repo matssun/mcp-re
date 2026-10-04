@@ -3482,8 +3482,8 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_decision_issued_for_another_enforcement_point_is_refused",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_deployment_running_no_decision_profile_is_unaffected",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::the_record_names_the_enrolled_authority_and_not_the_one_the_decision_claims_to_be",
+  "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_resolver_answering_differently_between_calls_cannot_split_the_key_from_the_name",
   "//mcp-re-proxy:proxy_unit_test#authorization::pdp::authority::tests::an_enrolled_authority_answers_with_the_name_it_was_enrolled_under",
-  "//mcp-re-proxy:proxy_unit_test#authorization::pdp::authority::tests::the_name_and_the_key_are_one_value",
 ]
 
 # ---------------------------------------------------------------------------------------
@@ -4858,6 +4858,7 @@ tested_symbols = [
   "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_unstated_contract_produces_no_invented_disposition",
   "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_input_required_reply_does_not_classify_as_terminal",
   "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::an_unrecognized_result_type_is_never_terminal",
+  "//mcp-re-client-proxy:mcp_re_client_proxy_test#proxy::tests::a_verified_rejection_of_a_notification_is_a_rejection_not_a_gateway_failure",
 ]
 
 [[unit]]

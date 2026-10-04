@@ -324,6 +324,16 @@ crate.spec(
     repositories = ["crates_mcp_re"],
 )
 crate.spec(
+    package = "tower-service",
+    version = "0.3",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "rustls-native-certs",
+    version = "0.8",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
     package = "ureq",
     version = "2",
     features = ["tls"],

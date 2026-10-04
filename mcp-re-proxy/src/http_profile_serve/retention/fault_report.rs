@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Saying that an evidence-retention fault happened, without letting the fault set the rate.
+//! Saying that an evidence-retention or continuation-store fault happened, without letting the fault set the rate.
 //!
 //! Each fault class owns the operator sentence that names it, so the serving code decides
 //! the answer and this module decides only how it is said.
@@ -27,7 +27,7 @@ const LINE_INTERVAL_MS: u64 = 10_000;
 
 /// Which retention fault this is, and therefore which sentence says it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Fault {
+pub(in crate::http_profile_serve) enum Fault {
     /// The store's queue is full; nothing was published and a retry is safe.
     Backpressure,
     /// The store's writer is gone; this replica will accept no further write.
@@ -38,7 +38,16 @@ pub(super) enum Fault {
     Unresolved,
     /// The call executed and the retention write then failed.
     AfterDispatch,
+    /// The continuation store could not be read for the approval an answer leg names.
+    ContinuationPeek,
+    /// The continuation store could not retire the approval an exchange answered.
+    ContinuationRetire,
+    /// The continuation store could not record an open leg.
+    ContinuationRecord,
 }
+
+/// The number of [`Fault`] classes, one pacing slot each.
+const FAULT_CLASSES: usize = 8;
 
 /// One class's pacing state.
 struct Slot {
@@ -76,35 +85,20 @@ impl Slot {
     }
 }
 
-/// One slot per [`Fault`].
+/// One slot per [`Fault`], indexed by its discriminant.
 struct Pacer {
-    backpressure: Slot,
-    retired: Slot,
-    unusable: Slot,
-    unresolved: Slot,
-    after_dispatch: Slot,
+    slots: [Slot; FAULT_CLASSES],
 }
 
 impl Pacer {
     const fn new() -> Self {
         Pacer {
-            backpressure: Slot::new(),
-            retired: Slot::new(),
-            unusable: Slot::new(),
-            unresolved: Slot::new(),
-            after_dispatch: Slot::new(),
+            slots: [const { Slot::new() }; FAULT_CLASSES],
         }
     }
 
     fn admit(&self, fault: Fault, now_ms: u64) -> Option<u64> {
-        let slot = match fault {
-            Fault::Backpressure => &self.backpressure,
-            Fault::Retired => &self.retired,
-            Fault::Unusable => &self.unusable,
-            Fault::Unresolved => &self.unresolved,
-            Fault::AfterDispatch => &self.after_dispatch,
-        };
-        slot.admit(now_ms)
+        self.slots.get(fault as usize)?.admit(now_ms)
     }
 }
 
@@ -117,7 +111,11 @@ fn elapsed_ms() -> u64 {
 }
 
 /// Report a pre-dispatch fault at the paced rate.
-pub(super) fn report(fault: Fault, attempted: &str, error: &RetentionError) {
+pub(in crate::http_profile_serve) fn report(
+    fault: Fault,
+    attempted: &str,
+    error: &dyn std::fmt::Display,
+) {
     if let Some(total) = PACER.admit(fault, elapsed_ms()) {
         write_line(
             &mut std::io::stderr().lock(),
@@ -139,7 +137,7 @@ fn write_line(
     sink: &mut impl std::io::Write,
     fault: Fault,
     attempted: &str,
-    error: &RetentionError,
+    error: &dyn std::fmt::Display,
     total: u64,
 ) {
     let _ = match fault {
@@ -171,6 +169,13 @@ fn write_line(
              indeterminate and MUST NOT be blindly retried: {error} ({total} such faults so \
              far on this replica)"
         ),
+        Fault::ContinuationPeek | Fault::ContinuationRetire | Fault::ContinuationRecord => {
+            writeln!(
+                sink,
+                "continuation store could not {attempted}: {error} ({total} such faults so far \
+                 on this replica)"
+            )
+        }
     };
 }
 
@@ -207,6 +212,7 @@ mod tests {
         }
         assert_eq!(pacer.admit(Fault::Backpressure, 1), None);
         assert_eq!(pacer.admit(Fault::AfterDispatch, 1), Some(1));
+        assert_eq!(pacer.admit(Fault::ContinuationPeek, 1), Some(1));
     }
 
     #[test]
@@ -218,6 +224,9 @@ mod tests {
             Fault::Unusable,
             Fault::Unresolved,
             Fault::AfterDispatch,
+            Fault::ContinuationPeek,
+            Fault::ContinuationRetire,
+            Fault::ContinuationRecord,
         ] {
             write_line(&mut FailingSink, fault, "accept the exchange", &error, 1);
         }

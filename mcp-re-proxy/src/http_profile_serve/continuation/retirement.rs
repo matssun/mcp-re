@@ -18,6 +18,8 @@
 //! which holds the continuation machine — decides both the refusal and what the exchange
 //! may claim. A stage that refused here would be stating a retry contract it cannot know.
 
+use crate::http_profile_serve::retention::fault_report::{report, Fault};
+
 use super::answer_leg::ContinuationPrep;
 use super::ContinuationPlane;
 
@@ -50,7 +52,14 @@ impl ContinuationPlane {
         match store.consume(key).await {
             Ok(true) => Retirement::Retired,
             Ok(false) => Retirement::AlreadyAnswered,
-            Err(_) => Retirement::Indeterminate,
+            Err(e) => {
+                report(
+                    Fault::ContinuationRetire,
+                    "retire the approval this exchange answered",
+                    &e,
+                );
+                Retirement::Indeterminate
+            }
         }
     }
 }

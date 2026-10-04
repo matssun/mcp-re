@@ -23,19 +23,14 @@
 //! Fail-closed: ANY transport/status/parse error — including a per-operation TIMEOUT —
 //! is [`ReplayStoreError::Unavailable`], and an outage is NEVER a fresh nonce.
 //!
-//! Awaiting the round-trips means a slow etcd does not block a runtime worker, but that
-//! is not the same as bounding it: an awaited future that never completes holds its
-//! request (and its in-flight admission slot) forever. This module's doc used to claim
-//! "the request path is still bounded by the tier's own timeout" — there is no such
-//! timeout. `AsyncReplayTier` has none, and the async serve path bounds the TLS
-//! handshake and the body read but awaits the handler unbounded. So a black-holed etcd
-//! endpoint (a dropped route, a stateful firewall that discards instead of resetting)
-//! parks every request on this store until the peer gives up, and with
-//! `--max-in-flight` set that is a way to consume the whole admission budget without
-//! sending a single invalid request. The timeout therefore lives HERE, where the
-//! round-trip is issued, and applies to every one of the three POSTs.
+//! Awaiting the round-trips keeps a runtime worker free but does not bound them: neither
+//! `AsyncReplayTier` nor the async serve path times the handler, so a black-holed etcd
+//! (a firewall that discards instead of resetting) would park requests and, under
+//! `--max-in-flight`, the whole admission budget. The deadline lives HERE, on every POST.
 
 #![cfg(feature = "cpstore_etcd")]
+
+mod gateway;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -45,7 +40,6 @@ use http_body_util::Full;
 use hyper::header;
 use hyper::Method;
 use hyper::Request;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use serde_json::Value;
@@ -64,6 +58,7 @@ use crate::etcd_store::parse_lease_id;
 use crate::etcd_store::system_clock;
 use crate::etcd_store::UnixClock;
 use crate::shared_replay::ReplayStoreError;
+use gateway::GatewayConnector;
 
 /// A cap on the etcd gateway response body read into memory, so a broken/hostile
 /// gateway cannot exhaust the proxy. Generous relative to a lease/txn JSON reply.
@@ -88,7 +83,7 @@ pub const MAX_ETCD_OP_TIMEOUT: Duration = Duration::from_secs(30);
 /// gateway. Holds one pooled `hyper` client (cheap to clone per op) and the
 /// gateway base URL.
 pub struct EtcdAsyncAtomicReplayStore {
-    client: Client<HttpConnector, Full<Bytes>>,
+    client: Client<GatewayConnector, Full<Bytes>>,
     /// The etcd JSON-gateway base, e.g. `http://10.0.0.5:2379` (no trailing slash).
     base_url: String,
     /// The store's own clock, read once per op for the lease-TTL arithmetic.
@@ -113,13 +108,13 @@ pub struct EtcdAsyncAtomicReplayStore {
 impl EtcdAsyncAtomicReplayStore {
     /// Build a store over the etcd JSON-gateway `base_url` (e.g.
     /// `http://host:2379`) with the production system clock.
-    pub fn connect(base_url: &str) -> Self {
+    pub fn connect(base_url: &str) -> Result<Self, ReplayStoreError> {
         Self::connect_with(base_url, system_clock())
     }
 
     /// Build with an injected clock (deterministic tests reuse the sync store's
     /// clock-injection pattern).
-    pub fn connect_with(base_url: &str, clock: UnixClock) -> Self {
+    pub fn connect_with(base_url: &str, clock: UnixClock) -> Result<Self, ReplayStoreError> {
         Self::connect_with_timeout(base_url, clock, DEFAULT_ETCD_OP_TIMEOUT)
     }
 
@@ -128,14 +123,19 @@ impl EtcdAsyncAtomicReplayStore {
     /// because `timeout(0)` fires before the request is even issued, which would fail
     /// EVERY insert closed and take the whole serving path down. The value is also
     /// clamped to [`MAX_ETCD_OP_TIMEOUT`].
-    pub fn connect_with_timeout(base_url: &str, clock: UnixClock, op_timeout: Duration) -> Self {
-        EtcdAsyncAtomicReplayStore {
-            client: Client::builder(TokioExecutor::new()).build_http(),
+    pub fn connect_with_timeout(
+        base_url: &str,
+        clock: UnixClock,
+        op_timeout: Duration,
+    ) -> Result<Self, ReplayStoreError> {
+        let connector = GatewayConnector::for_endpoint(base_url)?;
+        Ok(EtcdAsyncAtomicReplayStore {
+            client: Client::builder(TokioExecutor::new()).build(connector),
             base_url: base_url.trim_end_matches('/').to_string(),
             clock,
             op_timeout: op_timeout.clamp(Duration::from_millis(1), MAX_ETCD_OP_TIMEOUT),
             leases: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-        }
+        })
     }
 
     /// The per-operation deadline in force.
@@ -180,7 +180,7 @@ impl EtcdAsyncAtomicReplayStore {
     /// A non-2xx status, a transport error, an oversize body, or unparseable JSON
     /// all fail closed as [`ReplayStoreError::Unavailable`].
     async fn post(
-        client: &Client<HttpConnector, Full<Bytes>>,
+        client: &Client<GatewayConnector, Full<Bytes>>,
         base_url: &str,
         path: &str,
         body: &Value,
@@ -204,7 +204,7 @@ impl EtcdAsyncAtomicReplayStore {
 
     /// The unbounded exchange, wrapped by [`post`](Self::post).
     async fn post_inner(
-        client: &Client<HttpConnector, Full<Bytes>>,
+        client: &Client<GatewayConnector, Full<Bytes>>,
         base_url: &str,
         path: &str,
         body: &Value,
@@ -433,7 +433,8 @@ mod tests {
             &base,
             fixed_clock(),
             Duration::from_millis(150),
-        );
+        )
+        .expect("an http gateway endpoint is servable");
         let err = store
             .atomic_insert_if_absent(ReplayInsert::new(
                 "did:example:host|aud|nonce",
@@ -468,7 +469,8 @@ mod tests {
             &base,
             fixed_clock(),
             Duration::from_millis(150),
-        );
+        )
+        .expect("an http gateway endpoint is servable");
         let started = tokio::time::Instant::now();
         let err = store
             // A comfortably fresh window, so the staleness guard above is not what fires.
@@ -582,7 +584,8 @@ mod tests {
     #[tokio::test]
     async fn nonces_retained_to_the_same_instant_share_one_lease() {
         let (base, grants, txns, ttls) = counting_gateway().await;
-        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock());
+        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock())
+            .expect("an http gateway endpoint is servable");
         for i in 0..25 {
             assert_eq!(
                 store
@@ -636,7 +639,8 @@ mod tests {
     async fn a_lease_outlives_the_horizon_by_the_declared_divergence() {
         let (base, _grants, _txns, ttls) = counting_gateway().await;
         let store =
-            EtcdAsyncAtomicReplayStore::connect_with(&base, divergence(7).retention_clock(|| NOW));
+            EtcdAsyncAtomicReplayStore::connect_with(&base, divergence(7).retention_clock(|| NOW))
+                .expect("an http gateway endpoint is servable");
         store
             .atomic_insert_if_absent(ReplayInsert::new("k|a|n1", TEST_ACTOR, NOW + 300, 0))
             .await
@@ -648,7 +652,8 @@ mod tests {
         let fast = EtcdAsyncAtomicReplayStore::connect_with(
             &base,
             divergence(ahead).retention_clock(move || NOW + ahead),
-        );
+        )
+        .expect("an http gateway endpoint is servable");
         fast.atomic_insert_if_absent(ReplayInsert::new("k|a|n2", TEST_ACTOR, NOW + 300, 0))
             .await
             .expect("records");
@@ -663,7 +668,8 @@ mod tests {
     #[tokio::test]
     async fn an_expired_lease_is_never_reused() {
         let (base, grants, _txns, _ttls) = counting_gateway().await;
-        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock());
+        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock())
+            .expect("an http gateway endpoint is servable");
         store
             .atomic_insert_if_absent(ReplayInsert::new("k|a|n1", TEST_ACTOR, NOW + 5, 0))
             .await
@@ -687,7 +693,8 @@ mod tests {
             "http://127.0.0.1:2379",
             fixed_clock(),
             Duration::ZERO,
-        );
+        )
+        .expect("an http gateway endpoint is servable");
         assert_eq!(
             zero.op_timeout(),
             Duration::from_millis(1),
@@ -698,14 +705,16 @@ mod tests {
             "http://127.0.0.1:2379",
             fixed_clock(),
             Duration::from_secs(86_400),
-        );
+        )
+        .expect("an http gateway endpoint is servable");
         assert_eq!(
             absurd.op_timeout(),
             MAX_ETCD_OP_TIMEOUT,
             "clamped to the ceiling"
         );
 
-        let default = EtcdAsyncAtomicReplayStore::connect("http://127.0.0.1:2379");
+        let default = EtcdAsyncAtomicReplayStore::connect("http://127.0.0.1:2379")
+            .expect("an http gateway endpoint is servable");
         assert_eq!(
             default.op_timeout(),
             DEFAULT_ETCD_OP_TIMEOUT,
@@ -723,7 +732,8 @@ mod tests {
     #[tokio::test]
     async fn a_request_build_failure_leaks_neither_the_credential_nor_the_configured_url() {
         const CONFIGURED: &str = "http://ops:hunter2@etcd internal:2379";
-        let client = Client::builder(TokioExecutor::new()).build_http();
+        let client = Client::builder(TokioExecutor::new())
+            .build(GatewayConnector::for_endpoint("http://127.0.0.1:1").expect("servable"));
         let err =
             EtcdAsyncAtomicReplayStore::post_inner(&client, CONFIGURED, "/v3/kv/txn", &Value::Null)
                 .await
@@ -748,7 +758,8 @@ mod tests {
     /// build its request and fail (if at all) at the transport, not at the builder.
     #[tokio::test]
     async fn a_well_formed_credential_bearing_endpoint_still_reaches_the_transport() {
-        let client = Client::builder(TokioExecutor::new()).build_http();
+        let client = Client::builder(TokioExecutor::new())
+            .build(GatewayConnector::for_endpoint("http://127.0.0.1:1").expect("servable"));
         let err = EtcdAsyncAtomicReplayStore::post_inner(
             &client,
             "http://ops:hunter2@127.0.0.1:1",

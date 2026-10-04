@@ -52,6 +52,7 @@ use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
+use mcp_re_proxy::authorization::pdp::AuthorizationAuthorityResolver;
 use mcp_re_proxy::authorization::AuthorizationFacet;
 use mcp_re_proxy::authorization::AuthorizationRefusalFacet;
 use mcp_re_proxy::authorization::EnrolledAuthority;
@@ -309,12 +310,25 @@ fn proxy_with(
     trusted_kid: &'static str,
     calls: Arc<AtomicUsize>,
 ) -> HttpProfileProxy {
+    proxy_resolving(
+        scope,
+        Arc::new(move |kid: &str| {
+            (kid == trusted_kid)
+                .then(|| EnrolledAuthority::enrolled(PDP_ENROLLED_NAME, pdp_key().public_key()))
+        }),
+        calls,
+    )
+}
+
+/// A proxy enforcing the PDP profile, resolving authorities through `resolve_authority`.
+fn proxy_resolving(
+    scope: DecisionScope,
+    resolve_authority: AuthorizationAuthorityResolver,
+    calls: Arc<AtomicUsize>,
+) -> HttpProfileProxy {
     let evaluator = PdpDecisionEvaluator::new(
         PdpDecisionPolicy {
-            resolve_authority: Arc::new(move |kid: &str| {
-                (kid == trusted_kid)
-                    .then(|| EnrolledAuthority::enrolled(PDP_ENROLLED_NAME, pdp_key().public_key()))
-            }),
+            resolve_authority,
             accepted_scope: scope,
             freshness: PdpDecisionFreshness {
                 max_clock_skew: 30,
@@ -944,6 +958,43 @@ async fn the_record_names_the_enrolled_authority_and_not_the_one_the_decision_cl
         "the record must attribute to the enrolment, never to the decision's own `iss`"
     );
     assert_ne!(a.authority, "did:example:some-other-authority");
+}
+
+/// The key that authenticates a decision and the name its record attributes come from ONE
+/// resolver answer: a resolver whose answer changes between calls cannot split them.
+#[tokio::test]
+async fn a_resolver_answering_differently_between_calls_cannot_split_the_key_from_the_name() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let resolutions = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&resolutions);
+    let resolver: AuthorizationAuthorityResolver = Arc::new(move |kid: &str| {
+        if kid != PDP_KID {
+            return None;
+        }
+        let name = if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+            "did:example:first-answer"
+        } else {
+            "did:example:second-answer"
+        };
+        Some(EnrolledAuthority::enrolled(name, pdp_key().public_key()))
+    });
+    let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+
+    let (status, records) = serve_recorded(
+        proxy_resolving(DecisionScope::Principal, resolver, Arc::clone(&calls)),
+        signed_call("read", "n-single-answer", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let accepted = records
+        .iter()
+        .find(|r| r.event().event_type() == "mcp-re.request.accepted")
+        .expect("the admitted request is recorded");
+    let Some(AuthorizationFacet::Authorized(a)) = accepted.subject.authorization() else {
+        panic!("a policy permitted this, and the record must say so");
+    };
+    assert_eq!(a.authority, "did:example:first-answer");
+    assert_eq!(resolutions.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

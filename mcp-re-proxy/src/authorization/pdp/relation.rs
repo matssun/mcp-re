@@ -98,24 +98,25 @@ impl PdpDecisionEvaluator {
             .ok_or(PdpRelationRefusal::NoDecisionPresented)?;
 
         let audiences: Vec<&str> = self.audiences.iter().map(String::as_str).collect();
+        let answered = std::cell::OnceCell::new();
         let claims = verify_authorization_decision(
             evidence.document(),
             &self.profile,
             &audiences,
             &self.policy.freshness,
             (self.now)(),
-            |kid| (self.policy.resolve_authority)(kid).map(|a| a.key().clone()),
+            |kid| {
+                let authority = (self.policy.resolve_authority)(kid)?;
+                let key = authority.key().clone();
+                answered.set(authority).ok()?;
+                Some(key)
+            },
         )
         .map_err(PdpRelationRefusal::NotAuthenticated)?;
 
-        // The enrolment entry that answered for the kid the signature verified under.
-        // `claims.issuer_kid` is a verified coordinate, not a self-description: the verifier
-        // refuses a header/claims disagreement, and it is the string it resolved the key
-        // from — so a decision naming a kid it was not signed under never reaches here.
-        // Read a second time rather than captured, so that a seam whose answer has changed
-        // since — an enrolment withdrawn mid-request by an embedder's own resolver —
-        // refuses instead of attributing to an authority this deployment no longer enrols.
-        let Some(authority) = (self.policy.resolve_authority)(&claims.issuer_kid) else {
+        // The name attributed is the one from the same resolver answer whose key verified
+        // the signature; a resolver consulted a second time could answer differently.
+        let Some(authority) = answered.into_inner() else {
             return Err(PdpRelationRefusal::NotAuthenticated(
                 PdpDecisionRefusal::IssuerUntrusted,
             ));

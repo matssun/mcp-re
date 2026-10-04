@@ -21,6 +21,8 @@ use super::authority::EnrolledAuthority;
 /// needs both halves of the enrolment: the key to authenticate the decision, and the name to
 /// attribute the grant to. A seam that answered with the key alone left the name to be taken
 /// from the decision's own `iss` claim, which is the signer choosing its own attribution.
+/// The enforcement point consults it once per decision and takes both the verifying key and
+/// the attributed name from that one answer.
 pub type AuthorizationAuthorityResolver =
     Arc<dyn Fn(&str) -> Option<EnrolledAuthority> + Send + Sync>;
 

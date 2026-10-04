@@ -1243,18 +1243,18 @@ fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the artifact was written"),
     )
     .expect("the artifact parses");
 
     assert!(
-        artifact.chain().is_complete(),
+        artifact.claimed_chain().is_complete(),
         "a single terminal hop, fully verified, is a complete record: {:?}",
-        artifact.chain(),
+        artifact.claimed_chain(),
     );
     assert_eq!(
-        artifact.correspondence(),
+        artifact.claimed_correspondence(),
         mcp_re_proxy::transparency::auditor::CorrespondenceVerdict::BoundToVerifiedCall,
         "the statement is bound to the retained bytes of a verified call",
     );
@@ -1266,10 +1266,9 @@ fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
 
     // The statement the artifact carries is the real thing: register it and verify the
     // receipt offline, contacting nobody.
-    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
-        &artifact.signed_statement().expect("the statement decodes"),
-    )
-    .expect("the artifact carries a Signed Statement");
+    let statement =
+        mcp_re_http_profile::scitt::SignedStatement::from_cose(artifact.signed_statement())
+            .expect("the artifact carries a Signed Statement");
     assert!(statement.commitment().is_complete_record());
 
     let mut service = PrototypeTransparencyService::new(TS_KID);
@@ -1326,11 +1325,11 @@ fn the_auditor_binary_audits_an_archive_it_cannot_write_to() {
         "auditing must not require write access to the evidence it attests: {}",
         String::from_utf8_lossy(&output.stderr),
     );
-    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the artifact was written"),
     )
     .expect("the artifact parses");
-    assert!(artifact.chain().is_complete());
+    assert!(artifact.claimed_chain().is_complete());
 }
 
 /// And the SERVING constructor still refuses the same directory, at startup.
@@ -1434,13 +1433,13 @@ fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record()
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("an artifact was still written"),
     )
     .expect("the artifact parses");
 
     let mcp_re_proxy::transparency::auditor::ChainVerdict::Incomplete { hop, reason, .. } =
-        artifact.chain()
+        artifact.claimed_chain()
     else {
         panic!("a record served under another audience is not complete");
     };
@@ -1450,15 +1449,14 @@ fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record()
         mcp_re_proxy::transparency::auditor::IncompleteAt::RequestUnverifiable,
     );
     assert_eq!(
-        artifact.correspondence(),
+        artifact.claimed_correspondence(),
         mcp_re_proxy::transparency::auditor::CorrespondenceVerdict::BoundToSubmissionOnly,
         "nothing verified, so the statement binds the SUBMISSION and says only that",
     );
 
-    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
-        &artifact.signed_statement().expect("decodes"),
-    )
-    .expect("still a Signed Statement");
+    let statement =
+        mcp_re_http_profile::scitt::SignedStatement::from_cose(artifact.signed_statement())
+            .expect("still a Signed Statement");
     assert!(
         !statement.commitment().is_complete_record(),
         "and the signed record can never read as whole",
@@ -1691,7 +1689,7 @@ fn audit_and_register(
     name: &str,
     nonce: &str,
     mode: ServiceMode,
-) -> mcp_re_proxy::transparency::auditor::AttestationArtifact {
+) -> mcp_re_proxy::transparency::auditor::AttestationDocument {
     let (scratch, retention, token) = served_archive(name, nonce);
     drop(retention);
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
@@ -1716,7 +1714,7 @@ fn audit_and_register(
     );
     let _ = service.join();
 
-    mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the artifact was written"),
     )
     .expect("the artifact parses")
@@ -1756,7 +1754,7 @@ fn the_auditor_binary_registers_over_the_second_mechanism_and_records_which_one(
     );
     assert_receipt_verifies_offline(&artifact);
     assert_eq!(
-        artifact.registration_protocol(),
+        artifact.claimed_registration().map(|r| r.protocol()),
         Some("capsule-anchor /transparency"),
         "the artifact must name the contract that answered, not merely that one did",
     );
@@ -1772,7 +1770,7 @@ fn a_scrapi_registration_records_the_draft_revision_it_spoke() {
         ServiceMode::Synchronous,
     );
     assert_eq!(
-        artifact.registration_protocol(),
+        artifact.claimed_registration().map(|r| r.protocol()),
         Some("draft-ietf-scitt-scrapi-11"),
     );
 }
@@ -1856,7 +1854,7 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the artifact was written"),
     )
     .expect("the artifact parses");
@@ -1865,13 +1863,13 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
     // above; that is the whole meaning of the field. Re-derived here so the lane states the
     // property rather than trusting the process that just ran.
     let receipt = artifact
-        .receipt()
+        .claimed_registration()
         .expect("a live registration must carry a receipt")
-        .expect("the receipt decodes");
-    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
-        &artifact.signed_statement().expect("the statement decodes"),
-    )
-    .expect("a Signed Statement");
+        .receipt()
+        .to_vec();
+    let statement =
+        mcp_re_http_profile::scitt::SignedStatement::from_cose(artifact.signed_statement())
+            .expect("a Signed Statement");
     let pin: mcp_re_http_profile::scitt::ScittServiceTrustPin =
         serde_json::from_value(live_pin).expect("the pin deserializes");
     mcp_re_http_profile::scitt::verify_receipt_offline(
@@ -1884,7 +1882,8 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
 
     // The claim may not exceed the peer, so the artifact has to name it.
     let recorded = artifact
-        .registration_protocol()
+        .claimed_registration()
+        .map(|r| r.protocol())
         .expect("a registered artifact names the contract that answered");
     println!(
         "LIVE EXTERNAL RUN: {base} answered over {recorded}; receipt verified offline \
@@ -1912,16 +1911,16 @@ fn the_auditor_binary_polls_an_asynchronous_registration_to_its_receipt() {
 /// The receipt an artifact carries verifies offline against the statement beside it and
 /// the pin the operator captured — contacting nobody.
 fn assert_receipt_verifies_offline(
-    artifact: &mcp_re_proxy::transparency::auditor::AttestationArtifact,
+    artifact: &mcp_re_proxy::transparency::auditor::AttestationDocument,
 ) {
-    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
-        &artifact.signed_statement().expect("the statement decodes"),
-    )
-    .expect("a Signed Statement");
+    let statement =
+        mcp_re_http_profile::scitt::SignedStatement::from_cose(artifact.signed_statement())
+            .expect("a Signed Statement");
     let receipt_bytes = artifact
-        .receipt()
+        .claimed_registration()
         .expect("a registered artifact carries a receipt")
-        .expect("the receipt decodes");
+        .receipt()
+        .to_vec();
     let receipt =
         mcp_re_http_profile::scitt::Receipt::from_cose(&receipt_bytes).expect("a Receipt");
 
@@ -1976,16 +1975,16 @@ fn a_failed_registration_leaves_the_attestation_behind() {
         !output.status.success(),
         "a registration that did not happen must not read as success",
     );
-    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the attestation survives a failed submission"),
     )
     .expect("the artifact parses");
     assert!(
-        artifact.receipt().is_none(),
+        artifact.claimed_registration().is_none(),
         "no receipt was verified, so the artifact must carry none",
     );
     assert!(
-        artifact.chain().is_complete(),
+        artifact.claimed_chain().is_complete(),
         "and the attestation itself is unaffected",
     );
 

@@ -193,11 +193,7 @@ mod tests {
     /// `Output` refusal: it names the registration and says not to re-submit.
     #[test]
     fn a_receipt_that_cannot_be_recorded_reports_the_registration() {
-        let document = br#"{"schema":"mcp-re-attestation/v1","issuer_kid":"auditor-1",
-            "issued_at":1700000100,"signed_statement":"eA","hops":[],
-            "chain":{"label":"complete"},"correspondence":"bound-to-verified-call",
-            "transparency_service":{"service_identifier":"example-ts","kid":"ts-1"}}"#;
-        let artifact = AttestationArtifact::parse(document).expect("parses");
+        let artifact = AttestationArtifact::carrying_statement(b"x");
         let dir = std::env::temp_dir().join(format!("auditor-run-receipt-{}", std::process::id()));
         let out = dir.join("missing-parent").join("artifact.json");
 
@@ -212,11 +208,7 @@ mod tests {
     /// exists.
     #[test]
     fn a_write_that_fails_before_registration_is_an_output_refusal() {
-        let document = br#"{"schema":"mcp-re-attestation/v1","issuer_kid":"auditor-1",
-            "issued_at":1700000100,"signed_statement":"eA","hops":[],
-            "chain":{"label":"complete"},"correspondence":"bound-to-verified-call",
-            "transparency_service":{"service_identifier":"example-ts","kid":"ts-1"}}"#;
-        let artifact = AttestationArtifact::parse(document).expect("parses");
+        let artifact = AttestationArtifact::carrying_statement(b"x");
         let out = std::env::temp_dir()
             .join(format!("auditor-run-output-{}", std::process::id()))
             .join("missing-parent")

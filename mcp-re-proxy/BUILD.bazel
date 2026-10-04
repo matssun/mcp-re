@@ -313,6 +313,7 @@ _PROXY_LIB_SRCS = [
     "src/transparency/auditor/artifact/mod.rs",
     "src/transparency/auditor/artifact/verdict.rs",
     "src/transparency/auditor/artifact/derivation.rs",
+    "src/transparency/auditor/artifact/document.rs",
     "src/transparency/auditor/inputs.rs",
     "src/transparency/auditor/refusal.rs",
     "src/transparency/auditor/durable_file.rs",
@@ -401,6 +402,7 @@ _PROXY_LIB_SRCS = [
     # v3 JSON gateway; same `cpstore_etcd` gate). The linearizable durable tier the
     # async serving fleet awaits.
     "src/async_etcd_store.rs",
+    "src/async_etcd_store/gateway.rs",
     # ADR-MCPS-020: declared replay-store durability tier (deployment assertion).
     "src/replay_tier.rs",
     # MCPRE-104 (#308): proxy replay-tier adapter around the HTTP-profile dispatcher
@@ -601,6 +603,7 @@ _PROXY_LIB_SRCS = [
     # stateless Streamable-HTTP inner backends.
     "src/http_inner/mod.rs",
     "src/http_inner/selection.rs",
+    "src/http_inner/response_budget.rs",
     "src/inner_plane_bound.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async Redis authoritative replay backend
     # (SET NX PX over the tokio async client). #[cfg(feature = "redis_replay")] —
@@ -713,6 +716,8 @@ _PROXY_EXT_CRATES = [
     # owned safe wrapper in src/pkcs11_native.rs.
     "@crates_mcp_re//:cryptoki-sys",
     "@crates_mcp_re//:redis",
+    "@crates_mcp_re//:tower-service",
+    "@crates_mcp_re//:rustls-native-certs",
     "@crates_mcp_re//:ureq",
     # ADR-MCPS-028 §B: SigV4 HMAC-SHA256 for the AWS KMS Ed25519 signer (feature
     # aws_kms_keysource). NOTE: base64 moved to _PROXY_LIB_DEPS — the registration

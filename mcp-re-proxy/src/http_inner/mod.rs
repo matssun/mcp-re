@@ -71,6 +71,7 @@
 //! prepare:  no permit / all backends ejected / unbuildable  -> NotAdmitted
 //! dispatch: timeout, connect or transport error             -> Indeterminate
 //! dispatch: non-2xx, non-JSON, unreadable or over-cap       -> InvalidUpstream
+//! dispatch: process response-byte budget exhausted          -> InvalidUpstream (not counted against the breaker)
 //! dispatch: 2xx with a JSON body                            -> Replied
 //! ```
 //!
@@ -90,7 +91,6 @@ use std::time::Duration;
 use std::time::Instant;
 
 use bytes::Bytes;
-use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::header;
 use hyper::Method;
@@ -108,6 +108,7 @@ use crate::async_inner::InnerResponseFuture;
 use crate::async_inner::NotAdmitted;
 use crate::async_inner::PreparedInnerDispatch;
 
+mod response_budget;
 mod selection;
 
 /// A cap on the inner response body read into memory, so a hostile/broken backend
@@ -221,6 +222,8 @@ pub struct HttpInnerPool {
     in_flight: Arc<Semaphore>,
     /// The permit count `in_flight` was built with (introspection; not on the hot path).
     max_in_flight: usize,
+    /// Process-wide ceiling on inner-response bytes being read.
+    response_budget: Arc<Semaphore>,
     /// Monotonic clock origin for breaker timing (all `*_nanos` are relative to it).
     origin: Instant,
 }
@@ -257,6 +260,7 @@ impl HttpInnerPool {
             breaker,
             in_flight: Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT)),
             max_in_flight: DEFAULT_MAX_IN_FLIGHT,
+            response_budget: Arc::new(Semaphore::new(response_budget::INNER_RESPONSE_BUDGET_BYTES)),
             origin: Instant::now(),
         })
     }
@@ -394,7 +398,8 @@ impl HttpInnerPool {
         client: &Client<HttpConnector, Full<Bytes>>,
         req: Request<Full<Bytes>>,
         timeout: Duration,
-    ) -> DispatchedOutcome {
+        budget: &Arc<Semaphore>,
+    ) -> (DispatchedOutcome, bool) {
         // Bound the whole round-trip. Timeout OR transport error ⇒ failure.
         let resp = match tokio::time::timeout(timeout, client.request(req)).await {
             Ok(Ok(resp)) => resp,
@@ -403,15 +408,28 @@ impl HttpInnerPool {
             // the answer simply never came back. Reporting that as a clean error response is
             // the strongest available signal that nothing happened, which is precisely what
             // is not known.
-            Ok(Err(_)) => return DispatchedOutcome::Indeterminate("inner transport error"),
-            Err(_) => return DispatchedOutcome::Indeterminate("inner request timed out"),
+            Ok(Err(_)) => {
+                return (
+                    DispatchedOutcome::Indeterminate("inner transport error"),
+                    true,
+                )
+            }
+            Err(_) => {
+                return (
+                    DispatchedOutcome::Indeterminate("inner request timed out"),
+                    true,
+                )
+            }
         };
 
         // A non-2xx inner status is not a valid JSON-RPC response. The backend DID answer,
         // so this is not indeterminate — it is an unusable answer, and signing backend HTML
         // as an MCP result is not an option either.
         if !resp.status().is_success() {
-            return DispatchedOutcome::InvalidUpstream("inner backend returned a non-2xx status");
+            return (
+                DispatchedOutcome::InvalidUpstream("inner backend returned a non-2xx status"),
+                true,
+            );
         }
 
         // JSON mode (#415 rev 2 §3.4): if the backend answered with a stream, refuse
@@ -433,20 +451,31 @@ impl HttpInnerPool {
             })
             .unwrap_or(false);
         if !is_json {
-            return DispatchedOutcome::InvalidUpstream(
-                "inner backend did not answer application/json",
+            return (
+                DispatchedOutcome::InvalidUpstream("inner backend did not answer application/json"),
+                true,
             );
         }
 
-        // Read the body, capped. `Limited` fails the collect if the cap is exceeded.
-        let limited = http_body_util::Limited::new(resp.into_body(), MAX_INNER_RESPONSE_BYTES);
-        match limited.collect().await {
-            Ok(collected) => DispatchedOutcome::Replied(collected.to_bytes().to_vec()),
+        // Read the body under the per-response cap, charging the process byte budget per frame.
+        match response_budget::collect_charged(resp.into_body(), MAX_INNER_RESPONSE_BYTES, budget)
+            .await
+        {
+            response_budget::ResponseRead::Body(b) => (DispatchedOutcome::Replied(b), true),
             // The backend answered and the answer is unusable — over the cap, or the body
             // stream broke partway. It acted either way.
-            Err(_) => {
-                DispatchedOutcome::InvalidUpstream("inner response body was unreadable or over cap")
-            }
+            response_budget::ResponseRead::Unreadable => (
+                DispatchedOutcome::InvalidUpstream(
+                    "inner response body was unreadable or over cap",
+                ),
+                true,
+            ),
+            // A fact about this process, not the backend: the caller must not charge it to
+            // the breaker.
+            response_budget::ResponseRead::BudgetExhausted => (
+                DispatchedOutcome::InvalidUpstream("inner plane response-byte budget exhausted"),
+                false,
+            ),
         }
     }
 }
@@ -512,6 +541,7 @@ impl AsyncInnerServer for HttpInnerPool {
         let req = Self::build_request(backend.uri.clone(), Bytes::copy_from_slice(request))?;
         let client = self.client.clone();
         let timeout = self.request_timeout;
+        let budget = Arc::clone(&self.response_budget);
         // The bound this plane can honestly state, and it is the same value the round trip
         // is actually run under. `round_trip` gives up at `request_timeout` and reports
         // `Indeterminate`, so a dispatch begun now is no longer running after it — which is
@@ -525,13 +555,18 @@ impl AsyncInnerServer for HttpInnerPool {
                 let _probe = probe;
                 let _t_inner =
                     crate::stage_timers::Timed::start(crate::stage_timers::Stage::InnerDispatch);
-                let outcome = Self::round_trip(&client, req, timeout).await;
+                let (outcome, attributable) =
+                    Self::round_trip(&client, req, timeout, &budget).await;
                 let done = self.now_nanos();
                 // The breaker counts "did this backend serve a usable answer", so every
                 // non-`Replied` outcome is a failure for its purposes even though the two
                 // differ sharply in what they mean for the exchange.
                 let healthy = matches!(outcome, DispatchedOutcome::Replied(_));
-                self.record_outcome(idx, is_probe, healthy, done);
+                // A budget refusal is a fact about this process, so it is not recorded; an
+                // unrecorded probe is released by `ProbeGuard` and stays re-probeable.
+                if attributable {
+                    self.record_outcome(idx, is_probe, healthy, done);
+                }
                 outcome
             }) as InnerResponseFuture<'a>
         };
@@ -848,5 +883,39 @@ mod tests {
             assert_ne!(i, i0, "LB must not route to the ejected backend");
             assert!(!is_probe, "the healthy backend is normal traffic");
         }
+    }
+
+    #[tokio::test]
+    async fn a_budget_refusal_is_answered_invalid_upstream_and_does_not_eject_the_backend() {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let body = "{\"a\":\"0123456789\"}";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            );
+            let _ = sock.write_all(head.as_bytes()).await;
+            let _ = sock.write_all(body.as_bytes()).await;
+            let _ = sock.flush().await;
+        });
+        let mut p = HttpInnerPool::with_breaker_config(
+            vec![format!("http://{addr}/mcp").parse().unwrap()],
+            Duration::from_secs(5),
+            BreakerConfig {
+                failure_threshold: 1,
+                ejection_duration: Duration::from_secs(30),
+            },
+        )
+        .expect("pool");
+        p.response_budget = Arc::new(Semaphore::new(4));
+        let outcome = p.prepare(b"{}").unwrap().dispatch().await;
+        assert!(matches!(outcome, DispatchedOutcome::InvalidUpstream(_)));
+        assert_eq!(p.ejected_backend_count(), 0);
     }
 }

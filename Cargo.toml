@@ -173,6 +173,10 @@ seccompiler = "0.4"
 # byte-identical — only the I/O transport becomes async. mcp-re-core stays pure.
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+# The async etcd gateway connector: a tower `Service<Uri>` over hyper-util, and the
+# native root store the redis tls-rustls path already links.
+tower-service = "0.3"
+rustls-native-certs = "0.8"
 # `client` adds the client-side HTTP/1+2 role for the async inner plane
 # (ADR-MCPRE-051 §3): the per-core pooled hyper client to stateless
 # Streamable-HTTP inner backends. Server role is the ingress data plane.

@@ -237,15 +237,7 @@ mod tests {
     fn artifact_carrying(
         statement: &SignedStatement,
     ) -> crate::transparency::auditor::AttestationArtifact {
-        let document = format!(
-            r#"{{"schema":"mcp-re-attestation/v1","issuer_kid":"auditor-1",
-            "issued_at":1700000100,"signed_statement":"{}","hops":[],
-            "chain":{{"label":"complete"}},"correspondence":"bound-to-verified-call",
-            "transparency_service":{{"service_identifier":"example-ts","kid":"ts-1"}}}}"#,
-            mcp_re_core::b64url_encode(statement.to_cose()),
-        );
-        crate::transparency::auditor::AttestationArtifact::parse(document.as_bytes())
-            .expect("the document parses")
+        crate::transparency::auditor::AttestationArtifact::carrying_statement(statement.to_cose())
     }
 
     /// A receipt attaches to the artifact carrying the statement it verified against.

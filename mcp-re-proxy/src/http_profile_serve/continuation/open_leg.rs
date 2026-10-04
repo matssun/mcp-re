@@ -15,6 +15,7 @@ use crate::exchange_state::ExchangeEvent;
 
 /// The event a recorded open leg establishes, by the short name the match arm needs.
 const OPEN_LEG_RECORDED: ExchangeEvent = ExchangeEvent::OpenLegRecorded;
+use crate::http_profile_serve::retention::fault_report::{report, Fault};
 use crate::http_profile_serve::Exchange;
 use crate::refusal::Refusal;
 
@@ -97,7 +98,7 @@ impl ContinuationPlane {
             match store.create(&key, &bases, self.ttl_secs).await {
                 Ok(Creation::Stored) => return Ok(Established::new((), OPEN_LEG_RECORDED)),
                 Ok(Creation::Collision) => return Err(conflict()),
-                Err(_) => (),
+                Err(e) => report(Fault::ContinuationRecord, "record the open leg", &e),
             }
         }
         Err(Refusal::after_admission(

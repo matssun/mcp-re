@@ -29,6 +29,7 @@ use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
 
+use crate::verified_outcome::read_notification_rejection;
 use crate::verified_outcome::read_outcome;
 
 use crate::route::ClientVerification;
@@ -115,6 +116,13 @@ pub enum ResponseKind {
     /// whose side effect a retry would perform a second time — is not recoverable from
     /// a status code, and 503 is the status clients retry.
     VerifiedRejection {
+        wire_code: Option<String>,
+        bound: bool,
+        execution: ExecutionContract,
+    },
+    /// A verified rejection receipt for a one-way notification: no call to answer, so
+    /// no id.
+    RejectedNotification {
         wire_code: Option<String>,
         bound: bool,
         execution: ExecutionContract,
@@ -325,6 +333,12 @@ impl ClientProxy {
         response: &HttpResponse,
         params: &CallParams,
     ) -> Result<ProxyResponse, ProxyError> {
+        // A non-2xx answer is a signed refusal verified exactly as a reply is.
+        if !(200..300).contains(&response.status) {
+            return read_notification_rejection(
+                self.verify_reply(route, signed, response, params)?,
+            );
+        }
         let pin = route.expected_server_keyid.as_deref();
         match &route.verification {
             ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
@@ -378,7 +392,7 @@ impl ClientProxy {
 /// is a receipt that said nothing, and inventing `not_executed` for it would collapse
 /// "unknown whether it ran" into "it did not run" at the one place that matters.
 pub(crate) fn plain_error_from_rejection(
-    id: &Value,
+    id: Option<&Value>,
     wire_code: Option<&str>,
     execution: &ExecutionContract,
 ) -> Value {
@@ -414,12 +428,13 @@ pub(crate) fn plain_error_from_rejection(
             json!({ "mcp_re_error": Value::Object(mcp_re_error) }),
         );
     }
-    let error = Value::Object(error);
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": error,
-    })
+    let mut envelope = Map::new();
+    envelope.insert("jsonrpc".to_owned(), json!("2.0"));
+    if let Some(id) = id {
+        envelope.insert("id".to_owned(), id.clone());
+    }
+    envelope.insert("error".to_owned(), Value::Object(error));
+    Value::Object(envelope)
 }
 
 /// Rebuild a PLAIN MCP response from a verified signed response: strip the
@@ -687,7 +702,7 @@ mod tests {
             retention_status: None,
         };
         let plain = plain_error_from_rejection(
-            &json!("req-1"),
+            Some(&json!("req-1")),
             Some("mcp-re.upstream_unavailable"),
             &execution,
         );
@@ -716,7 +731,7 @@ mod tests {
     #[test]
     fn an_unstated_contract_produces_no_invented_disposition() {
         let plain = plain_error_from_rejection(
-            &json!(1),
+            Some(&json!(1)),
             Some("mcp-re.request_signature_invalid"),
             &ExecutionContract::default(),
         );
@@ -727,7 +742,7 @@ mod tests {
 
         // And a receipt with no wire code either emits no `data` at all rather than an
         // empty object that reads as a statement.
-        let bare = plain_error_from_rejection(&json!(1), None, &ExecutionContract::default());
+        let bare = plain_error_from_rejection(Some(&json!(1)), None, &ExecutionContract::default());
         assert!(bare["error"].get("data").is_none());
     }
 
@@ -1146,6 +1161,44 @@ mod tests {
 
     fn variants() -> [fn() -> ClientVerification; 2] {
         [required_verification, anchored_verification]
+    }
+
+    /// A signed refusal of a notification is a verdict, not a channel failure.
+    #[test]
+    fn a_verified_rejection_of_a_notification_is_a_rejection_not_a_gateway_failure() {
+        let plain = notification();
+        let signed = signed_for(&plain);
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("a credential is issued");
+        let key = custody.active_snapshot().expect("a key is active");
+        let window = SigningWindow::over(Arc::new(key), NOW, 300).expect("a live window");
+        let response = mcp_re_http_profile::build_delegated_rejection(
+            signed.request(),
+            signed.evidence(),
+            &mcp_re_http_profile::RejectionReason::new("mcp-re.replay_detected", "replayed"),
+            409,
+            &window,
+        )
+        .expect("the boundary builds a bound delegated rejection");
+        for verification in variants() {
+            let (proxy, _) = proxy_over(verification(), Some(ROOT_KID), Some(response.clone()));
+            let out = proxy
+                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .expect("a verified refusal is an answer");
+            assert_eq!(
+                out.kind,
+                ResponseKind::RejectedNotification {
+                    wire_code: Some("mcp-re.replay_detected".into()),
+                    bound: true,
+                    execution: ExecutionContract::default(),
+                }
+            );
+            assert!(out.plain_response.get("id").is_none());
+            assert_eq!(
+                out.plain_response["error"]["data"]["mcp_re_error"]["wire_code"],
+                "mcp-re.replay_detected"
+            );
+        }
     }
 
     /// The route's issuer pin reaches verification of a bodied reply on both variants.

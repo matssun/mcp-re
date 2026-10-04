@@ -24,9 +24,10 @@ use mcp_re_core::VerificationKey;
 ///
 /// # What this owns, and what it does not
 ///
-/// The fields are private, so a consumer cannot destructure one and re-form it with a
-/// different name beside the same key; the pair is taken or left whole. That is the whole
-/// of the invariant this type owns.
+/// It carries a name and a key from ONE enrolment answer. It does not stop a consumer
+/// re-forming a pair (`enrolled` is `pub` and `key()` projects the key), so the pairing is
+/// kept by the enforcement point taking both halves from a single resolver answer
+/// (`relation.rs`), not by this type.
 ///
 /// It is **not** sealed. [`EnrolledAuthority::enrolled`] is `pub`, because
 /// [`crate::authorization::pdp::policy::AuthorizationAuthorityResolver`] is a public seam
@@ -78,16 +79,5 @@ mod tests {
         let authority = EnrolledAuthority::enrolled("did:example:pdp", key(7));
         assert_eq!(authority.name(), "did:example:pdp");
         assert_eq!(authority.key().to_b64url(), key(7).to_b64url());
-    }
-
-    /// The pair is taken or left whole: there is no projection that yields the key without
-    /// the name it was enrolled beside, so a consumer cannot reach one and attribute the
-    /// other.
-    #[test]
-    fn the_name_and_the_key_are_one_value() {
-        let authority = EnrolledAuthority::enrolled("did:example:pdp", key(9));
-        let cloned = authority.clone();
-        assert_eq!(cloned.name(), authority.name());
-        assert_eq!(cloned.key().to_b64url(), authority.key().to_b64url());
     }
 }

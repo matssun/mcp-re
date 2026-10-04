@@ -621,6 +621,33 @@ likely_owner = "none. proxy.trust_resolution_window states the window T, and THM
 consequence = "medium"
 root_relationship = "Beside NP-134: that proposition covers the cache stopping caching before it stops answering, and this one covers a poisoned lock not stopping it from answering."
 record = "docs/architecture/control-dispositions.md#np-258"
+
+[[proposition]]
+id = "NP-259"
+title = "A verified refusal of a notification reaches the local client as an HTTP error with an id-less JSON-RPC error, never as a gateway failure or a reply"
+carrier = "mcp-re-client/src/serve/render.rs"
+likely_owner = "none. client.local_serving_pipeline states only the pause rendering, and no unit's statement covers how a refused notification is rendered."
+consequence = "medium"
+root_relationship = "Beside client.proxy_reply_disposition: that unit states the rejection path for a reply, and this one covers the rendering of the notification shape."
+record = "docs/architecture/control-dispositions.md#np-259"
+
+[[proposition]]
+id = "NP-260"
+title = "The inner plane bounds the response bytes it buffers and does not charge its own refusal to the backend"
+carrier = "mcp-re-proxy/src/http_inner"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-260"
+
+[[proposition]]
+id = "NP-261"
+title = "The async etcd gateway speaks TLS to an https endpoint and never serves a scheme its connector was not built for"
+carrier = "mcp-re-proxy/src/async_etcd_store/gateway.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "the channel premise beneath ASM-0041 under THM-0092"
+record = "docs/architecture/control-dispositions.md#np-261"
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14836,4 +14863,92 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#managed_worker::tests::dropping_an_empty_set_raises_the_halt_it_handed_out"
 decision = "new-proposition"
 proposition = "NP-003"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20277"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::artifact::document::tests::a_receipt_without_its_protocol_is_refused"
+decision = "new-proposition"
+proposition = "NP-043"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20278"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::artifact::document::tests::a_protocol_without_its_receipt_is_refused"
+decision = "new-proposition"
+proposition = "NP-043"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20279"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::artifact::document::tests::a_receipt_and_its_protocol_read_back_together"
+decision = "new-proposition"
+proposition = "NP-043"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20280"
+project = "mcp-re-client"
+control = "src/lib.rs#serve::render::tests::a_rejected_notification_is_rendered_as_an_http_error_with_no_id"
+decision = "new-proposition"
+proposition = "NP-259"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20281"
+project = "mcp-re-proxy"
+control = "src/lib.rs#http_inner::response_budget::tests::a_response_past_the_process_budget_is_refused_and_its_charge_returned"
+decision = "new-proposition"
+proposition = "NP-260"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20282"
+project = "mcp-re-proxy"
+control = "src/lib.rs#http_inner::response_budget::tests::a_charge_held_elsewhere_bounds_the_next_read_and_is_returned_after_it"
+decision = "new-proposition"
+proposition = "NP-260"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20283"
+project = "mcp-re-proxy"
+control = "src/lib.rs#http_inner::response_budget::tests::the_per_response_cap_still_refuses_as_unreadable"
+decision = "new-proposition"
+proposition = "NP-260"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20284"
+project = "mcp-re-proxy"
+control = "src/lib.rs#http_inner::tests::a_budget_refusal_is_answered_invalid_upstream_and_does_not_eject_the_backend"
+decision = "new-proposition"
+proposition = "NP-260"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20285"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_etcd_store::gateway::tests::a_scheme_outside_http_and_https_is_refused_at_construction_without_echoing_it"
+decision = "new-proposition"
+proposition = "NP-215"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20286"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_etcd_store::gateway::tests::an_https_endpoint_opens_a_tls_handshake_never_plaintext"
+decision = "new-proposition"
+proposition = "NP-261"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20287"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_etcd_store::gateway::tests::a_connector_never_serves_a_scheme_it_was_not_built_for"
+decision = "new-proposition"
+proposition = "NP-261"
 recorded = "2026-10-04"

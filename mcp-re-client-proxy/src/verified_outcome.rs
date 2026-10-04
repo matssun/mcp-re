@@ -92,7 +92,7 @@ pub(crate) fn read_outcome(
             execution,
         } => Ok(ProxyResponse {
             plain_response: plain_error_from_rejection(
-                &request_id,
+                Some(&request_id),
                 wire_code.as_deref(),
                 &execution,
             ),
@@ -102,6 +102,31 @@ pub(crate) fn read_outcome(
                 execution,
             },
         }),
+    }
+}
+
+/// A verified rejection receipt for a one-way notification. A notification is answered
+/// by a 202 or a rejection receipt, so a success reply here fails closed.
+pub(crate) fn read_notification_rejection(
+    verified: mcp_re_client_core::VerifiedDelegatedResponse,
+) -> Result<ProxyResponse, ProxyError> {
+    match verified.outcome {
+        DelegatedOutcome::Rejection {
+            wire_code,
+            execution,
+        } => Ok(ProxyResponse {
+            plain_response: plain_error_from_rejection(None, wire_code.as_deref(), &execution),
+            kind: ResponseKind::RejectedNotification {
+                wire_code,
+                bound: verified.verified.is_bound(),
+                execution,
+            },
+        }),
+        DelegatedOutcome::Success => Err(ProxyError::FailedClosed(
+            mcp_re_client_core::HttpProfileError::MalformedEvidence(
+                "a notification is answered by a 202 or a rejection receipt, never a reply",
+            ),
+        )),
     }
 }
 
