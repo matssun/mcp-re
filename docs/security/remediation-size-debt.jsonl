@@ -1,0 +1,1 @@
+{"baseline": 0, "commit": "f13ea3b8", "findings": [], "measured": 1, "metric": "too_many_lines", "path": "mcp-re-demo", "remediated_file": ""}
