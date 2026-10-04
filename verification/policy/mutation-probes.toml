@@ -4505,14 +4505,14 @@ path = "mcp-re-proxy/src/audit_record/subject.rs"
 anchor = """
         AuditSubject(Subject::Request {
             event: AuditEvent::request_accepted(),
-            authorization,
+            authorization: posture.audit_facet(),
             admission: AdmissionStatement::of(admission),
         })
 """
 weakening = """
         AuditSubject(Subject::Request {
             event: AuditEvent::response_signed(),
-            authorization,
+            authorization: posture.audit_facet(),
             admission: AdmissionStatement::of(admission),
         })
 """
