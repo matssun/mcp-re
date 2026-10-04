@@ -7941,6 +7941,14 @@ proposition = "NP-127"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-19328"
+project = "mcp-re-proxy"
+control = "src/lib.rs#config_snapshot::tests::a_poisoned_lock_still_loads_the_last_config_and_still_swaps"
+decision = "new-proposition"
+proposition = "NP-127"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-17012"
 project = "mcp-re-proxy"
 control = "src/lib.rs#continuation_store::tests::a_backing_failure_is_unavailable_and_never_a_collision"
@@ -14600,4 +14608,12 @@ project = "mcp-re-http-profile"
 control = "src/lib.rs#body::tests::extract_refuses_a_body_it_cannot_read_one_way"
 decision = "new-proposition"
 proposition = "NP-253"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20253"
+project = "mcp-re-proxy"
+control = "tests/pkcs11_keysource_e2e_test.rs#pkcs11_tls_signer_refuses_a_token_signature_that_does_not_verify"
+decision = "new-proposition"
+proposition = "NP-164"
 recorded = "2026-10-04"

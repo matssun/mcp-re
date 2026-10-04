@@ -290,7 +290,7 @@ fn swapped_server_config_is_in_force_on_the_next_connection() {
     let ca_a = make_ca("client-ca-A");
     let ca_b = make_ca("client-ca-B");
 
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca_a)));
+    let (snapshot, publisher) = ServerConfigSnapshot::establish(server_config_trusting(&ca_a));
     let server = spawn(Arc::clone(&snapshot));
 
     let client_a = client_config(&ca_a);
@@ -307,7 +307,7 @@ fn swapped_server_config_is_in_force_on_the_next_connection() {
     );
 
     // Swap in a config that trusts only CA-B — the shape of a CRL/trust reload.
-    snapshot.store(server_config_trusting(&ca_b));
+    publisher.store(server_config_trusting(&ca_b));
 
     // After the swap, with NO restart: the new config governs.
     assert_eq!(

@@ -39,7 +39,7 @@ pub(super) fn start_reload_worker(
     deployment: Arc<std::sync::atomic::AtomicBool>,
     plan: &crate::startup_plan::ChannelEstablishmentPlan,
     material: TlsKeyMaterial,
-    snapshot: &Arc<config_snapshot::ServerConfigSnapshot>,
+    config_publisher: config_snapshot::ServerConfigPublisher,
     reload_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
     reload_crl_paths: Vec<String>,
     publisher: Option<client_revocation::ClientRevocationPublisher>,
@@ -58,7 +58,7 @@ pub(super) fn start_reload_worker(
     spawn_crl_reload_task(
         &mut workers,
         CrlReloadTask {
-            snapshot: Arc::clone(snapshot),
+            config: config_publisher,
             server_chain: reload_chain,
             material,
             crl_paths: reload_crl_paths,
@@ -78,7 +78,7 @@ pub(super) fn start_reload_worker(
 }
 
 pub(super) struct CrlReloadTask {
-    pub(super) snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
+    pub(super) config: config_snapshot::ServerConfigPublisher,
     /// The immutable server key material the verifier is rebuilt from; a reload
     /// re-reads only the CRLs, never these.
     pub(super) server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
@@ -131,7 +131,7 @@ fn attempt_reload(
     // instant.
     let now_unix = crate::clock::now_unix();
     let mut installed: Option<ClientCrlEvidence> = None;
-    let outcome = config_snapshot::reload_once(&task.snapshot, || {
+    let outcome = config_snapshot::reload_once(&task.config, || {
         let crls = crate::client_crl_publication::load_client_crls(&task.crl_paths)?;
         // The SAME gate startup ran, because it is the evidence's own constructor. The
         // reload used to run the never-expires half alone, so a CRL past its `nextUpdate` —
@@ -231,7 +231,7 @@ mod tests {
             .build_exported_key_config(chain.clone(), key_der(), Vec::new())
             .expect("initial config");
         CrlReloadTask {
-            snapshot: Arc::new(ServerConfigSnapshot::new(Arc::new(initial))),
+            config: ServerConfigSnapshot::establish(Arc::new(initial)).1,
             server_chain: if server_chain.is_empty() {
                 server_chain
             } else {

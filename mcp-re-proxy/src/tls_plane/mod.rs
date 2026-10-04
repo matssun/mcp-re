@@ -268,15 +268,14 @@ impl TlsPlane {
         // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
         // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
         // byte-identical to the static posture.
-        let snapshot = Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(
-            server_config,
-        )));
+        let (snapshot, config_publisher) =
+            config_snapshot::ServerConfigSnapshot::establish(Arc::new(server_config));
 
         let (workers, currency) = start_reload_worker(
             deployment,
             plan,
             material,
-            &snapshot,
+            config_publisher,
             reload_chain,
             reload_crl_paths,
             publisher,
