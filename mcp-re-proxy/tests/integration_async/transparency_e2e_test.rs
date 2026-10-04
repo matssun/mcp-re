@@ -1731,10 +1731,20 @@ fn audit_and_register(
     );
     let _ = service.join();
 
-    mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationDocument::parse(
         &std::fs::read(&fixtures.out).expect("the artifact was written"),
     )
-    .expect("the artifact parses")
+    .expect("the artifact parses");
+    let protocol = artifact
+        .claimed_registration()
+        .map(|r| r.protocol())
+        .expect("a registered artifact claims its registration protocol");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(protocol),
+        "the summary must name the protocol the artifact records ({protocol}): {stdout}",
+    );
+    artifact
 }
 
 /// THE C2 property, synchronously: the shipped binary registers a real attestation with a
@@ -2010,6 +2020,10 @@ fn a_failed_registration_leaves_the_attestation_behind() {
     assert!(
         stderr.contains("the attestation was written"),
         "an operator must be told the record survived: {stderr}",
+    );
+    assert!(
+        stderr.contains(&fixtures.out.display().to_string()),
+        "the operator must be told where the surviving attestation is: {stderr}",
     );
     assert!(
         stderr.contains("draft-ietf-scitt-scrapi-11"),
