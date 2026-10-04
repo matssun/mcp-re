@@ -130,7 +130,7 @@ fn unix_seconds(at: std::time::SystemTime) -> Option<i64> {
 pub(crate) fn serve_until_shutdown(
     config: &ClientConfig,
     built: mcp_re_client::BuiltClient,
-    listener: std::net::TcpListener,
+    listener: mcp_re_client::serve::BoundListener,
 ) -> ExitCode {
     let _refresher = AnchorRefresher::start(
         built.loader,
@@ -149,7 +149,10 @@ pub(crate) fn serve_until_shutdown(
         stop_loop.store(true, Ordering::Relaxed);
     });
 
-    eprintln!("mcp-re-client: serving plain MCP on {}", config.local.bind);
+    eprintln!(
+        "mcp-re-client: serving plain MCP on {}",
+        listener.local_addr()
+    );
     if let Err(e) = mcp_re_client::serve::serve(listener, built.context, stop) {
         eprintln!("mcp-re-client: the local listener could not be served: {e}");
         return ExitCode::FAILURE;
@@ -346,9 +349,15 @@ mod tests {
         // exactly the case where holding the last good set is the wrong answer.
         std::fs::remove_file(scratch.join("manifest.json")).expect("unpublish");
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
-        let bind = listener.local_addr().expect("a local address");
-        let config = config(&scratch, bind);
+        let listener = mcp_re_client::serve::bind(&mcp_re_client::config::LocalConfig {
+            bind: "127.0.0.1:0".parse().expect("an address"),
+            allow_non_loopback: false,
+            request_lifetime_secs: 300,
+            default_route: None,
+            max_in_flight: 8,
+        })
+        .expect("an ephemeral port");
+        let config = config(&scratch, listener.local_addr());
         let context = Arc::new(mcp_re_client::serve::ServeContext {
             proxy: ClientProxy::new(
                 RouteRegistry::new(),
@@ -359,9 +368,6 @@ mod tests {
             default_route: None,
             request_lifetime_secs: 300,
             max_in_flight: 8,
-            accepted_authority: mcp_re_client::serve::AcceptedHttpAuthority::for_listener(
-                &mcp_re_client::config::BindScope::decide(bind, false).expect("loopback"),
-            ),
             clock: Box::new(|| now_unix().expect("a readable host clock")),
             nonce: Box::new(mcp_re_client::next_nonce),
         });

@@ -187,10 +187,7 @@ pub fn build(config: &ClientConfig, now: i64) -> Result<BuiltClient, StartupErro
         Box::new(transport),
     );
 
-    let context = Arc::new(
-        serve::ServeContext::for_local_config(&config.local, proxy)
-            .map_err(StartupError::Config)?,
-    );
+    let context = Arc::new(serve::ServeContext::for_local_config(&config.local, proxy));
 
     Ok(BuiltClient {
         context,

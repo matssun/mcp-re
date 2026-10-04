@@ -364,13 +364,6 @@ fn start_sidecar_with_backend(
         default_route: default_route.map(str::to_owned),
         request_lifetime_secs: 300,
         max_in_flight: 8,
-        accepted_authority: mcp_re_client::serve::AcceptedHttpAuthority::for_listener(
-            &mcp_re_client::config::BindScope::decide(
-                "127.0.0.1:0".parse().expect("an address"),
-                false,
-            )
-            .expect("loopback is admitted"),
-        ),
         // A FIXED clock, matching the server's: the point of this lane is the listener
         // and the anchors, not clock skew, and a fixed pair keeps the freshness gate
         // out of the way of what is being measured.
@@ -386,7 +379,7 @@ fn start_sidecar_with_backend(
         max_in_flight: 8,
     })
     .expect("bind an ephemeral loopback port");
-    let addr = listener.local_addr().expect("local addr");
+    let addr = listener.local_addr();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
     let handle = std::thread::spawn(move || {

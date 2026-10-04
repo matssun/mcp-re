@@ -24,6 +24,7 @@ use super::render::local_error;
 use super::render::render_gateway_failure;
 use super::render::render_verified;
 
+use super::accepted_authority::AcceptedHttpAuthority;
 use super::close::drain;
 use super::close::drain_pending;
 use super::deadlines::DeadlineWriter;
@@ -44,14 +45,18 @@ fn write_budget() -> Instant {
         .unwrap_or_else(Instant::now)
 }
 
-pub(super) fn handle_connection(mut stream: TcpStream, context: &ServeContext) {
+pub(super) fn handle_connection(
+    mut stream: TcpStream,
+    context: &ServeContext,
+    authority: &AcceptedHttpAuthority,
+) {
     // Class R: a whole-phase budget, so an unrepresentable one is no budget at all and
     // the connection is closed rather than served without one.
     let Some(deadline) = Instant::now().checked_add(EXCHANGE_DEADLINE) else {
         return;
     };
     let _ = stream.set_nonblocking(false);
-    let request = match read_request(&mut stream, deadline, &context.accepted_authority) {
+    let request = match read_request(&mut stream, deadline, authority) {
         Ok(request) => request,
         Err(status) => {
             let write_deadline = write_budget();

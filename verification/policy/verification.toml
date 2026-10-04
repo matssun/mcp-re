@@ -4494,8 +4494,8 @@ evidence = ["structural://client/bind_scope/sole_producer"]
 [[unit]]
 id = "client.accepted_authority"
 class = "V0"
-description = "A `Host` reaches the signing path only when it names this listener: the loopback literals always, and an exposed listener additionally its own address in both spellings and at its own port — never a rebound name, a neighbouring address, or another port, on an exposed listener exactly as on a loopback one."
-paths = ["mcp-re-client/src/serve/accepted_authority.rs"]
+description = "A `Host` reaches the signing path only when it names this listener: the loopback literals bare or at the port the socket is actually bound to, and an exposed listener additionally its own address in both spellings and at its own port — never a rebound name, a neighbouring address, or another port, on an exposed listener exactly as on a loopback one."
+paths = ["mcp-re-client/src/serve/accepted_authority.rs", "mcp-re-client/src/serve/bound_listener.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -4508,6 +4508,8 @@ tested_symbols = [
   "//mcp-re-client:mcp_re_client_test#serve::accepted_authority::tests::an_exposed_listener_still_refuses_a_rebound_name",
   "//mcp-re-client:mcp_re_client_test#serve::accepted_authority::tests::an_exposed_listener_answers_to_its_own_address",
   "//mcp-re-client:mcp_re_client_test#serve::accepted_authority::tests::an_exposed_ipv6_listener_answers_to_its_bracketed_literal",
+  "//mcp-re-client:mcp_re_client_test#serve::accepted_authority::tests::a_loopback_name_at_another_port_names_another_listener",
+  "//mcp-re-client:mcp_re_client_test#serve::accepted_authority::tests::a_port_zero_bind_is_answered_at_the_port_it_was_given",
 ]
 
 # 5. The second seal, and the one that carries the conflation fix. `for_listener` takes a
