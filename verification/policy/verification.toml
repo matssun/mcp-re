@@ -4030,6 +4030,10 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#request_stages::tests::the_dispatch_boundary_consumes_the_ready_state",
   "//mcp-re-proxy:proxy_unit_test#async_inner::tests::preparing_transmits_nothing",
   "//mcp-re-proxy:proxy_unit_test#async_inner::tests::dropping_a_prepared_dispatch_transmits_nothing_and_releases_what_it_held",
+  # the plane's declared completion instant, rounded up and saturating, so a signing window can only be shown to survive a bound that is not earlier than the dispatch's true worst completion
+  "//mcp-re-proxy:proxy_unit_test#async_inner::completion_bound::tests::an_unstated_bound_has_no_completion_instant",
+  "//mcp-re-proxy:proxy_unit_test#async_inner::completion_bound::tests::a_sub_second_remainder_is_counted_as_the_next_whole_second",
+  "//mcp-re-proxy:proxy_unit_test#async_inner::completion_bound::tests::a_bound_past_the_end_of_representable_time_saturates_rather_than_wrapping",
   "//mcp-re-proxy:proxy_unit_test#authorization::dispatch::tests::an_unconfigured_deployment_still_releases_a_body",
   # R11-481, the freshness precondition. The arithmetic first — a window that does not
   # cover the budget, one that does, an UNSTATED bound refused rather than assumed, the

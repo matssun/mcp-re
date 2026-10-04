@@ -62,3 +62,40 @@ impl DispatchCompletionBound {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::DispatchCompletionBound;
+    use std::time::Duration;
+
+    #[test]
+    fn an_unstated_bound_has_no_completion_instant() {
+        assert_eq!(DispatchCompletionBound::Unstated.latest_completion(1_000), None);
+    }
+
+    #[test]
+    fn a_sub_second_remainder_is_counted_as_the_next_whole_second() {
+        let at = |d| DispatchCompletionBound::Within(d).latest_completion(1_000);
+        assert_eq!(at(Duration::ZERO), Some(1_000));
+        assert_eq!(at(Duration::from_secs(30)), Some(1_030));
+        assert_eq!(at(Duration::from_millis(29_500)), Some(1_030));
+        assert_eq!(at(Duration::from_nanos(1)), Some(1_001));
+    }
+
+    #[test]
+    fn a_bound_past_the_end_of_representable_time_saturates_rather_than_wrapping() {
+        let max = i64::MAX.unsigned_abs();
+        assert_eq!(
+            DispatchCompletionBound::Within(Duration::from_secs(max)).latest_completion(1_000),
+            Some(i64::MAX)
+        );
+        assert_eq!(
+            DispatchCompletionBound::Within(Duration::new(max, 1)).latest_completion(0),
+            Some(i64::MAX)
+        );
+        assert_eq!(
+            DispatchCompletionBound::Within(Duration::MAX).latest_completion(0),
+            Some(i64::MAX)
+        );
+    }
+}
