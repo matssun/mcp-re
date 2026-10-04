@@ -4469,6 +4469,14 @@ proposition = "NP-067"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20303"
+project = "mcp-re-proxy"
+control = "src/lib.rs#materialized_runtime::tests::phase_three_releases_the_consumer_before_the_substrate_it_is_bound_to"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-10025"
 project = "mcp-re-proxy"
 control = "src/lib.rs#materialized_runtime::tests::the_transition_phase_leaves_the_substrate_intact"
