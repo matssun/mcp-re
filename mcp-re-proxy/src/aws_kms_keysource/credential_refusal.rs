@@ -101,18 +101,13 @@ impl RefusalRecovery {
                 ))));
             }
         };
-        match resend(fresh) {
-            Ok(body) => {
-                *self.since() = None;
-                Ok(body)
-            }
-            Err(error) => {
-                if refused_the_session_credential(&error) {
-                    self.suspend(now);
-                }
-                Err(error)
-            }
+        let resent = resend(fresh);
+        match &resent {
+            Ok(_) => *self.since() = None,
+            Err(error) if refused_the_session_credential(error) => self.suspend(now),
+            Err(_) => {}
         }
+        resent
     }
 
     fn since(&self) -> std::sync::MutexGuard<'_, Option<Instant>> {
