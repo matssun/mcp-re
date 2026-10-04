@@ -15442,3 +15442,36 @@ control = "src/lib.rs#io_errors::tests::a_stalled_handshake_is_a_timeout"
 decision = "new-proposition"
 proposition = "NP-271"
 recorded = "2026-10-04"
+
+[[proposition]]
+id = "NP-272"
+title = "The --trust document is accepted only from a file that nobody but this process or root can rewrite, decided on the handle it is read from"
+carrier = "mcp-re-proxy/src/trust_plane/snapshot.rs (write_posture_violation, open_checked, read_bounded)"
+likely_owner = "none. proxy.trust_reload_cadence states when --trust is re-read and what a failed cycle does, not who may have written it."
+consequence = "high"
+root_relationship = "a premise of proxy.trust_resolution_window and proxy.trust_reload_cadence: both take the read document as the deployment's trust decision"
+record = "docs/architecture/control-dispositions.md#np-272"
+
+[[disposition]]
+id = "CD-20336"
+project = "mcp-re-proxy"
+control = "src/lib.rs#trust_plane::snapshot::tests::the_write_posture_admits_only_this_process_or_root_as_writer"
+decision = "new-proposition"
+proposition = "NP-272"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20337"
+project = "mcp-re-proxy"
+control = "src/lib.rs#trust_plane::snapshot::tests::a_group_writable_trust_file_is_refused_at_the_read"
+decision = "new-proposition"
+proposition = "NP-272"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20338"
+project = "mcp-re-proxy"
+control = "src/lib.rs#trust_plane::reload::reload_loop_tests::a_replacement_with_a_refused_write_posture_keeps_the_last_good_document"
+decision = "new-proposition"
+proposition = "NP-272"
+recorded = "2026-10-04"

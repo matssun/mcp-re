@@ -93,6 +93,7 @@ pub use evidence::{AuditState, RetentionState, VerifiedContextState};
 pub use freshness::FreshnessWindow;
 pub use in_flight_limit::{InFlightLimitBasis, InFlightLimitRequest};
 pub use key_file_access::KeyFileAccessPolicy;
+pub use key_file_access::{foreign_owner, FOREIGN_OWNER};
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
 pub use replica_clock::ReplicaClockDivergence;

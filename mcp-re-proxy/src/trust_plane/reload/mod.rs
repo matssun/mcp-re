@@ -217,6 +217,11 @@ mod reload_loop_tests {
             ),
         )
         .expect("write trust file");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644))
+                .expect("chmod trust file");
+        }
         std::fs::rename(&tmp, &path).expect("publish trust file");
         path
     }
@@ -349,6 +354,33 @@ mod reload_loop_tests {
         assert!(
             store.resolve(SIGNER, "kid-new").is_ok(),
             "the re-read map is the one the resolver now answers from"
+        );
+    }
+
+    /// A replacement whose write posture is refused does not replace the snapshot: the cycle
+    /// counts a failure and the last known-good document keeps answering.
+    #[test]
+    fn a_replacement_with_a_refused_write_posture_keeps_the_last_good_document() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = trust_file("posture", "kid-good");
+        let trust_path = path.to_string_lossy().into_owned();
+        let store = load_trust_snapshot(&trust_path, "response-kid").expect("initial snapshot");
+
+        let _ = trust_file("posture", "kid-planted");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).expect("chmod");
+        let freshness = TrustStoreFreshness::default();
+        freshness.mark_fresh();
+        let failures = trust_reload_cycle(&store, &trust_path, "response-kid", &freshness, 0);
+
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(failures, 1, "a refused replacement is a failed reload");
+        assert!(
+            store.resolve(SIGNER, "kid-good").is_ok(),
+            "the last known-good document must keep answering"
+        );
+        assert!(
+            store.resolve(SIGNER, "kid-planted").is_err(),
+            "a key from a world-writable replacement must never resolve"
         );
     }
 

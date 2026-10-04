@@ -4831,3 +4831,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none. `client.transport_server_identity` states what is rejected, not how other failures are named.
 **Root relationship.** A premise of `client.transport_server_identity`: its `Handshake` refusal is the signal the rejection tests read.
 **Severity:** `medium`.
+
+## NP-272 — the --trust document is accepted only from a file that nobody but this process or root can rewrite, decided on the handle it is read from
+
+**Controls:** `mcp-re-proxy` `lib#trust_plane::snapshot::tests::the_write_posture_admits_only_this_process_or_root_as_writer`, `lib#trust_plane::snapshot::tests::a_group_writable_trust_file_is_refused_at_the_read`, `lib#trust_plane::reload::reload_loop_tests::a_replacement_with_a_refused_write_posture_keeps_the_last_good_document`.
+**Carrier:** `mcp-re-proxy/src/trust_plane/snapshot.rs` (`write_posture_violation`, `open_checked`, `read_bounded`).
+**Statement.** *A `--trust` file owned by a uid that is neither this process's effective uid nor root, or carrying a group- or world-write bit, is refused; the decision is made on the `fstat` of the handle the bytes are then read from. At startup the refusal is fatal; on reload it is a failed cycle and the last known-good document keeps answering.*
+**If false.** Whoever can write the trust document decides which keys may sign requests, without holding the deployment's authority.
+**Likely owner:** none. `proxy.trust_reload_cadence` states when `--trust` is re-read and what a failed cycle does, not who may have written it.
+**Root relationship.** A premise of `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`: both take the read document as the deployment's trust decision.
+**Severity:** `high`.
+**Recorded:** 2026-10-04, owner Ruling 13.2 for 73d78a4c78f58c86.

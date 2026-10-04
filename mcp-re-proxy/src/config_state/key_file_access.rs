@@ -51,6 +51,21 @@ pub enum KeyFileAccessPolicy {
     GroupReadableUnderProcessGroup,
 }
 
+/// Whether a file is owned by a uid that is neither this process's effective uid nor root.
+///
+/// Such an owner can rewrite or `chmod` the file whatever its mode bits say, so the bits
+/// alone never establish who controls its contents. Root stays admitted: an `fsGroup`
+/// Secret and a ConfigMap mount are root-owned. One rule for every file this process
+/// trusts the contents of — key material here, the `--trust` document in
+/// `trust_plane::snapshot`.
+pub fn foreign_owner(file_uid: u32, process_euid: u32) -> bool {
+    file_uid != process_euid && file_uid != 0
+}
+
+/// The refusal [`foreign_owner`] names.
+pub const FOREIGN_OWNER: &str =
+    "owned by a uid that is neither this process's effective uid nor root";
+
 impl KeyFileAccessPolicy {
     /// Why this key file's posture is refused, or `None` when it is acceptable.
     ///
@@ -70,8 +85,8 @@ impl KeyFileAccessPolicy {
         process_euid: u32,
         process_gids: &[u32],
     ) -> Option<&'static str> {
-        if file_uid != process_euid && file_uid != 0 {
-            return Some("owned by a uid that is neither this process's effective uid nor root");
+        if foreign_owner(file_uid, process_euid) {
+            return Some(FOREIGN_OWNER);
         }
         if mode & 0o007 != 0 {
             return Some("world-accessible");
