@@ -97,9 +97,13 @@ impl AsyncContinuationStore for RedisContinuationStore {
         let value = encode_handles(bases);
         let mut conn = self.conn.clone();
         // A non-positive TTL would ask Redis for a <=0 PX; clamp to a 1s floor so a
-        // degenerate window still records a briefly-live entry rather than erroring.
-        let ttl_ms = (ttl_secs.max(1)) * 1000;
+        // degenerate window still records a briefly-live entry rather than erroring. A TTL
+        // whose millisecond count does not fit i64 is refused, as the in-memory tier does.
+        let ttl_ms = ttl_secs.max(1).checked_mul(1000);
         Box::pin(async move {
+            let ttl_ms = ttl_ms.ok_or_else(|| ContinuationStoreError::Unavailable {
+                details: "continuation ttl is not representable in milliseconds".to_string(),
+            })?;
             // `NX` and `PX` in ONE command. Not GET-then-SET: that is two round trips
             // with a window between them, and two open legs racing on one key land in
             // exactly that window — so the read-then-write form would hand both of them
@@ -311,6 +315,17 @@ mod tests {
             let commands = recorded(&seen);
             assert_eq!(commands[0][5], "1000", "ttl_secs {ttl_secs} must clamp up");
         }
+    }
+
+    #[tokio::test]
+    async fn an_unrepresentable_ttl_is_refused_before_any_command() {
+        let (store, seen) = store_against("+OK\r\n").await;
+        let refused = store.create(KEY, &bases(), i64::MAX).await;
+        assert!(
+            matches!(&refused, Err(ContinuationStoreError::Unavailable { details }) if details.contains("ttl")),
+            "got {refused:?}"
+        );
+        assert!(recorded(&seen).is_empty());
     }
 
     #[tokio::test]
