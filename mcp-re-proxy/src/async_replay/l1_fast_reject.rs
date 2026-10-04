@@ -139,7 +139,12 @@ impl<L2: AsyncAtomicReplayStore> L1FastRejectStore<L2> {
         l1.is_live(key, now_unix).then_some(ReplayDecision::Replay)
     }
 
-    fn l1_record(&self, key: &str, retain_until: i64) {
+    /// Record an L2 `Fresh` with the `retain_until` it was inserted under. Any other answer
+    /// is not recorded: an L2 `Replay` does not disclose the matched entry's retention.
+    fn l1_record(&self, key: &str, decision: &ReplayDecision, retain_until: i64) {
+        if *decision != ReplayDecision::Fresh {
+            return;
+        }
         // Not recording is the same as evicting, and evicting is always safe here.
         if let Ok(mut l1) = self.l1.lock() {
             l1.insert(key, retain_until);
@@ -158,9 +163,7 @@ impl<L2: AsyncAtomicReplayStore> AsyncAtomicReplayStore for L1FastRejectStore<L2
             // Replay does not disclose the retain_until of the entry it matched. On an
             // L2 error, fail closed and record NOTHING (the key's presence is unknown).
             let decision = self.l2.atomic_insert_if_absent(insert).await?;
-            if decision == ReplayDecision::Fresh {
-                self.l1_record(insert.key, insert.retain_until);
-            }
+            self.l1_record(insert.key, &decision, insert.retain_until);
             Ok(decision)
         })
     }
