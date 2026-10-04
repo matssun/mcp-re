@@ -110,18 +110,21 @@ impl ChainReconstruction {
     /// A reconstruction carrying an AUTHORED submission identity — a corpus fixture, and
     /// nothing a production path produces.
     ///
-    /// Public because conformance vectors in other crates pin the ENCODING of a commitment
-    /// and need one that identifies a submission; there is no production caller and there
-    /// must not be, since a real identity is [`reconstruct_chain`]'s digest over the
+    /// Compiled only under `test` or the crate's test-only fixture feature, because
+    /// conformance vectors in other crates pin the ENCODING of a commitment and need a
+    /// record that identifies a submission. The shipped library has no constructor that
+    /// accepts an identity: a real identity is [`reconstruct_chain`]'s digest over the
     /// submitted hops.
     ///
-    /// **What the seal on this field does and does not buy.** It is not that a string is
-    /// hard to author: an authored identity can only ever match a statement whose identity
-    /// was authored the same way, and a real statement carries the real digest, so a
-    /// fabricated record cannot be made to bind a real one — [`Self::submitted_commitment`]
-    /// is compared, not trusted. What the private field buys is that a record with NO
-    /// identity has one named producer, [`Self::from_retained_handles`], so an artifact
-    /// that cannot reproduce the digest says so rather than filling the field in silently.
+    /// **What the seal on this field does and does not buy.** The committed fields are
+    /// readable from any statement, so an authored identity CAN reproduce a real
+    /// statement's commitment. What prevents that is that the shipped library has no
+    /// constructor accepting an identity: in a product build every reconstruction with a
+    /// non-empty [`Self::submitted_commitment`] came from `reconstruct_chain`'s digest over
+    /// submitted bytes, and a record with NO identity has one named producer,
+    /// [`Self::from_retained_handles`], so an artifact that cannot reproduce the digest
+    /// says so rather than filling the field in silently.
+    #[cfg(any(test, feature = "pre_052_fixtures"))]
     pub fn with_authored_submission_identity(
         label: ChainLabel,
         hop_evidence: Vec<HopEvidence>,

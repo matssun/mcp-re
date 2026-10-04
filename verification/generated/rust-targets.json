@@ -662,7 +662,7 @@
    "crate_name": "scitt_vectors_test",
    "deps": [
     "//mcp-re-core:mcp_re_core",
-    "//mcp-re-http-profile:mcp_re_http_profile"
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
    ],
    "features": [],
    "kind": "rust_test",
