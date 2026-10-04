@@ -165,9 +165,12 @@ pub enum HttpProfileError {
     /// `mcp-re.request_binding_mismatch` — the statement is not bound into the log
     /// the receipt claims.
     ReceiptInclusionInvalid,
-    /// The Signed Statement issuer or transparency service key is not trusted. Maps
-    /// to `mcp-re.actor_binding_failed`.
+    /// The Signed Statement issuer key is not trusted. Maps to
+    /// `mcp-re.actor_binding_failed`.
     ReceiptIssuerUntrusted,
+    /// The receipt's transparency-service kid resolves to no service this verifier
+    /// trusts. Maps to `mcp-re.actor_binding_failed`.
+    ReceiptServiceUntrusted,
     /// The pinned transparency service issues position-bound receipts, and this one
     /// carries no position commitment. Refused rather than verified under the weaker
     /// contract: falling back on request would let an attacker strip the parameter.

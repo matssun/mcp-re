@@ -48,7 +48,7 @@ pub fn verify_receipt_offline(
     // 2. Inclusion proof: run the RFC 9162 §2.1.3.2 verification algorithm, which
     //    consumes the leaf index AND the tree size, and require the result to equal
     //    the root the receipt commits to.
-    let ts = resolve_ts(receipt.ts_kid()).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
+    let ts = resolve_ts(receipt.ts_kid()).ok_or(HttpProfileError::ReceiptServiceUntrusted)?;
     let leaf = leaf_hash(statement, ts.leaf_profile());
     let computed = rfc9162_root_from_inclusion_proof(
         &leaf,
@@ -376,6 +376,14 @@ mod tests {
         assert_eq!(
             verify_receipt_offline(&st, &receipt, |_| None, tr()).unwrap_err(),
             HttpProfileError::ReceiptIssuerUntrusted,
+        );
+        assert_eq!(
+            verify_receipt_offline(&st, &receipt, ir(), |_| None).unwrap_err(),
+            HttpProfileError::ReceiptServiceUntrusted,
+        );
+        assert_eq!(
+            HttpProfileError::ReceiptServiceUntrusted.wire_code(),
+            HttpProfileError::ReceiptIssuerUntrusted.wire_code(),
         );
     }
 }

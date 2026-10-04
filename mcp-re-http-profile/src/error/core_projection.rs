@@ -95,7 +95,8 @@ impl From<&HttpProfileError> for McpReError {
             | HttpProfileError::AdmissionIssuerUntrusted
             | HttpProfileError::AdmissionNotCurrent
             | HttpProfileError::AdmissionStateUnavailable
-            | HttpProfileError::ReceiptIssuerUntrusted => McpReError::ActorBindingFailed,
+            | HttpProfileError::ReceiptIssuerUntrusted
+            | HttpProfileError::ReceiptServiceUntrusted => McpReError::ActorBindingFailed,
             HttpProfileError::ArtifactBindingFailed => McpReError::ArtifactBindingFailed,
             HttpProfileError::AudienceMismatch => McpReError::InvalidAudience,
             // A response bound to a different request is a request-binding
@@ -276,6 +277,7 @@ mod tests {
             HttpProfileError::ReceiptPositionUnbound => HttpProfileError::ReceiptPositionUnbound,
             HttpProfileError::ReceiptPositionMismatch => HttpProfileError::ReceiptPositionMismatch,
             HttpProfileError::ReceiptIssuerUntrusted => HttpProfileError::ReceiptIssuerUntrusted,
+            HttpProfileError::ReceiptServiceUntrusted => HttpProfileError::ReceiptServiceUntrusted,
             HttpProfileError::UnrecognizedResultType => HttpProfileError::UnrecognizedResultType,
             HttpProfileError::UpstreamResponseInvalid("clause") => HttpProfileError::UpstreamResponseInvalid(_),
             HttpProfileError::TrustResolverUnavailable => HttpProfileError::TrustResolverUnavailable,

@@ -286,7 +286,7 @@ fn a_wrong_pinned_service_key_is_refused() {
     });
     assert_eq!(
         verify_with(&statement(), &receipt(), &other_kid).unwrap_err(),
-        HttpProfileError::ReceiptIssuerUntrusted,
+        HttpProfileError::ReceiptServiceUntrusted,
     );
 }
 
