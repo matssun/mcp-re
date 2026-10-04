@@ -46,7 +46,7 @@ use supervision::supervise_trust_reload;
 /// promises a one-cadence window. Five consecutive failures is far longer than a
 /// ConfigMap remount or an editor's save and short enough that an incident-time
 /// revocation is not silently ignored.
-const TRUST_RELOAD_FAILURE_BUDGET: u32 = 5;
+pub(super) const TRUST_RELOAD_FAILURE_BUDGET: u32 = 5;
 /// Re-read `--trust` on a cadence and swap the snapshot atomically.
 ///
 /// The same shape as [`spawn_crl_reload_task`], and for the same reason: a

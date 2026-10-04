@@ -3,8 +3,12 @@
 //!
 //! One fact, and it is the one an operator sizes an incident response against: **how long a
 //! key removed from `--trust` can keep resolving.** It is not the tier's `T`, and it is not
-//! the reload cadence `R` — it is their SUM, because a reload swaps the snapshot the tier
+//! the reload cadence `R` — it is their SUM while every re-read succeeds, because a reload swaps the snapshot the tier
 //! resolves against while holding no handle to the tier's cache and evicting nothing.
+//!
+//! While re-reads fail, the reloader keeps the last-good store for up to its failure budget
+//! of cadences, so the worst case is budget x R + T (budget x R for `Live`), with R + T the
+//! bound while every re-read succeeds.
 //!
 //! The composition is stated as arithmetic here because every other surface prints the two
 //! numbers side by side and leaves the composition to a preposition, which reads as *the
@@ -37,7 +41,10 @@ pub(super) fn store_change_cadence(reload: crate::startup_plan::TrustReloadPlan)
     }
 }
 /// The revocation window the deployment actually delivers: the store cadence `R` and the
-/// tier's cached-entry lifetime `T` ADD, and this states the sum.
+/// tier's cached-entry lifetime `T` ADD, and this states the sum. The worst case is
+/// budget x R + T (budget x R for `Live`), the reload failure budget being the number of
+/// consecutive failed re-reads the reloader tolerates; R + T bounds the window while every
+/// re-read succeeds.
 ///
 /// A reload swaps the snapshot the tier resolves AGAINST; it holds no handle to the tier's
 /// cache and evicts nothing, and a cached entry restarts a full `T` at every miss. So an
@@ -58,16 +65,27 @@ pub(in crate::trust_plane) fn delivered_revocation_window(
             .to_string();
     };
     let r = i64::try_from(cadence.get()).unwrap_or(i64::MAX);
+    let budget = i64::from(super::reload::TRUST_RELOAD_FAILURE_BUDGET);
+    let tolerated = super::reload::TRUST_RELOAD_FAILURE_BUDGET.saturating_sub(1);
     match tier {
-        RevocationTier::Live => format!(
-            "worst case {r}s (the store cadence R={r}s; this tier caches no positive trust)"
-        ),
-        RevocationTier::BoundedCache { t_secs } | RevocationTier::Push { t_secs } => {
-            let total = r.saturating_add(*t_secs);
+        RevocationTier::Live => {
+            let worst = r.saturating_mul(budget);
             format!(
-                "worst case {total}s = R {r}s + T {t_secs}s (the reload swaps the store but \
-                 evicts nothing already cached, so a cached entry outlives the swap by a \
-                 further T)"
+                "worst case {worst}s = {budget} x R {r}s (the reloader keeps the last-good \
+                 store across {tolerated} failed re-reads and fails closed on the {budget}th; \
+                 this tier caches no positive trust), plus each re-read's own duration; \
+                 R = {r}s while every re-read succeeds"
+            )
+        }
+        RevocationTier::BoundedCache { t_secs } | RevocationTier::Push { t_secs } => {
+            let worst = r.saturating_mul(budget).saturating_add(*t_secs);
+            let healthy = r.saturating_add(*t_secs);
+            format!(
+                "worst case {worst}s = {budget} x R {r}s + T {t_secs}s (the reloader keeps the \
+                 last-good store across {tolerated} failed re-reads and fails closed on the \
+                 {budget}th, and the reload swaps the store but evicts nothing already cached, \
+                 so a cached entry outlives the swap by a further T), plus each re-read's own \
+                 duration; R + T = {healthy}s while every re-read succeeds"
             )
         }
     }
@@ -89,5 +107,31 @@ mod tests {
         );
         assert!(window.starts_with("UNBOUNDED"), "got {window}");
         assert!(store_change_cadence(TrustReloadPlan::ReadOnceAtStartup).contains("NONE"));
+    }
+
+    #[test]
+    fn the_worst_case_composes_the_reload_failure_budget() {
+        // A key removed during a run of tolerated failed re-reads resolves for budget
+        // cadences plus T.
+        let budget = i64::from(crate::trust_plane::reload::TRUST_RELOAD_FAILURE_BUDGET);
+        let plan = TrustReloadPlan::Every {
+            secs: crate::config_state::TrustRevocationState::cadence(30),
+        };
+        for tier in [
+            RevocationTier::BoundedCache { t_secs: 60 },
+            RevocationTier::Push { t_secs: 60 },
+        ] {
+            let window = delivered_revocation_window(&tier, plan);
+            assert!(
+                window.starts_with(&format!("worst case {}s ", budget * 30 + 60)),
+                "got {window}"
+            );
+            assert!(window.contains("R + T = 90s"), "got {window}");
+        }
+        let live = delivered_revocation_window(&RevocationTier::Live, plan);
+        assert!(
+            live.starts_with(&format!("worst case {}s ", budget * 30)),
+            "got {live}"
+        );
     }
 }
