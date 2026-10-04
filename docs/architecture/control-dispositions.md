@@ -4729,3 +4729,13 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 
 **Lanes.** Only the `cpstore_etcd` lane (`proxy_ext_unit_test`) compiles these controls; the default lane compiles them to zero tests.
+
+## NP-262 — a method the MCP protocol table does not list is Unknown, never target-less, and reaches authorization as its own state
+
+**Controls:** `mcp-re-http-profile` `mcp_name_source::tests::a_method_the_table_does_not_list_is_unknown_never_targetless`, `mcp-re-proxy` `authorization::verified_action::tests::a_method_outside_the_protocol_table_yields_an_unknown_target`.
+**Carrier:** `mcp-re-http-profile/src/mcp_name_source.rs`.
+**Statement.** *A method the closed MCP protocol table does not list is `Unknown`, never `NoTarget`, and the authorization action coordinate carries it as its own `Unknown` target, which no decision matches.*
+**If false.** A target-less decision authorizes `completion/complete`, `tasks/*` and extension methods.
+**Likely owner:** none.
+**Root relationship.** Law A-1 premise (ADR-MCPRE-065 s2.7) beside THM-0040: an unlisted operation matches no decision.
+**Severity:** `high`.

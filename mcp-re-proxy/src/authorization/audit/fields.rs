@@ -23,13 +23,13 @@ use crate::audit_record::text::AuditField;
 use crate::audit_record::text::AuditValue;
 use crate::authorization::verified_action::AuthorizationTarget;
 
-/// The target as one stable field, keeping the three states the coordinate distinguishes.
+/// The target as one stable field, keeping the four states the coordinate distinguishes.
 ///
-/// `named()` answers `None` for two of them, which is right for a policy that treats them
+/// `named()` answers `None` for three of them, which is right for a policy that treats them
 /// alike and wrong for a record: *this operation names no target* and *this operation names
 /// one and the signed body carried none* are different facts about the request, and a reader
 /// holding only the record could not recover the difference.
-/// Two states are tokens of this module's own vocabulary and one is client-chosen text.
+/// Three states are tokens of this module's own vocabulary and one is client-chosen text.
 /// This is the one place the three-state distinction and the classification meet, which is
 /// the right place for both.
 fn target_field(target: &AuthorizationTarget) -> AuditValue<'_> {
@@ -37,6 +37,7 @@ fn target_field(target: &AuthorizationTarget) -> AuditValue<'_> {
         AuthorizationTarget::NotApplicable => AuditValue::Token("none"),
         AuthorizationTarget::Named(t) => AuditValue::Text(t.as_str().into()),
         AuthorizationTarget::Absent => AuditValue::Token("absent"),
+        AuthorizationTarget::Unknown => AuditValue::Token("unknown"),
     }
 }
 
@@ -122,6 +123,10 @@ mod tests {
         assert_eq!(
             target_field(&AuthorizationTarget::Absent),
             AuditValue::Token("absent")
+        );
+        assert_eq!(
+            target_field(&AuthorizationTarget::Unknown),
+            AuditValue::Token("unknown")
         );
 
         let line = render_record(&[AuditField {

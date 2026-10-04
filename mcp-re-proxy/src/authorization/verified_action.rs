@@ -48,7 +48,7 @@
 //! state, and a policy that cares denies it.
 
 use mcp_re_core::McpReError;
-use mcp_re_http_profile::mcp_name_source::mcp_name_source;
+use mcp_re_http_profile::mcp_name_source::McpMethodTarget;
 use mcp_re_http_profile::VerifiedMcpRequest;
 use serde_json::Value;
 
@@ -63,8 +63,7 @@ use serde_json::Value;
 /// currency, and it would hide a malformed request inside a legitimate one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorizationTarget {
-    /// This operation names no target. `tools/list`, `initialize`, and everything else
-    /// whose authority is the method alone.
+    /// The protocol table lists this operation as naming no target.
     NotApplicable,
     /// The signed body named this tool or resource.
     Named(String),
@@ -73,10 +72,12 @@ pub enum AuthorizationTarget {
     /// Not refused here — whether that is a legal MCP request is the transport contract's
     /// question. Reported so a policy can decline to match it.
     Absent,
+    /// The protocol table does not list this operation; no decision matches it.
+    Unknown,
 }
 
 impl AuthorizationTarget {
-    /// The named target, or `None` for both of the other states.
+    /// The named target, or `None` for every other state.
     ///
     /// A convenience for a policy that treats *no target* and *target absent* alike. One
     /// that does not must match on the variants — which is why this is not the only way to
@@ -84,7 +85,7 @@ impl AuthorizationTarget {
     pub fn named(&self) -> Option<&str> {
         match self {
             AuthorizationTarget::Named(t) => Some(t),
-            AuthorizationTarget::NotApplicable | AuthorizationTarget::Absent => None,
+            Self::NotApplicable | Self::Absent | Self::Unknown => None,
         }
     }
 }
@@ -178,9 +179,11 @@ pub fn interpret_authorization_action(
     let Some(operation) = body.get("method").and_then(Value::as_str) else {
         return Err(AuthorizationActionRefusal::NoOperation);
     };
-    let target = match mcp_name_source(operation) {
-        None => AuthorizationTarget::NotApplicable,
-        Some(source) => match body.get("params").and_then(|p| source.extract(p)) {
+    let params = body.get("params");
+    let target = match McpMethodTarget::of(operation) {
+        McpMethodTarget::NoTarget => AuthorizationTarget::NotApplicable,
+        McpMethodTarget::Unknown => AuthorizationTarget::Unknown,
+        McpMethodTarget::Named(source) => match params.and_then(|p| source.extract(p)) {
             Some(named) => AuthorizationTarget::Named(named.to_owned()),
             None => AuthorizationTarget::Absent,
         },
@@ -227,6 +230,18 @@ mod tests {
                 .target(),
             &AuthorizationTarget::Absent
         );
+    }
+
+    #[test]
+    fn a_method_outside_the_protocol_table_yields_an_unknown_target() {
+        for body in [
+            &br#"{"jsonrpc":"2.0","id":1,"method":"completion/complete","params":{"name":"x"}}"#[..],
+            &br#"{"jsonrpc":"2.0","id":1,"method":"x-vendor/deploy"}"#[..],
+        ] {
+            let action = interpret_authorization_action(&verified_over(body), body).expect("reads");
+            assert_eq!(action.target(), &AuthorizationTarget::Unknown);
+            assert_eq!(action.target().named(), None);
+        }
     }
 
     #[test]

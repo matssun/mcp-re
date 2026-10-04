@@ -33,7 +33,7 @@ use serde_json::Value;
 
 use crate::error::HttpProfileError;
 use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
-use crate::mcp_name_source::mcp_name_source;
+use crate::mcp_name_source::McpMethodTarget;
 use crate::mcp_name_source::McpNameSource;
 use crate::message::single_header;
 use crate::message::HttpRequest;
@@ -82,7 +82,10 @@ impl McpTransportPolicy {
             // authorization coordinate can never disagree about where a target is named.
             mcp_name_required: ["tools/call", "resources/read"]
                 .into_iter()
-                .filter_map(|m| mcp_name_source(m).map(|s| (m.to_owned(), s)))
+                .filter_map(|m| match McpMethodTarget::of(m) {
+                    McpMethodTarget::Named(s) => Some((m.to_owned(), s)),
+                    McpMethodTarget::NoTarget | McpMethodTarget::Unknown => None,
+                })
                 .collect(),
             protocol_version_body_key: "io.modelcontextprotocol/protocolVersion".to_owned(),
         }

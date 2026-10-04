@@ -14,7 +14,7 @@ use crate::error::HttpProfileError;
 use crate::ids::MCP_METHOD_HEADER;
 use crate::ids::MCP_NAME_HEADER;
 use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
-use crate::mcp_name_source::mcp_name_source;
+use crate::mcp_name_source::McpMethodTarget;
 use crate::message::single_header;
 use crate::message::HttpRequest;
 
@@ -30,9 +30,13 @@ pub(crate) fn add_contract_headers(request: &mut HttpRequest) -> Result<(), Http
     let Some(method) = body.get("method").and_then(Value::as_str) else {
         return Ok(());
     };
-    let name = mcp_name_source(method)
-        .and_then(|source| body.get("params").and_then(|p| source.extract(p)))
-        .map(str::to_owned);
+    let name = match McpMethodTarget::of(method) {
+        McpMethodTarget::Named(source) => body
+            .get("params")
+            .and_then(|p| source.extract(p))
+            .map(str::to_owned),
+        McpMethodTarget::NoTarget | McpMethodTarget::Unknown => None,
+    };
     let derived = [
         ("Mcp-Method", MCP_METHOD_HEADER, Some(method.to_owned())),
         ("Mcp-Name", MCP_NAME_HEADER, name),
