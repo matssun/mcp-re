@@ -13,7 +13,7 @@
 //! is REFUSED rather than ignored: an operator who wrote down how long a registration may
 //! take has said they expect one, and a run that quietly performed none under that budget
 //! would be answering a question they did not ask. The same holds for a protocol named with
-//! nothing to speak it to.
+//! nothing to speak it to, and for a poll interval named for a contract that does not poll.
 
 use std::time::Duration;
 
@@ -46,6 +46,13 @@ impl RegistrationTarget {
             Some(token) => RegistrationProtocol::parse(&token)?,
             None => RegistrationProtocol::default(),
         };
+        if matches!(protocol, RegistrationProtocol::CapsuleAnchor) && interval.is_some() {
+            return Err(
+                "--registration-poll-interval-secs does not apply to --registration-protocol \
+                 capsule-anchor: that contract has no polling, so the term would select nothing"
+                    .to_owned(),
+            );
+        }
         let timeout = seconds(
             "--registration-timeout-secs",
             timeout,
@@ -167,6 +174,36 @@ mod tests {
                     .expect("a legal target")
                     .is_some(),
                 "{protocol:?}",
+            );
+        }
+    }
+
+    /// A poll interval for a contract that never polls is REFUSED, never ignored.
+    #[test]
+    fn a_poll_interval_for_a_contract_that_does_not_poll_is_refused() {
+        let refused = from(
+            Some("https://ts.example.test"),
+            Some("capsule-anchor"),
+            None,
+            Some("1"),
+        )
+        .expect_err("capsule-anchor has no polling");
+        assert!(
+            refused.contains("--registration-poll-interval-secs"),
+            "{refused}"
+        );
+        assert!(refused.contains("capsule-anchor"), "{refused}");
+        for (protocol, interval) in [("scrapi-11", Some("1")), ("capsule-anchor", None)] {
+            assert!(
+                from(
+                    Some("https://ts.example.test"),
+                    Some(protocol),
+                    None,
+                    interval
+                )
+                .expect("legal")
+                .is_some(),
+                "{protocol}",
             );
         }
     }

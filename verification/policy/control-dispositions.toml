@@ -15131,3 +15131,11 @@ control = "src/lib.rs#pkcs11_native::tests::a_token_under_the_selected_label_wit
 decision = "new-proposition"
 proposition = "NP-210"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20306"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::endpoint::flags::tests::a_poll_interval_for_a_contract_that_does_not_poll_is_refused"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-10-04"
