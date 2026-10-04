@@ -13556,6 +13556,15 @@ consequence = "high"
 root_relationship = "The agent-side half of proxy.remote_signer_egress_bound's statement that the egress carries the same bound."
 record = "docs/architecture/control-dispositions.md#np-232"
 
+[[proposition]]
+id = "NP-233"
+title = "An unreadable trust epoch is recorded as a rotation failure when first observed"
+carrier = "mcp-re-proxy/src/signing_plane/rotation.rs (wait_for_window)"
+likely_owner = "none. proxy.delegated_signing_credential holds the carrier in its paths but states fail-closed transitions, which a metric-timeliness test does not falsify."
+consequence = "low"
+root_relationship = "Observability premise of the operator's trust-epoch kill switch (ADR-MCPRE-052 §7)."
+record = "docs/architecture/control-dispositions.md#np-233"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -13931,4 +13940,12 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#outbound_fetch::binding::tests::an_agent_bounds_a_request_that_sets_no_timeout_of_its_own"
 decision = "new-proposition"
 proposition = "NP-232"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20199"
+project = "mcp-re-proxy"
+control = "src/lib.rs#signing_plane::rotation::tests::an_unreadable_epoch_is_recorded_when_first_seen_not_when_the_window_opens"
+decision = "new-proposition"
+proposition = "NP-233"
 recorded = "2026-10-04"

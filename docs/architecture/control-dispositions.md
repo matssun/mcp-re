@@ -4416,3 +4416,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** The agent-side half of proxy.remote_signer_egress_bound's statement that the egress carries the same bound.
 **Recorded:** 2026-10-04, round-12 remediation of 3ce1f18db0d470fc.
+
+## NP-233 — an unreadable trust epoch is recorded as a rotation failure when first observed
+
+**Controls:** `mcp-re-proxy` `lib#signing_plane::rotation::tests::an_unreadable_epoch_is_recorded_when_first_seen_not_when_the_window_opens`.
+**Carrier:** `mcp-re-proxy/src/signing_plane/rotation.rs` (`wait_for_window`).
+**Statement.** *`wait_for_window` records one rotation failure the first time it sees the shared trust epoch unreadable or regressed, and keeps polling.*
+**If false.** `consecutive_failures` reads 0 for up to ttl-overlap while the kill switch is unreadable.
+**Likely owner:** none. proxy.delegated_signing_credential holds the carrier in its paths but states fail-closed transitions, which a metric-timeliness test does not falsify.
+**Severity:** `low`.
+**Root relationship.** Observability premise of the operator's trust-epoch kill switch (ADR-MCPRE-052 §7).
+**Recorded:** 2026-10-04, round-12 remediation of 0b8c4644c4121538.

@@ -144,6 +144,9 @@ pub(super) fn rotation_loop(
 /// than by a full TTL. With no current key — startup edge, or post-retirement — it rotates
 /// at once.
 ///
+/// An unreadable epoch is not an advance: the wait keeps polling, and records a failure
+/// once per wait when it first sees one so the metric stops reading healthy.
+///
 /// Returns `true` when a halt was requested.
 fn wait_for_window(
     signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
@@ -163,16 +166,22 @@ fn wait_for_window(
         None => now_unix(),
     };
     let mut ticks = 0u32;
+    let mut unreadable_seen = false;
     while now_unix() < wake_at {
         if halt.requested() {
             return true;
         }
         // Poll the shared trust epoch ~every 500ms (10 * 50ms).
-        if ticks.is_multiple_of(10) {
-            if let Some(watch) = epoch_watch.as_ref() {
-                if matches!(watch.current_label(), Some(l) if l != last_label) {
-                    break;
+        if let Some(watch) = epoch_watch.filter(|_| ticks.is_multiple_of(10)) {
+            match watch.current_label() {
+                Some(l) if l != last_label => break,
+                None if !std::mem::replace(&mut unreadable_seen, true) => {
+                    let n = signer.metrics().record_failure();
+                    eprintln!(
+                        "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed during the steady-state wait; minting will be refused when the window opens unless it recovers; consecutive_failures {n}"
+                    );
                 }
+                _ => {}
             }
         }
         // Wrapping IS the algebra: a phase counter read only through `is_multiple_of(10)`
@@ -249,5 +258,45 @@ mod tests {
             "after a panic the rotor's state is not known good; continuing to mint from it \
              would be worse than refusing"
         );
+    }
+
+    struct Unreadable;
+
+    impl crate::trust_epoch::EpochReader for Unreadable {
+        fn read_epoch(&self) -> Result<i64, crate::trust_epoch::EpochReadError> {
+            Err(crate::trust_epoch::EpochReadError("injected".into()))
+        }
+    }
+
+    /// An unreadable epoch is recorded once, when the wait first sees it, rather than
+    /// only when the window opens an hour later; the wait keeps polling until halted.
+    #[test]
+    fn an_unreadable_epoch_is_recorded_when_first_seen_not_when_the_window_opens() {
+        let signer = Arc::new(crate::delegated_server_signer::DelegatedServerSigner::new());
+        signer.publish(crate::delegated_wiring::test_support::issued_expiring_at(
+            now_unix() + 3600,
+            9,
+        ));
+        let watch = DelegatedEpochWatch {
+            reader: Box::new(Unreadable),
+            base_label: "epoch-1".into(),
+            high_water: std::sync::Mutex::new(None),
+        };
+        let deployment = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let halt = crate::managed_worker::WorkerSet::new(Arc::clone(&deployment)).halt();
+        let stopper = std::thread::spawn({
+            let deployment = Arc::clone(&deployment);
+            move || {
+                std::thread::sleep(Duration::from_millis(1200));
+                deployment.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+
+        let halted = wait_for_window(&signer, 60, Some(&watch), "epoch-1#0", &halt);
+        stopper.join().expect("stopper thread");
+
+        assert!(halted, "an unreadable epoch is not an advance; only the halt ends the wait");
+        assert_eq!(signer.metrics().consecutive_failures(), 1);
+        assert_eq!(signer.metrics().rotation_failures(), 1);
     }
 }
