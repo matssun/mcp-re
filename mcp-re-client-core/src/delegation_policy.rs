@@ -85,12 +85,21 @@ impl DelegationPolicy {
 
     /// The RFC 9421 signature-acceptance policy this delegation policy implies.
     ///
-    /// Built from [`bounded_clock_skew`](Self::bounded_clock_skew), so the construction
-    /// can no longer fail on the skew argument; the fallback remains only because
-    /// `new` is fallible in its algorithm argument too.
+    /// Built from the profile's own implemented algorithm set and
+    /// [`bounded_clock_skew`](Self::bounded_clock_skew), so verification never runs under a
+    /// skew this policy did not carry.
+    // `VerifierPolicy::new` errs only on an empty or unresolvable algorithm set or a skew
+    // outside `0..=MAX_CLOCK_SKEW_BOUND`. `DEFAULT_ALGORITHMS` is the profile's own
+    // implemented set (non-empty, every token resolves; pinned by the profile's
+    // `default_policy_is_one_new_would_build`), and `DelegationPolicy::new` clamps the skew
+    // against the same `MAX_CLOCK_SKEW_BOUND` that `VerifierPolicy::new` checks.
+    #[allow(clippy::expect_used)]
     fn verifier_policy(&self) -> mcp_re_http_profile::VerifierPolicy {
-        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], self.bounded_clock_skew())
-            .unwrap_or_default()
+        mcp_re_http_profile::VerifierPolicy::new(
+            &mcp_re_http_profile::DEFAULT_ALGORITHMS,
+            self.bounded_clock_skew(),
+        )
+        .expect("default algorithms and a clamped skew always build a VerifierPolicy")
     }
 
     /// Build a delegation policy, bounding the configured clock skew as it goes.
@@ -182,15 +191,21 @@ mod policy_seal_tests {
     #[test]
     fn both_gates_read_the_same_bounded_number() {
         // The property the field's own documentation states: the credential window and the
-        // RFC 9421 signature window must be one number. The verifier policy is built from
-        // the same bounded value the credential expectations carry.
-        let policy = DelegationPolicy::new(
-            vec!["aud".to_owned()],
-            "hash",
-            vec!["epoch".to_owned()],
-            120,
-        );
-        assert_eq!(policy.verifier_policy().max_clock_skew(), 120);
-        assert_eq!(policy.bounded_clock_skew(), 120);
+        // RFC 9421 signature window must be one number, over the whole clamp range.
+        let bound = mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND;
+        for configured in [i64::MIN, -1, 0, 1, 120, bound, bound + 1, i64::MAX] {
+            let policy = DelegationPolicy::new(
+                vec!["aud".to_owned()],
+                "hash",
+                vec!["epoch".to_owned()],
+                configured,
+            );
+            let clamped = configured.clamp(0, bound);
+            let (expect_skew, verifier_skew) = policy.with_expectations(|expect, verifier| {
+                (expect.max_clock_skew, verifier.max_clock_skew())
+            });
+            assert_eq!(expect_skew, clamped);
+            assert_eq!(verifier_skew, clamped);
+        }
     }
 }
