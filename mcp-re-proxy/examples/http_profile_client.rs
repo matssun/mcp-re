@@ -143,7 +143,7 @@ fn main() {
         Ok(verified) => {
             println!(
                 "leg 1  ACCEPTED  server_signer={}  status={}  fastmcp_result={}",
-                verified.signature_facts.accepted_signer.identity.subject,
+                verified.signature_facts().accepted_signer.identity.subject,
                 resp.status,
                 mcp_result(&resp.body)
             );
