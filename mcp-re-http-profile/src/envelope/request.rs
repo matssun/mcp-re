@@ -31,9 +31,11 @@ use super::JSON_RPC_VERSION;
 
 /// Read the outstanding id from a REQUEST body.
 ///
-/// The serving path calls this on the body it verified, so the parse cannot fail in
-/// production; it still fails closed rather than defaulting, because "I could not read the
-/// request's id" must never become "any id correlates".
+/// No serving path calls this: the serving path's outstanding id comes from
+/// [`validate_request_envelope`]. This applies none of that function's clauses, so a `null`
+/// id is returned as `OutstandingId::Id(Value::Null)`. It fails closed on an unparseable
+/// body rather than defaulting, because "I could not read the request's id" must never
+/// become "any id correlates".
 ///
 /// This reads the id and nothing else. Whether the body is a JSON-RPC message at all is
 /// [`validate_request_envelope`]'s question, and the absence of an `id` is only a
@@ -74,8 +76,9 @@ pub fn outstanding_id(request_body: &[u8]) -> Result<OutstandingId, HttpProfileE
 /// 5. neither `result` nor `error` is present, so one document cannot be read as a
 ///    request by this boundary and as a response by the peer;
 /// 6. `params`, when present, is an object or an array (JSON-RPC 2.0 §4.2);
-/// 7. `id`, when present, is a string or a number. JSON-RPC also permits `null`, and MCP
-///    forbids it; a null-id request is refused rather than folded into a notification,
+/// 7. `id`, when present, is a string or an integer. MCP requires a string or integer id,
+///    so a fractional or exponent-form number is refused. JSON-RPC also permits `null`, and
+///    MCP forbids it; a null-id request is refused rather than folded into a notification,
 ///    because the two are answered differently — one with a bound signed reply, the other
 ///    with a bodyless 202.
 ///
@@ -123,8 +126,11 @@ pub fn validate_request_envelope(request_body: &[u8]) -> Result<OutstandingId, H
 
     match object.get("id") {
         None => Ok(OutstandingId::Notification),
-        Some(id @ (Value::String(_) | Value::Number(_))) => Ok(OutstandingId::Id(id.clone())),
-        Some(_) => Err(malformed("request id is neither a string nor a number")),
+        Some(id @ Value::String(_)) => Ok(OutstandingId::Id(id.clone())),
+        Some(id @ Value::Number(n)) if n.is_i64() || n.is_u64() => {
+            Ok(OutstandingId::Id(id.clone()))
+        }
+        Some(_) => Err(malformed("request id is neither a string nor an integer")),
     }
 }
 #[cfg(test)]
@@ -170,6 +176,7 @@ mod tests {
             r#"{"jsonrpc":"2.0","method":"x","params":"nope"}"#,
             r#"{"jsonrpc":"2.0","method":"x","id":null}"#,
             r#"{"jsonrpc":"2.0","method":"x","id":{"a":1}}"#,
+            r#"{"jsonrpc":"2.0","method":"x","id":1.5}"#,
             "[]",
             "not json",
         ] {
@@ -177,9 +184,6 @@ mod tests {
                 validate_request_envelope(body.as_bytes()).is_err(),
                 "{body} was accepted as an MCP request"
             );
-            // The reader the serving path uses today sees no `id` in most of these and
-            // calls them notifications, which is what the validator exists to stop.
-            let _ = outstanding_id(body.as_bytes());
         }
     }
 
