@@ -9055,6 +9055,14 @@ proposition = "NP-138"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20327"
+project = "mcp-re-proxy"
+control = "src/lib.rs#blocking_mtls_harness::deadline_stream::aggregate_deadline_tests::a_silent_peer_is_cut_off_at_the_aggregate_deadline"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-18051"
 project = "mcp-re-proxy"
 control = "src/lib.rs#blocking_mtls_harness::http1::content_length_framing_tests::absent_content_length_is_a_zero_length_body"
