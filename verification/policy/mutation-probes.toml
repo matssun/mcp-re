@@ -3325,10 +3325,10 @@ theorem = "THM-0098"
 conjunct = "every key_id is enrolled once across the whole document — the same signer twice and two signers under one key_id are both refused"
 path = "mcp-re-proxy/src/trust_document.rs"
 anchor = """
-            if let Some(prior) = entries.iter().find(|e| e.key_id == key_id) {
+            if let Some(prior_signer) = enrolled.get(&key_id) {
 """
 weakening = """
-            if let Some(prior) = entries.iter().find(|e| e.key_id == key_id && false) {
+            if let Some(prior_signer) = enrolled.get(&key_id).filter(|_| false) {
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#trust_document::tests::trust_file_with_duplicate_key_id_is_rejected",
