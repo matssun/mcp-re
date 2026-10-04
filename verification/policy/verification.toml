@@ -3745,6 +3745,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::retained::tests::a_verified_receipt_does_not_imply_the_evidence_is_retained",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::commitment::tests::the_two_evidence_roles_are_not_interchangeable",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::commitment::tests::a_record_with_no_verified_hop_has_no_identity",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::commitment::correspondence::tests::a_statement_over_a_verified_call_does_not_bind_a_reconstruction_that_verified_nothing",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::commitment::correspondence::tests::the_submission_only_verdict_still_compares_label_and_artifacts",
 ]
 
 # ---------------------------------------------------------------------------------------
