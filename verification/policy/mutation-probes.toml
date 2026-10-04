@@ -4742,16 +4742,16 @@ theorem = "THM-0041"
 conjunct = "the protected `alg` and the resolved key must agree; a disagreement is refused rather than resolved in the key's favour"
 path = "mcp-re-http-profile/src/scitt/cose_key/verify.rs"
 note = """
-THE PAIR IS THE CHECK, and the module says so: `(protected alg, resolved key)` is exhaustive,
-which is the point. Weakening the mismatch arm to fall through to the key's own algorithm
+THE AGREEMENT IS THE CHECK: the match on the resolved key is exhaustive, and `require_alg` is
+where a header/key disagreement is refused. Weakening the mismatch arm to return `Ok(())`
 would make the protected header advisory — a signer could declare one algorithm and be
-verified under another, which is the confusion this exhaustive match exists to remove.
+verified under another, which is the confusion this check exists to remove.
 """
-anchor = """        (iana::Algorithm::EdDSA | iana::Algorithm::ES256, _) => Err(
+anchor = """        iana::Algorithm::EdDSA | iana::Algorithm::ES256 => Err(
             HttpProfileError::MalformedEvidence("scitt cose algorithm key mismatch"),
         ),
 """
-weakening = """        (iana::Algorithm::EdDSA | iana::Algorithm::ES256, _) => Ok(()),
+weakening = """        iana::Algorithm::EdDSA | iana::Algorithm::ES256 => Ok(()),
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::cose_key::tests::an_algorithm_that_disagrees_with_the_resolved_key_is_refused",

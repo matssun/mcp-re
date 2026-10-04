@@ -2369,3 +2369,28 @@ sites = [
   "mcp-re-proxy/src/config_state/replica_clock.rs#ReplicaClockDivergence",
 ]
 tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0065"
+description = "ECDSA P-256 / SHA-256 verification as implemented by the pinned `p256` 0.14 / `ecdsa` 0.17 accepts a signature only if it was produced under the private key of the supplied verifying key, and `p256::ecdsa::VerifyingKey::from_sec1_bytes` refuses every encoding that is not a point on the curve."
+justification = """
+The security of the signature scheme itself, as implemented by the pinned `p256` and `ecdsa`
+crates. No test can establish it: a battery shows that valid signatures verify and that
+specific invalid ones do not, which is conformance, not unforgeability. The `P256Point` seal
+in `cose_key/mod.rs` rests on the SEC1 decode refusing off-curve encodings. Mirrors ASM-0027
+for the ES256 verifier. This is unforgeability, NOT signature uniqueness: a high-S pair
+(r, n - s) also verifies, so receipt octets are not unique. It stops being acceptable if the
+curve or scheme is broken, or if the crate is replaced by one whose acceptance criterion
+differs.
+"""
+scope = [
+  "unit://http_profile.scitt_algorithm_agreement",
+  "unit://http_profile.scitt_derived_root",
+  "boundary://boundary.crypto_primitives",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 remediation (63885ad628dac6c9)"
+review_requirement = "Owner review; any change of ECDSA backend or pinned version."
+premise_class = "assumed"
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-primitive"
