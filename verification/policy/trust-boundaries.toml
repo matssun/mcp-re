@@ -269,6 +269,10 @@ paths = [
   "mcp-re-proxy/src/tls_listener_state/**/*.rs",
   "mcp-re-proxy/src/delegated_tls.rs",
   "mcp-re-proxy/src/delegated_tls/**/*.rs",
+  # The CLIENT side of the same mechanism: the client transport builds rustls'
+  # `WebPkiServerVerifier` here, and every server-authentication verdict it reports is
+  # rustls'. ASM-0070 is the premise a unit crossing it rests on.
+  "mcp-re-transport/src/tls_config.rs",
 ]
 beyond = "Whether a handshake that reports success proved what the protocol says it proves, whether the reported chain is the peer's in the order claimed, and whether a resumed session continues an earlier authenticated one."
 max_class_without_assumption = "V0"

@@ -502,3 +502,4 @@ attestations this view cannot see.
 | ASM-0067 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0068 | description, justification, scope or mechanism | host.request_freshness_inputs, proxy.delegated_signing_credential | assumption review |
 | ASM-0069 | description, justification, scope or mechanism | http_profile.delegated_credential_chain | assumption review |
+| ASM-0070 | description, justification, scope or mechanism | client.transport_server_identity | assumption review |

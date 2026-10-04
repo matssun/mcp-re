@@ -2510,3 +2510,53 @@ sites = [
   "mcp-re-http-profile/src/delegation/verify.rs#check_freshness",
 ]
 tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0070"
+description = "rustls' `WebPkiServerVerifier`, built over only the configured server-CA roots, completes a client handshake only for a server certificate that chains to one of those roots, names the server identity the connection was opened for, and is inside its validity window at the handshake, presented by a server that proved possession of that certificate's private key."
+justification = """
+THM-0109 says the client transport never sends a request body to a server it did not
+authenticate, and three of its four conjuncts — chain of trust, server identity, validity
+window — are decided inside rustls, not in this repository. `tls_config.rs` selects the
+mechanism (the standard `WebPkiServerVerifier`, over a `RootCertStore` holding ONLY the
+configured server CA, with the connection's `server_name` as the identity to match) and
+refuses an empty bundle; that refusal is the one conjunct this repository decides. Everything
+else the claim says about a handshake that completed is a faithful report of what rustls and
+webpki checked, and the unit's controls drive real handshakes against real certificates
+precisely because a stand-in verifier would establish nothing about the real one.
+
+It is the client-side counterpart of the server-side premises ASM-0033..ASM-0036 and is
+registered per unit rather than by widening any of them: those are about what the proxy's
+listener reports about a CLIENT credential, and none of their consumers is this one.
+
+The possession half is what makes "authenticated" mean more than "presented": on a full
+handshake the server signs the transcript with the certificate's key and rustls rejects a
+signature that does not verify. Without it a copied certificate would complete the handshake
+under a true-sounding sentence.
+
+Not proved here: a TLS implementation and its path validation are a far larger verification
+target than the configuration selecting them. The fault-injection lane demonstrates that the
+controls fail when the verifier is replaced by an accept-any one; it establishes nothing about
+whether the verifier that IS installed checks what it says it checks.
+
+It stops being acceptable if the client config installs any verifier other than
+`WebPkiServerVerifier` in a production build, if the root store is ever populated from
+anything but the configured server-CA bundle, or if the pinned rustls or webpki version
+changes what path validation, name matching or validity checking accepts.
+"""
+scope = [
+  "unit://client.transport_server_identity",
+  "boundary://boundary.tls_mechanism",
+]
+owner = "mats@sundvall.name"
+introduced_by = "owner-signature:asm-client-transport-webpki-verifier-premise (r12, a01feb270113496e)"
+review_requirement = "Owner review; any change to the client transport's server verifier, its root store, or the pinned rustls/webpki version."
+premise_class = "external-boundary"
+boundary_owner = """
+The `rustls` TLS client and its webpki path validation, across `WebPkiServerVerifier` as built in
+`mcp-re-transport/src/tls_config.rs`: a handshake completes only for a server certificate that
+chains to a configured root, matches the connection's `server_name`, is within its validity
+window, and is presented by a server holding its private key.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
