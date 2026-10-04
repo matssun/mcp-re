@@ -6295,6 +6295,32 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#delegated_server_signer::terminal_retirement_tests::a_rotor_retire_after_permanent_retirement_cannot_reopen_publish",
 ]
 
+# A SIBLING of `proxy.delegated_signing_credential`, not a widening of it. That unit answers
+# what the credential lifecycle publishes; this one answers whether the worker that drives it
+# can be parked by the root it asks. A root call that never returned stopped rotation and the
+# trust-epoch kill-switch poll while every health signal read steady.
+[[unit]]
+id = "proxy.root_issuer_call_bound"
+class = "V0"
+description = "Every root-issuer call made for delegated-credential issuance is bounded and single-flight: a call that has not answered within ROOT_ISSUER_CALL_BOUND is a failed issuance returned to the rotation worker, and while such a call is still running no further call is started; a root that panics fails its call without leaving later calls refused."
+paths = [
+  "mcp-re-proxy/src/signing_plane/bounded_root_issuer.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/signing/root_issuer_call_bound",
+  "mutation://proxy/signing/root_issuer_call_bound",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::bounded_root_issuer::tests::an_answering_root_signs",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::bounded_root_issuer::tests::a_root_that_does_not_answer_is_a_failure_within_the_bound",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::bounded_root_issuer::tests::a_call_outliving_the_bound_refuses_the_next_without_starting_it",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::bounded_root_issuer::tests::once_the_stuck_call_returns_the_next_call_is_served",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::bounded_root_issuer::tests::a_root_that_panics_fails_each_call_without_wedging_the_issuer",
+]
+
 [[unit]]
 id = "http_profile.request_envelope"
 class = "V0"

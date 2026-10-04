@@ -11303,3 +11303,40 @@ expect_red = [
 note = """
 A window that admits no instant is constructed and held.
 """
+
+[[probe]]
+id = "M445-proxy-a-stuck-root-call-refuses-the-next"
+unit = "proxy.root_issuer_call_bound"
+conjunct = "while a call that outlived the bound is still running no further call is started"
+path = "mcp-re-proxy/src/signing_plane/bounded_root_issuer.rs"
+anchor = """
+        if self.in_flight.swap(true, Ordering::SeqCst) {
+"""
+weakening = """
+        if false && self.in_flight.swap(true, Ordering::SeqCst) {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::bounded_root_issuer::tests::a_call_outliving_the_bound_refuses_the_next_without_starting_it",
+]
+note = """
+Every retry against a stuck root starts another thread.
+"""
+
+[[probe]]
+id = "M446-proxy-an-ended-root-call-releases-the-issuer"
+unit = "proxy.root_issuer_call_bound"
+conjunct = "a call that ends, however it ends, stops refusing later calls"
+path = "mcp-re-proxy/src/signing_plane/bounded_root_issuer.rs"
+anchor = """
+        self.0.store(false, Ordering::SeqCst);
+"""
+weakening = """
+        self.0.store(true, Ordering::SeqCst);
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::bounded_root_issuer::tests::once_the_stuck_call_returns_the_next_call_is_served",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::bounded_root_issuer::tests::a_root_that_panics_fails_each_call_without_wedging_the_issuer",
+]
+note = """
+One slow root call refuses every issuance for the life of the process.
+"""

@@ -4859,3 +4859,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Root relationship.** The auditor product claim the graph does not hold. Rests on ASM-0067 (the operator keeps the stated lifecycle current) and `boundary.clock`.
 **Severity:** `high`.
 **Recorded:** 2026-10-04, owner Ruling 14.1 for 89aa1a1a453cf723.
+
+## NP-274 — a delegated-credential issuance whose root-issuer call does not answer within its bound fails, through the production wiring
+
+**Controls:** `mcp-re-proxy` `lib#delegated_wiring::tests::a_root_that_does_not_answer_fails_the_issuance_at_the_bound`.
+**Carrier:** `mcp-re-proxy/src/delegated_wiring.rs` (`build_delegated_signing`, `root_signature`) over `mcp-re-proxy/src/signing_plane/bounded_root_issuer.rs` (`BoundedRootIssuer`).
+**Statement.** *Every root-issuer call `build_delegated_signing` makes goes through a `BoundedRootIssuer` under `ROOT_ISSUER_CALL_BOUND`, so a root that does not answer makes the issuance fail at the bound — nothing is published, the custody reports a failed issuance, and the rotation worker returns to its loop and its trust-epoch poll.*
+**If false.** A wedged root call parks the rotation worker: rotation and the operator's epoch kill switch stop while `consecutive_failures` reads 0, and the replica serves its current key to `exp` before failing with no attributable cause.
+**Likely owner:** `proxy.root_issuer_call_bound` owns the bound and claims its own tests; this proposition is that the production wiring asks the root only through it.
+**Root relationship.** ADR-MCPRE-052 §6/§7. `proxy.delegated_signing_credential` measures the wiring file but is an owner-approved surface (F3), so the control is dispositioned here rather than added to that unit.
+**Severity:** `high`.
+**Recorded:** 2026-10-04, READJUDICATION-2026-10-04 §A for 566557fe105d0c66.

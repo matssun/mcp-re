@@ -50,6 +50,9 @@ mod trust_epoch_advance;
 /// Asking the root for a successor, and reading its answer honestly.
 mod mint_successor;
 
+/// The root issuer under a bound; `pub(crate)` for the issuer closure `delegated_wiring` builds.
+pub(crate) mod bounded_root_issuer;
+
 use rotation::spawn_delegated_rotation_task;
 
 /// Response-signing custody: the delegated snapshot and the worker that maintains it.

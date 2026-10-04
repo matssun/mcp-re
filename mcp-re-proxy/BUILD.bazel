@@ -502,6 +502,7 @@ _PROXY_LIB_SRCS = [
     "src/signing_plane/rotation.rs",
     "src/signing_plane/trust_epoch_advance.rs",
     "src/signing_plane/mint_successor.rs",
+    "src/signing_plane/bounded_root_issuer.rs",
     # ADR-MCPRE-056 §8 (ADR-MCPRE-051 §6): the TLS plane — serving TLS config, the
     # per-request revocation index and the CRL reload worker.
     "src/tls_plane/mod.rs",

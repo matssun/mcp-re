@@ -15508,3 +15508,20 @@ control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_
 decision = "new-proposition"
 proposition = "NP-273"
 recorded = "2026-10-04"
+
+[[proposition]]
+id = "NP-274"
+title = "A delegated-credential issuance whose root-issuer call does not answer within its bound fails, through the production wiring"
+carrier = "mcp-re-proxy/src/delegated_wiring.rs (build_delegated_signing, root_signature) over mcp-re-proxy/src/signing_plane/bounded_root_issuer.rs (BoundedRootIssuer)"
+likely_owner = "proxy.root_issuer_call_bound owns the bound and claims its own tests; this proposition is that the production wiring asks the root only through it, so an unanswered call is a failed issuance the custody returns to the rotation worker."
+consequence = "high"
+root_relationship = "the delegated-signing availability and kill-switch claim (ADR-MCPRE-052 §6/§7); proxy.delegated_signing_credential measures the wiring file and is an owner-approved surface, so the control is dispositioned here rather than cited there"
+record = "docs/architecture/control-dispositions.md#np-274"
+
+[[disposition]]
+id = "CD-20348"
+project = "mcp-re-proxy"
+control = "src/lib.rs#delegated_wiring::tests::a_root_that_does_not_answer_fails_the_issuance_at_the_bound"
+decision = "new-proposition"
+proposition = "NP-274"
+recorded = "2026-10-04"

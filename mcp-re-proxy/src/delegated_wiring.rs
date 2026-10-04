@@ -35,6 +35,8 @@ use zeroize::Zeroizing;
 use crate::delegated_server_signer::DelegatedRotor;
 use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::key_source::ResponseSigner;
+use crate::signing_plane::bounded_root_issuer::BoundedRootIssuer;
+use crate::signing_plane::bounded_root_issuer::ROOT_ISSUER_CALL_BOUND;
 
 /// The root issuer closure the custody drives at issuance/rotation. Boxed so the
 /// production rotor has a concrete type regardless of which root signer (KMS/file)
@@ -70,16 +72,14 @@ pub struct DelegatedSigningWiring {
 }
 
 /// The root issuer's signature over a credential signing input, checked under the key it
-/// advertises. The `Err` names the refusing check, so an unavailable root (an outage) and
-/// a root breaching its contract (a permanent misconfiguration) are told apart.
-fn root_signature(
-    root: &impl ResponseSigner,
+/// advertises. The `Err` names the refusing check, so an unavailable root (an outage or an
+/// unanswered call) and a root breaching its contract (a misconfiguration) are told apart.
+fn root_signature<S: ResponseSigner + Send + 'static>(
+    root: &BoundedRootIssuer<S>,
     advertised: Option<&VerificationKey>,
     input: &[u8],
 ) -> Result<Vec<u8>, String> {
-    let b64 = root
-        .sign_response(input)
-        .map_err(|e| format!("root issuer unavailable: {e}"))?;
+    let b64 = root.sign(input).map_err(|e| e.to_string())?;
     let public_key = advertised.ok_or_else(|| {
         "root issuer advertises no public key, so its signature cannot be checked".to_string()
     })?;
@@ -109,11 +109,21 @@ fn issuance_refused(class: impl std::fmt::Display) -> HttpProfileError {
 /// established resources. The wiring is handed a policy and builds it.
 ///
 /// `root_signer` signs ONLY the delegation credential's compact-JWS signing input at
-/// issuance/rotation (never per response); a transient root failure yields `None`,
-/// which the custody state machine treats as a fail-closed issuance.
+/// issuance/rotation (never per response), each call bounded and single-flight; a root
+/// failure or an unanswered call yields `None`, which the custody state machine treats as
+/// a fail-closed issuance.
 pub fn build_delegated_signing(
     plan: &crate::startup_plan::SigningPlan,
     root_signer: impl ResponseSigner + Send + 'static,
+) -> DelegatedSigningWiring {
+    build_with_root_bound(plan, root_signer, ROOT_ISSUER_CALL_BOUND)
+}
+
+/// [`build_delegated_signing`], with every root-issuer call bounded by `bound`.
+fn build_with_root_bound(
+    plan: &crate::startup_plan::SigningPlan,
+    root_signer: impl ResponseSigner + Send + 'static,
+    bound: std::time::Duration,
 ) -> DelegatedSigningWiring {
     let cfg = plan.custody.clone();
     let window = cfg.window;
@@ -122,6 +132,7 @@ pub fn build_delegated_signing(
     // cannot state its own public key cannot have its issuance checked against anything, and
     // an unverifiable issuer is not one this deployment publishes credentials from.
     let root_public_key = root_signer.response_public_key().ok();
+    let root = BoundedRootIssuer::with_bound(root_signer, bound);
 
     // ROOT ISSUER: sign the credential's compact-JWS signing input with the root
     // ResponseSigner (KMS/HSM/file), decoding its base64url raw Ed25519 signature to
@@ -138,7 +149,7 @@ pub fn build_delegated_signing(
     // custody state machine already guarantees.
     let issue: BoxedIssuer = Box::new(move |h, c| {
         issue_delegation_credential_with_signer(h, c, |input| {
-            root_signature(&root_signer, root_public_key.as_ref(), input).map_err(issuance_refused)
+            root_signature(&root, root_public_key.as_ref(), input).map_err(issuance_refused)
         })
         .ok()
     });
@@ -271,6 +282,45 @@ mod tests {
         assert_eq!(wiring.rotor.root_invocations(), 1);
     }
 
+    /// A ROOT issuer that never answers until released: a wedged HSM `C_Sign`.
+    struct SilentRoot(std::sync::Mutex<std::sync::mpsc::Receiver<()>>);
+    impl ResponseSigner for SilentRoot {
+        fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
+            let _ = self.0.lock().expect("release lock").recv();
+            Ok(SigningKey::from_seed_bytes(&ROOT_SEED).sign(preimage))
+        }
+        fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
+            Ok(SigningKey::from_seed_bytes(&ROOT_SEED).public_key())
+        }
+    }
+
+    /// A root that does not answer is a failed issuance at the bound, so the rotation
+    /// worker gets its loop — and its trust-epoch poll — back instead of parking in the call.
+    #[test]
+    fn a_root_that_does_not_answer_fails_the_issuance_at_the_bound() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let bound = std::time::Duration::from_millis(100);
+        let mut wiring = build_with_root_bound(
+            &delegated_plan(),
+            SilentRoot(std::sync::Mutex::new(wait)),
+            bound,
+        );
+        let started = std::time::Instant::now();
+        assert!(
+            wiring.rotor.rotate(NOW).is_err(),
+            "no answer is no issuance"
+        );
+        assert!(
+            started.elapsed() < bound * 50,
+            "the issuance failed at the bound, not when the root returned"
+        );
+        assert!(
+            wiring.signer.current(NOW).is_none(),
+            "nothing was published"
+        );
+        drop(release);
+    }
+
     #[test]
     fn ttl_bounds_the_published_snapshot() {
         let root = SigningKey::from_seed_bytes(&ROOT_SEED);
@@ -342,15 +392,19 @@ mod tests {
 
     #[test]
     fn issuance_refusals_name_their_class() {
-        let unavailable = root_signature(&FailingRoot, None, b"input").expect_err("root is down");
+        let bound = std::time::Duration::from_secs(5);
+        let failing = BoundedRootIssuer::with_bound(FailingRoot, bound);
+        let unavailable = root_signature(&failing, None, b"input").expect_err("root is down");
         assert!(unavailable.contains("unavailable"), "{unavailable}");
 
         let m = RootSigningUnderAnotherKey {
             signing: SigningKey::from_seed_bytes(&ROOT_SEED),
             advertised: SigningKey::from_seed_bytes(&[34u8; 32]).public_key(),
         };
+        let advertised = m.advertised.clone();
+        let m = BoundedRootIssuer::with_bound(m, bound);
         let violation =
-            root_signature(&m, Some(&m.advertised), b"input").expect_err("off-key signature");
+            root_signature(&m, Some(&advertised), b"input").expect_err("off-key signature");
         assert!(violation.contains("CONTRACT VIOLATION"), "{violation}");
         assert_ne!(unavailable, violation);
     }
