@@ -689,8 +689,8 @@ pub fn verify_response(
     // the outcome so the caller does not read a signed replay/trust rejection as a
     // success. (An unsigned / direct-root / forged answer never reaches here: it fails
     // verify_delegated_response above and is raised as an error.)
-    let ev = &verified.verified;
-    let (outcome, wire_code, bound, execution) = match verified.outcome {
+    let ev = verified.verified();
+    let (outcome, wire_code, bound, execution) = match verified.outcome() {
         mcp_re_client_core::DelegatedOutcome::Success => (
             "success".to_owned(),
             None,
@@ -700,7 +700,12 @@ pub fn verify_response(
         mcp_re_client_core::DelegatedOutcome::Rejection {
             wire_code,
             execution,
-        } => ("rejection".to_owned(), wire_code, ev.is_bound(), execution),
+        } => (
+            "rejection".to_owned(),
+            wire_code.clone(),
+            ev.is_bound(),
+            execution.clone(),
+        ),
     };
     // The response evidence handle (D_irr): the answer leg binds to it. Read from the
     // VERIFIED response evidence, never from unverified bytes.

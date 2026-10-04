@@ -590,13 +590,13 @@ mod delegated_tests {
             NOW,
         )
         .expect("client verifies delegated success");
-        assert_eq!(out.outcome, DelegatedOutcome::Success);
+        assert_eq!(out.outcome(), &DelegatedOutcome::Success);
         // The delegated key is profile-issued, so its keyid is the RFC 7638 JWK
         // thumbprint of the key that actually signed (#415 rev 2 §1.5) — derived
         // from the key material, not from an issuer-private counter.
         let snap = custody.active_snapshot().expect("a key is active");
         assert_eq!(
-            out.verified.server_signer().keyid,
+            out.verified().server_signer().keyid,
             mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.public_key().to_b64url()),
         );
     }
@@ -628,10 +628,10 @@ mod delegated_tests {
             NOW,
         )
         .expect("an unpinned delegated success still verifies");
-        assert_eq!(ok.outcome, DelegatedOutcome::Success);
+        assert_eq!(ok.outcome(), &DelegatedOutcome::Success);
 
         // The verified evidence reports the anchor the credential chained to.
-        assert_eq!(ok.verified.delegation_issuer_kid(), ROOT_KID);
+        assert_eq!(ok.verified().delegation_issuer_kid(), ROOT_KID);
 
         // A pin on the ROOT ISSUER verifies — the coordinate that is stable across
         // delegated-key rotation.
@@ -643,7 +643,7 @@ mod delegated_tests {
             NOW,
         )
         .expect("a pin naming the root issuer verifies");
-        assert_eq!(pinned.outcome, DelegatedOutcome::Success);
+        assert_eq!(pinned.outcome(), &DelegatedOutcome::Success);
 
         // Any other root fails closed.
         let err = verify_delegated_response(
@@ -658,7 +658,7 @@ mod delegated_tests {
 
         // And NOT against the accepted signer keyid: that is the ephemeral delegated
         // kid, so pinning it would break on the first rotation.
-        let delegated_kid = ok.verified.server_signer().keyid.clone();
+        let delegated_kid = ok.verified().server_signer().keyid.clone();
         assert_ne!(delegated_kid, ROOT_KID);
         let err = verify_delegated_response(
             &resp,
@@ -739,8 +739,8 @@ mod delegated_tests {
         )
         .expect("client verifies bound rejection");
         assert_eq!(
-            out.outcome,
-            DelegatedOutcome::Rejection {
+            out.outcome(),
+            &DelegatedOutcome::Rejection {
                 wire_code: Some("mcp-re.replay_detected".into()),
                 execution: ExecutionContract::default(),
             }
@@ -775,8 +775,8 @@ mod delegated_tests {
         )
         .expect("client verifies preflight rejection unbound");
         assert_eq!(
-            out.outcome,
-            DelegatedOutcome::Rejection {
+            out.outcome(),
+            &DelegatedOutcome::Rejection {
                 wire_code: Some("mcp-re.request_signature_invalid".into()),
                 execution: ExecutionContract::default(),
             }
@@ -870,7 +870,7 @@ mod delegated_tests {
             NOW,
         )
         .expect("the receipt for this request's bytes still verifies");
-        assert!(matches!(out.outcome, DelegatedOutcome::Rejection { .. }));
+        assert!(matches!(out.outcome(), DelegatedOutcome::Rejection { .. }));
     }
 
     /// A receipt with NO received-digest is about no request at all, so it cannot be
@@ -938,8 +938,8 @@ mod delegated_tests {
             NOW,
         )
         .expect("client verifies the receipt");
-        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome else {
-            panic!("a 503 receipt is a rejection, got {:?}", out.outcome);
+        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome() else {
+            panic!("a 503 receipt is a rejection, got {:?}", out.outcome());
         };
         assert!(execution.is_stated());
         assert_eq!(execution.execution(), ExecutionStatus::PossiblyExecuted);
@@ -972,7 +972,7 @@ mod delegated_tests {
             NOW,
         )
         .expect("client verifies the receipt");
-        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome else {
+        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome() else {
             panic!("a 503 receipt is a rejection");
         };
         assert_eq!(execution.execution(), ExecutionStatus::NotExecuted);
@@ -1042,7 +1042,7 @@ mod delegated_tests {
             NOW,
         )
         .expect("client verifies the receipt");
-        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome else {
+        let DelegatedOutcome::Rejection { execution, .. } = &out.outcome() else {
             panic!("a 500 receipt is a rejection");
         };
         assert_eq!(execution.execution(), ExecutionStatus::PossiblyExecuted);
@@ -1341,7 +1341,7 @@ mod delegated_tests {
             NOW,
         )
         .expect("verifies — this credential is not on the denylist");
-        assert_eq!(out.outcome, DelegatedOutcome::Success);
+        assert_eq!(out.outcome(), &DelegatedOutcome::Success);
     }
 
     /// A rejection RECEIPT signed with a revoked delegated key is itself rejected —
@@ -1673,6 +1673,6 @@ mod delegated_tests {
             rot,
         )
         .expect("response on the rotated key verifies while the old key is revoked");
-        assert_eq!(out.outcome, DelegatedOutcome::Success);
+        assert_eq!(out.outcome(), &DelegatedOutcome::Success);
     }
 }

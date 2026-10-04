@@ -1412,11 +1412,11 @@ fn load_harness_smoke() {
         let verified =
             verify_delegated_response(&response, &trust, &expectation, &policy, now_unix())
                 .expect("delegated signed response verifies and binds to the request");
-        assert_eq!(verified.outcome, DelegatedOutcome::Success);
+        assert_eq!(verified.outcome(), &DelegatedOutcome::Success);
         // Profile-issued kids are RFC 7638 JWK thumbprints (MCPRE-432); the property
         // under test is that a DELEGATED key signed, not the root directly.
         assert_ne!(
-            verified.verified.server_signer().keyid,
+            verified.verified().server_signer().keyid,
             SERVER_KEY_ID,
             "signed by the delegated key chaining to the root, not the root directly",
         );

@@ -47,7 +47,7 @@ pub(crate) fn read_outcome(
     response: &HttpResponse,
     request_id: Value,
 ) -> Result<ProxyResponse, ProxyError> {
-    match verified.outcome {
+    match verified.outcome() {
         DelegatedOutcome::Success => {
             let plain = plain_response_from_verified(&response.body, &request_id)?;
             // Classify BEFORE handing the reply over. A verified signature says
@@ -94,12 +94,12 @@ pub(crate) fn read_outcome(
             plain_response: plain_error_from_rejection(
                 Some(&request_id),
                 wire_code.as_deref(),
-                &execution,
+                execution,
             ),
             kind: ResponseKind::VerifiedRejection {
-                wire_code,
-                bound: verified.verified.is_bound(),
-                execution,
+                wire_code: wire_code.clone(),
+                bound: verified.verified().is_bound(),
+                execution: execution.clone(),
             },
         }),
     }
@@ -110,16 +110,16 @@ pub(crate) fn read_outcome(
 pub(crate) fn read_notification_rejection(
     verified: mcp_re_client_core::VerifiedDelegatedResponse,
 ) -> Result<ProxyResponse, ProxyError> {
-    match verified.outcome {
+    match verified.outcome() {
         DelegatedOutcome::Rejection {
             wire_code,
             execution,
         } => Ok(ProxyResponse {
-            plain_response: plain_error_from_rejection(None, wire_code.as_deref(), &execution),
+            plain_response: plain_error_from_rejection(None, wire_code.as_deref(), execution),
             kind: ResponseKind::RejectedNotification {
-                wire_code,
-                bound: verified.verified.is_bound(),
-                execution,
+                wire_code: wire_code.clone(),
+                bound: verified.verified().is_bound(),
+                execution: execution.clone(),
             },
         }),
         DelegatedOutcome::Success => Err(ProxyError::FailedClosed(

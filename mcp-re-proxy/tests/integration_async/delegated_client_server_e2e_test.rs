@@ -607,9 +607,9 @@ fn a_pin_on_the_root_issuer_kid_verifies() {
         NOW,
     )
     .expect("a pin on the issuer kid is the coordinate that verifies");
-    assert!(matches!(verified.outcome, DelegatedOutcome::Success));
+    assert!(matches!(verified.outcome(), DelegatedOutcome::Success));
     assert_eq!(
-        Some(verified.verified.delegation_issuer_kid()),
+        Some(verified.verified().delegation_issuer_kid()),
         Some(ROOT_KID),
         "the verified evidence reports the anchor the credential chained to"
     );
@@ -712,7 +712,7 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
     )
     .expect("the SAME issuer pin still verifies after rotation — this is why it is the coordinate");
     assert_eq!(
-        Some(verified.verified.delegation_issuer_kid()),
+        Some(verified.verified().delegation_issuer_kid()),
         Some(ROOT_KID)
     );
 }

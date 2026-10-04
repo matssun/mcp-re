@@ -3,8 +3,8 @@
 //!
 //! One main type per file: this value owns the invariant that its continuation state is
 //! derived, at construction, from the bytes verification's Content-Digest covered. The
-//! field is private to this module, so nothing outside it can pair a product with any other
-//! answer. Its control lives in `response.rs`, where the verifier mints one: an inhabitant
+//! fields are private to this module and read through projections, so nothing outside it can
+//! assemble a product or pair one with any other answer. Its control lives in `response.rs`, where the verifier mints one: an inhabitant
 //! needs http-profile verified products whose constructors are crate-private there.
 
 use crate::delegated_evidence::DelegatedResponseEvidence;
@@ -14,10 +14,8 @@ use mcp_re_http_profile::HttpProfileError;
 /// A verified delegated response: the verification evidence plus the outcome.
 #[derive(Debug, Clone)]
 pub struct VerifiedDelegatedResponse {
-    /// The verified response evidence, bound or unbound.
-    pub verified: DelegatedResponseEvidence,
-    /// Success vs delegated rejection receipt.
-    pub outcome: DelegatedOutcome,
+    verified: DelegatedResponseEvidence,
+    outcome: DelegatedOutcome,
     continuation: Result<Option<String>, HttpProfileError>,
 }
 
@@ -34,6 +32,16 @@ impl VerifiedDelegatedResponse {
             outcome,
             continuation: mcp_re_http_profile::result_class::input_required_state(verified_body),
         }
+    }
+
+    /// The verified response evidence, bound or unbound.
+    pub fn verified(&self) -> &DelegatedResponseEvidence {
+        &self.verified
+    }
+
+    /// Success vs delegated rejection receipt.
+    pub fn outcome(&self) -> &DelegatedOutcome {
+        &self.outcome
     }
 
     /// The continuation state the verified body carries, for a caller acting on a live

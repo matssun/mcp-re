@@ -990,6 +990,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_crl_set_that_drops_an_issuer_does_not_succeed",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_re_read_or_newer_crl_set_succeeds",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_crl_without_a_crl_number_produces_no_evidence",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::succession::tests::numbers_order_numerically_not_lexically",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::succession::tests::an_empty_prior_admits_anything",
 ]
 
 # ---------------------------------------------------------------------------------------

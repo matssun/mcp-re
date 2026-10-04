@@ -205,7 +205,8 @@ fn verify_with(
     set: &TrustedIssuerSet,
     now: i64,
 ) -> Result<DelegatedOutcome, HttpProfileError> {
-    verify_delegated_response(resp, set, &expectation(signed), &policy(), now).map(|v| v.outcome)
+    verify_delegated_response(resp, set, &expectation(signed), &policy(), now)
+        .map(|v| v.outcome().clone())
 }
 
 // --- Category 1: ROOT ROTATION (trust-anchor rotation) -----------------------
@@ -388,7 +389,7 @@ fn a_revoked_root_fails_closed_and_the_split_seam_is_gone() {
     let recomposed = CompositeResponseTrust::new(&resolve, &knows_nothing);
     assert_eq!(
         verify_delegated_response(&resp_a, &recomposed, &expectation(&signed), &policy(), NOW)
-            .map(|v| v.outcome)
+            .map(|v| v.outcome().clone())
             .unwrap_err(),
         HttpProfileError::DelegationIssuerUntrusted,
         "the split seam cannot be rebuilt through the remaining public API"
