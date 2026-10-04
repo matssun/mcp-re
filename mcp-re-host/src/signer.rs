@@ -165,12 +165,35 @@ mod tests {
 
     /// The identity is readable and the key is not. There is no accessor returning the
     /// `SigningKey` or a detached signature, so code holding a `HostSigner` can ask for a
-    /// signed request and can never forge one (ADR-MCPS-003 signing locus).
+    /// signed request and can never forge one (ADR-MCPS-003 signing locus). The absence is
+    /// read from this file's production source: the key field is private to the module, so
+    /// any export path has to be written here.
     #[test]
     fn the_identity_is_readable_and_the_key_is_not() {
         let host = host();
         assert_eq!(host.signer(), "did:example:agent");
         assert_eq!(host.key_id(), "k1");
+
+        let source = include_str!("signer.rs");
+        let (production, _) = source
+            .split_once("#[cfg(test)]")
+            .expect("the test region is present");
+        assert!(production.contains("\n    signing_key: SigningKey,\n"));
+        assert!(production.contains("pub fn sign_request("));
+        let exports_key = |text: &str| {
+            text.match_indices("->").any(|(at, _)| {
+                let tail = text.get(at..).unwrap_or("");
+                let end = tail.find(['{', ';']).unwrap_or(tail.len());
+                let ret = tail.get(..end).unwrap_or("");
+                ret.contains("SigningKey") || ret.contains("Signature")
+            })
+        };
+        assert!(exports_key("pub fn signing_key(&self) -> &SigningKey {"));
+        assert!(!exports_key("pub fn key_id(&self) -> &str {"));
+        assert!(
+            !exports_key(production),
+            "no HostSigner method may return the SigningKey or a detached signature"
+        );
     }
 
     /// A signed request names the SIGNER'S OWN key id, not one a caller supplied alongside
