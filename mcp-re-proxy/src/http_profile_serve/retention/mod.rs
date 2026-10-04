@@ -240,25 +240,6 @@ mod tests {
         );
     }
 
-    /// The three outcomes are three values, and only two of them mean the exchange is
-    /// accounted for.
-    ///
-    /// Stated as a control because the property that matters is exactly that `Failed` does
-    /// not fold into the safe side. A `bool` here — or a `Result` whose error a refusal path
-    /// discards — would make *the completion did not land* indistinguishable from *nothing
-    /// was owed*, and the surviving `DispatchCommitted` marker is the only evidence an
-    /// operator has that an exchange is unaccounted for.
-    #[test]
-    fn a_failed_completion_is_not_accounted_for_and_the_other_two_are() {
-        assert!(RetentionOutcome::Retained.is_accounted_for());
-        assert!(RetentionOutcome::NotConfigured.is_accounted_for());
-        assert!(
-            !RetentionOutcome::Failed.is_accounted_for(),
-            "a failed completion leaves the crossing standing; its marker is the true answer"
-        );
-        assert_ne!(RetentionOutcome::Retained, RetentionOutcome::NotConfigured);
-    }
-
     /// The two configurations state different things, and only the unconfigured one states
     /// that nothing is retained.
     ///

@@ -4499,7 +4499,7 @@ weakening = """
         true
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::retention::tests::a_failed_completion_is_not_accounted_for_and_the_other_two_are",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::retention::outcome::tests::a_failed_completion_is_not_accounted_for_and_the_other_two_are",
 ]
 
 [[probe]]
