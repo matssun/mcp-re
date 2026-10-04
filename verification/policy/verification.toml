@@ -4382,6 +4382,7 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::expired_manifest_fails_closed",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_manifests_deadline_travels_with_the_anchors_it_published",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::overlap_and_revocation_round_trip_through_the_manifest",
+  "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::a_manifest_naming_one_issuer_twice_is_refused",
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::anchors::tests::a_revoked_issuer_resolves_nothing_even_while_listed_current",
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::anchors::tests::a_current_unrevoked_issuer_resolves_for_the_response_slot_only",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_signer_kid_is_covered_by_the_signature",

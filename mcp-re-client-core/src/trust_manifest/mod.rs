@@ -294,6 +294,9 @@ pub fn load_signed_manifest(
         });
     }
 
+    // A manifest names each root once; a repeat would let JSON order pick the effective anchor.
+    refuse_repeated_issuers(&signed.manifest)?;
+
     // 6. Build the trust-anchor set. (Roots verified-in only AFTER the signature +
     //    freshness + version gates above.)
     let mut set = TrustedIssuerSet::new();
@@ -362,6 +365,28 @@ pub fn load_signed_manifest_with_floor(
     )?;
     floor.record(loaded.version)?;
     Ok(loaded)
+}
+
+/// Refuse a manifest that lists one `issuer_kid` more than once across its current and
+/// retiring issuers.
+fn refuse_repeated_issuers(manifest: &TrustAnchorManifest) -> Result<(), TrustManifestError> {
+    let mut seen = std::collections::HashSet::<&str>::new();
+    let kids = manifest
+        .current_issuers
+        .iter()
+        .map(|i| i.issuer_kid.as_str())
+        .chain(
+            manifest
+                .retiring_issuers
+                .iter()
+                .map(|r| r.issuer_kid.as_str()),
+        );
+    for kid in kids {
+        if !seen.insert(kid) {
+            return Err(TrustManifestError::Malformed("repeated issuer_kid"));
+        }
+    }
+    Ok(())
 }
 
 /// Build the ROOT [`ResolvedActor`] (Response slot) a manifest issuer describes.
@@ -497,6 +522,39 @@ mod tests {
                 .resolve_root("root-A", m.expires_at + 1)
                 .is_none(),
             "an anchor from an expired manifest must not resolve"
+        );
+    }
+
+    #[test]
+    fn a_manifest_naming_one_issuer_twice_is_refused() {
+        let expected = Some(TrustManifestError::Malformed("repeated issuer_kid"));
+
+        let twice_current = manifest(
+            1,
+            vec![issuer("root-A", &root_a()), issuer("root-A", &root_b())],
+            vec![],
+            vec![],
+        );
+        let signed = sign_manifest(&twice_current, &org_key(), ORG_KID);
+        assert_eq!(
+            load_signed_manifest(&signed, org_resolver, PROFILE, 0, 5_000).err(),
+            expected
+        );
+
+        let retiring = RetiringIssuer {
+            issuer_kid: "root-A".into(),
+            public_key: root_b().public_key().to_b64url(),
+            role: "server".into(),
+            trust_domain: "example.com".into(),
+            subject: "did:example:issuer".into(),
+            valid_until: 6_000,
+        };
+        let current_and_retiring =
+            manifest(1, vec![issuer("root-A", &root_a())], vec![retiring], vec![]);
+        let signed = sign_manifest(&current_and_retiring, &org_key(), ORG_KID);
+        assert_eq!(
+            load_signed_manifest(&signed, org_resolver, PROFILE, 0, 5_000).err(),
+            expected
         );
     }
 
