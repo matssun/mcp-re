@@ -254,7 +254,7 @@ on:
       # `async_serve/`, because the per-request revocation verdict rules live here and the
       # request loop only calls them.
       - "mcp-re-proxy/src/client_revocation.rs"
-      - "mcp-re-proxy/src/client_revocation/build.rs"
+      - "mcp-re-proxy/src/client_revocation/index_build.rs"
       - "mcp-re-proxy/src/client_revocation/issuer_key.rs"
       - "mcp-re-proxy/src/client_revocation/shared.rs"
       - "mcp-re-proxy/src/client_revocation/verdict.rs"
@@ -646,7 +646,7 @@ on:
       # `async_serve/`, because the per-request revocation verdict rules live here and the
       # request loop only calls them.
       - "mcp-re-proxy/src/client_revocation.rs"
-      - "mcp-re-proxy/src/client_revocation/build.rs"
+      - "mcp-re-proxy/src/client_revocation/index_build.rs"
       - "mcp-re-proxy/src/client_revocation/issuer_key.rs"
       - "mcp-re-proxy/src/client_revocation/shared.rs"
       - "mcp-re-proxy/src/client_revocation/verdict.rs"

@@ -529,7 +529,7 @@ _PROXY_LIB_SRCS = [
     # consults on every request, since rustls consults the CRLs at the handshake alone.
     "src/client_crl_publication.rs",
     "src/client_revocation.rs",
-    "src/client_revocation/build.rs",
+    "src/client_revocation/index_build.rs",
     "src/client_revocation/issuer_key.rs",
     "src/client_revocation/shared.rs",
     "src/client_revocation/verdict.rs",

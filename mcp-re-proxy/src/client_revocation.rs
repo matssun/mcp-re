@@ -62,7 +62,7 @@ use self::issuer_key::CaKey;
 mod issuer_key;
 
 /// Building the index: parsing each CRL and authenticating it against the client CA keys.
-mod build;
+mod index_build;
 
 /// WHICH index a request reads: the cell a reload publishes into.
 mod shared;

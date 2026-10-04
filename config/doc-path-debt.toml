@@ -269,11 +269,6 @@ dead_tokens = 1
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/aws_kms_keysource.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/config_state/admission.rs"
 dead_tokens = 1
 status = "unreviewed"
@@ -314,11 +309,6 @@ dead_tokens = 1
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/config_state/mod.rs"
 dead_tokens = 1
 status = "unreviewed"
@@ -340,11 +330,6 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/validation/mod.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
 dead_tokens = 1
 status = "unreviewed"
 

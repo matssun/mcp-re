@@ -12092,7 +12092,7 @@ class = "V0"
 description = "WHAT THE PER-REQUEST CLIENT-REVOCATION INDEX ANSWERS ABOUT ONE CERTIFICATE, by its raw issuer `Name` DER and its raw serial: a listed serial is Revoked and an unlisted one under an in-force list is Good, with the two DER spellings of one serial normalised so a zero pad cannot miss a revocation; a CRL speaks only for its own issuer and says nothing about another CA's leaves; every CRL it carries was signed by a configured client CA key — a CRL no such key signed is refused at construction, and the entry is filed under that KEY and not under the issuer name the document asserts, so two CAs sharing a subject Name never answer for each other; several CRLs for one issuer union their serials and keep the EARLIEST nextUpdate, so a fresher sibling cannot hold a lapsed list in force; an issuer no in-force CRL covers is Unknown and Unknown is refused, with no parameter, field or policy object through which a caller could admit it; a CRL past its nextUpdate certifies nothing and its issuer's certificates become Unknown, while a revocation it already carries is still honoured; and an index carrying no CRLs at all admits everything, which is the one admission granted without a Good verdict. It says nothing about WHICH index a request reads, and nothing about what the handshake verifier does."
 paths = [
   "mcp-re-proxy/src/client_revocation.rs",
-  "mcp-re-proxy/src/client_revocation/build.rs",
+  "mcp-re-proxy/src/client_revocation/index_build.rs",
   "mcp-re-proxy/src/client_revocation/issuer_key.rs",
   "mcp-re-proxy/src/client_revocation/verdict.rs",
 ]
@@ -12124,7 +12124,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#client_revocation::tests::two_cas_sharing_a_name_never_answer_for_each_other",
   "//mcp-re-proxy:proxy_unit_test#client_revocation::verdict::tests::a_zero_pad_is_the_only_thing_normalisation_removes",
   "//mcp-re-proxy:proxy_unit_test#client_revocation::verdict::tests::the_three_verdicts_are_distinct",
-  "//mcp-re-proxy:proxy_unit_test#client_revocation::build::tests::no_crls_build_no_index_even_with_anchors",
+  "//mcp-re-proxy:proxy_unit_test#client_revocation::index_build::tests::no_crls_build_no_index_even_with_anchors",
   "//mcp-re-proxy:proxy_unit_test#client_revocation::issuer_key::tests::two_cas_with_one_name_are_two_keys",
   "//mcp-re-proxy:proxy_unit_test#client_revocation::issuer_key::tests::an_unreadable_key_or_certificate_issued_nothing",
 ]
