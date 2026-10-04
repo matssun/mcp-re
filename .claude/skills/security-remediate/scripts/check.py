@@ -59,6 +59,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -67,6 +68,7 @@ sys.path.insert(0, HERE)
 import bazel_gate  # noqa: E402
 import rust_gate  # noqa: E402
 import progress  # noqa: E402
+import writer_patch  # noqa: E402
 
 GATE_SCRIPT = os.path.join(HERE, "bazel_gate.py")
 PRESCAN_SCRIPT = os.path.join(HERE, "prescan.py")
@@ -127,6 +129,9 @@ def _dirty(paths: list[str]) -> list[str]:
 
 
 def cmd_pre(a) -> int:
+    # The tree this writer starts from, so its own diff — and nothing an earlier writer
+    # left uncommitted — is what a red gate reverts and what finalize commits.
+    writer_patch.snapshot(a.store, a.file)
     if a.file.endswith(".rs"):
         # No stored baseline for Rust: the lane starts on a tree batch_gate.py
         # measured green and every writer leaves it green or reverted. What `pre`
@@ -210,14 +215,23 @@ def _bazel(a, tree: str) -> dict:
             **({"stderr_tail": err} if v == "infra" and err else {})}
 
 
-def _revert(touched: list[str], work_dir: str) -> str:
-    """Save the change as a patch, then return the touched paths to HEAD.
+def _revert(touched: list[str], work_dir: str, store: str | None = None,
+            file: str | None = None) -> str:
+    """Save the change as a patch, then return the touched paths to where this writer
+    found them.
 
     A red change left in the tree makes the next writer's gate fail on it, and the
     lane's attribution — one writer, so a failure is that writer's — collapses. The
     patch keeps the work; the tree goes back to the state the next writer expects.
+
+    With a `pre` snapshot that state is the snapshot, not HEAD: earlier writers' accepted
+    but uncommitted hunks in a shared file survive. Without one (a direct call), HEAD.
     """
     patch = os.path.join(work_dir, "gate-failed-%s.patch" % _slug(",".join(touched)))
+    own = writer_patch.patch_path(store, file) if store and file else None
+    if own and writer_patch.restore(store, file, touched):
+        shutil.copyfile(own, patch)
+        return patch
     tracked = subprocess.run(["git", "ls-files", "--", *touched], capture_output=True,
                              text=True).stdout.split()
     with open(patch, "w", encoding="utf-8") as fh:
@@ -247,6 +261,7 @@ def cmd_post(a) -> int:
         counts="applied=%d,not_applied=%d,tests_added=%d" % (a.applied, a.not_applied, a.tests_added),
         note=(a.note or "")))
 
+    writer_patch.capture(a.store, a.file, touched)
     pre = _prescan(a, touched, related)
     parts: list[dict] = []
     if a.file.endswith(".rs"):
@@ -267,7 +282,7 @@ def cmd_post(a) -> int:
     reverted = None
     if verdict == "new-failures":
         if not a.keep_on_fail:
-            reverted = _revert(touched, a.work_dir)
+            reverted = _revert(touched, a.work_dir, a.store, a.file)
             note += "; reverted, patch %s" % reverted
         # The reviewer is skipped on a red tree, so the worker owns the terminal
         # event. Emitting nothing here is how two tick-1 files were reported lost.
