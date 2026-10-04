@@ -44,6 +44,12 @@ pub enum CrlFreshness {
     NoNextUpdate,
 }
 
+fn decode_crl(crl_der: &[u8]) -> Result<x509_cert::crl::CertificateList, TlsError> {
+    use der::Decode;
+    x509_cert::crl::CertificateList::from_der(crl_der)
+        .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))
+}
+
 /// Refuse a client CRL that omits `nextUpdate`.
 ///
 /// RFC 5280 §5.1.2.5 requires a conforming CRL issuer to include it, and every
@@ -53,7 +59,7 @@ pub enum CrlFreshness {
 /// so it is refused where it is read — at startup and on every reload — rather than
 /// admitted into a posture that says it bounds itself.
 pub fn crl_next_update_required(crl_der: &[u8], index: usize) -> Result<(), TlsError> {
-    if crl_freshness(crl_der, 0, 0)? == CrlFreshness::NoNextUpdate {
+    if decode_crl(crl_der)?.tbs_cert_list.next_update.is_none() {
         return Err(TlsError::Verifier(format!(
             "client CRL #{index} omits nextUpdate. It would never fall out of force, so a \
              reload that stops working (unreadable mount, dead reload thread) would leave \
@@ -77,10 +83,7 @@ pub fn crl_freshness(
     now_unix: i64,
     warn_window_secs: i64,
 ) -> Result<CrlFreshness, TlsError> {
-    use der::Decode;
-    use x509_cert::crl::CertificateList;
-    let crl = CertificateList::from_der(crl_der)
-        .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))?;
+    let crl = decode_crl(crl_der)?;
     let next_update = match crl.tbs_cert_list.next_update {
         Some(t) => t.to_unix_duration().as_secs() as i64,
         None => return Ok(CrlFreshness::NoNextUpdate),
@@ -128,10 +131,7 @@ pub struct CrlPosture {
 /// offline-testable. A malformed CRL is a hard error (fail closed), consistent
 /// with [`crl_freshness`] and the verifier build.
 pub fn crl_posture(crl_der: &[u8]) -> Result<CrlPosture, TlsError> {
-    use der::Decode;
-    use x509_cert::crl::CertificateList;
-    let crl = CertificateList::from_der(crl_der)
-        .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))?;
+    let crl = decode_crl(crl_der)?;
     let this_update = crl.tbs_cert_list.this_update.to_unix_duration().as_secs() as i64;
     let next_update_unix = crl
         .tbs_cert_list
@@ -146,10 +146,10 @@ pub fn crl_posture(crl_der: &[u8]) -> Result<CrlPosture, TlsError> {
 
 /// Load the configured offline client-certificate revocation lists (#3839) into
 /// the DER form rustls' `WebPkiClientVerifier` consumes. Each path may hold one or
-/// more CRLs in PEM (`-----BEGIN X509 CRL-----`) or a single raw DER CRL. Fails
-/// closed: a missing or malformed CRL file is a hard startup error (`Err`) rather
-/// than a silently-skipped revocation check. An empty `paths` yields an empty vec
-/// (revocation checking disabled — the pre-#3839 behavior).
+/// more CRLs in PEM (`-----BEGIN X509 CRL-----`) or a single raw DER CRL. Refuses an
+/// unreadable path, malformed PEM and an empty file; a non-PEM file is passed through
+/// as one DER CRL undecoded, and DER validity, `nextUpdate` and signature are refused
+/// by `ClientCrlEvidence::from_checked` (`crate::tls_plane::crl_evidence`).
 ///
 /// OFFLINE only: these bytes are read once at startup and never refreshed over the
 /// network. Online OCSP / CRL-distribution-point fetching is deliberately NOT done
@@ -310,5 +310,36 @@ mod client_crl_loading_tests {
         // The no-CRL path: empty input → empty vec (revocation disabled), no error.
         let crls = super::load_client_crls(&[]).expect("empty load");
         assert!(crls.is_empty());
+    }
+
+    fn load_fixture(name: &str, content: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+        let path = std::env::temp_dir().join(format!("mcp-re-crl-{name}-{}", std::process::id()));
+        std::fs::write(&path, content).expect("write fixture");
+        let result = super::load_client_crls(&[path.to_string_lossy().into_owned()]);
+        std::fs::remove_file(&path).expect("remove fixture");
+        result.map(|crls| crls.into_iter().map(|c| c.as_ref().to_vec()).collect())
+    }
+
+    #[test]
+    fn an_empty_client_crl_file_fails_closed() {
+        let err = load_fixture("empty", b"").unwrap_err();
+        assert!(err.contains("file is empty"), "got: {err}");
+    }
+
+    #[test]
+    fn a_malformed_pem_client_crl_fails_closed() {
+        let err = load_fixture(
+            "badpem",
+            b"-----BEGIN X509 CRL-----\n!!!not-base64!!!\n-----END X509 CRL-----\n",
+        )
+        .unwrap_err();
+        assert!(err.contains("malformed PEM"), "got: {err}");
+    }
+
+    #[test]
+    fn a_non_pem_client_crl_is_passed_through_as_one_der() {
+        let der = super::test_support::crl_with_next_update().as_ref().to_vec();
+        let crls = load_fixture("der", &der).expect("load");
+        assert_eq!(crls, vec![der]);
     }
 }

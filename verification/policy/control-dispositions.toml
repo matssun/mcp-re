@@ -14164,3 +14164,27 @@ control = "src/lib.rs#aws_sts::tests::an_empty_environment_credential_is_refused
 decision = "new-proposition"
 proposition = "NP-240"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20220"
+project = "mcp-re-proxy"
+control = "src/lib.rs#client_crl_publication::client_crl_loading_tests::an_empty_client_crl_file_fails_closed"
+decision = "new-proposition"
+proposition = "NP-126"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20221"
+project = "mcp-re-proxy"
+control = "src/lib.rs#client_crl_publication::client_crl_loading_tests::a_malformed_pem_client_crl_fails_closed"
+decision = "new-proposition"
+proposition = "NP-126"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20222"
+project = "mcp-re-proxy"
+control = "src/lib.rs#client_crl_publication::client_crl_loading_tests::a_non_pem_client_crl_is_passed_through_as_one_der"
+decision = "new-proposition"
+proposition = "NP-126"
+recorded = "2026-10-04"
