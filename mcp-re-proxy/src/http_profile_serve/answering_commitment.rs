@@ -166,7 +166,7 @@ impl HttpProfileProxy {
         // itself would have used, rather than re-asking a signer that may have been
         // retired in between and degrading to an unsigned error.
         ex.key = Some(window.shared());
-        let retirement = self.continuations.retire(prep.answer_key()).await;
+        let retirement = self.continuations.retire(prep).await;
         self.observe_retirement(ex, progress, retirement)?;
         progress.advance(ExchangeEvent::ContinuationRetired);
         Ok(window)

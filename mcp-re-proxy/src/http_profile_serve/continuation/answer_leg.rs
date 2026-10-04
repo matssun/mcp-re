@@ -167,7 +167,7 @@ impl ContinuationPrep {
     }
 
     /// The key this exchange's approval is retired under, when it answers one.
-    pub(in crate::http_profile_serve) fn answer_key(&self) -> Option<&String> {
+    pub(super) fn answer_key(&self) -> Option<&String> {
         self.answer_key.as_ref()
     }
 }

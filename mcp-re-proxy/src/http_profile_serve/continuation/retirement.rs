@@ -18,6 +18,7 @@
 //! which holds the continuation machine — decides both the refusal and what the exchange
 //! may claim. A stage that refused here would be stating a retry contract it cannot know.
 
+use super::answer_leg::ContinuationPrep;
 use super::ContinuationPlane;
 
 impl ContinuationPlane {
@@ -35,14 +36,18 @@ impl ContinuationPlane {
     /// second, and a stage that refused without it would be stating a retry contract it
     /// cannot know.
     ///
+    /// The key is the one [`ContinuationPlane::prepare`] derived from the verifier-resolved
+    /// actor, and taking the prep by value makes one retirement per prepared leg: no caller
+    /// can name a key of its own.
+    ///
     /// A store-less deployment answering nothing is [`Retirement::NotInvolved`]; a
     /// store-less deployment answering SOMETHING never arrives, because `prepare` refused
     /// it.
     pub(in crate::http_profile_serve) async fn retire(
         &self,
-        answer_key: Option<&String>,
+        prep: ContinuationPrep,
     ) -> Retirement {
-        let (Some(store), Some(key)) = (&self.store, answer_key) else {
+        let (Some(store), Some(key)) = (&self.store, prep.answer_key()) else {
             return Retirement::NotInvolved;
         };
         match store.consume(key).await {
@@ -87,7 +92,33 @@ mod tests {
     use crate::continuation_store::AsyncContinuationStore;
     use crate::continuation_store::ContinuationStoreError;
     use crate::continuation_store::RetainedHandles;
+    use crate::http_profile_serve::continuation::answer_leg::tests::{http_request, verified_as};
+    use crate::http_profile_serve::Exchange;
     use std::sync::Arc;
+
+    /// The prep `prepare` yields for a request that answers `s-1`, or one that answers
+    /// nothing when `answering` is false.
+    async fn prepared(plane: &ContinuationPlane, answering: bool) -> ContinuationPrep {
+        let mut verified = verified_as("did:example:host-a", "key-1");
+        if !answering {
+            verified.request_block.continuation = None;
+        }
+        let actor_id = verified.resolved_actor().actor_id();
+        let http_req = http_request(br#"{"params":{"requestState":"s-1"}}"#);
+        let ex = Exchange {
+            http_req: &http_req,
+            verified: &verified,
+            actor_id: &actor_id,
+            now: 1,
+            key: None,
+            verdicts: Default::default(),
+        };
+        let established = plane
+            .prepare(&ex, "aud")
+            .await
+            .expect("a store miss or an absent continuation is not a refusal");
+        crate::exchange_state::ExchangeProgress::new().establish(established)
+    }
 
     #[tokio::test]
     async fn a_request_that_answers_nothing_retires_nothing() {
@@ -97,14 +128,14 @@ mod tests {
         // The narrow reading, and it is narrow because `prepare` now refuses the case the
         // old wording also covered: a deployment holding no capability while the request
         // needs one never reaches a retirement at all.
+        let disabled = ContinuationPlane::disabled();
         assert_eq!(
-            ContinuationPlane::disabled().retire(None).await,
+            disabled.retire(prepared(&disabled, false).await).await,
             Retirement::NotInvolved
         );
+        let wired = ContinuationPlane::wired(Arc::new(UnansweringStore), 300);
         assert_eq!(
-            ContinuationPlane::wired(Arc::new(UnansweringStore), 300)
-                .retire(None)
-                .await,
+            wired.retire(prepared(&wired, false).await).await,
             Retirement::NotInvolved,
             "a wired plane answering nothing has nothing at stake either"
         );
@@ -118,14 +149,19 @@ mod tests {
         // answer at all.
         let store = Arc::new(crate::continuation_store::InMemoryContinuationStore::new());
         let plane = ContinuationPlane::wired(store.clone(), 300);
-        let key = continuation_key("aud", "actor-1", b"s-1");
+        let actor_id = verified_as("did:example:host-a", "key-1")
+            .resolved_actor()
+            .actor_id();
+        let key = continuation_key("aud", &actor_id, b"s-1");
         store
             .create(&key, &RetainedHandles::over(b"req", b"resp"), 300)
             .await
             .expect("the in-memory tier accepts an open leg");
 
-        assert_eq!(plane.retire(Some(&key)).await, Retirement::Retired);
-        assert_eq!(plane.retire(Some(&key)).await, Retirement::AlreadyAnswered);
+        let first = prepared(&plane, true).await;
+        let second = prepared(&plane, true).await;
+        assert_eq!(plane.retire(first).await, Retirement::Retired);
+        assert_eq!(plane.retire(second).await, Retirement::AlreadyAnswered);
     }
 
     /// The fourth outcome is carried, not collapsed into one of the other three.
@@ -139,7 +175,7 @@ mod tests {
     async fn a_tier_that_does_not_answer_the_spend_is_its_own_outcome() {
         let plane = ContinuationPlane::wired(Arc::new(UnansweringStore), 300);
         assert_eq!(
-            plane.retire(Some(&"k-1".to_owned())).await,
+            plane.retire(prepared(&plane, true).await).await,
             Retirement::Indeterminate
         );
     }
