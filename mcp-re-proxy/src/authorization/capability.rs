@@ -67,6 +67,14 @@ pub(crate) fn evaluator(
         scope_name(enforced.accepted_scope()),
         enforced.max_decision_age_secs(),
     );
+    let max_decision_age = i64::try_from(enforced.max_decision_age_secs().get()).map_err(|_| {
+        format!(
+            "--authz-max-decision-age-secs {} exceeds the largest staleness bound the decision \
+             verifier can enforce ({}s); refusing to start rather than accept decisions of any age",
+            enforced.max_decision_age_secs(),
+            i64::MAX
+        )
+    })?;
     let policy = PdpDecisionPolicy {
         resolve_authority: Arc::new(move |kid: &str| issuers.get(kid).cloned()),
         accepted_scope: enforced.accepted_scope(),
@@ -76,10 +84,10 @@ pub(crate) fn evaluator(
             // it does the RFC 9421 freshness gate. Reusing it keeps a deployment from
             // agreeing with a peer's clock on the request and disagreeing on the decision.
             max_clock_skew,
-            // Saturating rather than fallible: layer A narrowed the bound to a positive
-            // `i64` before it became a `NonZeroU64`, so the conversion back cannot fail.
-            max_decision_age: i64::try_from(enforced.max_decision_age_secs().get())
-                .unwrap_or(i64::MAX),
+            // The owner's bound is a `NonZeroU64` and the verifier reads an `i64`, so a
+            // bound the verifier cannot represent refuses startup rather than widening to
+            // unbounded.
+            max_decision_age,
         },
     };
     let evaluator = PdpDecisionEvaluator::new(
