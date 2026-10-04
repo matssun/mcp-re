@@ -249,9 +249,10 @@ impl TrustPlane {
         // tier line itself: as a separate line further down it was routinely read as being
         // about something else, and the tier line was quoted on its own.
         eprintln!(
-            "mcp-re-proxy: {} store-change-cadence={}",
+            "mcp-re-proxy: {} store-change-cadence={}{}",
             plan.revocation().tier().startup_audit_line("trust-store"),
-            store_change_cadence(plan.reload())
+            store_change_cadence(plan.reload()),
+            window_policy::long_window_advisory(&plan.revocation().tier()).unwrap_or_default()
         );
         // ADR-MCPS-021 Axis 2: APPLY the declared tier to the resolver so the runtime
         // behavior actually matches the surfaced guarantee (Tier 1 bounds cached active

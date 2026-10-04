@@ -15172,3 +15172,11 @@ control = "src/lib.rs#http_profile_serve::inner_plane::tests::an_unusable_answer
 decision = "new-proposition"
 proposition = "NP-130"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20310"
+project = "mcp-re-proxy"
+control = "src/lib.rs#trust_plane::window_policy::tests::long_window_advisory_flags_a_window_past_the_recommended_maximum"
+decision = "new-proposition"
+proposition = "NP-179"
+recorded = "2026-10-04"

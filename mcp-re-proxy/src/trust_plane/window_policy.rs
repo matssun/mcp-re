@@ -6,15 +6,12 @@
 //! that a window longer than five minutes is a long revocation exposure and should be
 //! flagged, and that a request must use the strictest applicable one.
 //!
-//! # Neither rule is wired, and they are unwired for different reasons
+//! # One rule is wired; the other has no input
 //!
-//! This is the honest state of the module and it is written here rather than discovered by
-//! the next reader:
-//!
-//! * [`t_exceeds_recommended_max`] has **no caller**. The advisory exists and nothing
-//!   consults it, so no deployment is warned about a long window. What the operator IS told
-//!   is the actual window, on the tier's `startup_audit_line`; what is missing is the
-//!   annotation that it is longer than recommended.
+//! * [`t_exceeds_recommended_max`] backs [`long_window_advisory`], which the startup path
+//!   appends to the tier's `startup_audit_line`, so a window past the recommended maximum
+//!   is flagged on the same line that states the window. The window is only flagged, never
+//!   capped.
 //! * [`strictest_applicable_t`] has **no input**, and after ADR-MCPRE-067 Phase 6 the type
 //!   system says so: [`ApplicableClassWindows`] has one production constructor and it is
 //!   empty, so the rule is the identity BY TYPE. Two things would have to arrive before it
@@ -22,32 +19,39 @@
 //!   deployment input that states a window per class. Adding the second alone would be
 //!   fabricating configuration to activate dormant code.
 //!
-//! Both are retained rather than deleted, and deliberately so: they are ADR-MCPS-021
-//! behaviours that were never connected, not values that stopped being needed. Deleting
-//! them would erase the only record in the tree that the requirements exist, and a
-//! zero-caller count is evidence about the WIRING, not about the rule.
+//! It is retained rather than deleted: it is an ADR-MCPS-021 behaviour that was never
+//! connected, not a value that stopped being needed. Deleting it would erase the only
+//! record in the tree that the requirement exists, and a zero-caller count is evidence
+//! about the WIRING, not about the rule.
 
 /// The maximum recommended trust-propagation window (seconds). ADR-MCPS-021 warns
 /// when a configured `T` exceeds 5 minutes (a long revocation exposure window);
 /// strict/production mode MAY cap `T` at this value unless explicitly overridden.
 ///
-/// **NOT WIRED.** Nothing on the startup path consults it, so no deployment is warned
-/// about a long window today. Retained deliberately rather than deleted: this is an
-/// ADR-MCPS-021 behaviour that has never been connected, not a value that stopped being
-/// needed, and deleting it would erase the only record that the advisory exists. What the
-/// operator IS told is the actual window, on the tier's `startup_audit_line`; what is
-/// missing is the annotation that the window is longer than recommended.
-#[allow(dead_code)]
+/// [`long_window_advisory`] appends the advisory to the tier's startup line; the window is
+/// flagged, not capped.
 pub(super) const RECOMMENDED_MAX_T_SECS: i64 = 300;
 
 /// Whether a configured `T` exceeds the recommended maximum (→ the proxy warns;
 /// strict mode MAY cap). A non-positive `T` (live-check / no caching) never warns.
-///
-/// **NOT WIRED** — see [`RECOMMENDED_MAX_T_SECS`]. Its own tests pin the predicate; what
-/// no test can pin is a caller that does not exist.
-#[allow(dead_code)]
 pub(super) fn t_exceeds_recommended_max(t_secs: i64) -> bool {
     t_secs > RECOMMENDED_MAX_T_SECS
+}
+
+/// The startup-line qualifier for a tier whose window exceeds the recommended maximum, with
+/// a leading space so it appends to the tier line. `Live` has no window and never warns.
+pub(super) fn long_window_advisory(tier: &crate::RevocationTier) -> Option<String> {
+    let t_secs = match tier {
+        crate::RevocationTier::Live => return None,
+        crate::RevocationTier::BoundedCache { t_secs } | crate::RevocationTier::Push { t_secs } => {
+            *t_secs
+        }
+    };
+    t_exceeds_recommended_max(t_secs).then(|| {
+        format!(
+            " window-advisory=\"T {t_secs}s exceeds the ADR-MCPS-021 recommended maximum {RECOMMENDED_MAX_T_SECS}s: a long revocation exposure window\""
+        )
+    })
 }
 
 /// Select the **strictest applicable** trust-propagation window (ADR-MCPS-021:
@@ -60,8 +64,7 @@ pub(super) fn t_exceeds_recommended_max(t_secs: i64) -> bool {
 /// non-negative. The result is the smallest — i.e. the tightest revocation
 /// exposure — of the applicable windows.
 ///
-/// **NOT WIRED, and for a different reason from the two above.** Those are an advisory with
-/// no caller; this is a capability with no INPUT. What it is missing is named by
+/// **NOT WIRED.** The window advisory is wired; this is a capability with no INPUT. What it is missing is named by
 /// [`ApplicableClassWindows`], which production can only construct empty — so this function
 /// is the identity in production BY TYPE rather than by a comment saying so.
 #[allow(dead_code)]
@@ -162,5 +165,23 @@ mod tests {
         assert!(!t_exceeds_recommended_max(
             super::super::trust_cache::DEFAULT_T_SECS
         ));
+    }
+
+    #[test]
+    fn long_window_advisory_flags_a_window_past_the_recommended_maximum() {
+        use crate::RevocationTier::{BoundedCache, Live, Push};
+        assert_eq!(
+            long_window_advisory(&BoundedCache {
+                t_secs: RECOMMENDED_MAX_T_SECS
+            }),
+            None
+        );
+        let long = long_window_advisory(&BoundedCache { t_secs: 86400 }).expect("flagged");
+        assert!(long.contains("86400s") && long.contains("300s"));
+        assert!(long_window_advisory(&Push {
+            t_secs: RECOMMENDED_MAX_T_SECS + 1
+        })
+        .is_some());
+        assert_eq!(long_window_advisory(&Live), None);
     }
 }
