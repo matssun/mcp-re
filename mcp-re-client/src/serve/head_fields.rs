@@ -31,6 +31,25 @@ pub(super) struct HeadFields<'a> {
     content_type: Option<&'a str>,
 }
 
+/// One head line as a field: `None` for a line that is not one, a refusal for a line a
+/// front parser may read differently.
+///
+/// An obs-fold continuation (leading space or tab) and whitespace between the field name and
+/// the colon are the Content-Length smuggling class, so both are refused rather than read;
+/// a continuation is refused whether or not it has a colon.
+fn field_line(line: &str) -> Result<Option<(&str, &str)>, u16> {
+    if line.starts_with([' ', '\t']) {
+        return Err(400);
+    }
+    let Some((name, value)) = line.split_once(':') else {
+        return Ok(None);
+    };
+    if name.contains([' ', '\t']) {
+        return Err(400);
+    }
+    Ok(Some((name, value.trim())))
+}
+
 impl<'a> HeadFields<'a> {
     pub(super) fn read(lines: impl Iterator<Item = &'a str>) -> Result<Self, u16> {
         let mut content_length: Option<usize> = None;
@@ -38,19 +57,9 @@ impl<'a> HeadFields<'a> {
         let mut host: Option<&str> = None;
         let mut content_type: Option<&str> = None;
         for line in lines {
-            // An obs-fold continuation is a field a front parser may read differently:
-            // the Content-Length smuggling class. Refused whether or not it has a colon.
-            if line.starts_with([' ', '\t']) {
-                return Err(400);
-            }
-            let Some((name, value)) = line.split_once(':') else {
+            let Some((name, value)) = field_line(line)? else {
                 continue;
             };
-            // Whitespace between the field name and the colon is the same class.
-            if name.contains([' ', '\t']) {
-                return Err(400);
-            }
-            let value = value.trim();
             if name.eq_ignore_ascii_case("content-length") {
                 // A repeated Content-Length is a request-smuggling primitive, not a
                 // formatting quirk: two lengths let a reader and a writer disagree about
