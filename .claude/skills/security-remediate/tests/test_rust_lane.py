@@ -213,6 +213,21 @@ def test_rust_gate_rustfmt_blames_only_touched_files() -> None:
     print("  rust gate: a rustfmt diff in the touched file is blamed; elsewhere or silent = infra  OK")
 
 
+def test_every_rust_gate_part_has_a_journal_line() -> None:
+    """check.py journals one line per part. A part the summary does not name fell through to
+    the Python-tree branch and crashed on `new_failures` — every writer's gate event was lost
+    and a whole batch was rejected for missing evidence."""
+    parts = [{"gate": "clippy", "verdict": "ok"},
+             {"gate": "rustfmt", "verdict": "new-failures", "unformatted": ["alpha/src/keys.rs"]},
+             {"gate": "module-size", "verdict": "ok"},
+             {"gate": "test", "target": "unit", "verdict": "ok", "ran": 3},
+             {"gate": "targets", "verdict": "infra", "why": "no target"}]
+    lines = [check.gate_summary(p) for p in parts]
+    assert lines[1] == "rustfmt new-failures — ['alpha/src/keys.rs']", lines
+    assert check.gate_summary({"gate": "bazel", "tree": "t", "verdict": "ok"}) == "bazel t ok"
+    print("  check: every Rust gate part, rustfmt included, journals a line  OK")
+
+
 def test_revert_on_fail_restores_tree() -> None:
     with tempfile.TemporaryDirectory() as td:
         _write(td, "a.rs", "fn a() {}\n")
