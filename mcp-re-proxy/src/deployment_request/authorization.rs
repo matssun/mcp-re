@@ -58,6 +58,7 @@ impl AuthorizationRequest {
 mod tests {
     use super::AuthorizationRequest;
     use super::AuthzKind;
+    use mcp_re_http_profile::pdp_decision::DecisionScope;
 
     #[test]
     fn the_off_request_supplies_no_parameter_any_machine_could_dangle() {
@@ -70,8 +71,18 @@ mod tests {
 
     #[test]
     fn a_scope_beside_off_is_representable_because_refusing_it_is_not_this_types_job() {
-        let mut request = AuthorizationRequest::off();
-        request.decision_scope = Some(mcp_re_http_profile::pdp_decision::DecisionScope::Principal);
-        assert_eq!(request.kind, AuthzKind::Off);
+        // The refusal half is witnessed by
+        // `config_state::authorization::tests::a_scope_with_no_authority_installed_is_refused_rather_than_ignored`.
+        let request = AuthorizationRequest {
+            kind: AuthzKind::Off,
+            decision_scope: Some(DecisionScope::Principal),
+            max_decision_age_secs: None,
+            revocation_list_paths: Vec::new(),
+        };
+        assert_ne!(
+            request,
+            AuthorizationRequest::off(),
+            "the mistake is carried to the boundary rather than normalised away"
+        );
     }
 }
