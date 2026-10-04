@@ -817,7 +817,7 @@ mod tests {
         let peak = AtomicUsize::new(0);
 
         std::thread::scope(|scope| {
-            for _ in 0..TLS_SESSION_POOL_SIZE {
+            for _ in 0..TLS_SESSION_POOL_SIZE.get() {
                 scope.spawn(|| {
                     pool.with_session(&factory, |_session| {
                         let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
@@ -834,7 +834,7 @@ mod tests {
 
         assert_eq!(
             peak.load(Ordering::SeqCst),
-            TLS_SESSION_POOL_SIZE,
+            TLS_SESSION_POOL_SIZE.get(),
             "handshake signatures must overlap; one session serializes them all"
         );
     }
@@ -849,7 +849,7 @@ mod tests {
         let pool: SessionPool<FakeSession> = SessionPool::new(TLS_SESSION_POOL_SIZE);
 
         let mut generations = Vec::new();
-        for _ in 0..TLS_SESSION_POOL_SIZE * 10 {
+        for _ in 0..TLS_SESSION_POOL_SIZE.get() * 10 {
             generations.push(
                 pool.with_session(&factory, |session| {
                     Ok::<u32, SessionOpError>(session.generation)
@@ -860,13 +860,13 @@ mod tests {
 
         assert_eq!(
             factory.logins.load(std::sync::atomic::Ordering::SeqCst) as usize,
-            TLS_SESSION_POOL_SIZE,
+            TLS_SESSION_POOL_SIZE.get(),
             "the pool must log each of its sessions in ONCE, not once per operation"
         );
         let distinct: std::collections::BTreeSet<u32> = generations.iter().copied().collect();
         assert_eq!(
             distinct.len(),
-            TLS_SESSION_POOL_SIZE,
+            TLS_SESSION_POOL_SIZE.get(),
             "every session in the pool must be used, got {generations:?}"
         );
     }
