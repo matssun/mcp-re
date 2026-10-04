@@ -514,6 +514,33 @@ consequence = "medium"
 root_relationship = "Beside http_profile.carrier_verdict_projection: the projection is stated there, the pre-projection classification here."
 record = "docs/architecture/control-dispositions.md#np-246"
 
+[[proposition]]
+id = "NP-247"
+title = "Every MCP-RE JSON-RPC error envelope carries the variant's frozen token in all three positions, under code -31000, bound to the request id"
+carrier = "mcp-re-core/src/wire.rs (json_rpc_error_object)"
+likely_owner = "none. core.verification_taxonomy owns the frozen token rendering but its paths are error.rs only."
+consequence = "medium"
+root_relationship = "Beside core.verification_taxonomy: that unit owns token rendering, this owns the envelope placement."
+record = "docs/architecture/control-dispositions.md#np-247"
+
+[[proposition]]
+id = "NP-248"
+title = "The assembled client gives every route the one trust-anchor snapshot and re-validates a handed-in configuration"
+carrier = "mcp-re-client/src/lib.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-248"
+
+[[proposition]]
+id = "NP-249"
+title = "A client signing-key seed is refused unless it decodes from Base64URL to exactly 32 bytes"
+carrier = "mcp-re-client/src/lib.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-249"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14369,4 +14396,52 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#retained_evidence::store::tests::stage_at_refuses_a_path_outside_the_archive_root"
 decision = "new-proposition"
 proposition = "NP-136"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20236"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::ureq_exchange::tests::a_request_outside_the_vetted_destination_never_leaves"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20237"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::ureq_exchange::tests::an_answer_over_the_bound_is_refused_not_buffered"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20238"
+project = "mcp-re-core"
+control = "src/lib.rs#wire::tests::every_variant_renders_its_frozen_token_in_message_mcp_re_error_and_details"
+decision = "new-proposition"
+proposition = "NP-247"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20239"
+project = "mcp-re-core"
+control = "src/lib.rs#wire::tests::a_transport_binding_refusal_is_bound_to_the_request_id_and_is_not_retryable"
+decision = "new-proposition"
+proposition = "NP-247"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20240"
+project = "mcp-re-client"
+control = "src/lib.rs#tests::build_gives_every_route_the_one_snapshot_and_revalidates_a_handed_in_config"
+decision = "new-proposition"
+proposition = "NP-248"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20241"
+project = "mcp-re-client"
+control = "src/lib.rs#tests::a_signing_key_seed_must_decode_to_exactly_32_bytes"
+decision = "new-proposition"
+proposition = "NP-249"
 recorded = "2026-10-04"

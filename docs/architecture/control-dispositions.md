@@ -1535,13 +1535,14 @@ a KMS endpoint (NP-027), one product step out.
 ## NP-042 — a statement is registered only against a receipt about itself
 
 **Controls:** `auditor/registration/capability.rs` (7),
-`registration/ureq_exchange.rs` (3), `registration/exchange.rs` (1).
+`registration/ureq_exchange.rs` (5), `registration/exchange.rs` (1).
 **Statement.** *A verifying receipt about THIS statement, from a pinned log, produces a
 registered statement; an answer that is not a receipt, a receipt about another statement,
 and a receipt from an unpinned log are each refused, and an artifact carrying another statement refuses the receipt; an attached receipt carries the protocol that established it; a mechanism refusal is carried through
 with its certainty rather than flattened; and the exchange carries the body verbatim across
-the socket, refuses a disallowed scheme with no transport at all, and reads a header
-case-insensitively taking the first.*
+the socket, refuses a disallowed scheme with no transport at all, refuses a request not
+addressed under the vetted destination before connecting, refuses an answer over its stated
+size bound, and reads a header case-insensitively taking the first.*
 **If false.** The auditor records a registration that a transparency service never made, or
 made about something else — which is the whole of what a transparency claim is worth. The
 "carried through with its certainty" clause is the one this repository has ruled on before:
@@ -4571,3 +4572,36 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `medium`.
 **Root relationship.** Beside http_profile.carrier_verdict_projection: the projection is stated there, the pre-projection classification here.
 **Recorded:** 2026-10-04, round-12 remediation of message.rs.
+
+## NP-247 — every MCP-RE JSON-RPC error envelope carries the variant's frozen token in all three positions, under code -31000, bound to the request id
+
+**Controls:** `mcp-re-core` `lib#wire::tests::every_variant_renders_its_frozen_token_in_message_mcp_re_error_and_details`, `lib#wire::tests::a_transport_binding_refusal_is_bound_to_the_request_id_and_is_not_retryable`.
+**Carrier:** `mcp-re-core/src/wire.rs` (json_rpc_error_object).
+**Statement.** *json_rpc_error_object renders every variant's frozen wire token as error.message, data.mcp_re_error and data.details under code -31000, echoes the request id exactly, and marks the refusal not retryable.*
+**If false.** A client keys retry or diagnosis off a token that is missing from one position, or a refusal is attributed to the wrong request.
+**Likely owner:** none. core.verification_taxonomy owns the frozen token rendering but its paths are error.rs only.
+**Severity:** `medium`.
+**Root relationship.** Beside core.verification_taxonomy: that unit owns token rendering, and this proposition covers the envelope placement.
+**Recorded:** 2026-10-04, round-12 remediation of wire.rs.
+
+## NP-248 — the assembled client gives every route the one trust-anchor snapshot and re-validates a handed-in configuration
+
+**Controls:** `mcp-re-client` `lib#tests::build_gives_every_route_the_one_snapshot_and_revalidates_a_handed_in_config`.
+**Carrier:** `mcp-re-client/src/lib.rs`.
+**Statement.** *build hands every route the one trust-anchor snapshot the refresher publishes into, and re-validates a configuration handed in as a struct before using it.*
+**If false.** A published revocation reaches some routes and not others, or a constructed configuration reaches the signing pipeline unchecked.
+**Likely owner:** none. `mcp-re-client/src/lib.rs` is in no unit's `paths` and is listed in
+`config/unit-closure-exclusions.toml`.
+**Root relationship.** A premise of the units above it.
+**Severity:** `high`.
+
+## NP-249 — a client signing-key seed is refused unless it decodes from Base64URL to exactly 32 bytes
+
+**Controls:** `mcp-re-client` `lib#tests::a_signing_key_seed_must_decode_to_exactly_32_bytes`.
+**Carrier:** `mcp-re-client/src/lib.rs`.
+**Statement.** *read_signing_key refuses a seed that is not Base64URL text or does not decode to exactly 32 bytes.*
+**If false.** The client signs under an identity derived from malformed key material, or panics on a short seed.
+**Likely owner:** none. `mcp-re-client/src/lib.rs` is in no unit's `paths` and is listed in
+`config/unit-closure-exclusions.toml`.
+**Root relationship.** A premise of the units above it.
+**Severity:** `high`.

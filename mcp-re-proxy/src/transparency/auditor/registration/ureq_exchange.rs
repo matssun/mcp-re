@@ -18,6 +18,9 @@
 //! responder or a KMS endpoint, and inventing a parallel one would mean two answers to
 //! *where may this process connect*.
 //!
+//! Every request's URL must sit under the vetted base (equal to it, or beneath it at a
+//! `/` boundary), and one that does not is refused before any connection.
+//!
 //! Redirects are refused by that agent, for every provenance. The first URL is the only
 //! one any guard saw.
 
@@ -28,6 +31,10 @@ use crate::outbound_fetch::VettedDestination;
 use super::exchange::HttpExchange;
 use super::exchange::HttpRequest;
 use super::exchange::HttpResponse;
+
+/// Upper bound on an answer body. A COSE receipt or a capsule-anchor JSON document is
+/// kilobytes; nothing this subtree reads needs more.
+const MAX_ANSWER_BYTES: u64 = 1024 * 1024;
 
 /// A blocking HTTP transport over the workspace's outbound-network policy.
 pub struct UreqExchange {
@@ -50,6 +57,15 @@ impl UreqExchange {
 
 impl HttpExchange for UreqExchange {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, String> {
+        let base = self.service.url().trim_end_matches('/');
+        let beneath_base = request.url == base
+            || request
+                .url
+                .strip_prefix(base)
+                .is_some_and(|rest| rest.starts_with('/'));
+        if !beneath_base {
+            return Err("the request is not addressed under the vetted service destination".to_owned());
+        }
         let agent = self.service.agent(self.timeout);
         let mut call = agent
             .request(request.method, &request.url)
@@ -86,8 +102,16 @@ fn read(response: ureq::Response) -> Result<HttpResponse, String> {
         })
         .collect();
     let mut body = Vec::new();
-    std::io::Read::read_to_end(&mut response.into_reader(), &mut body)
-        .map_err(|e| format!("the response body could not be read: {e}"))?;
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(response.into_reader(), MAX_ANSWER_BYTES + 1),
+        &mut body,
+    )
+    .map_err(|e| format!("the response body could not be read: {e}"))?;
+    if u64::try_from(body.len()).map_or(true, |len| len > MAX_ANSWER_BYTES) {
+        return Err(format!(
+            "the response body exceeds the {MAX_ANSWER_BYTES}-byte bound"
+        ));
+    }
     Ok(HttpResponse {
         status,
         headers,
@@ -215,5 +239,81 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.header("content-type"), Some("application/cose"));
         assert_eq!(response.body, b"\xd2\x84\x43\xa1\x01");
+    }
+
+    /// A request whose URL is not under the vetted base never reaches a socket.
+    #[test]
+    fn a_request_outside_the_vetted_destination_never_leaves() {
+        use std::net::TcpListener;
+
+        let a = TcpListener::bind("127.0.0.1:0").expect("bind a");
+        let b = TcpListener::bind("127.0.0.1:0").expect("bind b");
+        b.set_nonblocking(true).expect("non-blocking");
+        let port_a = a.local_addr().expect("addr").port();
+        let port_b = b.local_addr().expect("addr").port();
+        let exchange = UreqExchange::operator_configured(
+            &format!("http://127.0.0.1:{port_a}"),
+            Duration::from_secs(1),
+        )
+        .expect("a loopback destination");
+        let get = |url: String| HttpRequest {
+            method: "GET",
+            url,
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+
+        assert!(exchange
+            .send(get(format!("http://127.0.0.1:{port_b}/x")))
+            .is_err());
+        assert_eq!(
+            b.accept().expect_err("no connection was made").kind(),
+            std::io::ErrorKind::WouldBlock,
+        );
+        assert!(exchange
+            .send(get(format!("http://127.0.0.1:{port_a}0/x")))
+            .is_err());
+    }
+
+    /// An answer over the bound is refused, never truncated or buffered whole.
+    #[test]
+    fn an_answer_over_the_bound_is_refused_not_buffered() {
+        use std::io::Read;
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a listener");
+        let port = listener.local_addr().expect("addr").port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0_u8; 2048];
+                let _ = stream.read(&mut buf);
+                let len = MAX_ANSWER_BYTES + 1;
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/cose\r\nContent-Length: {len}\r\n\r\n"
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.write_all(&vec![0_u8; usize::try_from(len).unwrap_or(0)]);
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                let mut rest = Vec::new();
+                let _ = stream.read_to_end(&mut rest);
+            }
+        });
+
+        let exchange = UreqExchange::operator_configured(
+            &format!("http://127.0.0.1:{port}"),
+            Duration::from_secs(5),
+        )
+        .expect("a loopback destination");
+        let outcome = exchange.send(HttpRequest {
+            method: "GET",
+            url: format!("http://127.0.0.1:{port}/operations/1"),
+            headers: Vec::new(),
+            body: Vec::new(),
+        });
+
+        assert!(outcome.is_err());
     }
 }
