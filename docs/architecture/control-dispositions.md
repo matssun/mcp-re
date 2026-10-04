@@ -4810,3 +4810,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none. `proxy.retention_commitment` states the stages and the fault classes, not their rendering; NP-145 is the same shape for correspondence refusals.
 **Root relationship.** Beside the retention propositions the proxy already states.
 **Severity:** `medium`.
+
+## NP-270 — a retained exchange record never renders the covered credentials it retains
+
+**Controls:** `mcp-re-proxy` `lib#transparency::retained_record::tests::a_retained_record_never_renders_a_covered_credential_value`.
+**Carrier:** `mcp-re-proxy/src/transparency/retained_record.rs` (`Debug for RetainedRequest`, `Debug for RetainedResponse`).
+**Statement.** *`Debug` for a retained request or response renders header names and a body length only, so a covered `authorization` or `dpop` value never appears in a format string, while `into_hop()` still yields the headers verbatim.*
+**If false.** A `{:?}` of a retained record or of a value holding one prints a live bearer token and DPoP proof into logs.
+**Likely owner:** none. `proxy.retained_record_content` states what a record contains, which a Debug-rendering test does not falsify; NP-236 is the floor product in another crate.
+**Severity:** `high`.
+**Root relationship.** Beside NP-236: that states the floor product never renders a covered credential, this states the retained record does not either.
+**Recorded:** 2026-10-04, round-12 remediation of 37093dd77e367725.

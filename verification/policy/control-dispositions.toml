@@ -15392,3 +15392,20 @@ control = "src/lib.rs#transparency::tests::every_retention_fault_renders_its_own
 decision = "new-proposition"
 proposition = "NP-269"
 recorded = "2026-10-04"
+
+[[proposition]]
+id = "NP-270"
+title = "A retained exchange record never renders the covered credentials it retains"
+carrier = "mcp-re-proxy/src/transparency/retained_record.rs (Debug for RetainedRequest, RetainedResponse)"
+likely_owner = "none. proxy.retained_record_content states what a record contains, which a Debug-rendering test does not falsify; NP-236 is the floor product in another crate."
+consequence = "high"
+root_relationship = "Beside NP-236: that states the floor product never renders a covered credential, this states the retained record does not either."
+record = "docs/architecture/control-dispositions.md#np-270"
+
+[[disposition]]
+id = "CD-20332"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::retained_record::tests::a_retained_record_never_renders_a_covered_credential_value"
+decision = "new-proposition"
+proposition = "NP-270"
+recorded = "2026-10-04"
