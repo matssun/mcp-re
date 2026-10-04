@@ -113,9 +113,10 @@ impl<E: HttpExchange> CapsuleAnchorRegistrationClient<E> {
 
 /// The receipt octets out of an accepted answer.
 ///
-/// Every failure here is [`CapsuleAnchorFault::UnreadableAnswer`], and that is the whole
-/// point of the separate variant: the service has already said `200`, so the statement is
-/// in the log whatever this function makes of the body.
+/// Every failure here is [`CapsuleAnchorFault::UnreadableAnswer`], which is indeterminate
+/// rather than a refusal because something answered `200` — it may be the service having
+/// logged the statement, or a peer that is not the service — and only a readable, verified
+/// receipt settles it.
 fn receipt_bytes(body: &[u8]) -> Result<Vec<u8>, CapsuleAnchorFault> {
     let answer: wire::RegisterStatementResponse =
         serde_json::from_slice(body).map_err(|_| CapsuleAnchorFault::UnreadableAnswer {
@@ -257,8 +258,7 @@ mod tests {
         );
     }
 
-    /// An ACCEPTED submission whose answer cannot be read is indeterminate, never a
-    /// failure to register.
+    /// A `200` whose answer cannot be read is indeterminate, never a failure to register.
     #[test]
     fn an_accepted_submission_with_an_unreadable_answer_does_not_report_a_failure() {
         let statement = a_statement();
@@ -272,7 +272,8 @@ mod tests {
             .expect_err("the receipt cannot be read");
 
         assert!(matches!(refused, RegistrationError::Indeterminate(_)));
-        assert!(refused.to_string().contains("ACCEPTED"), "{refused}");
+        assert!(refused.to_string().contains("answered 200"), "{refused}");
+        assert!(!refused.to_string().contains("is registered"), "{refused}");
     }
 
     /// The service's log coordinates are NOT read: an answer carrying none still works,
