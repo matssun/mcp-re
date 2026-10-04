@@ -1533,11 +1533,11 @@ a KMS endpoint (NP-027), one product step out.
 
 ## NP-042 — a statement is registered only against a receipt about itself
 
-**Controls:** `auditor/registration/capability.rs` (5),
+**Controls:** `auditor/registration/capability.rs` (7),
 `registration/ureq_exchange.rs` (3), `registration/exchange.rs` (1).
 **Statement.** *A verifying receipt about THIS statement, from a pinned log, produces a
 registered statement; an answer that is not a receipt, a receipt about another statement,
-and a receipt from an unpinned log are each refused; a mechanism refusal is carried through
+and a receipt from an unpinned log are each refused, and an artifact carrying another statement refuses the receipt; an attached receipt carries the protocol that established it; a mechanism refusal is carried through
 with its certainty rather than flattened; and the exchange carries the body verbatim across
 the socket, refuses a disallowed scheme with no transport at all, and reads a header
 case-insensitively taking the first.*
@@ -2349,11 +2349,11 @@ Packet at `verification/reviews/packets/adr069-np-088-ratification-2026-09-19.md
 
 ## NP-089 — the signature base is exactly the covered components
 
-**Controls:** `mcp-re-http-profile/src/sigbase.rs` (8).
+**Controls:** `mcp-re-http-profile/src/sigbase.rs` (12).
 **Statement.** *A missing covered field and a duplicated one each fail closed; CRLF in a
-field value and in a derived component each fail closed; a `req` component on a request fails
-closed; derived components resolve; the method case is carried VERBATIM into the base; and a
-nonce the profile cannot carry is never emitted.*
+field value and in a derived component each fail closed; a `req` component on a request or on a response-only source fails
+closed; CRLF at the edge of a field value fails closed; userinfo in the target URI has no authority; derived components resolve; the method case is carried VERBATIM into the base; and a
+nonce or string parameter the profile cannot carry is never emitted.*
 **If false.** The base a verifier reconstructs differs from the base the signer produced — by
 a folded header, an injected line, a component that belongs to the other direction, or a case
 change — and a valid signature verifies over the wrong bytes. The CRLF clauses are request
@@ -3519,7 +3519,7 @@ control proves impossible is one the theorem already declines to reason about. P
 
 ## NP-164 — the file and dev key sources' own load and refusal behaviour, and the PKCS#11 token's second key
 
-**Controls:** `mcp-re-proxy/tests/key_source_test.rs` (6), `mcp-re-proxy/tests/dev_env_key_source_test.rs` (4), `mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs` (6), `mcp-re-proxy/src/key_source/file_key_source.rs` (2), `mcp-re-proxy/src/pkcs11_keysource/mod.rs` (1).
+**Controls:** `mcp-re-proxy/tests/key_source_test.rs` (6), `mcp-re-proxy/tests/dev_env_key_source_test.rs` (5), `mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs` (6), `mcp-re-proxy/src/key_source/file_key_source.rs` (2), `mcp-re-proxy/src/pkcs11_keysource/mod.rs` (1), `mcp-re-proxy/src/key_source/mod.rs` (1).
 **Statement.** *Each source opened DIRECTLY, not through the materializer: the file source loads the signing seed, the channel credential and the client anchors and tells a missing file from a malformed seed; the dev-only environment source does the same without mutating the process and scrubs its seed temporaries; neither source's error carries the secret; and the token's SECOND object — the delegated TLS handshake key — is established at `open` or the deployment does not start.*
 **If false.** A source reports material it did not load, or names the wrong failure, and an operator debugs the wrong half of a deployment; or a secret seed reaches a log through an error value; or the proxy serves a handshake under a token key nobody established, which is the one case where the delegated-TLS correspondence gate compares a key the signer did not actually sign with.
 **Likely owner:** none — a composition's source is every unit under it.
