@@ -14,7 +14,7 @@
 //! Design (stateless replicas, shared correlation tier):
 //!   * OPEN leg on replica A: after A delegated-signs an `InputRequiredResult`, it
 //!     records the two role-labeled evidence handles over its signature bases under the
-//!     key `H(actor_id, requestState)`, with a bounded TTL.
+//!     key `H(audience_id, actor_id, requestState)` ([`continuation_key`]), with a bounded TTL.
 //!   * ANSWER leg on replica B: B reads `requestState` from the request, derives the
 //!     same key from the state and ITS OWN resolved actor, `peek`s the retained
 //!     handles, and drives the EXISTING pure continuation binding

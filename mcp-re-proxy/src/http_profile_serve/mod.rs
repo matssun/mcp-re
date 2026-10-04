@@ -242,11 +242,10 @@ impl HttpProfileProxy {
 
     /// Construct the serving PEP (ADR-MCPRE-052 delegated-signing — the only response-
     /// signing mode). `resolve_actor` is the trust seam; `expected_audience` the
-    /// verifier audience; `dispatch_cfg`/`inner_async` the replay/inner planes. There
-    /// is no directly-held server key on the serving struct — only the shared
-    /// [`DelegatedServerSigner`] whose snapshot the cold-path rotor keeps fresh. Every
-    /// response and rejection is signed by the active delegated key + inline
-    /// credential, failing closed when none is valid.
+    /// verifier audience; `dispatch_cfg`/`inner_async` the replay/inner planes. No server
+    /// key is held directly, only the shared [`DelegatedServerSigner`]. Every response and
+    /// rejection is signed by the active delegated key + inline credential, failing closed.
+    // Public embedder constructor: seven required inputs, no default; optional postures are `with_*`.
     #[allow(clippy::too_many_arguments)]
     pub fn new_delegated(
         resolve_actor: ActorResolver,
@@ -331,10 +330,10 @@ impl HttpProfileProxy {
         self
     }
 
-    /// Wire the MRTR continuation correlation store (ADR-MCPS-047) with a bounded
-    /// entry TTL. The open leg records the two role-labeled
-    /// evidence handles over its signature bases under `H(requestState)`; the answer leg — on
-    /// ANY replica — takes them one-shot to drive the pure continuation binding.
+    /// Wire the MRTR continuation correlation store (ADR-MCPS-047) with a bounded entry TTL.
+    /// The open leg records two role-labeled evidence handles under `continuation_key` over
+    /// (audience, verifier-resolved actor, requestState); the answer leg, on ANY replica,
+    /// `peek`s them to bind and only the post-admission retirement `consume`s, one-shot.
     pub fn with_continuation_store(
         mut self,
         store: Arc<dyn AsyncContinuationStore>,
@@ -515,5 +514,50 @@ pub(super) fn served(resp: HttpResponse) -> ServedHttpResponse {
         status: resp.status,
         headers: resp.headers,
         body: resp.body,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exchange_state::ContinuationState;
+
+    /// The `RequiresNewElicitation` x `Some(refinement)` rows pin current behaviour, which
+    /// ruling `retry-disposition-refinement-composition` may change.
+    #[test]
+    fn every_retry_verdict_maps_to_its_one_wire_disposition() {
+        let safe = ExchangeProgress::new();
+        let mut spent = ExchangeProgress::new();
+        spent.observe_continuation(ContinuationState::Consumed);
+        let mut dispatched = ExchangeProgress::new();
+        dispatched.advance(ExchangeEvent::BackendDispatched);
+        assert_eq!(safe.retry_semantics(), RetrySemantics::SafeNothingExecuted);
+        assert_eq!(spent.retry_semantics(), RetrySemantics::RequiresNewElicitation);
+        assert_eq!(dispatched.retry_semantics(), RetrySemantics::NotRetrySafe);
+
+        let refinements = [
+            ExecutionDisposition::Unstated,
+            ExecutionDisposition::NothingExecuted,
+            ExecutionDisposition::ApprovalSpentNothingExecuted,
+            ExecutionDisposition::PossiblyExecuted,
+            ExecutionDisposition::NothingExecutedRetentionUnresolved,
+        ];
+        assert_eq!(
+            HttpProfileProxy::disposition(&safe, None),
+            ExecutionDisposition::NothingExecuted
+        );
+        for r in refinements {
+            assert_eq!(HttpProfileProxy::disposition(&safe, Some(r)), r);
+        }
+        for refined in std::iter::once(None).chain(refinements.into_iter().map(Some)) {
+            assert_eq!(
+                HttpProfileProxy::disposition(&spent, refined),
+                ExecutionDisposition::ApprovalSpentNothingExecuted
+            );
+            assert_eq!(
+                HttpProfileProxy::disposition(&dispatched, refined),
+                ExecutionDisposition::PossiblyExecuted
+            );
+        }
     }
 }
