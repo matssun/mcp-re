@@ -85,3 +85,71 @@ impl ResolvedTransparencyService {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scitt::fixtures::*;
+
+    const LEAVES: [StatementLeafProfile; 3] = [
+        StatementLeafProfile::StatementBytes,
+        StatementLeafProfile::StatementDigest,
+        StatementLeafProfile::SigStructureDigest,
+    ];
+    const POSITIONS: [ReceiptPositionProfile; 2] = [
+        ReceiptPositionProfile::Unbound,
+        ReceiptPositionProfile::Bound,
+    ];
+
+    fn pin(leaf: StatementLeafProfile, position: ReceiptPositionProfile) -> ScittServiceTrustPin {
+        serde_json::from_value::<ScittServiceTrustPin>(serde_json::json!({
+            "schema": crate::scitt::TRUST_PIN_SCHEMA,
+            "service_identifier": "test-service",
+            "discovery_method": "well-known-scitt-keys",
+            "discovery_uri": "https://example.test/.well-known/scitt-keys",
+            "fetched_at": "2026-07-31T00:00:00Z",
+            "kid": TS_KID,
+            "algorithm": "EdDSA",
+            "public_key": {"x": mcp_re_core::b64url_encode(&ts().public_key().to_bytes())},
+            "public_key_thumbprint": "unused-by-this-test",
+            "discovery_document_digest": "unused-by-this-test",
+            "leaf_profile": serde_json::to_value(leaf).expect("leaf"),
+            "position_profile": serde_json::to_value(position).expect("position"),
+        }))
+        .expect("a legal pin document")
+    }
+
+    fn assert_parts(
+        service: &ResolvedTransparencyService,
+        leaf: StatementLeafProfile,
+        position: ReceiptPositionProfile,
+    ) {
+        assert_eq!(service.leaf_profile(), leaf);
+        assert_eq!(service.position_profile(), position);
+        let CoseVerificationKey::Ed25519(k) = service.key() else {
+            panic!("an EdDSA service key must be Ed25519");
+        };
+        assert_eq!(k.to_bytes(), ts().public_key().to_bytes());
+    }
+
+    #[test]
+    fn a_pinned_service_carries_every_part_the_pin_states() {
+        for leaf in LEAVES {
+            for position in POSITIONS {
+                let service = ResolvedTransparencyService::pinned(&pin(leaf, position));
+                assert_parts(&service, leaf, position);
+            }
+        }
+    }
+
+    #[test]
+    fn a_stated_service_carries_exactly_what_the_caller_said() {
+        for leaf in LEAVES {
+            for position in POSITIONS {
+                let service =
+                    ResolvedTransparencyService::stated(ts().public_key().into(), leaf, position);
+                assert_parts(&service, leaf, position);
+            }
+        }
+    }
+}
