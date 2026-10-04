@@ -2648,7 +2648,9 @@ anchor = """
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
             );
-            return self.refuse_retained(ex, refusal, progress, retention).await;
+            return self
+                .refuse_retained(ans, refusal, progress, retention)
+                .await;
         }
 """
 weakening = """
@@ -2673,7 +2675,9 @@ anchor = """
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
             );
-            return self.refuse_retained(ex, refusal, progress, retention).await;
+            return self
+                .refuse_retained(ans, refusal, progress, retention)
+                .await;
         }
 """
 weakening = """

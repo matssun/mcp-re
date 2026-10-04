@@ -26,7 +26,7 @@ use crate::request_stages::RetentionDisposition;
 
 use super::super::reply::ReplyClass;
 use super::super::served;
-use super::super::Exchange;
+use super::super::Answerable;
 use super::super::HttpProfileProxy;
 use super::SignedReply;
 
@@ -39,7 +39,7 @@ impl HttpProfileProxy {
     /// exactly the kind of contradiction that makes an audit stream unusable.
     pub(in crate::http_profile_serve) async fn serve_retained(
         &self,
-        ex: &Exchange<'_>,
+        ans: &Answerable<'_>,
         progress: &mut ExchangeProgress,
         reply: SignedReply,
         retention: &RetentionDisposition,
@@ -60,18 +60,20 @@ impl HttpProfileProxy {
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
             );
-            return self.refuse_retained(ex, refusal, progress, retention).await;
+            return self
+                .refuse_retained(ans, refusal, progress, retention)
+                .await;
         }
         if let Some(rejection) = self
             .retain_accepted(
-                ex.http_req,
+                ans.ex.http_req,
                 &reply.response,
-                ex.now,
-                Some(ex.verified.evidence()),
-                ex.actor_id.to_owned(),
+                ans.ex.now,
+                Some(ans.ex.verified.evidence()),
+                ans.ex.actor_id.to_owned(),
                 retention,
                 Self::disposition(progress, None),
-                ex.key.clone(),
+                Some(std::sync::Arc::clone(&ans.key)),
             )
             .await
         {
@@ -80,9 +82,9 @@ impl HttpProfileProxy {
         crate::audit_record::record_to(
             &self.audit,
             crate::audit_record::AuditSubject::response_signed(),
-            Some(ex.actor_id.to_owned()),
+            Some(ans.ex.actor_id.to_owned()),
             reply.response.status,
-            ex.now,
+            ans.ex.now,
         );
         progress.publish(success);
         served(reply.response)
@@ -129,12 +131,12 @@ impl HttpProfileProxy {
     /// client was told* — more than the store holds today, not less.
     pub(in crate::http_profile_serve) async fn refuse_retained(
         &self,
-        ex: &Exchange<'_>,
+        ans: &Answerable<'_>,
         refusal: crate::refusal::Refusal,
         progress: &ExchangeProgress,
         retention_owed: &RetentionDisposition,
     ) -> ServedHttpResponse {
-        let rejection = self.refuse(ex, refusal, progress);
+        let rejection = self.refuse_answerable(ans, refusal, progress);
         let served_bytes = HttpResponse {
             status: rejection.status,
             headers: rejection.headers.clone(),
@@ -258,7 +260,10 @@ mod tests {
              decision {decision}, retention {retention}, record {record}, commit {commit}"
         );
         assert!(
-            body[decision..retention].contains("return self.refuse_retained("),
+            body[decision..retention]
+                .split_whitespace()
+                .collect::<String>()
+                .contains("returnself.refuse_retained("),
             "the refusing arm must exit before retention discharges"
         );
     }

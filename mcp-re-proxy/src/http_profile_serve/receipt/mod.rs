@@ -122,6 +122,7 @@ impl ResponseSigning {
         ex: &Exchange<'_>,
         refusal: Refusal,
         execution: ExecutionDisposition,
+        snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     ) -> ServedHttpResponse {
         let bound = Some(ex.verified.evidence());
         let actor = Some(ex.actor_id.to_owned());
@@ -135,7 +136,7 @@ impl ResponseSigning {
                 bound,
                 actor,
                 execution,
-                ex.key.clone(),
+                snapshot,
             );
         }
         self.rejection(
@@ -147,7 +148,7 @@ impl ResponseSigning {
             bound,
             actor,
             execution,
-            ex.key.clone(),
+            snapshot,
             ex.verdicts.authorization(),
             ex.verdicts.admission_facet(),
             ex.verdicts.admission_refusal(),

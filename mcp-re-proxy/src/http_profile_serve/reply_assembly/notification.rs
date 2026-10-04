@@ -24,7 +24,7 @@ use crate::request_stages::RetentionDisposition;
 
 use super::super::served;
 use super::super::signing_window::SigningWindow;
-use super::super::Exchange;
+use super::super::Answerable;
 use super::super::HttpProfileProxy;
 
 impl HttpProfileProxy {
@@ -101,7 +101,7 @@ impl HttpProfileProxy {
     /// commits to a dispatch at all.
     pub(in crate::http_profile_serve) async fn answer_notification_terminal(
         &self,
-        ex: &Exchange<'_>,
+        ans: &Answerable<'_>,
         progress: &mut ExchangeProgress,
         outcome: &DispatchedOutcome,
         window: &SigningWindow,
@@ -115,7 +115,11 @@ impl HttpProfileProxy {
             // executed and the client was told this*, instead of a bare surviving marker
             // that says only *unaccounted for*. The stronger case — never transmitted —
             // cannot reach here; it is refused before the exchange commits.
-            Err(refusal) => return self.refuse_retained(ex, refusal, progress, retention).await,
+            Err(refusal) => {
+                return self
+                    .refuse_retained(ans, refusal, progress, retention)
+                    .await
+            }
         };
         // The 202 is a signed success claim, so an exchange that no longer satisfies its
         // model may not mint one — and the decision is taken before the acknowledgement is
@@ -125,14 +129,16 @@ impl HttpProfileProxy {
                 mcp_re_core::McpReError::ExchangeInvariantViolation,
                 500,
             );
-            return self.refuse_retained(ex, refusal, progress, retention).await;
+            return self
+                .refuse_retained(ans, refusal, progress, retention)
+                .await;
         }
         self.answer_notification(
-            ex.http_req,
+            ans.ex.http_req,
             window,
-            ex.now,
-            ex.verified,
-            ex.actor_id.to_owned(),
+            ans.ex.now,
+            ans.ex.verified,
+            ans.ex.actor_id.to_owned(),
             retention,
             Self::disposition(progress, None),
         )
@@ -173,7 +179,10 @@ mod tests {
         // And the refusing arm must LEAVE. A refusal that falls through to the 202 decides
         // nothing.
         assert!(
-            body[decision..mint].contains("return self.refuse_retained("),
+            body[decision..mint]
+                .split_whitespace()
+                .collect::<String>()
+                .contains("returnself.refuse_retained("),
             "the refusing arm must exit before the 202 is signed"
         );
     }

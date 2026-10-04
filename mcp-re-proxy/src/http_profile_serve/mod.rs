@@ -151,16 +151,17 @@ pub(super) struct Exchange<'a> {
     verified: &'a VerifiedMcpRequest,
     actor_id: &'a str,
     now: i64,
-    /// The delegated key snapshotted at ANSWERABLE, once the exchange has one.
-    ///
-    /// `None` only before that stage. Every refusal from ANSWERABLE onward signs with this
-    /// snapshot rather than re-asking the signer: `now` is fixed for the exchange, so a key
-    /// valid there is valid here, while a signer retired in between makes the re-ask return
-    /// nothing and degrades the refusal to an unsigned error — on exactly the exits that
-    /// most need to state, under signature, that the backend may have acted.
-    key: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     /// What the request-side authorities established; see [`AuthorityVerdicts`].
     verdicts: AuthorityVerdicts,
+}
+
+/// An exchange past ANSWERABLE, holding the delegated key snapshotted there.
+///
+/// Every refusal from here on signs with this snapshot, not a re-ask of a signer that may
+/// have been retired since, which would degrade to an unsigned error.
+pub(super) struct Answerable<'a> {
+    ex: Exchange<'a>,
+    key: Arc<mcp_re_http_profile::ActiveDelegatedKey>,
 }
 
 /// The RFC 9421 server-side PEP run by the async fleet (ADR-MCPRE-051).
@@ -382,7 +383,7 @@ impl HttpProfileProxy {
         progress: &ExchangeProgress,
     ) -> ServedHttpResponse {
         let owed = Self::disposition(progress, refusal.execution_refinement);
-        self.responses.refuse(&self.audit, ex, refusal, owed)
+        self.responses.refuse(&self.audit, ex, refusal, owed, None)
     }
 
     /// What the exchange machine's cross-machine state means on the wire.
@@ -394,7 +395,7 @@ impl HttpProfileProxy {
     /// continuation-record failure at **HTTP 503** returned a bare status after the tool
     /// had run (ADR-MCPRE-058 §10, ruling D1). Deriving it from the machine, not an
     /// allowlist, stops the next post-dispatch exit from silently not being on it — and a
-    /// refusing OWNER refines only where an ordinary retry was correct.
+    /// refusing OWNER refines only where an ordinary retry was correct or retention is unresolved.
     fn disposition(
         p: &ExchangeProgress,
         refined: Option<ExecutionDisposition>,
@@ -402,8 +403,8 @@ impl HttpProfileProxy {
         match (p.retry_semantics(), refined) {
             (RetrySemantics::SafeNothingExecuted, Some(refined)) => refined,
             (RetrySemantics::SafeNothingExecuted, None) => ExecutionDisposition::NothingExecuted,
-            (RetrySemantics::RequiresNewElicitation, _) => {
-                ExecutionDisposition::ApprovalSpentNothingExecuted
+            (RetrySemantics::RequiresNewElicitation, refined) => {
+                ExecutionDisposition::approval_spent(refined)
             }
             (RetrySemantics::NotRetrySafe, _) => ExecutionDisposition::PossiblyExecuted,
         }
@@ -448,7 +449,6 @@ impl HttpProfileProxy {
             verified: &verified,
             actor_id: &actor_id,
             now,
-            key: None,
             verdicts: AuthorityVerdicts::default(),
         };
 
@@ -463,12 +463,12 @@ impl HttpProfileProxy {
             Ok(admitted) => admitted,
             Err(rejection) => return rejection,
         };
-        let window = match self.commit_to_answering(&mut ex, &mut progress).await {
-            Ok(window) => window,
+        let (ans, window) = match self.commit_to_answering(ex, &mut progress).await {
+            Ok(answered) => answered,
             Err(rejection) => return rejection,
         };
-        self.record_request_accepted(&admitted, ex.verdicts.admission(), &actor_id, now);
-        let commitment = self.commit_to_dispatch(&ex, admitted.authorized, &window, &mut progress);
+        self.record_request_accepted(&admitted, ans.ex.verdicts.admission(), &actor_id, now);
+        let commitment = self.commit_to_dispatch(&ans, admitted.authorized, &window, &mut progress);
         let (prepared, retention) = match commitment.await {
             Ok(committed) => committed,
             Err(rejection) => return rejection,
@@ -493,18 +493,18 @@ impl HttpProfileProxy {
         // from the REQUEST, which is where the fact lives.
         if matches!(admitted.outstanding, OutstandingId::Notification) {
             return self
-                .answer_notification_terminal(&ex, &mut progress, &outcome, &window, &owed)
+                .answer_notification_terminal(&ans, &mut progress, &outcome, &window, &owed)
                 .await;
         }
         let outstanding = &admitted.outstanding;
         let reply = match self
-            .assemble_reply(&ex, &mut progress, outcome, outstanding, &window, &owed)
+            .assemble_reply(&ans, &mut progress, outcome, outstanding, &window, &owed)
             .await
         {
             Ok(reply) => reply,
             Err(rejection) => return rejection,
         };
-        self.serve_retained(&ex, &mut progress, reply, &owed).await
+        self.serve_retained(&ans, &mut progress, reply, &owed).await
     }
 }
 
@@ -522,8 +522,6 @@ mod tests {
     use super::*;
     use crate::exchange_state::ContinuationState;
 
-    /// The `RequiresNewElicitation` x `Some(refinement)` rows pin current behaviour, which
-    /// ruling `retry-disposition-refinement-composition` may change.
     #[test]
     fn every_retry_verdict_maps_to_its_one_wire_disposition() {
         let safe = ExchangeProgress::new();
@@ -544,6 +542,7 @@ mod tests {
             ExecutionDisposition::ApprovalSpentNothingExecuted,
             ExecutionDisposition::PossiblyExecuted,
             ExecutionDisposition::NothingExecutedRetentionUnresolved,
+            ExecutionDisposition::ApprovalSpentRetentionUnresolved,
         ];
         assert_eq!(
             HttpProfileProxy::disposition(&safe, None),
@@ -553,10 +552,14 @@ mod tests {
             assert_eq!(HttpProfileProxy::disposition(&safe, Some(r)), r);
         }
         for refined in std::iter::once(None).chain(refinements.into_iter().map(Some)) {
-            assert_eq!(
-                HttpProfileProxy::disposition(&spent, refined),
-                ExecutionDisposition::ApprovalSpentNothingExecuted
-            );
+            let expected = match refined {
+                Some(
+                    ExecutionDisposition::NothingExecutedRetentionUnresolved
+                    | ExecutionDisposition::ApprovalSpentRetentionUnresolved,
+                ) => ExecutionDisposition::ApprovalSpentRetentionUnresolved,
+                _ => ExecutionDisposition::ApprovalSpentNothingExecuted,
+            };
+            assert_eq!(HttpProfileProxy::disposition(&spent, refined), expected);
             assert_eq!(
                 HttpProfileProxy::disposition(&dispatched, refined),
                 ExecutionDisposition::PossiblyExecuted

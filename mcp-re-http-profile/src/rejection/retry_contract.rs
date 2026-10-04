@@ -66,6 +66,33 @@ pub enum ExecutionDisposition {
     /// client into a free retry while the deployment holds an artefact that reads as a
     /// crossed execution threshold and cannot account for it.
     NothingExecutedRetentionUnresolved,
+    /// The backend never acted, the approval authorizing it was already consumed, AND the
+    /// retained-evidence store could neither establish nor withdraw its record.
+    ///
+    /// Neither neighbour rounds it: [`ApprovalSpentNothingExecuted`](Self::ApprovalSpentNothingExecuted)
+    /// would hide the unresolved record, and
+    /// [`NothingExecutedRetentionUnresolved`](Self::NothingExecutedRetentionUnresolved) would
+    /// hide the spent approval.
+    ApprovalSpentRetentionUnresolved,
+}
+
+impl ExecutionDisposition {
+    /// The disposition of a refusal raised after the exchange's approval was consumed, given
+    /// what the refusing owner refined it to.
+    pub fn approval_spent(refined: Option<Self>) -> Self {
+        match refined {
+            Some(
+                Self::NothingExecutedRetentionUnresolved | Self::ApprovalSpentRetentionUnresolved,
+            ) => Self::ApprovalSpentRetentionUnresolved,
+            None
+            | Some(
+                Self::Unstated
+                | Self::NothingExecuted
+                | Self::ApprovalSpentNothingExecuted
+                | Self::PossiblyExecuted,
+            ) => Self::ApprovalSpentNothingExecuted,
+        }
+    }
 }
 
 /// Explicit machine-readable execution/retry state, for the cases where the safe action is
@@ -116,6 +143,17 @@ pub fn retry_semantics(wire_code: &str, execution: ExecutionDisposition) -> Opti
             "retry_safety": "unsafe_without_new_elicitation",
         }));
     }
+    if execution == ExecutionDisposition::ApprovalSpentRetentionUnresolved {
+        // The action did not run and the approval is gone, and the store holds a record it
+        // can neither confirm nor withdraw. Reconciliation outranks a new elicitation, and
+        // `continuation_status` keeps the spent approval visible.
+        return Some(json!({
+            "execution_status": "not_executed",
+            "continuation_status": "consumed",
+            "retention_status": "unresolved",
+            "retry_safety": "unsafe_without_reconciliation",
+        }));
+    }
     if execution == ExecutionDisposition::NothingExecutedRetentionUnresolved {
         // Both halves stated, neither rounded to the other. The action did not run, and
         // the store may still hold something that reads as a crossed execution threshold
@@ -153,6 +191,7 @@ mod tests {
         for d in [
             ExecutionDisposition::ApprovalSpentNothingExecuted,
             ExecutionDisposition::NothingExecutedRetentionUnresolved,
+            ExecutionDisposition::ApprovalSpentRetentionUnresolved,
             ExecutionDisposition::PossiblyExecuted,
             ExecutionDisposition::Unstated,
         ] {
@@ -182,6 +221,16 @@ mod tests {
         )
         .expect("disposition arm answers");
         assert_eq!(field(&v, "execution_status"), "not_executed");
+        assert_eq!(field(&v, "retention_status"), "unresolved");
+        assert_eq!(field(&v, "retry_safety"), "unsafe_without_reconciliation");
+
+        let v = retry_semantics(
+            McpReError::EvidenceRetentionUnavailable.wire_code(),
+            ExecutionDisposition::ApprovalSpentRetentionUnresolved,
+        )
+        .expect("disposition arm answers");
+        assert_eq!(field(&v, "execution_status"), "not_executed");
+        assert_eq!(field(&v, "continuation_status"), "consumed");
         assert_eq!(field(&v, "retention_status"), "unresolved");
         assert_eq!(field(&v, "retry_safety"), "unsafe_without_reconciliation");
     }

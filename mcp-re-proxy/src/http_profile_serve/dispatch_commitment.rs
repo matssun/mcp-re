@@ -36,6 +36,7 @@ use crate::request_stages::RetentionDisposition;
 use super::body_boundary::ForwardedBody;
 use super::signing_window;
 use super::signing_window::SigningWindow;
+use super::Answerable;
 use super::Exchange;
 use super::HttpProfileProxy;
 
@@ -86,37 +87,37 @@ impl HttpProfileProxy {
     /// refuse.
     pub(super) async fn commit_to_dispatch<'p>(
         &'p self,
-        ex: &Exchange<'_>,
+        ans: &Answerable<'_>,
         authorized: AuthorizationPosture,
         window: &SigningWindow,
         progress: &mut ExchangeProgress,
     ) -> Result<(PreparedInnerDispatch<'p>, RetentionDisposition), ServedHttpResponse> {
-        let forwarded = match self.forward_body_stage(ex) {
+        let forwarded = match self.forward_body_stage(&ans.ex) {
             Ok(body) => progress.establish(body),
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => return Err(self.refuse_answerable(ans, refusal, progress)),
         };
         let prepared = match self.inner_async.prepare(authorized.release(forwarded)) {
             Ok(prepared) => progress.establish(prepared),
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => return Err(self.refuse_answerable(ans, refusal, progress)),
         };
         // The signing window must still be admissible at the worst instant this dispatch
         // can complete at — asked HERE because this is the first point where the bound
         // exists and the last where refusing is free. The capability is already held, so a
         // refusal drops it and returns everything it took.
         if !signing_window::covers(window, prepared.completion_bound()) {
-            return Err(self.refuse(
-                ex,
+            return Err(self.refuse_answerable(
+                ans,
                 Refusal::after_admission(McpReError::DelegatedSigningUnavailable, 503),
                 progress,
             ));
         }
-        let accepted = match self.retention.reserve(ex.http_req).await {
+        let accepted = match self.retention.reserve(ans.ex.http_req).await {
             Ok(accepted) => accepted,
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => return Err(self.refuse_answerable(ans, refusal, progress)),
         };
         let retention = match self.retention.commit(accepted).await {
             Ok(disposition) => progress.establish(disposition),
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => return Err(self.refuse_answerable(ans, refusal, progress)),
         };
         Ok((prepared, retention))
     }

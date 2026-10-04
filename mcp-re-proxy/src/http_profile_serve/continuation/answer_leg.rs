@@ -207,7 +207,6 @@ pub(in crate::http_profile_serve) mod tests {
             verified: &verified,
             actor_id: &actor_id,
             now: 1,
-            key: None,
             verdicts: Default::default(),
         };
 
@@ -238,7 +237,6 @@ pub(in crate::http_profile_serve) mod tests {
             verified: &verified,
             actor_id: &actor_id,
             now: 1,
-            key: None,
             verdicts: Default::default(),
         };
 
@@ -356,7 +354,6 @@ pub(in crate::http_profile_serve) mod tests {
             verified: &verified,
             actor_id: &actor_id,
             now: 1,
-            key: None,
             verdicts: Default::default(),
         };
 
@@ -474,7 +471,6 @@ pub(in crate::http_profile_serve) mod tests {
             verified: &verified,
             actor_id: &actor_id,
             now: 1,
-            key: None,
             verdicts: Default::default(),
         };
 

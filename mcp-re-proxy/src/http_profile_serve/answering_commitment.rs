@@ -24,6 +24,7 @@ use crate::refusal::Refusal;
 
 use super::continuation::Retirement;
 use super::signing_window::SigningWindow;
+use super::Answerable;
 use super::Exchange;
 use super::HttpProfileProxy;
 use mcp_re_http_profile::RetainedContinuation;
@@ -86,6 +87,24 @@ impl HttpProfileProxy {
         }
     }
 
+    /// Turn a post-ANSWERABLE stage's decision into the refusal signed under the exchange's
+    /// own key snapshot.
+    pub(super) fn refuse_answerable(
+        &self,
+        ans: &Answerable<'_>,
+        refusal: Refusal,
+        progress: &ExchangeProgress,
+    ) -> ServedHttpResponse {
+        let owed = Self::disposition(progress, refusal.execution_refinement);
+        self.responses.refuse(
+            &self.audit,
+            &ans.ex,
+            refusal,
+            owed,
+            Some(std::sync::Arc::clone(&ans.key)),
+        )
+    }
+
     /// What the correlation store's answer to the one-shot take MEANS for this exchange.
     ///
     /// Three of the four outcomes are statements the client needs: nothing was involved, the
@@ -94,7 +113,7 @@ impl HttpProfileProxy {
     /// so the approval is recorded as spent BEFORE the refusal is signed.
     fn observe_retirement(
         &self,
-        ex: &Exchange<'_>,
+        ans: &Answerable<'_>,
         progress: &mut ExchangeProgress,
         retirement: Retirement,
     ) -> Result<(), ServedHttpResponse> {
@@ -109,8 +128,8 @@ impl HttpProfileProxy {
             }
             // The store answered: there was nothing live under this key. A replayed or
             // spliced continuation, and a statement about the caller.
-            Retirement::AlreadyAnswered => Err(self.refuse(
-                ex,
+            Retirement::AlreadyAnswered => Err(self.refuse_answerable(
+                ans,
                 Refusal::before_admission(McpReError::ContinuationBindingFailed, 409),
                 progress,
             )),
@@ -122,8 +141,8 @@ impl HttpProfileProxy {
             // because the fault is this deployment's.
             Retirement::Indeterminate => {
                 progress.observe_continuation(ContinuationState::Consumed);
-                Err(self.refuse(
-                    ex,
+                Err(self.refuse_answerable(
+                    ans,
                     Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503),
                     progress,
                 ))
@@ -138,38 +157,41 @@ impl HttpProfileProxy {
     /// `consume`. The retirement is last, and the [`SigningWindow`] it hands back is put on
     /// the exchange before it happens, so the refusal that a failed retirement produces is
     /// signed under the key the reply itself would have used.
-    pub(super) async fn commit_to_answering(
+    pub(super) async fn commit_to_answering<'a>(
         &self,
-        ex: &mut Exchange<'_>,
+        ex: Exchange<'a>,
         progress: &mut ExchangeProgress,
-    ) -> Result<SigningWindow, ServedHttpResponse> {
+    ) -> Result<(Answerable<'a>, SigningWindow), ServedHttpResponse> {
         let prep = match self
             .continuations
-            .prepare(ex, self.requests.audience_id())
+            .prepare(&ex, self.requests.audience_id())
             .await
         {
             Ok(prep) => progress.establish(prep),
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => return Err(self.refuse(&ex, refusal, progress)),
         };
         if prep.was_peeked() {
             progress.observe_continuation(ContinuationState::Peeked);
         }
-        match self.replay_admission_stage(ex, prep.binding()).await {
+        match self.replay_admission_stage(&ex, prep.binding()).await {
             Ok(admitted) => progress.establish(admitted),
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => return Err(self.refuse(&ex, refusal, progress)),
         }
-        let window = match self.answerable_stage(ex) {
+        let window = match self.answerable_stage(&ex) {
             Ok(established) => progress.establish(established),
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => return Err(self.refuse(&ex, refusal, progress)),
         };
-        // Carried on the exchange so every refusal below signs with the key the reply
+        // Carried with the exchange so every refusal below signs with the key the reply
         // itself would have used, rather than re-asking a signer that may have been
         // retired in between and degrading to an unsigned error.
-        ex.key = Some(window.shared());
+        let ans = Answerable {
+            ex,
+            key: window.shared(),
+        };
         let retirement = self.continuations.retire(prep).await;
-        self.observe_retirement(ex, progress, retirement)?;
+        self.observe_retirement(&ans, progress, retirement)?;
         progress.advance(ExchangeEvent::ContinuationRetired);
-        Ok(window)
+        Ok((ans, window))
     }
 }
 
