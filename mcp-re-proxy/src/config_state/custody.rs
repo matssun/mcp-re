@@ -286,36 +286,42 @@ impl CustodyState {
     }
 }
 
+/// The one presence rule: a value is present only when it is non-empty.
+fn named(value: Option<&str>) -> Option<String> {
+    value.filter(|v| !v.is_empty()).map(str::to_string)
+}
+
 /// Build the requested state from the material its row requires.
 ///
-/// `None` when a required value is absent — which is exactly when [`required_violations`]
-/// pushes a refusal, so a caller never sees one without the other.
+/// `None` exactly when a required value is absent or empty — decided by the same [`named`]
+/// predicate [`required_violations`] refuses on, so a `None` never appears without a
+/// required-column refusal nor such a refusal without a `None`; the endpoint-authority and
+/// dangling-STS refusals are reported beside a built state, which carries no refused value.
 ///
 /// One arm per mechanism, and each arm reads only its own payload. There is no arm that
 /// can read another mechanism's value, because the request has no such value to read.
 fn classify(source: &SigningSourceRequest) -> Option<CustodyState> {
-    let named = |value: &str| (!value.is_empty()).then(|| value.to_string());
     let kind = match source {
         SigningSourceRequest::File(file) => CustodyKind::FileSeed {
-            seed_path: named(&file.seed_path)?,
+            seed_path: named(Some(file.seed_path.as_str()))?,
         },
         SigningSourceRequest::Environment(env) => CustodyKind::EnvSeed {
-            env_var: named(&env.seed_var)?,
+            env_var: named(Some(env.seed_var.as_str()))?,
         },
         SigningSourceRequest::Pkcs11(token) => CustodyKind::Pkcs11 {
-            module: token.module.clone()?,
-            pin_file: token.pin_file.clone()?,
-            token_label: token.token_label.clone()?,
-            key_label: token.key_label.clone()?,
+            module: named(token.module.as_deref())?,
+            pin_file: named(token.pin_file.as_deref())?,
+            token_label: named(token.token_label.as_deref())?,
+            key_label: named(token.key_label.as_deref())?,
         },
         SigningSourceRequest::AwsKms(kms) => CustodyKind::AwsKms {
-            region: kms.region.clone()?,
-            key_id: kms.key_id.clone()?,
+            region: named(kms.region.as_deref())?,
+            key_id: named(kms.key_id.as_deref())?,
             endpoint: guarded_endpoint("--aws-kms-endpoint", kms.endpoint.as_deref()),
             credentials: aws_credential_mode(kms),
         },
         SigningSourceRequest::GcpKms(kms) => CustodyKind::GcpKms {
-            key_version: kms.key_version.clone()?,
+            key_version: named(kms.key_version.as_deref())?,
             endpoint: guarded_endpoint("--gcp-kms-endpoint", kms.endpoint.as_deref()),
             use_metadata: kms.use_metadata,
         },
@@ -351,46 +357,46 @@ fn required_violations(source: &SigningSourceRequest) -> Vec<String> {
     };
     match source {
         SigningSourceRequest::File(file) => require(
-            !file.seed_path.is_empty(),
+            named(Some(file.seed_path.as_str())).is_some(),
             "--key-source file requires --signing-key-seed <path>: the response-signing key \
              has no other source in this state",
         ),
         SigningSourceRequest::Environment(env) => require(
-            !env.seed_var.is_empty(),
+            named(Some(env.seed_var.as_str())).is_some(),
             "--key-source env requires --signing-key-seed <env-var-name>",
         ),
         SigningSourceRequest::Pkcs11(token) => {
             require(
-                token.module.is_some(),
+                named(token.module.as_deref()).is_some(),
                 "--key-source pkcs11 requires --pkcs11-module <path>",
             );
             require(
-                token.pin_file.is_some(),
+                named(token.pin_file.as_deref()).is_some(),
                 "--key-source pkcs11 requires --pkcs11-pin-file <path>; the User PIN is \
                  never accepted on argv, which is world-readable via ps and \
                  /proc/<pid>/cmdline",
             );
             require(
-                token.token_label.is_some(),
+                named(token.token_label.as_deref()).is_some(),
                 "--key-source pkcs11 requires --pkcs11-token-label <label>",
             );
             require(
-                token.key_label.is_some(),
+                named(token.key_label.as_deref()).is_some(),
                 "--key-source pkcs11 requires --pkcs11-key-label <label>",
             );
         }
         SigningSourceRequest::AwsKms(kms) => {
             require(
-                kms.region.is_some(),
+                named(kms.region.as_deref()).is_some(),
                 "--key-source aws-kms requires --aws-kms-region <region>",
             );
             require(
-                kms.key_id.is_some(),
+                named(kms.key_id.as_deref()).is_some(),
                 "--key-source aws-kms requires --aws-kms-key-id <key-id|arn|alias>",
             );
         }
         SigningSourceRequest::GcpKms(kms) => require(
-            kms.key_version.is_some(),
+            named(kms.key_version.as_deref()).is_some(),
             "--key-source gcp-kms requires --gcp-kms-key-version \
              <projects/.../cryptoKeyVersions/N>",
         ),
@@ -576,6 +582,18 @@ mod tests {
             built(|c| select(c, file_seed("/seed"))).exposure(),
             PrivateKeyExposure::ProcessReadable
         );
+        assert_eq!(
+            built(|c| {
+                select(
+                    c,
+                    SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
+                        seed_var: "MCP_RE_SEED".to_string(),
+                    }),
+                );
+            })
+            .exposure(),
+            PrivateKeyExposure::ProcessReadable
+        );
         for mutate in [pkcs11 as fn(&mut DeploymentRequest), aws, gcp] {
             assert_eq!(built(mutate).exposure(), PrivateKeyExposure::NonExporting);
         }
@@ -672,6 +690,42 @@ mod tests {
             ("--gcp-kms-key-version", |c| {
                 gcp(c);
                 gcp_of(c).key_version = None;
+            }),
+            ("--pkcs11-module", |c| {
+                pkcs11(c);
+                token_of(c).module = Some(String::new());
+            }),
+            ("--pkcs11-pin-file", |c| {
+                pkcs11(c);
+                token_of(c).pin_file = Some(String::new());
+            }),
+            ("--pkcs11-token-label", |c| {
+                pkcs11(c);
+                token_of(c).token_label = Some(String::new());
+            }),
+            ("--pkcs11-key-label", |c| {
+                pkcs11(c);
+                token_of(c).key_label = Some(String::new());
+            }),
+            ("--aws-kms-region", |c| {
+                aws(c);
+                aws_of(c).region = Some(String::new());
+            }),
+            ("--aws-kms-key-id", |c| {
+                aws(c);
+                aws_of(c).key_id = Some(String::new());
+            }),
+            ("--gcp-kms-key-version", |c| {
+                gcp(c);
+                gcp_of(c).key_version = Some(String::new());
+            }),
+            ("--key-source env requires --signing-key-seed", |c| {
+                select(
+                    c,
+                    SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
+                        seed_var: String::new(),
+                    }),
+                );
             }),
         ];
         for (flag, mutate) in cases {
@@ -809,6 +863,42 @@ mod tests {
                 gcp_of(c).key_version = None;
             },
             |c: &mut DeploymentRequest| select(c, file_seed("")),
+            |c: &mut DeploymentRequest| {
+                pkcs11(c);
+                token_of(c).module = Some(String::new());
+            },
+            |c: &mut DeploymentRequest| {
+                pkcs11(c);
+                token_of(c).pin_file = Some(String::new());
+            },
+            |c: &mut DeploymentRequest| {
+                pkcs11(c);
+                token_of(c).token_label = Some(String::new());
+            },
+            |c: &mut DeploymentRequest| {
+                pkcs11(c);
+                token_of(c).key_label = Some(String::new());
+            },
+            |c: &mut DeploymentRequest| {
+                aws(c);
+                aws_of(c).region = Some(String::new());
+            },
+            |c: &mut DeploymentRequest| {
+                aws(c);
+                aws_of(c).key_id = Some(String::new());
+            },
+            |c: &mut DeploymentRequest| {
+                gcp(c);
+                gcp_of(c).key_version = Some(String::new());
+            },
+            |c: &mut DeploymentRequest| {
+                select(
+                    c,
+                    SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
+                        seed_var: String::new(),
+                    }),
+                );
+            },
         ] {
             let (state, violations) = run(mutate);
             assert!(state.is_none(), "a state was built over a refusal");
