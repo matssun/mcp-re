@@ -54,7 +54,7 @@ pub(crate) fn full_bound_response<R: Into<ResolverOutcome>>(
     let bound_request_evidence = request_evidence_of(request)?;
 
     // 3. server_signer.keyid must be the keyid the signature was accepted under; the block's other coordinates are not compared and the product carries only the seam's identity.
-    if block.server_signer.keyid != floor.resolved_server_actor.identity.keyid {
+    if block.server_signer.keyid != floor.resolved_server_actor().identity.keyid {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 

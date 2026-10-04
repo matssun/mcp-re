@@ -164,7 +164,7 @@ fn verify_delegated_response_under(
             is_revoked,
             now,
         )?;
-        check_expected_issuer(pinned, &verified.delegation_issuer_kid)?;
+        check_expected_issuer(pinned, verified.delegation_issuer_kid())?;
         return Ok(VerifiedDelegatedResponse {
             verified: DelegatedResponseEvidence::Bound(verified),
             outcome: DelegatedOutcome::Success,
@@ -182,7 +182,7 @@ fn verify_delegated_response_under(
         now,
     ) {
         Ok(verified) => {
-            check_expected_issuer(pinned, &verified.delegation_issuer_kid)?;
+            check_expected_issuer(pinned, verified.delegation_issuer_kid())?;
             let (wire_code, execution) = rejection_receipt(&response.body);
             Ok(VerifiedDelegatedResponse {
                 verified: DelegatedResponseEvidence::Bound(verified),
@@ -195,7 +195,7 @@ fn verify_delegated_response_under(
         Err(bound_err) => {
             match verifier.verify_delegated_unbound_response(response, expect, is_revoked, now) {
                 Ok(verified) => {
-                    check_expected_issuer(pinned, &verified.delegation_issuer_kid)?;
+                    check_expected_issuer(pinned, verified.delegation_issuer_kid())?;
                     // The unbound signature binds nothing about the request, so a receipt
                     // that verifies here is not yet an answer to THIS request. Confirm the
                     // server produced it for the bytes this client sent before reporting a

@@ -270,7 +270,7 @@ anchor = """
         &resolved_server_actor.verification_key,
         McpReError::ResponseSigInvalid,
     )?;
-    Ok(CryptographicFloorVerifiedBoundResponse {
+    Ok(CryptographicFloorVerifiedBoundResponse::new(
 """
 weakening = """
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
@@ -281,7 +281,7 @@ weakening = """
         &resolved_server_actor.verification_key,
         McpReError::ResponseSigInvalid,
     );
-    Ok(CryptographicFloorVerifiedBoundResponse {
+    Ok(CryptographicFloorVerifiedBoundResponse::new(
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#rejection::pre_052_direct_root::tests::spliced_rejection_onto_a_different_request_fails",
@@ -442,7 +442,7 @@ anchor = """
         &resolved_server_actor.verification_key,
         McpReError::ResponseSigInvalid,
     )?;
-    Ok(CryptographicFloorVerifiedUnboundResponse {
+    Ok(CryptographicFloorVerifiedUnboundResponse::new(
 """
 weakening = """
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
@@ -453,7 +453,7 @@ weakening = """
         &resolved_server_actor.verification_key,
         McpReError::ResponseSigInvalid,
     );
-    Ok(CryptographicFloorVerifiedUnboundResponse {
+    Ok(CryptographicFloorVerifiedUnboundResponse::new(
 """
 expect_red = [
   "//mcp-re-http-profile:proof_path_test#the_unbound_floor_signature_check_is_load_bearing",
@@ -466,7 +466,7 @@ theorem = "THM-0018"
 conjunct = "the block's server_signer carries the keyid the signature was accepted under"
 path = "mcp-re-http-profile/src/verify/full/response.rs"
 anchor = """
-    if block.server_signer.keyid != floor.resolved_server_actor.identity.keyid {
+    if block.server_signer.keyid != floor.resolved_server_actor().identity.keyid {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 """

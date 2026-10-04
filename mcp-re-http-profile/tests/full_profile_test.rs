@@ -179,11 +179,11 @@ fn full_response_roundtrip_binds_request_evidence() {
         .verify_bound_response(&rsp, &req, NOW)
         .expect("full response verifies");
     assert_eq!(
-        rv.request_evidence_agreement.bound_request_evidence,
-        rv.request_evidence_agreement.body_request_evidence
+        rv.request_evidence_agreement().bound_request_evidence,
+        rv.request_evidence_agreement().body_request_evidence
     );
     assert_eq!(
-        rv.floor.resolved_server_actor.identity.keyid,
+        rv.floor().resolved_server_actor().identity.keyid,
         "server-key-1"
     );
 }

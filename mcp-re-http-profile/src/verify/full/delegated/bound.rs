@@ -148,20 +148,20 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     // block's `server_signer`. That is why this path assembles the SHARED facts rather
     // than a `CryptographicFloorVerifiedBoundResponse`, whose meaning is "the presented
     // keyid was resolved through the trust seam" — false of every value here.
-    Ok(VerifiedDelegatedMcpResponse {
-        signature_facts: BoundResponseSignatureFacts {
+    Ok(VerifiedDelegatedMcpResponse::new(
+        BoundResponseSignatureFacts {
             accepted_signer: AcceptedResponseSigner {
                 identity: block.server_signer.clone(),
                 verification_key: verified.delegated_key,
             },
             response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         },
-        request_evidence_agreement: block_agreement(bound, &block),
+        block_agreement(bound, &block),
         // C004b: the ROOT anchor the credential chained to — the stable coordinate,
         // unlike the ephemeral delegated kid. Not an `Option`: this product is only
         // reachable through a verified chain.
-        delegation_issuer_kid: verified.issuer_kid.clone(),
-    })
+        verified.issuer_kid.clone(),
+    ))
 }
 /// The single value of header `name`, or the evidence refusal naming `what` when it is absent.
 fn required_header<'a>(

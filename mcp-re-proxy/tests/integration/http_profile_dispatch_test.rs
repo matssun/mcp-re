@@ -365,7 +365,11 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
         .verify_bound_response(&resp, &req, NOW)
         .expect("verify response e2e");
     assert_eq!(
-        verified_response.floor.resolved_server_actor.identity.keyid,
+        verified_response
+            .floor()
+            .resolved_server_actor()
+            .identity
+            .keyid,
         SERVER_KEY_ID
     );
 }

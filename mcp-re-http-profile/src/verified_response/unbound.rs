@@ -27,13 +27,32 @@ use super::facts::UnboundResponseSignatureFacts;
 /// which is why it is a different type rather than an `Option`.
 #[derive(Debug, Clone)]
 pub struct CryptographicFloorVerifiedUnboundResponse {
-    /// The resolved server/response signer — identity, key, and `Response` slot.
-    pub resolved_server_actor: ResolvedActor,
-    /// The response signature-base handle, under the response role label.
-    pub response_signature_base_digest: RequestEvidence,
+    resolved_server_actor: ResolvedActor,
+    response_signature_base_digest: RequestEvidence,
 }
 
 impl CryptographicFloorVerifiedUnboundResponse {
+    /// Assemble from what the trust seam resolved; `crate::verify` is the only producer.
+    pub(crate) fn new(
+        resolved_server_actor: ResolvedActor,
+        response_signature_base_digest: RequestEvidence,
+    ) -> Self {
+        Self {
+            resolved_server_actor,
+            response_signature_base_digest,
+        }
+    }
+
+    /// The resolved server/response signer — identity, key, and `Response` slot.
+    pub fn resolved_server_actor(&self) -> &ResolvedActor {
+        &self.resolved_server_actor
+    }
+
+    /// The response signature-base handle, under the response role label.
+    pub fn response_signature_base_digest(&self) -> &RequestEvidence {
+        &self.response_signature_base_digest
+    }
+
     /// The authorization-independent facts, as the delegated unbound product carries them.
     pub fn signature_facts(&self) -> UnboundResponseSignatureFacts {
         UnboundResponseSignatureFacts {
@@ -60,12 +79,34 @@ impl CryptographicFloorVerifiedUnboundResponse {
 /// seam-resolved.
 #[derive(Debug, Clone)]
 pub struct VerifiedDelegatedUnboundResponse {
+    signature_facts: UnboundResponseSignatureFacts,
+    delegation_issuer_kid: String,
+}
+
+impl VerifiedDelegatedUnboundResponse {
+    /// Assemble from the facts a verified credential chain authorized; `crate::verify` is
+    /// the only producer.
+    pub(crate) fn new(
+        signature_facts: UnboundResponseSignatureFacts,
+        delegation_issuer_kid: String,
+    ) -> Self {
+        Self {
+            signature_facts,
+            delegation_issuer_kid,
+        }
+    }
+
     /// The unbound cryptographic facts, with the credential-authorized signer. Its
     /// `accepted_signer.identity` is the block's declared `server_signer`, whose keyid was
     /// checked against the credential's delegated kid.
-    pub signature_facts: UnboundResponseSignatureFacts,
+    pub fn signature_facts(&self) -> &UnboundResponseSignatureFacts {
+        &self.signature_facts
+    }
+
     /// The ROOT issuer kid the credential chained to.
-    pub delegation_issuer_kid: String,
+    pub fn delegation_issuer_kid(&self) -> &str {
+        &self.delegation_issuer_kid
+    }
 }
 
 #[cfg(test)]

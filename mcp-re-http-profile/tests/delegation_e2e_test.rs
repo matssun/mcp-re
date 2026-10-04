@@ -241,11 +241,11 @@ fn valid_delegated_response_verifies_under_cnf_key() {
     // The accepted signer is the delegated identity, authorized via the credential
     // chain (its verification key is the delegated key).
     assert_eq!(
-        rv.signature_facts.accepted_signer.identity.keyid,
+        rv.signature_facts().accepted_signer.identity.keyid,
         DELEGATED_KID
     );
     assert_eq!(
-        rv.signature_facts
+        rv.signature_facts()
             .accepted_signer
             .verification_key
             .to_bytes(),
@@ -457,7 +457,7 @@ fn custody_signed_response_verifies_via_attestation_chain() {
     // the key material, not from an issuance counter.
     let first_issued = SigningKey::from_seed_bytes(&[101u8; 32]);
     assert_eq!(
-        rv.signature_facts.accepted_signer.identity.keyid,
+        rv.signature_facts().accepted_signer.identity.keyid,
         mcp_re_http_profile::jwk_thumbprint_ed25519(&first_issued.public_key().to_b64url()),
     );
     assert_eq!(
@@ -530,10 +530,10 @@ fn a_delegated_preflight_receipt_verifies_without_request_binding() {
         .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
         .expect("the preflight receipt verifies unbound");
     assert_eq!(
-        rv.signature_facts.accepted_signer.identity.keyid,
+        rv.signature_facts().accepted_signer.identity.keyid,
         DELEGATED_KID
     );
-    assert_eq!(rv.delegation_issuer_kid, ROOT_KID);
+    assert_eq!(rv.delegation_issuer_kid(), ROOT_KID);
 }
 
 /// Delegation stays REQUIRED on the unbound path: a receipt with no inline credential —

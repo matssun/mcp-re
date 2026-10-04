@@ -357,7 +357,7 @@ remote peer can drive. These three are driven by the test, not by a reply.
 ## ND-010 — a `compile_fail` doctest superseded by a structural probe
 
 **Covers:** `mcp-re-http-profile` `doc#verified_response::bound::VerifiedMcpResponse`,
-`doc#verified_response::bound::VerifiedDelegatedMcpResponse`,
+`doc#verified_response::delegated_bound::VerifiedDelegatedMcpResponse`,
 `doc#verified_request::VerifiedMcpRequest`, `doc#dispatch::outcome::PreparedDispatch`,
 `doc#dispatch::outcome::DispatchOutcome`,
 `doc#verified_response::facts::UnboundResponseSignatureFacts`; `mcp-re-client-core`
@@ -2506,7 +2506,7 @@ Packet at `verification/reviews/packets/adr069-np-094-ratification-2026-09-19.md
 
 ## NP-099 — each verifier product states what it established, without an Option
 
-**Controls:** `mcp-re-http-profile/src/verified_request/mod.rs`, `mcp-re-http-profile/src/verified_response/bound.rs`, `mcp-re-http-profile/src/verified_response/facts.rs`, `mcp-re-http-profile/src/verified_response/unbound.rs`.
+**Controls:** `mcp-re-http-profile/src/verified_request/mod.rs`, `mcp-re-http-profile/src/verified_response/bound.rs`, `mcp-re-http-profile/src/verified_response/delegated_bound.rs`, `mcp-re-http-profile/src/verified_response/facts.rs`, `mcp-re-http-profile/src/verified_response/unbound.rs`.
 **Statement.** *A full product states its audience, a bound one its binding and a delegated one its issuer WITHOUT AN OPTION; a floor product carries the slot trust resolved it in; a seam-authorized floor projects the signer it resolved; the shared facts carry who signed and no authorization; bound and unbound facts are not the same type; an agreement records both handles and not only the verdict; and the unbound products carry no request binding and no trust-seam resolution TO MISREAD.*
 **If false.** A product admits two proof strengths in one type, so a consumer reads an absent fact as a weaker establishment rather than as a different product. The repository has ruled on this exact shape: one Verified type, one proof strength, and an Option documented 'None on the minimal path' is a type admitting two.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.

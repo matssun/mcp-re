@@ -159,7 +159,7 @@ impl<R: Into<ResolverOutcome>> ChainVerification<'_, R> {
         Ok(HopEvidence {
             request_evidence,
             response_evidence: verified_rsp
-                .signature_facts
+                .signature_facts()
                 .response_signature_base_digest
                 .clone(),
         })

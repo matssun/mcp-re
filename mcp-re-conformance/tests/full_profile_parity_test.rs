@@ -282,12 +282,12 @@ fn full_exchange_activates_all_blocks() {
         .verify_bound_response(&rsp, &req, NOW)
         .expect("full response verifies");
     assert_eq!(
-        rv.request_evidence_agreement.bound_request_evidence,
-        rv.request_evidence_agreement.body_request_evidence,
+        rv.request_evidence_agreement().bound_request_evidence,
+        rv.request_evidence_agreement().body_request_evidence,
         "response binds request evidence"
     );
     assert_eq!(
-        rv.floor.resolved_server_actor.identity.keyid,
+        rv.floor().resolved_server_actor().identity.keyid,
         "server-key-1"
     );
 }

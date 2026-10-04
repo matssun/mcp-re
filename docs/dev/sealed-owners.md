@@ -77,6 +77,11 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `P256Point` | http-profile `scitt.rs` | `verifying_key()` — the representation IS the decoded key |
 | `ScittServiceTrustPin` | http-profile `scitt.rs` | `verification_key()`, `kid()`, `service_identifier()`, `leaf_profile()`, `position_profile()`, `resolve()` |
 | `EvidenceCommitment` | http-profile `scitt.rs` | `corresponds_to()`, `is_complete_record()`, `commits_to_verified_evidence()`, `identifies_a_submission()`, `chain_label()` |
+| `CryptographicFloorVerifiedBoundResponse` | http-profile `verified_response/bound.rs` | `resolved_server_actor()`, `response_signature_base_digest()`, `signature_facts()` |
+| `VerifiedMcpResponse` | http-profile `verified_response/bound.rs` | `floor()`, `request_evidence_agreement()` |
+| `VerifiedDelegatedMcpResponse` | http-profile `verified_response/delegated_bound.rs` | `signature_facts()`, `request_evidence_agreement()`, `delegation_issuer_kid()` |
+| `CryptographicFloorVerifiedUnboundResponse` | http-profile `verified_response/unbound.rs` | `resolved_server_actor()`, `response_signature_base_digest()`, `signature_facts()` |
+| `VerifiedDelegatedUnboundResponse` | http-profile `verified_response/unbound.rs` | `signature_facts()`, `delegation_issuer_kid()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
@@ -415,6 +420,20 @@ request. The parameter type now excludes those, so the obligation is stated
 unconditionally. `verify-verus` reports PASS over 6 units with the same 15 verified
 obligations in `mcp-re-http-profile` as before, so the strengthening is not paid for by a
 weaker proof somewhere else.
+
+### The response products: no proof trade, a crate-boundary seal
+
+No Verus `ensures` reads a response product (their units are V0), so the request-side
+trade above never applied to them. Each response product's representation is private to its
+module and its sole constructor is `pub(crate)`, called from `crate::verify`. The seal is
+a crate-boundary seal: outside the crate holding a product means a verifier returned it;
+inside the crate it excludes destructuring and mutation, not construction. No structural
+witness pins it yet, a named coverage gap of the kind "The campaign, finished" lists.
+
+The facts types (`AcceptedResponseSigner`, `BoundResponseSignatureFacts`,
+`UnboundResponseSignatureFacts`, `BoundRequestEvidenceAgreement`) stay deliberately
+unsealed value records that establish nothing alone; they are reached as projections of a
+product.
 
 ## Sealing the next owner
 

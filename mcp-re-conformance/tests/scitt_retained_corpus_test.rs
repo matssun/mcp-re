@@ -282,8 +282,9 @@ fn hop(
             NOW,
         )
         .expect("response verifies")
-        .signature_facts
-        .response_signature_base_digest;
+        .signature_facts()
+        .response_signature_base_digest
+        .clone();
 
     (
         RetainedHop { request, response },

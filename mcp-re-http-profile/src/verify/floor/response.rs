@@ -86,10 +86,10 @@ pub(crate) fn floor_bound_response<R: Into<ResolverOutcome>>(
         &resolved_server_actor.verification_key,
         McpReError::ResponseSigInvalid,
     )?;
-    Ok(CryptographicFloorVerifiedBoundResponse {
+    Ok(CryptographicFloorVerifiedBoundResponse::new(
         resolved_server_actor,
-        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
-    })
+        RequestEvidence::from_response_signature_base(&base),
+    ))
 }
 /// [`verify_response_unbound`] under an explicit verifier-local [`VerifierPolicy`].
 pub(crate) fn floor_unbound_response<R: Into<ResolverOutcome>>(
@@ -135,8 +135,8 @@ pub(crate) fn floor_unbound_response<R: Into<ResolverOutcome>>(
         &resolved_server_actor.verification_key,
         McpReError::ResponseSigInvalid,
     )?;
-    Ok(CryptographicFloorVerifiedUnboundResponse {
+    Ok(CryptographicFloorVerifiedUnboundResponse::new(
         resolved_server_actor,
-        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
-    })
+        RequestEvidence::from_response_signature_base(&base),
+    ))
 }

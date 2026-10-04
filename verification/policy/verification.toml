@@ -694,6 +694,7 @@ paths = [
   "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
   "mcp-re-http-profile/src/verify/full/delegated/expectations.rs",
   "mcp-re-http-profile/src/verified_response/bound.rs",
+  "mcp-re-http-profile/src/verified_response/delegated_bound.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -866,6 +867,7 @@ paths = [
   "mcp-re-http-profile/src/verified_response/mod.rs",
   "mcp-re-http-profile/src/verified_response/facts.rs",
   "mcp-re-http-profile/src/verified_response/bound.rs",
+  "mcp-re-http-profile/src/verified_response/delegated_bound.rs",
   "mcp-re-http-profile/src/verified_response/unbound.rs",
 ]
 exported_contracts = []

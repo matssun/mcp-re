@@ -128,14 +128,14 @@ pub(crate) fn delegated_unbound_response<R: Into<ResolverOutcome>>(
 
     // Credential-authorized, exactly as on the bound path: the shared unbound facts, not
     // a seam-resolved `CryptographicFloorVerifiedUnboundResponse`.
-    Ok(VerifiedDelegatedUnboundResponse {
-        signature_facts: UnboundResponseSignatureFacts {
+    Ok(VerifiedDelegatedUnboundResponse::new(
+        UnboundResponseSignatureFacts {
             accepted_signer: AcceptedResponseSigner {
                 identity: block.server_signer.clone(),
                 verification_key: verified.delegated_key,
             },
             response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         },
-        delegation_issuer_kid: verified.issuer_kid.clone(),
-    })
+        verified.issuer_kid.clone(),
+    ))
 }

@@ -525,10 +525,10 @@ fn verified_response_exposes_resolved_server_actor() {
     let v = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_bound_response_floor(&rsp, &req, NOW)
         .expect("verifies");
-    assert_eq!(v.resolved_server_actor.identity.role, "server");
-    assert_eq!(v.resolved_server_actor.slot, SignerSlot::Response);
-    assert!(v.resolved_server_actor.actor_id().starts_with("server:"));
-    assert_eq!(v.response_signature_base_digest.digest_alg, "sha256");
+    assert_eq!(v.resolved_server_actor().identity.role, "server");
+    assert_eq!(v.resolved_server_actor().slot, SignerSlot::Response);
+    assert!(v.resolved_server_actor().actor_id().starts_with("server:"));
+    assert_eq!(v.response_signature_base_digest().digest_alg, "sha256");
     // "the floor path carries no request binding" is no longer an assertion about a
     // field's absence — the floor product has no such field to inspect.
 }
@@ -653,8 +653,8 @@ fn unbound_response_floor_verifies_a_receipt_with_no_request() {
     let v = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_unbound_response_floor(&rsp, NOW)
         .expect("an unbound receipt verifies with no request context");
-    assert_eq!(v.resolved_server_actor.slot, SignerSlot::Response);
-    assert_eq!(v.resolved_server_actor.identity.keyid, "server-key-1");
+    assert_eq!(v.resolved_server_actor().slot, SignerSlot::Response);
+    assert_eq!(v.resolved_server_actor().identity.keyid, "server-key-1");
 }
 
 /// THE SLOT CONJUNCT, ON THE UNBOUND ARM. THM-0017 says the presented keyid resolved
