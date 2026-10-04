@@ -3546,6 +3546,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::offline::tests::a_tampered_statement_fails_the_receipt",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::statement::tests::a_critical_header_on_a_signed_statement_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::statement::tests::editing_a_decoded_view_does_not_change_what_was_signed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::statement::tests::a_statement_payload_with_trailing_octets_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::statement::tests::a_duplicate_cwt_claim_in_a_signed_statement_is_refused",
 ]
 
 # M73 is this unit's, and BEFORE ANY FOLD is the load-bearing half of its conjunct: a leaf
