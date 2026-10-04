@@ -8,9 +8,9 @@
 //! about the range their arguments can occupy, and the module's own controls pin that
 //! argument at both `i64` extremes (`docs/dev/partial-operations.md`, class C).
 //!
-//! The inverse is exact only across the era the grammar admits. Outside it the year field
-//! exceeds four digits and the parser will not read the result back — a property of the
-//! admitted range, which the parser's boundary controls pin.
+//! The inverse is exact across the era the grammar admits, 0000-01-01T00:00:00Z through
+//! 9999-12-31T23:59:59Z. Outside it the formatter returns `None`, so every string it
+//! returns is in the parser's grammar.
 
 /// Convert days-since-Unix-epoch to a Gregorian `(year, month, day)`, using
 /// Howard Hinnant's `civil_from_days` — the exact inverse of [`days_from_civil`].
@@ -37,16 +37,22 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 /// (`YYYY-MM-DDTHH:MM:SSZ`) — the inverse of [`parse_rfc3339_utc`] for whole
 /// seconds. Used by verifiers/servers to stamp `verified_at` / `issued_at` from
 /// a caller-supplied `now_unix` (core never reads the system clock itself).
+/// Returns `None` for an instant outside 0000-01-01T00:00:00Z..=9999-12-31T23:59:59Z.
 // Class C: `div_euclid`/`rem_euclid` by the non-zero constant 86_400 are total on `i64`
 // (the one panicking division needs a negative divisor), and they are what bounds
 // [`civil_from_days`]. `secs` is in [0, 86399], so the clock divisions are total too.
 #[allow(clippy::arithmetic_side_effects)]
-pub fn unix_to_rfc3339_utc(unix: i64) -> String {
+pub fn unix_to_rfc3339_utc(unix: i64) -> Option<String> {
     let days = unix.div_euclid(86_400);
     let secs = unix.rem_euclid(86_400);
     let (year, month, day) = civil_from_days(days);
+    if !(0..=9999).contains(&year) {
+        return None;
+    }
     let hh = secs / 3600;
     let mm = (secs % 3600) / 60;
     let ss = secs % 60;
-    format!("{year:04}-{month:02}-{day:02}T{hh:02}:{mm:02}:{ss:02}Z")
+    Some(format!(
+        "{year:04}-{month:02}-{day:02}T{hh:02}:{mm:02}:{ss:02}Z"
+    ))
 }

@@ -408,18 +408,19 @@ mod tests {
         );
     }
 
-    /// The formatting inverse is TOTAL on `i64`, including both extremes.
+    /// `unix_to_rfc3339_utc` does not panic at exactly the seven listed inputs, both
+    /// `i64` extremes included, in a build with overflow checks on. This is a point
+    /// check, not a totality result.
     ///
-    /// `unix_to_rfc3339_utc` and `civil_from_days` are the two functions in this module
-    /// that the Verus cone does not reach, and their arithmetic is justified by an
-    /// argument about bounds rather than by a proof. This control is what makes that
-    /// argument measured: the extremes are exactly where a bound argument fails, and a
-    /// panic here would mean the reasoning in those two comments is wrong.
+    /// The totality claim over the caller's domain is THM-0128 (unit
+    /// `core.time_civil_from_days`), a Lean result over a model extracted from
+    /// `civil_from_days`. Per its own scope, the step from any `i64` to that domain runs
+    /// through `div_euclid`, which the extraction leaves uninterpreted; that composition
+    /// rests on the bound argument in `format.rs`, which this control pins at both
+    /// extremes.
     ///
-    /// It deliberately asserts nothing about the TEXT produced outside the era the
-    /// grammar admits. Outside it, the year field exceeds four digits and
-    /// `parse_rfc3339_utc` will not read the result back — the round trip is a property
-    /// of the admitted range, which the boundary controls above pin.
+    /// It asserts only totality; the refusal outside the admitted era is
+    /// `formatter_refuses_outside_the_admitted_era`'s.
     #[test]
     fn civil_from_days_is_total_at_the_i64_extremes() {
         for unix in [i64::MIN, i64::MIN + 1, -1, 0, 1, i64::MAX - 1, i64::MAX] {
@@ -435,8 +436,20 @@ mod tests {
             (0, "1970-01-01T00:00:00Z"),
             (253402300799, "9999-12-31T23:59:59Z"),
         ] {
-            assert_eq!(super::unix_to_rfc3339_utc(unix), text);
+            assert_eq!(super::unix_to_rfc3339_utc(unix).as_deref(), Some(text));
             assert_eq!(parse_rfc3339_utc(text), Ok(unix));
+        }
+    }
+
+    /// The formatter refuses every instant outside the era the parser admits, and
+    /// accepts both ends of it.
+    #[test]
+    fn formatter_refuses_outside_the_admitted_era() {
+        for unix in [i64::MIN, -62167219201, 253402300800, i64::MAX] {
+            assert_eq!(super::unix_to_rfc3339_utc(unix), None);
+        }
+        for unix in [-62167219200, 253402300799] {
+            assert!(super::unix_to_rfc3339_utc(unix).is_some());
         }
     }
 
