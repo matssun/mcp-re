@@ -1617,7 +1617,7 @@ mod tests {
                 .position(|f| f == missing)
                 .expect("flag present");
             flags.drain(idx..idx + 2);
-            let mut a = minimal();
+            let mut a = minimal_durable_without("--signing-key-seed");
             a.splice(0..0, flags);
             let err = parse_args(&a).unwrap_err();
             assert!(
@@ -1797,7 +1797,7 @@ mod tests {
                 .position(|f| f == missing)
                 .expect("flag present");
             flags.drain(idx..idx + 2);
-            let mut a = minimal();
+            let mut a = minimal_durable_without("--signing-key-seed");
             a.splice(0..0, flags);
             let err = parse_args(&a).unwrap_err();
             assert!(
