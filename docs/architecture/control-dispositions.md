@@ -4739,3 +4739,15 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none.
 **Root relationship.** Law A-1 premise (ADR-MCPRE-065 s2.7) beside THM-0040: an unlisted operation matches no decision.
 **Severity:** `high`.
+
+## NP-263 — what an AWS KMS session-credential refusal costs, and what it discards
+
+**Controls:** `mcp-re-proxy` `aws_sts::tests::a_refused_credential_is_evicted_only_while_it_is_still_the_cached_one`, `aws_kms_keysource::tests::a_kms_refusal_of_the_session_credential_re_signs_once_with_a_fresh_one`, `aws_kms_keysource::credential_refusal::tests::only_an_expired_or_unrecognized_session_credential_is_a_refusal_of_the_credential`, `aws_kms_keysource::credential_refusal::tests::a_refused_session_credential_is_discarded_and_the_call_retried_once`, `aws_kms_keysource::credential_refusal::tests::an_access_denied_refusal_discards_nothing_and_costs_one_call`, `aws_kms_keysource::credential_refusal::tests::a_refusal_about_a_credential_already_replaced_costs_no_second_call`, `aws_kms_keysource::credential_refusal::tests::a_refusal_a_fresh_credential_does_not_fix_suspends_the_retry_for_the_cool_off`.
+**Carrier:** `mcp-re-proxy/src/aws_kms_keysource/credential_refusal.rs` and `mcp-re-proxy/src/aws_sts.rs` (`WebIdentityCredentialSource::invalidate`).
+**Statement.** *An `ExpiredTokenException` or `UnrecognizedClientException` refusal discards exactly the presented credential and re-signs once; `AccessDeniedException` and every other name discard nothing and cost one call; a refusal a fresh credential does not fix suspends the retry for the cool-off; eviction is keyed on the presented access key id, so a refusal about a credential already replaced evicts nothing.*
+**If false.** A credential KMS no longer honours fails every signature until its stated expiry, or a permanent refusal costs one STS exchange per handshake.
+**Likely owner:** none. `proxy.aws_sts_credentials` and `proxy.aws_web_identity_credential_exchange` state the exchange and lifetime algebra, and `proxy.aws_kms_adapter` states key spec, SPKI and verify-before-return; none states a runtime refusal verdict.
+**Root relationship.** A premise of the proxy units above it.
+**Severity:** `high`.
+
+**Lanes.** Only the `aws_kms_keysource` lanes (`proxy_aws_kms_unit_test`, `proxy_ext_unit_test`) compile these controls; the default lane compiles them to zero tests.

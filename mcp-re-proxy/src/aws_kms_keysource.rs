@@ -17,12 +17,13 @@
 //!     BEFORE it is handed to the proxy — a non-verifying signature is an error,
 //!     never emitted.
 
+mod credential_refusal;
+
 use crate::kms_endpoint_policy::KmsEndpoint;
 use crate::outbound_fetch::CredentialEgress;
 use crate::remote_signer_call::NETWORK_TIMEOUT;
 use std::io::Read;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -107,6 +108,8 @@ pub(crate) struct UreqKmsClient {
     authority: String,
     /// Set while the credential source is failing, so the failure is reported once per episode.
     refresh_failing: AtomicBool,
+    /// The refused-session-credential retry.
+    refusal: credential_refusal::RefusalRecovery,
 }
 
 impl UreqKmsClient {
@@ -136,27 +139,12 @@ impl UreqKmsClient {
             credential_source,
             authority: endpoint.authority().to_string(),
             refresh_failing: AtomicBool::new(false),
+            refusal: credential_refusal::RefusalRecovery::new(),
             egress: endpoint.egress(NETWORK_TIMEOUT),
         })
     }
-}
 
-impl KmsHttpClient for UreqKmsClient {
-    fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
-        // Refresh before signing. A failed refresh keeps the last-good credentials and is
-        // reported once per failing episode. Both lock takes recover poison because the
-        // guarded value is a whole-value swap.
-        match self.credential_source.credentials() {
-            Ok(refreshed) => {
-                let mut signer = self.signer.write().unwrap_or_else(|p| p.into_inner());
-                signer.set_credentials(refreshed);
-                self.refresh_failing.store(false, Ordering::Relaxed);
-            }
-            Err(e) if !self.refresh_failing.swap(true, Ordering::Relaxed) => {
-                eprintln!("mcp-re-proxy: aws-kms credential refresh failed; signing continues on the last-good credentials: {e}");
-            }
-            Err(_) => {}
-        }
+    fn signed_post(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
         let signer = self.signer.read().unwrap_or_else(|p| p.into_inner());
         let amz_date = amz_date_at(crate::clock::now_unix())?;
         // Headers that are SIGNED (host, content-type, x-amz-target). x-amz-date and
@@ -193,6 +181,25 @@ impl KmsHttpClient for UreqKmsClient {
             req = req.set("X-Amz-Security-Token", token);
         }
         read_kms_response(req.send_bytes(body))
+    }
+}
+
+impl KmsHttpClient for UreqKmsClient {
+    fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
+        let presented = self.refresh();
+        self.refusal.recover(
+            &*self.credential_source,
+            presented,
+            target,
+            self.signed_post(target, body),
+            |fresh| {
+                self.signer
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .set_credentials(fresh);
+                self.signed_post(target, body)
+            },
+        )
     }
 }
 
@@ -583,6 +590,7 @@ mod tests {
 
     use super::*;
     use crate::communication_assurance::Ed25519PublicKeyValue;
+    use std::sync::atomic::Ordering;
 
     fn spki_from_raw(raw: &[u8; 32]) -> Vec<u8> {
         Ed25519PublicKeyValue::spki_der_for_point(*raw)
@@ -1220,6 +1228,80 @@ mod tests {
         assert!(client.refresh_failing.load(Ordering::Relaxed));
         let seen = server.join().unwrap();
         assert!(seen[0].contains("Credential=AKIDSECOND/"), "{}", seen[0]);
+        assert!(seen[1].contains("Credential=AKIDSECOND/"), "{}", seen[1]);
+    }
+
+    #[test]
+    fn a_kms_refusal_of_the_session_credential_re_signs_once_with_a_fresh_one() {
+        use std::io::Write;
+        struct RefusedThenFresh(AtomicBool);
+        impl AwsCredentialSource for RefusedThenFresh {
+            fn credentials(&self) -> Result<crate::aws_sigv4::AwsCredentials, KeyError> {
+                let akid = if self.0.load(Ordering::SeqCst) {
+                    "AKIDSECOND"
+                } else {
+                    "AKIDFIRST"
+                };
+                Ok(crate::aws_sigv4::AwsCredentials {
+                    access_key_id: akid.to_string(),
+                    secret_access_key: zeroize::Zeroizing::new("secret".to_string()),
+                    session_token: None,
+                })
+            }
+            fn invalidate(&self, refused: &str) -> bool {
+                refused == "AKIDFIRST" && !self.0.swap(true, Ordering::SeqCst)
+            }
+            fn describe(&self) -> String {
+                "test-refused-then-fresh".to_string()
+            }
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for answer in [
+                &b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 52\r\n\r\n{\"__type\":\"com.amazonaws.kms#ExpiredTokenException\"}"[..],
+                &b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}"[..],
+            ] {
+                let (mut conn, _) = listener.accept().unwrap();
+                let mut raw = Vec::new();
+                let mut chunk = [0u8; 1024];
+                loop {
+                    let n = conn.read(&mut chunk).unwrap();
+                    raw.extend_from_slice(&chunk[..n]);
+                    let text = String::from_utf8_lossy(&raw).to_string();
+                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                        let len = head
+                            .lines()
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if body.len() >= len {
+                            break;
+                        }
+                    }
+                    assert!(n > 0, "connection closed before the request completed");
+                }
+                seen.push(String::from_utf8_lossy(&raw).to_string());
+                conn.write_all(answer).unwrap();
+            }
+            seen
+        });
+        let client = UreqKmsClient::new(
+            Box::new(RefusedThenFresh(AtomicBool::new(false))),
+            &AwsKmsConfig {
+                region: "eu-north-1".to_string(),
+                key_id: "alias/mcp-re".to_string(),
+                endpoint: Some(format!("http://127.0.0.1:{port}")),
+            },
+        )
+        .expect("construct");
+        client.post_kms(TARGET_SIGN, b"{}").expect("re-signed once");
+        let seen = server.join().unwrap();
+        assert!(seen[0].contains("Credential=AKIDFIRST/"), "{}", seen[0]);
         assert!(seen[1].contains("Credential=AKIDSECOND/"), "{}", seen[1]);
     }
 

@@ -196,6 +196,7 @@ on:
       # feature, so none of their units runs in the default lane and a change here must
       # still re-trigger every one of them.
       - "mcp-re-proxy/src/aws_kms_keysource.rs"
+      - "mcp-re-proxy/src/aws_kms_keysource/**"
       - "mcp-re-proxy/src/aws_sigv4.rs"
       - "mcp-re-proxy/src/aws_sigv4/amz_date.rs"
       - "mcp-re-proxy/src/aws_sts.rs"
@@ -590,6 +591,7 @@ on:
       # feature, so none of their units runs in the default lane and a change here must
       # still re-trigger every one of them.
       - "mcp-re-proxy/src/aws_kms_keysource.rs"
+      - "mcp-re-proxy/src/aws_kms_keysource/**"
       - "mcp-re-proxy/src/aws_sigv4.rs"
       - "mcp-re-proxy/src/aws_sigv4/amz_date.rs"
       - "mcp-re-proxy/src/aws_sts.rs"

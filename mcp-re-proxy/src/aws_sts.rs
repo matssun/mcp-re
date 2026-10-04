@@ -90,7 +90,7 @@ const STS_FAILURE_COOLDOWN: Duration = NETWORK_TIMEOUT;
 /// A role's `MaxSessionDuration` cannot exceed 12 hours, so an `Expiration` beyond that is
 /// not a lifetime STS can honestly have issued. Unbounded, a substituted or emulator
 /// endpoint stating a far-future `Expiration` pins the credential for the process lifetime
-/// — nothing re-exchanges it and nothing evicts it — which is a permanent loss of
+/// — nothing re-exchanges it unless KMS refuses it as expired, which a substitute can avoid — a loss of
 /// AWS-rooted signing on that replica.
 const MAX_SESSION_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 
@@ -144,9 +144,10 @@ const STS_API_VERSION: &str = "2011-06-15";
 /// The SAME length as the GCP metadata sibling's identically-named constant, reached from the
 /// opposite direction: that peer is an unauthenticated link-local plaintext service and its
 /// client evicts a token Cloud KMS answers 401 for; this peer is an operator-configured HTTPS
-/// endpoint, and nothing here evicts a cached credential when KMS rejects it. A credential
-/// that STATED an expiry and that AWS then stops honouring is therefore held for its whole
-/// stated life, up to [`MAX_SESSION_LIFETIME`]; this floor does not touch that case.
+/// endpoint. A credential KMS refuses as expired or unrecognized is evicted and re-exchanged
+/// once (`aws_kms_keysource::credential_refusal`); one KMS authenticates but does not
+/// authorize (`AccessDenied`) is not, so it is held for its stated life, up to
+/// [`MAX_SESSION_LIFETIME`]; this floor does not touch that case.
 const UNKNOWN_EXPIRY_REUSE: Duration = Duration::from_secs(120);
 
 /// Default session name when `AWS_ROLE_SESSION_NAME` is unset. It lands in
@@ -163,6 +164,13 @@ const DEFAULT_SESSION_NAME: &str = "mcp-re-proxy";
 /// here are a `getenv` or a cache hit in the common case.
 pub trait AwsCredentialSource: Send + Sync {
     fn credentials(&self) -> Result<AwsCredentials, KeyError>;
+
+    /// Discard the cached credential IF it is still the one whose access key id was refused;
+    /// report whether it was. The default is right for a source that reads per call
+    /// (`EnvCredentialSource` re-reads the environment every call).
+    fn invalidate(&self, _refused_access_key_id: &str) -> bool {
+        false
+    }
 
     /// One line for the startup banner, so an operator can see which custody path a
     /// running proxy actually took rather than which one they meant to configure.
@@ -610,6 +618,19 @@ impl AwsCredentialSource for WebIdentityCredentialSource {
         self.cached_or_exchange(&SystemTime::now, &|| self.exchange())
     }
 
+    fn invalidate(&self, refused_access_key_id: &str) -> bool {
+        // `last_failure` stays: a KMS refusal says nothing about whether STS answers.
+        let mut state = self.state();
+        let held = state
+            .credentials
+            .as_ref()
+            .is_some_and(|c| c.credentials.access_key_id == refused_access_key_id);
+        if held {
+            state.credentials = None;
+        }
+        held
+    }
+
     fn describe(&self) -> String {
         format!(
             "web identity / IRSA (role {}, token {})",
@@ -706,7 +727,7 @@ fn parse_assume_role_response_at(
     // The TOP is bounded too, and for the same reason the GCP sibling clamps `expires_in`:
     // an `Expiration` of year 9999 parses cleanly and pins the credential for the process
     // lifetime, so CREDENTIAL_REFRESH_MARGIN never fires again and nothing re-exchanges —
-    // and nothing evicts a cached credential when KMS rejects it either, so that state is
+    // a credential KMS refuses as expired is evicted and re-exchanged once, but one it accepts is not, so that state is
     // permanent until a restart. `AssumeRoleWithWebIdentity` cannot issue a session longer
     // than the role's MaxSessionDuration, whose own ceiling is 12 hours, so a longer claim
     // is not a lifetime the peer can honestly promise. Truncating is a truthful bound, not
@@ -1459,6 +1480,43 @@ mod tests {
             .cached_or_exchange(&|| now + UNKNOWN_EXPIRY_REUSE, &exchange)
             .expect("credentials");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_refused_credential_is_evicted_only_while_it_is_still_the_cached_one() {
+        let source = source();
+        let now = SystemTime::now();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let exchange = || {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(CachedCredentials {
+                credentials: AwsCredentials {
+                    access_key_id: "ASIAFIRST".to_string(),
+                    ..parsed("2026-08-03T12:34:56Z").credentials
+                },
+                expires_at: now + Duration::from_secs(3600),
+            })
+        };
+        let count = || calls.load(std::sync::atomic::Ordering::SeqCst);
+        source
+            .cached_or_exchange(&|| now, &exchange)
+            .expect("first");
+        assert_eq!(count(), 1);
+        assert!(!source.invalidate("ASIAOTHER"));
+        source
+            .cached_or_exchange(&|| now, &exchange)
+            .expect("cached");
+        assert_eq!(
+            count(),
+            1,
+            "a refusal about another credential evicts nothing"
+        );
+        assert!(source.invalidate("ASIAFIRST"));
+        source
+            .cached_or_exchange(&|| now, &exchange)
+            .expect("again");
+        assert_eq!(count(), 2, "the refused credential is re-exchanged");
+        assert!(!EnvCredentialSource.invalidate("ASIAFIRST"));
     }
 
     /// The floor must never extend a real expiry. A credential with 100 seconds left is

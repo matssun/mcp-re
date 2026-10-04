@@ -9856,6 +9856,7 @@ class = "V0"
 description = "The AWS KMS Ed25519 response signer: the key spec is read at construction and a non-Ed25519 one fails closed, the advertised public key is parsed from RFC 8410 SPKI, every signature is verified locally before it is returned, and a pre-hashed signature is refused rather than emitted. Two operations only — GetPublicKey and Sign — over a minimal audited SigV4, with no aws-sdk-kms and no tokio."
 paths = [
   "mcp-re-proxy/src/aws_kms_keysource.rs",
+  "mcp-re-proxy/src/aws_kms_keysource/credential_refusal.rs",
   "mcp-re-proxy/src/aws_sigv4.rs",
   "mcp-re-proxy/src/aws_sigv4/amz_date.rs",
   "mcp-re-proxy/src/kms_keysource/handshake_control.rs",

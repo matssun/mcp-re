@@ -656,6 +656,16 @@ likely_owner = ""
 consequence = "high"
 root_relationship = "Law A-1 premise (ADR-MCPRE-065 s2.7) beside THM-0040: an unlisted operation matches no decision"
 record = "docs/architecture/control-dispositions.md#np-262"
+
+[[proposition]]
+id = "NP-263"
+title = "What an AWS KMS session-credential refusal costs, and what it discards"
+carrier = "mcp-re-proxy/src/aws_kms_keysource/credential_refusal.rs and aws_sts.rs (WebIdentityCredentialSource::invalidate)"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-263"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14975,4 +14985,60 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#authorization::verified_action::tests::a_method_outside_the_protocol_table_yields_an_unknown_target"
 decision = "new-proposition"
 proposition = "NP-262"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20290"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_sts::tests::a_refused_credential_is_evicted_only_while_it_is_still_the_cached_one"
+decision = "new-proposition"
+proposition = "NP-263"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20291"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_kms_keysource::tests::a_kms_refusal_of_the_session_credential_re_signs_once_with_a_fresh_one"
+decision = "new-proposition"
+proposition = "NP-263"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20292"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_kms_keysource::credential_refusal::tests::only_an_expired_or_unrecognized_session_credential_is_a_refusal_of_the_credential"
+decision = "new-proposition"
+proposition = "NP-263"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20293"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_kms_keysource::credential_refusal::tests::a_refused_session_credential_is_discarded_and_the_call_retried_once"
+decision = "new-proposition"
+proposition = "NP-263"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20294"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_kms_keysource::credential_refusal::tests::an_access_denied_refusal_discards_nothing_and_costs_one_call"
+decision = "new-proposition"
+proposition = "NP-263"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20295"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_kms_keysource::credential_refusal::tests::a_refusal_about_a_credential_already_replaced_costs_no_second_call"
+decision = "new-proposition"
+proposition = "NP-263"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20296"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_kms_keysource::credential_refusal::tests::a_refusal_a_fresh_credential_does_not_fix_suspends_the_retry_for_the_cool_off"
+decision = "new-proposition"
+proposition = "NP-263"
 recorded = "2026-10-04"

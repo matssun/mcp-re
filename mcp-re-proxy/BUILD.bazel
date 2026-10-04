@@ -80,6 +80,7 @@ _PROXY_LIB_SRCS = [
     # is what the L-5 control for `BodyIsNotTheSignedBody` needs.
     "src/authorization/action_harness.rs",
     "src/aws_kms_keysource.rs",
+    "src/aws_kms_keysource/credential_refusal.rs",
     "src/aws_sigv4.rs",
     "src/aws_sigv4/amz_date.rs",
     # ADR-MCPRE-063 Slice 1: the compatibility surface of the certificate identity
