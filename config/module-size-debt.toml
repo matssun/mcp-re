@@ -629,15 +629,6 @@ baseline_prod_loc = 370
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
-[[debt]]
-path = "mcp-re-proxy/src/key_source.rs"
-# R12-630/634: `FileKeySource` changed representation and moved to its own file,
-# `key_source/file_key_source.rs`: 359 -> 273. Consumed, not kept as headroom.
-baseline_prod_loc = 273
-baseline_sha = "b32c327"
-status = "reviewed-exception"
-review_ref = "EX-008 in docs/architecture/review-dispositions.md"
-
 # RA3-003 shrank this entry from 342 to 335: `open` and `with_bootstrap` were deleted and
 # `with_bounds` became the floor's only constructor, carrying the two doc facts they held. An
 # ordinary ratchet decrease, not a measurement correction — the bytes changed, so the
