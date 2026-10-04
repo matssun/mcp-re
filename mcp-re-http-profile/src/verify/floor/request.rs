@@ -20,8 +20,6 @@
 //! attacker-chosen. The ordering argument is load-bearing only from the content-digest
 //! step on.
 
-use mcp_re_core::McpReError;
-
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::verify_content_digest_sha256;
@@ -45,6 +43,7 @@ use super::params::check_params;
 use super::sf_dictionary::member_value;
 use super::signature::signature_value_b64url;
 use super::signature::verify_under;
+use super::signature::SignedMessage;
 use super::signature_input::parse_signature_input;
 use super::transport_headers::reject_mcp_method_divergence;
 use super::trust_slot::resolve_actor_for_slot;
@@ -119,7 +118,7 @@ pub(crate) fn floor_request<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &resolved_actor.verification_key,
-        McpReError::InvalidSignature,
+        SignedMessage::Request,
     )?;
 
     // 5. MCP transport contract (§4.1). Deliberately AFTER the signature: before

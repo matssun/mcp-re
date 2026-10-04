@@ -50,8 +50,6 @@
 //! `notifications/cancelled`, which is exactly why the distinction has to hold. See
 //! "Binding granularity" in `docs/spec/http-profile-conformance-notes.md` §3.4.
 
-use mcp_re_core::McpReError;
-
 // The cryptographic-floor subordinates, imported by name rather than spelled out at each
 // call site. The bodyless shapes verify DIFFERENT required component sets — a 202 has no
 // body to digest — under IDENTICAL parse, coverage, parameter, trust and signature rules,
@@ -62,6 +60,7 @@ use crate::verify::floor::components::require_conditional_coverage;
 use crate::verify::floor::params::check_params;
 use crate::verify::floor::signature::signature_value_b64url;
 use crate::verify::floor::signature::verify_under;
+use crate::verify::floor::signature::SignedMessage;
 use crate::verify::floor::signature_input::parse_signature_input_for;
 
 /// What a verified bodyless acknowledgement establishes.
@@ -376,7 +375,7 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &actor.verification_key,
-        McpReError::InvalidSignature,
+        SignedMessage::Request,
     )?;
     // After the signature, never before: the contract reads covered headers, so
     // applying it to unverified input would let an attacker choose which arm fires.

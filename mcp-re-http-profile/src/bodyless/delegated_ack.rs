@@ -22,8 +22,6 @@
 //! cannot fail. The SUBSTANTIVE cross-check is against a field the credential does not get
 //! to choose freely: the delegated kid the response actually signed under.
 
-use mcp_re_core::McpReError;
-
 use crate::block::ResolverOutcome;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
@@ -42,6 +40,7 @@ use crate::verify::floor::components::require_components;
 use crate::verify::floor::params::check_params;
 use crate::verify::floor::signature::signature_value_b64url;
 use crate::verify::floor::signature::verify_under;
+use crate::verify::floor::signature::SignedMessage;
 use crate::verify::floor::signature_input::parse_signature_input_for;
 use crate::verify::floor::signature_input::ParsedSignatureInput;
 
@@ -145,7 +144,7 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &verified.delegated_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
     Ok(AcknowledgedDelegation::established(verified, server_signer))

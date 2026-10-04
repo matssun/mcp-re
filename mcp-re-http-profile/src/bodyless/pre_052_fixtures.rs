@@ -147,7 +147,7 @@ pub fn verify_pre_052_root_signed_202_for_negative_test<R: Into<ResolverOutcome>
         &base,
         &sig,
         &actor.verification_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )?;
     Ok(actor)
 }

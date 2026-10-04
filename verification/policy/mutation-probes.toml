@@ -88,7 +88,7 @@ anchor = """
         &base,
         &sig,
         &resolved_actor.verification_key,
-        McpReError::InvalidSignature,
+        SignedMessage::Request,
     )?;
 """
 weakening = """
@@ -98,7 +98,7 @@ weakening = """
         &base,
         &sig,
         &resolved_actor.verification_key,
-        McpReError::InvalidSignature,
+        SignedMessage::Request,
     );
 """
 expect_red = [
@@ -268,7 +268,7 @@ anchor = """
         &base,
         &sig,
         &resolved_server_actor.verification_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )?;
     Ok(CryptographicFloorVerifiedBoundResponse::new(
 """
@@ -279,7 +279,7 @@ weakening = """
         &base,
         &sig,
         &resolved_server_actor.verification_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     );
     Ok(CryptographicFloorVerifiedBoundResponse::new(
 """
@@ -440,7 +440,7 @@ anchor = """
         &base,
         &sig,
         &resolved_server_actor.verification_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )?;
     Ok(CryptographicFloorVerifiedUnboundResponse::new(
 """
@@ -451,7 +451,7 @@ weakening = """
         &base,
         &sig,
         &resolved_server_actor.verification_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     );
     Ok(CryptographicFloorVerifiedUnboundResponse::new(
 """
@@ -606,7 +606,7 @@ anchor = """
         &base,
         &sig,
         &verified.delegated_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
@@ -618,7 +618,7 @@ weakening = """
         &base,
         &sig,
         &verified.delegated_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     );
 
     // Request-evidence binding (explicit MCP defense-in-depth, as verify_response_full).
@@ -773,7 +773,7 @@ anchor = """
         &base,
         &sig,
         &verified.delegated_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
@@ -785,7 +785,7 @@ weakening = """
         &base,
         &sig,
         &verified.delegated_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     );
 
     // Credential-authorized, exactly as on the bound path: the shared unbound facts, not

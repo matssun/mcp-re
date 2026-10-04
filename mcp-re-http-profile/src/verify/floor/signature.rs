@@ -22,6 +22,19 @@ use crate::sign::base64_standard_decode;
 
 use super::sf_dictionary::member_value;
 
+/// Which message a signature covers. Both refusal tokens follow from it, so a caller names
+/// the message and cannot pair one direction's token with the other's.
+///
+/// `pub(crate)` because the request and response floors, the delegated full-profile
+/// verifiers and the bodyless paths all verify from sibling subtrees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SignedMessage {
+    /// A client's signed request.
+    Request,
+    /// A server's signed response.
+    Response,
+}
+
 /// Verify `sig` over `base` under the RESOLVED algorithm.
 ///
 /// The match is exhaustive over [`ProfileAlgorithm`], which is the point: a new
@@ -36,11 +49,17 @@ pub(crate) fn verify_under(
     base: &[u8],
     sig: &str,
     key: &mcp_re_core::VerificationKey,
-    on_fail: McpReError,
+    message: SignedMessage,
 ) -> Result<(), HttpProfileError> {
-    let failure = match on_fail {
-        McpReError::ResponseSigInvalid => HttpProfileError::ResponseSignatureInvalid,
-        _ => HttpProfileError::InvalidSignature,
+    let (on_fail, failure) = match message {
+        SignedMessage::Request => (
+            McpReError::InvalidSignature,
+            HttpProfileError::InvalidSignature,
+        ),
+        SignedMessage::Response => (
+            McpReError::ResponseSigInvalid,
+            HttpProfileError::ResponseSignatureInvalid,
+        ),
     };
     match algorithm {
         ProfileAlgorithm::Ed25519 => {

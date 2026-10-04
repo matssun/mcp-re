@@ -14,8 +14,6 @@
 //! `CryptographicFloorVerifiedBoundResponse` — see [`super`] for why that containment would
 //! state something false.
 
-use mcp_re_core::McpReError;
-
 use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
@@ -41,6 +39,7 @@ use crate::verify::floor::params::check_params;
 use crate::verify::floor::sf_dictionary::member_value;
 use crate::verify::floor::signature::signature_value_b64url;
 use crate::verify::floor::signature::verify_under;
+use crate::verify::floor::signature::SignedMessage;
 use crate::verify::floor::signature_input::parse_signature_input;
 
 use super::credential_chain::chain_to_root;
@@ -129,7 +128,7 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &verified.delegated_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 

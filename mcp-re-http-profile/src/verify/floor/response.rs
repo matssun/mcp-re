@@ -11,8 +11,6 @@
 //! against and a component that cannot be resolved must not be silently ignored. Their
 //! products are two types for the same reason.
 
-use mcp_re_core::McpReError;
-
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::verify_content_digest_sha256;
@@ -37,6 +35,7 @@ use super::params::check_params;
 use super::sf_dictionary::member_value;
 use super::signature::signature_value_b64url;
 use super::signature::verify_under;
+use super::signature::SignedMessage;
 use super::signature_input::parse_signature_input;
 use super::trust_slot::resolve_actor_for_slot;
 
@@ -84,7 +83,7 @@ pub(crate) fn floor_bound_response<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &resolved_server_actor.verification_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )?;
     Ok(CryptographicFloorVerifiedBoundResponse::new(
         resolved_server_actor,
@@ -133,7 +132,7 @@ pub(crate) fn floor_unbound_response<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &resolved_server_actor.verification_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )?;
     Ok(CryptographicFloorVerifiedUnboundResponse::new(
         resolved_server_actor,
