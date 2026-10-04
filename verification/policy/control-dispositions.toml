@@ -496,6 +496,24 @@ consequence = "medium"
 root_relationship = "Beside NP-243: that proposition covers what a printed key says, and this one covers that the dropped key's scalar is scrubbed."
 record = "docs/architecture/control-dispositions.md#np-244"
 
+[[proposition]]
+id = "NP-245"
+title = "A panicking audit sink loses its record and does not unwind into the request"
+carrier = "mcp-re-proxy/src/audit_record/mod.rs (record_to)"
+likely_owner = "none. proxy.audit_delivery states bounded, non-blocking delivery for the stderr sink but its paths exclude the funnel; proxy.audit_authority_coordinates is the record's content."
+consequence = "medium"
+root_relationship = "Beside proxy.audit_delivery: delivery is stated there for the shipped sink, this covers the funnel's containment of any installed sink."
+record = "docs/architecture/control-dispositions.md#np-245"
+
+[[proposition]]
+id = "NP-246"
+title = "A duplicated exactly-once header is reported as ambiguous, never as absent"
+carrier = "mcp-re-http-profile/src/message.rs (single_header, require_json_media_type)"
+likely_owner = "none. http_profile.carrier_verdict_projection owns the wire projection (both verdicts map to missing_envelope) but its paths exclude message.rs; the request/response result units state success postconditions."
+consequence = "medium"
+root_relationship = "Beside http_profile.carrier_verdict_projection: the projection is stated there, the pre-projection classification here."
+record = "docs/architecture/control-dispositions.md#np-246"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14303,4 +14321,28 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#config_state::continuation_control::tests::a_state_and_its_plan_debug_print_carries_no_credential"
 decision = "new-proposition"
 proposition = "NP-238"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20230"
+project = "mcp-re-proxy"
+control = "src/lib.rs#audit_record::tests::a_panicking_sink_loses_the_record_and_does_not_unwind_into_the_request"
+decision = "new-proposition"
+proposition = "NP-245"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20231"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#message::tests::a_duplicated_content_type_is_reported_as_duplicate_not_missing"
+decision = "new-proposition"
+proposition = "NP-246"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20232"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#message::tests::an_absent_content_type_is_missing_evidence_under_the_callers_label"
+decision = "new-proposition"
+proposition = "NP-246"
 recorded = "2026-10-04"

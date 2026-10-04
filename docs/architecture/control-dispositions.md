@@ -4549,3 +4549,25 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `medium`.
 **Root relationship.** Beside NP-243: that proposition covers what a printed key says, and this one covers scrubbing on drop.
 **Recorded:** 2026-10-04, round-12 remediation of crypto.rs.
+
+## NP-245 — a panicking audit sink loses its record and does not unwind into the request
+
+**Controls:** `mcp-re-proxy` `lib#audit_record::tests::a_panicking_sink_loses_the_record_and_does_not_unwind_into_the_request`.
+**Carrier:** `mcp-re-proxy/src/audit_record/mod.rs` (record_to).
+**Statement.** *record_to delivers each record to the installed AuditSink, and a panic raised by that sink is contained in record_to: the record is lost and the caller returns normally.*
+**If false.** An embedder's sink fault, reachable from the unauthenticated preflight rejection path, kills the connection task.
+**Likely owner:** none. proxy.audit_delivery states bounded, non-blocking delivery for the stderr sink but its paths exclude the funnel; proxy.audit_authority_coordinates is the record's content.
+**Severity:** `medium`.
+**Root relationship.** Beside proxy.audit_delivery: delivery is stated there for the shipped sink, and this proposition covers the funnel's containment of any installed sink.
+**Recorded:** 2026-10-04, round-12 remediation of audit_record/mod.rs.
+
+## NP-246 — a duplicated exactly-once header is reported as ambiguous, never as absent
+
+**Controls:** `mcp-re-http-profile` `lib#message::tests::a_duplicated_content_type_is_reported_as_duplicate_not_missing`, `lib#message::tests::an_absent_content_type_is_missing_evidence_under_the_callers_label`.
+**Carrier:** `mcp-re-http-profile/src/message.rs` (single_header, require_json_media_type).
+**Statement.** *A header that must appear once and appears twice is reported as DuplicateHeader naming the header; an absent one is MissingEvidence under the caller's label; neither admits.*
+**If false.** An operator handed `missing` for an intermediary-duplicated header investigates the wrong hop.
+**Likely owner:** none. http_profile.carrier_verdict_projection owns the wire projection (both verdicts map to missing_envelope) but its paths exclude message.rs; the request/response result units state success postconditions.
+**Severity:** `medium`.
+**Root relationship.** Beside http_profile.carrier_verdict_projection: the projection is stated there, the pre-projection classification here.
+**Recorded:** 2026-10-04, round-12 remediation of message.rs.
