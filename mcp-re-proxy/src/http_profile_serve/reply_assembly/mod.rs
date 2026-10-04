@@ -109,19 +109,19 @@ impl HttpProfileProxy {
                 return Err(self.refuse_retained(ex, refusal, progress, retention).await)
             }
         };
-        let mut response = HttpResponse {
+        let response = HttpResponse {
             status: 200,
             headers: vec![("content-type".into(), "application/json".into())],
             body: inner_bytes,
         };
-        let class = match self.read_reply(progress, &response, outstanding) {
-            Ok(class) => class,
+        let (validated, class) = match self.read_reply(progress, response, outstanding) {
+            Ok(read) => read,
             Err(refusal) => {
                 return Err(self.refuse_retained(ex, refusal, progress, retention).await)
             }
         };
-        let response_base = match self.responses.sign_reply(ex, &mut response, window) {
-            Ok(base) => progress.establish(base),
+        let (response, response_base) = match self.responses.sign_reply(ex, validated, window) {
+            Ok((response, base)) => (response, progress.establish(base)),
             // SIGNING failed, so there is no signed terminal to retain. The marker stays,
             // and it is the true statement: this exchange crossed and no durable retained
             // terminal discharges it.
@@ -140,9 +140,9 @@ impl HttpProfileProxy {
     fn read_reply(
         &self,
         progress: &mut ExchangeProgress,
-        response: &HttpResponse,
+        response: HttpResponse,
         outstanding: &OutstandingId,
-    ) -> Result<ReplyClass, Refusal> {
+    ) -> Result<(ValidatedReply, ReplyClass), Refusal> {
         let validated = progress.establish(Established::new(
             ValidatedReply::of(response, outstanding)?,
             ExchangeEvent::EnvelopeValidated,
@@ -158,7 +158,7 @@ impl HttpProfileProxy {
             ReplyClass::Terminal => OpenLeg::NotApplicable,
             ReplyClass::Open(_) => OpenLeg::Required,
         });
-        Ok(class)
+        Ok((validated, class))
     }
 }
 

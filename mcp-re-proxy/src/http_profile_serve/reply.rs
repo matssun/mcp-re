@@ -37,11 +37,12 @@ use crate::refusal::Refusal;
 /// A reply whose JSON-RPC control envelope is legal and correlated to this exchange.
 ///
 /// Private representation, one producer: holding one means syntax, `jsonrpc`, `id`
-/// correlation and `result` XOR `error` all hold. There is no way to name the parsed body
-/// without having asked that question, so signing bytes nobody validated is not a step the
-/// assembly can forget — it is unconstructible.
+/// correlation and `result` XOR `error` all hold. The verdict owns the response it judged
+/// and [`into_response`](Self::into_response) is the only way back to it, so signing bytes
+/// nobody validated is not a step the assembly can forget — the signer takes this value.
 pub(super) struct ValidatedReply {
     parsed: serde_json::Value,
+    response: HttpResponse,
 }
 
 impl ValidatedReply {
@@ -61,7 +62,7 @@ impl ValidatedReply {
     /// bodies as opaque payload and the client's own verifier then rejected a message the
     /// enforcement boundary had vouched for.
     pub(super) fn of(
-        response: &HttpResponse,
+        response: HttpResponse,
         outstanding: &OutstandingId,
     ) -> Result<Self, Refusal> {
         let parsed = parse_response_body(&response.body).map_err(|e| match e {
@@ -69,10 +70,15 @@ impl ValidatedReply {
             _ => invalid("response body"),
         })?;
         match validate_response_envelope(&parsed, outstanding) {
-            Ok(_) => Ok(ValidatedReply { parsed }),
+            Ok(_) => Ok(ValidatedReply { parsed, response }),
             Err(HttpProfileError::UpstreamResponseInvalid(clause)) => Err(invalid(clause)),
             Err(e) => Err(Refusal::after_admission(e, 502)),
         }
+    }
+
+    /// The response this verdict judged, handed over to be signed.
+    pub(super) fn into_response(self) -> HttpResponse {
+        self.response
     }
 
     /// RESPONSE-CLASSIFIED — which MCP lifecycle transition is this reply?
@@ -153,7 +159,7 @@ mod tests {
         // protocol response: the backend answered, and the exchange ends. Treating it as
         // invalid would refuse a conformant message at 502.
         let validated = ValidatedReply::of(
-            &reply(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"bad params"}}"#),
+            reply(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"bad params"}}"#),
             &OutstandingId::Id(serde_json::json!(1)),
         )
         .expect("an error reply is a legal envelope");
@@ -168,7 +174,7 @@ mod tests {
         // `id` correlation is part of the envelope question, so a reply to some OTHER
         // request never reaches the classifier — let alone the signer.
         assert!(ValidatedReply::of(
-            &reply(r#"{"jsonrpc":"2.0","id":99,"result":{}}"#),
+            reply(r#"{"jsonrpc":"2.0","id":99,"result":{}}"#),
             &OutstandingId::Id(serde_json::json!(1)),
         )
         .is_err());
@@ -188,7 +194,7 @@ mod tests {
             },
         })
         .to_string();
-        let validated = ValidatedReply::of(&reply(&body), &OutstandingId::Id(serde_json::json!(1)))
+        let validated = ValidatedReply::of(reply(&body), &OutstandingId::Id(serde_json::json!(1)))
             .expect("a legal envelope");
         match validated.classify().expect("a legal classification") {
             ReplyClass::Open(state) => assert_eq!(state, "s-1"),
@@ -201,7 +207,7 @@ mod tests {
         // MCP 2026-07-28 closes the set. Signing an unreadable transition would hand the
         // client a verifiable message whose continuation semantics nobody can read.
         let validated = ValidatedReply::of(
-            &reply(r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"something_new"}}"#),
+            reply(r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"something_new"}}"#),
             &OutstandingId::Id(serde_json::json!(1)),
         )
         .expect("a legal envelope");

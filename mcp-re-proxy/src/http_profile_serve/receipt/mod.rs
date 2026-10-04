@@ -23,6 +23,7 @@ use crate::delegated_server_signer::DelegatedSigningReader;
 use crate::refusal::RefusalPosture;
 use mcp_re_http_profile::ExecutionDisposition;
 
+use super::reply::ValidatedReply;
 use super::signing_window;
 use super::signing_window::SigningWindow;
 use crate::exchange_state::Established;
@@ -83,8 +84,8 @@ impl ResponseSigning {
     /// RESPONSE-SIGNED — the enforcement boundary puts its signature on the reply.
     ///
     /// ```text
-    /// ensures   Ok  => `response` carries the delegated signature bound to THIS request,
-    ///                  and the returned bytes are its signature base
+    /// ensures   Ok  => the returned response carries the delegated signature bound to THIS
+    ///                  request, and the returned bytes are its signature base
     ///           Err => 500, bound
     /// refusal   NOT free
     /// ```
@@ -93,24 +94,25 @@ impl ResponseSigning {
     /// makes, about the same credential and the same window: this module's whole reason to
     /// exist is that the reply path and the refusal path cannot drift apart in what they
     /// sign under. Both take a [`SigningWindow`], and only this owner opens one.
-    pub(crate) fn sign_reply(
+    pub(in crate::http_profile_serve) fn sign_reply(
         &self,
         ex: &Exchange<'_>,
-        response: &mut HttpResponse,
+        reply: ValidatedReply,
         window: &SigningWindow,
-    ) -> Result<Established<Vec<u8>>, Refusal> {
+    ) -> Result<(HttpResponse, Established<Vec<u8>>), Refusal> {
+        let mut response = reply.into_response();
         // Scoped so the timer covers the signature and nothing after it.
         let sign_result = {
             let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Sign);
             mcp_re_http_profile::sign_delegated_response_full(
-                response,
+                &mut response,
                 ex.http_req,
                 ex.verified.evidence(),
                 window,
             )
         };
         sign_result
-            .map(|base| Established::new(base, ExchangeEvent::ResponseSigned))
+            .map(|base| (response, Established::new(base, ExchangeEvent::ResponseSigned)))
             .map_err(|e| Refusal::after_admission(e, 500))
     }
 
