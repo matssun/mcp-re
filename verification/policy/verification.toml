@@ -1262,6 +1262,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_outside_its_validity_window_is_rejected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_older_than_the_verifiers_own_budget_is_rejected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_dated_ahead_of_the_verifier_is_rejected",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_whose_header_kid_disagrees_with_its_claims_is_rejected",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_malformed_compact_assertion_is_refused_as_malformed",
 ]
 
 [[unit]]
@@ -1306,6 +1308,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_suspended_assertion_never_permits_a_call",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_untrusted_issuer_is_rejected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_binding_committing_to_the_wrong_state_is_rejected",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_binding_of_another_form_or_digest_algorithm_is_rejected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::unreachable_state_fails_closed_by_default",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::degraded_mode_serves_within_p_but_not_beyond",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_zero_p_still_leaves_a_degraded_window_the_width_of_the_clock_skew",
@@ -1317,7 +1320,6 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_dated_ahead_of_the_verifier_is_rejected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::the_verdict_names_the_workload_the_binding_committed_to",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::another_workloads_state_at_the_same_generation_does_not_admit_this_call",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_revoked_workload_cannot_be_served_on_another_workloads_admitted_record",
   "//mcp-re-http-profile:mcp_re_http_profile_test#authoritative_admission::tests::the_subject_is_projected_back_exactly_as_supplied",
   "//mcp-re-http-profile:mcp_re_http_profile_test#authoritative_admission::tests::two_workloads_at_the_same_generation_are_different_states",
   # R11-014. THM-0005 now states two kinds of Ok as two VARIANTS, and these measure what the

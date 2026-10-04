@@ -2097,7 +2097,6 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::another_workloads_state_at_the_same_generation_does_not_admit_this_call",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_revoked_workload_cannot_be_served_on_another_workloads_admitted_record",
 ]
 
 [[probe]]

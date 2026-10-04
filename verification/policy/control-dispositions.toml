@@ -14188,3 +14188,11 @@ control = "src/lib.rs#client_crl_publication::client_crl_loading_tests::a_non_pe
 decision = "new-proposition"
 proposition = "NP-126"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20223"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#admission::tests::a_signer_returning_a_non_ed25519_signature_is_refused_at_issuance"
+decision = "new-proposition"
+proposition = "NP-102"
+recorded = "2026-10-04"

@@ -54,10 +54,12 @@ pub const ADMISSION_TYP: &str = "mcp-re-admission+jws";
 
 /// The JWS `alg` — EdDSA, as everywhere in this profile.
 pub const ADMISSION_ALG: &str = "EdDSA";
+/// Raw Ed25519 signature octets; the external `sign_root` seam must return exactly this.
+const ED25519_SIGNATURE_LEN: usize = 64;
 
-/// Admission status (§4.3). Only `Admitted` permits a call to proceed; the others
-/// are distinct so a rejection can say WHY, and so a suspended workload (a
-/// recoverable state) is not conflated with a revoked one (terminal).
+/// Admission status (§4.3). Only `Admitted` permits a call to proceed. `Suspended`
+/// (recoverable) and `Revoked` (terminal) are distinct in the signed artifacts; every
+/// refusal reports either as not current.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AdmissionStatus {
     /// The workload is admitted and may act.
@@ -224,16 +226,14 @@ pub fn issue_admission_assertion(
         alg: ADMISSION_ALG.to_owned(),
         kid: claims.issuer_kid.clone(),
     };
-    let h = b64url_encode(
-        &serde_json::to_vec(&header)
-            .map_err(|_| HttpProfileError::MalformedEvidence("admission header"))?,
-    );
-    let p = b64url_encode(
-        &serde_json::to_vec(claims)
-            .map_err(|_| HttpProfileError::MalformedEvidence("admission claims"))?,
-    );
+    let unformable = |_| HttpProfileError::MalformedEvidence("admission assertion");
+    let h = b64url_encode(&serde_json::to_vec(&header).map_err(unformable)?);
+    let p = b64url_encode(&serde_json::to_vec(claims).map_err(unformable)?);
     let signing_input = format!("{h}.{p}");
     let sig = sign_root(signing_input.as_bytes())?;
+    if sig.len() != ED25519_SIGNATURE_LEN {
+        return Err(HttpProfileError::MalformedEvidence("admission signature length"));
+    }
     Ok(format!("{h}.{p}.{}", b64url_encode(&sig)))
 }
 
@@ -591,6 +591,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_signer_returning_a_non_ed25519_signature_is_refused_at_issuance() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        for wrong in [0usize, 63, 65, 71] {
+            assert!(
+                matches!(
+                    issue_admission_assertion(&c, |_| Ok(vec![0u8; wrong])),
+                    Err(HttpProfileError::MalformedEvidence(
+                        "admission signature length"
+                    ))
+                ),
+                "{wrong}"
+            );
+        }
+        assert!(issue_admission_assertion(&c, |_| Ok(vec![0u8; 64])).is_ok());
+    }
+
     /// A borrowed assertion. Genuine, current, signed by the real authority, and
     /// naming a workload that IS admitted — the only thing wrong with it is that it was
     /// issued to somebody else.
@@ -649,20 +666,6 @@ mod tests {
         let own =
             AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         assert!(check(&c, Some(&own), &AdmissionPolicy::default()).is_ok());
-    }
-
-    /// A revoked workload cannot buy the call with a stranger's admitted record. The
-    /// registered security consequence of THM-0004, asked directly.
-    #[test]
-    fn a_revoked_workload_cannot_be_served_on_another_workloads_admitted_record() {
-        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        // The authority has revoked workload-7. workload-9 is admitted at the same
-        // generation, and its record is what the lookup returns.
-        let stranger =
-            AuthoritativeAdmission::new("workload-9".to_owned(), 5, AdmissionStatus::Admitted);
-        let err = check(&c, Some(&stranger), &AdmissionPolicy::default())
-            .expect_err("a revoked workload must not be served on a stranger's record");
-        assert!(matches!(err, HttpProfileError::AdmissionStateUnavailable));
     }
 
     #[test]
@@ -754,6 +757,36 @@ mod tests {
     }
 
     #[test]
+    fn a_binding_of_another_form_or_digest_algorithm_is_rejected() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        let jws = issue(&c);
+        let auth =
+            AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
+        let run = |binding: &AdmissionBinding| {
+            check_as(
+                binding,
+                &jws,
+                TEST_ACTOR,
+                Some(&auth),
+                &AdmissionPolicy::default(),
+            )
+        };
+        let mut other_form = AdmissionBinding::opaque_from(&c);
+        other_form.binding_type = BindingType::ReferenceDigest;
+        assert_eq!(
+            run(&other_form).unwrap_err(),
+            HttpProfileError::AdmissionBindingMismatch,
+        );
+        let mut other_alg = AdmissionBinding::opaque_from(&c);
+        other_alg.digest_alg = "sha-512".to_owned();
+        assert_eq!(
+            run(&other_alg).unwrap_err(),
+            HttpProfileError::AdmissionBindingMismatch,
+        );
+        run(&AdmissionBinding::opaque_from(&c)).expect("the unmodified binding is admitted");
+    }
+
+    #[test]
     fn unreachable_state_fails_closed_by_default() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
         assert_eq!(
@@ -783,12 +816,11 @@ mod tests {
     /// `P = 0` with degraded mode ENABLED is not a closed door: the effective window is
     /// `max_clock_skew`, so an unreachable authority still admits a recent assertion.
     ///
-    /// This is why the CLI refuses that combination, and it is a sharper reason than the
-    /// one the refusal used to give. "Zero is not a policy" suggests the deployment merely
-    /// gets nothing; in fact it gets a `max_clock_skew`-wide window in which a REVOKED
-    /// workload keeps being served, without having asked for one. The skew term is
-    /// deliberate — it tolerates disagreeing clocks — but it means P is a floor on the
-    /// window, never the whole of it.
+    /// `check_admission` bounds the assertion's age by `P + max_clock_skew`, because `iat`
+    /// is the issuer's clock. The declared P is the replica-wide outage window enforced by
+    /// the proxy's admission_enforcer `degraded_window`, which uses P without skew and is
+    /// closed at P=0. A caller of `check_admission` without that enforcer gets the wider
+    /// assertion-level window, which is why the CLI also refuses P=0.
     #[test]
     fn a_zero_p_still_leaves_a_degraded_window_the_width_of_the_clock_skew() {
         let pol = AdmissionPolicy {
@@ -834,6 +866,33 @@ mod tests {
         verify_jws(&genuine).expect("the genuine assertion verifies");
     }
 
+    #[test]
+    fn a_malformed_compact_assertion_is_refused_as_malformed() {
+        let genuine = issue(&claims(5, AdmissionStatus::Admitted, NOW - 10));
+        let (h, p, s) = split_compact(&genuine).expect("compact jws");
+        let not_json = b64url_encode(b"not json");
+        for bad in [
+            String::new(),
+            format!("{h}.{p}"),
+            format!("{h}.{p}.{s}.{s}"),
+            format!(".{p}.{s}"),
+            format!("{h}..{s}"),
+            format!("{h}.{p}."),
+            format!("!!!.{p}.{s}"),
+            format!("{not_json}.{p}.{s}"),
+            format!("{h}.{not_json}.{s}"),
+        ] {
+            assert!(
+                matches!(
+                    verify_jws(&bad).unwrap_err(),
+                    HttpProfileError::MalformedEvidence(_)
+                ),
+                "{bad:?}"
+            );
+        }
+        verify_jws(&genuine).expect("the genuine assertion verifies");
+    }
+
     /// `typ` and `alg` are what stop a delegation credential — or an assertion signed
     /// under some other algorithm the authority root also holds — from being presented
     /// here. Both are checked before anything else is trusted.
@@ -855,6 +914,25 @@ mod tests {
         );
         verify_jws(&issue_with_header(ADMISSION_TYP, ADMISSION_ALG, &c))
             .expect("the profile's own typ/alg verify");
+    }
+
+    #[test]
+    fn an_assertion_whose_header_kid_disagrees_with_its_claims_is_rejected() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        let header = AdmissionHeader {
+            typ: ADMISSION_TYP.to_owned(),
+            alg: ADMISSION_ALG.to_owned(),
+            kid: "admission-root-2".to_owned(),
+        };
+        let h = b64url_encode(&serde_json::to_vec(&header).expect("header"));
+        let p = b64url_encode(&serde_json::to_vec(&c).expect("claims"));
+        let sig = b64url_decode(&root().sign(format!("{h}.{p}").as_bytes())).expect("sign");
+        let jws = format!("{h}.{p}.{}", b64url_encode(&sig));
+        assert_eq!(
+            verify_jws(&jws).unwrap_err(),
+            HttpProfileError::AdmissionAssertionInvalid,
+        );
+        verify(&c).expect("the control with agreeing kids verifies");
     }
 
     /// The profile tag scopes an assertion to one evidence profile, and `aud` scopes it to
