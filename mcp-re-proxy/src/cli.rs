@@ -3123,7 +3123,8 @@ mod tests {
             config
                 .request_signer_currency
                 .epoch()
-                .and_then(crate::deployment_request::TrustEpochStoreRequest::key),
+                .and_then(|epoch| epoch.source.as_ref())
+                .and_then(crate::deployment_request::TrustEpochSource::key),
             Some("mcp-re:trust:epoch")
         );
     }

@@ -281,23 +281,20 @@ fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<TrustR
                 t_secs,
                 reload_secs: cadence?,
             },
-            RequestedState::PushNetworked { t_secs } => RevocationKind::PushNetworked {
-                t_secs,
-                reload_secs: cadence?,
-                epoch_url: config
-                    .request_signer_currency
-                    .epoch()?
-                    .locator()?
-                    .to_string(),
-                // The default belongs to this machine, so it is applied here and nothing
-                // downstream can tell an omitted key from a named one.
-                epoch_key: config
-                    .request_signer_currency
-                    .epoch()
-                    .and_then(TrustEpochStoreRequest::key)
-                    .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY)
-                    .to_string(),
-            },
+            RequestedState::PushNetworked { t_secs } => {
+                let source = config.request_signer_currency.epoch()?.source.as_ref()?;
+                RevocationKind::PushNetworked {
+                    t_secs,
+                    reload_secs: cadence?,
+                    epoch_url: source.locator().to_string(),
+                    // The default belongs to this machine, so it is applied here and nothing
+                    // downstream can tell an omitted key from a named one.
+                    epoch_key: source
+                        .key()
+                        .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY)
+                        .to_string(),
+                }
+            }
         },
     })
 }

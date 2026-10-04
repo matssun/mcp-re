@@ -19,11 +19,6 @@ impl TrustEpochStoreRequest {
     pub fn locator(&self) -> Option<&str> {
         self.source.as_ref().map(TrustEpochSource::locator)
     }
-
-    /// The coordinate within it, where the operator named one.
-    pub fn key(&self) -> Option<&str> {
-        self.source.as_ref().and_then(TrustEpochSource::key)
-    }
 }
 
 /// Which store carries the epoch, and the coordinate within it.
@@ -37,8 +32,9 @@ pub enum TrustEpochSource {
     Redis {
         /// Where the epoch lives.
         store: RedisStoreRequest,
-        /// The key holding it. `None` takes this machine's default, so nothing downstream
-        /// can tell an omitted key from a named one.
+        /// The key holding it, where the operator named one. `None` records that no key was
+        /// named; this machine's default is applied once, where the plan is built, so the
+        /// request keeps an omitted key distinguishable from a named one.
         key: Option<String>,
     },
 }
