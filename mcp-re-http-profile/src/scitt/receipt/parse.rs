@@ -36,7 +36,10 @@ struct InclusionProof {
     path: Vec<[u8; 32]>,
 }
 
-/// Every critical label must be one this verifier understands.
+/// Every critical label must be one this verifier understands AND the protected header
+/// must carry it.
+///
+/// A label named critical but not carried is a receipt claiming a binding it does not hold.
 ///
 /// This is what makes the v1→v2 transition safe in the direction the profile pin cannot
 /// cover: a v2 receipt marks its position parameter critical, so an implementation that only
@@ -51,6 +54,17 @@ fn check_critical_labels(sign1: &CoseSign1) -> Result<(), HttpProfileError> {
         if !known {
             return Err(HttpProfileError::MalformedEvidence(
                 "scitt receipt critical header unsupported",
+            ));
+        }
+        let present = sign1
+            .protected
+            .header
+            .rest
+            .iter()
+            .any(|(l, _)| *l == Label::Text(HEADER_POSITION_COMMITMENT.to_owned()));
+        if !present {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt receipt critical header absent",
             ));
         }
     }
@@ -235,6 +249,28 @@ mod tests {
             .payload(vec![0u8; 32])
             .build();
         read_inclusion_proof(&sign1)
+    }
+
+    /// A critical position parameter the protected header does not carry is refused.
+    #[test]
+    fn a_critical_position_parameter_that_is_absent_is_refused() {
+        let mut sign1 = coset::CoseSign1Builder::new()
+            .protected(coset::HeaderBuilder::new().build())
+            .build();
+        sign1.protected.header.crit = vec![coset::RegisteredLabelWithPrivate::Text(
+            HEADER_POSITION_COMMITMENT.to_owned(),
+        )];
+        assert!(matches!(
+            check_critical_labels(&sign1),
+            Err(HttpProfileError::MalformedEvidence(
+                "scitt receipt critical header absent"
+            ))
+        ));
+        sign1.protected.header.rest.push((
+            Label::Text(HEADER_POSITION_COMMITMENT.to_owned()),
+            Value::Bytes(vec![0u8; 32]),
+        ));
+        assert!(check_critical_labels(&sign1).is_ok());
     }
 
     /// A leaf index the signed tree head cannot contain is refused at PARSE, so no fold is
