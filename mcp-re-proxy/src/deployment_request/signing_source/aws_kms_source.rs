@@ -36,10 +36,13 @@ pub struct AwsKmsSigningSourceRequest {
 /// The second, distinct KMS key that custodies the channel-establishment key.
 ///
 /// Independent of the response-signing key id and a separate security principal an
-/// operator should scope with its own authorization policy. It reuses this deployment's
-/// region, endpoint and credential mode — the channel key takes the SAME custody path as
-/// the response-signing key, so a deployment cannot end up with one KMS principal reached
-/// through IRSA and the other through static keys.
+/// operator should scope with its own authorization policy. This request carries only the
+/// key id: the region, endpoint and credential mode it is reached through are the AWS KMS
+/// response-signing source's, and only when that source is AWS KMS. That pairing is
+/// relation X2a of the configuration boundary
+/// ([`cross_machine`](crate::config_state::cross_machine)), not something this type states;
+/// it is what keeps one KMS principal from being reached through IRSA and the other through
+/// static keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AwsKmsChannelKeyRequest {
     /// Key id, ARN or alias of the Ed25519 channel key. Its presence is what selects
