@@ -23,8 +23,11 @@
 //!
 //! On `atomic_insert_if_absent` the L1 is consulted FIRST; a hit returns `Replay`
 //! immediately with no L2 round-trip. On a miss the authoritative L2 is awaited — and ONLY
-//! L2 can return `Fresh`. Whatever L2 answers for a key, the key is now present in L2, so
-//! it is recorded in L1 to fast-reject future duplicates.
+//! L2 can return `Fresh`. Only an L2 `Fresh` is recorded in L1, with that insert's
+//! `retain_until`, and an L1 hit is answered only while the verifier's `now_unix` is before
+//! it, so the L1 never answers `Replay` past the retention of the entry it mirrors. An L2
+//! `Replay` does not disclose the `retain_until` of the entry it matched, so it is not
+//! recorded.
 //!
 //! Because the L1 lookup can only ever yield `Replay` or a miss, the L1 can NEVER
 //! manufacture a `Fresh`. That is enforced BY CONSTRUCTION — [`L1FastRejectStore::l1_lookup`]
@@ -32,7 +35,7 @@
 //! safe: an evicted key costs an authoritative L2 round-trip next time, never a false
 //! `Fresh`. On an L2 error nothing is recorded, because the key''s presence is unknown.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
@@ -43,12 +46,12 @@ use super::AsyncAtomicReplayStore;
 use super::ReplayDecisionFuture;
 use super::ReplayInsert;
 
-/// A bounded, insertion-ordered set of keys the L1 knows are PRESENT in L2 (known
-/// replays). Bounded so a per-core L1 cannot grow without bound; eviction is FIFO and
-/// always safe — an evicted key simply costs an authoritative L2 round-trip next time,
+/// A bounded, insertion-ordered map from the keys the L1 knows are PRESENT in L2 (known
+/// replays) to the `retain_until` of the L2 entry each mirrors. Bounded so a per-core L1
+/// cannot grow without bound; eviction is FIFO and always safe — an evicted key simply costs an authoritative L2 round-trip next time,
 /// never a false `Fresh`.
 struct BoundedKeySet {
-    set: HashSet<String>,
+    retain_until: HashMap<String, i64>,
     order: VecDeque<String>,
     cap: usize,
 }
@@ -56,28 +59,32 @@ struct BoundedKeySet {
 impl BoundedKeySet {
     fn new(cap: usize) -> Self {
         BoundedKeySet {
-            set: HashSet::new(),
+            retain_until: HashMap::new(),
             order: VecDeque::new(),
             cap: cap.max(1),
         }
     }
 
-    fn contains(&self, key: &str) -> bool {
-        self.set.contains(key)
+    /// True only while `now_unix` is before the `retain_until` the key was recorded with.
+    fn is_live(&self, key: &str, now_unix: i64) -> bool {
+        self.retain_until
+            .get(key)
+            .is_some_and(|retain_until| now_unix < *retain_until)
     }
 
-    fn insert(&mut self, key: &str) {
-        if self.set.contains(key) {
+    fn insert(&mut self, key: &str, retain_until: i64) {
+        if let Some(stored) = self.retain_until.get_mut(key) {
+            *stored = retain_until;
             return;
         }
         while self.order.len() >= self.cap {
             if let Some(evicted) = self.order.pop_front() {
-                self.set.remove(&evicted);
+                self.retain_until.remove(&evicted);
             } else {
                 break;
             }
         }
-        self.set.insert(key.to_string());
+        self.retain_until.insert(key.to_string(), retain_until);
         self.order.push_back(key.to_string());
     }
 }
@@ -91,9 +98,9 @@ pub const DEFAULT_L1_CAPACITY: usize = 65_536;
 /// **L1-never-Fresh (the load-bearing invariant):** on `atomic_insert_if_absent` the
 /// L1 is consulted FIRST; a hit returns `Replay` immediately (fast-reject, no L2
 /// round-trip). On a miss the authoritative L2 is awaited — and ONLY L2 can return
-/// `Fresh`. Whatever L2 returns for a key (`Fresh` because this caller won, or
-/// `Replay`), the key is now present in L2, so it is recorded in L1 to fast-reject
-/// future duplicates. Because the L1 lookup can only ever yield `Replay` or "miss",
+/// `Fresh`. Only an L2 `Fresh` is recorded in L1, with that insert's `retain_until`, and an L1 hit is answered only while the verifier's
+/// `now_unix` is before it, so the L1 never answers `Replay` past the retention of the
+/// entry it mirrors. Because the L1 lookup can only ever yield `Replay` or "miss",
 /// the L1 can NEVER manufacture a `Fresh` — it is a pure latency optimization.
 /// **Not on the shipped serving path.** `app.rs` wires the L2 store directly, with no
 /// L1 wrapper, on every backend — so the two-tier architecture the module header
@@ -121,21 +128,21 @@ impl<L2: AsyncAtomicReplayStore> L1FastRejectStore<L2> {
         }
     }
 
-    /// L1 lookup — returns `Some(Replay)` on a hit, `None` on a miss. The return type
-    /// deliberately CANNOT express `Fresh`: this is the type-level half of the
+    /// L1 lookup — returns `Some(Replay)` on a live hit, `None` on a miss or an expired
+    /// entry. The return type deliberately CANNOT express `Fresh`: this is the type-level half of the
     /// L1-never-Fresh guarantee.
-    fn l1_lookup(&self, key: &str) -> Option<ReplayDecision> {
+    fn l1_lookup(&self, key: &str, now_unix: i64) -> Option<ReplayDecision> {
         // A poisoned L1 is a MISS — the eviction case this module's invariant already
         // covers: a key absent from L1 costs an authoritative L2 round trip and can never
         // produce a false `Fresh`.
         let l1 = self.l1.lock().ok()?;
-        l1.contains(key).then_some(ReplayDecision::Replay)
+        l1.is_live(key, now_unix).then_some(ReplayDecision::Replay)
     }
 
-    fn l1_record(&self, key: &str) {
+    fn l1_record(&self, key: &str, retain_until: i64) {
         // Not recording is the same as evicting, and evicting is always safe here.
         if let Ok(mut l1) = self.l1.lock() {
-            l1.insert(key);
+            l1.insert(key, retain_until);
         }
     }
 }
@@ -144,14 +151,16 @@ impl<L2: AsyncAtomicReplayStore> AsyncAtomicReplayStore for L1FastRejectStore<L2
     fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a> {
         Box::pin(async move {
             // L1 fast-reject: a known replay never touches L2 (and never yields Fresh).
-            if let Some(replay) = self.l1_lookup(insert.key) {
+            if let Some(replay) = self.l1_lookup(insert.key, insert.now_unix) {
                 return Ok(replay);
             }
-            // Authoritative L2 — the ONLY source of Fresh. On any decision the key is
-            // now present in L2, so cache it in L1 for future fast-reject. On an L2
-            // error, fail closed and record NOTHING (the key's presence is unknown).
+            // Authoritative L2 — the ONLY source of Fresh. Only a Fresh is cached: an L2
+            // Replay does not disclose the retain_until of the entry it matched. On an
+            // L2 error, fail closed and record NOTHING (the key's presence is unknown).
             let decision = self.l2.atomic_insert_if_absent(insert).await?;
-            self.l1_record(insert.key);
+            if decision == ReplayDecision::Fresh {
+                self.l1_record(insert.key, insert.retain_until);
+            }
             Ok(decision)
         })
     }
@@ -168,6 +177,26 @@ impl<L2: AsyncAtomicReplayStore> AsyncAtomicReplayStore for L1FastRejectStore<L2
 mod tests {
     use super::*;
     use crate::async_replay::InMemoryAsyncAtomicReplayStore;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    /// An L2 that answers one fixed decision and counts its calls.
+    struct FixedL2 {
+        answer: ReplayDecision,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl AsyncAtomicReplayStore for FixedL2 {
+        fn atomic_insert_if_absent<'a>(
+            &'a self,
+            _insert: ReplayInsert<'a>,
+        ) -> ReplayDecisionFuture<'a> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let answer = self.answer.clone();
+            Box::pin(async move { Ok(answer) })
+        }
+    }
 
     /// The L1 budgets nothing, so the actor is only there to build a legal insert.
     const TEST_ACTOR: &str = "did:example:test-signer";
@@ -218,5 +247,42 @@ mod tests {
             l1.durability_class(),
             ReplayDurabilityClass::SingleProcessReference
         );
+    }
+
+    #[test]
+    fn an_l1_hit_ends_at_the_retain_until_it_mirrors() {
+        let l2 = FixedL2 {
+            answer: ReplayDecision::Fresh,
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let l1 = L1FastRejectStore::new(l2);
+        block(async {
+            let decide = |retain_until, now| {
+                l1.atomic_insert_if_absent(ReplayInsert::new("a", TEST_ACTOR, retain_until, now))
+            };
+            assert_eq!(decide(100, 0).await.unwrap(), ReplayDecision::Fresh);
+            assert_eq!(decide(100, 50).await.unwrap(), ReplayDecision::Replay);
+            assert_eq!(decide(300, 100).await.unwrap(), ReplayDecision::Fresh);
+        });
+    }
+
+    #[test]
+    fn an_l2_replay_is_not_cached_by_the_l1() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let l1 = L1FastRejectStore::new(FixedL2 {
+            answer: ReplayDecision::Replay,
+            calls: Arc::clone(&calls),
+        });
+        block(async {
+            for _ in 0..2 {
+                assert_eq!(
+                    l1.atomic_insert_if_absent(ReplayInsert::new("k", TEST_ACTOR, 100, 0))
+                        .await
+                        .unwrap(),
+                    ReplayDecision::Replay
+                );
+            }
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }

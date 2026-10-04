@@ -3989,6 +3989,8 @@ can see it, and it stays a proposition for exactly as long as the code stays dor
 **Severity:** `high`.
 **Packet:** `verification/reviews/packets/adr069-np-146-np-197-ratification-2026-09-20.md`.
 
+**Extended 2026-10-04.** The two controls `an_l1_hit_ends_at_the_retain_until_it_mirrors` and `an_l2_replay_is_not_cached_by_the_l1` also establish that an L1 hit is answered only before the `retain_until` of the L2 `Fresh` it mirrors and that an L2 `Replay` is never cached, so the L1 never answers `Replay` past the retention of the entry it mirrors; the statement carries that clause from here.
+
 ## NP-198 — current documentation names no path this repository does not contain
 
 **Control:** `scripts/doc_path_gate.py`.

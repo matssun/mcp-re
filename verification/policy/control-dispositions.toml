@@ -15342,3 +15342,19 @@ control = "src/lib.rs#proxy::tests::the_reply_is_judged_at_the_instant_it_arrive
 decision = "new-proposition"
 proposition = "NP-230"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20328"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_replay::l1_fast_reject::tests::an_l1_hit_ends_at_the_retain_until_it_mirrors"
+decision = "new-proposition"
+proposition = "NP-197"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20329"
+project = "mcp-re-proxy"
+control = "src/lib.rs#async_replay::l1_fast_reject::tests::an_l2_replay_is_not_cached_by_the_l1"
+decision = "new-proposition"
+proposition = "NP-197"
+recorded = "2026-10-04"
