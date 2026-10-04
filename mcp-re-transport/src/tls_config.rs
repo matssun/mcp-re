@@ -55,7 +55,7 @@ impl ClientTlsConfig {
             ));
         }
         let client_key = PrivateKeyDer::from_pem_slice(client_key_pem)
-            .map_err(|e| TransportError::BadClientMaterial(e.to_string()))?;
+            .map_err(client_key_parse_error)?;
         let server_ca = certs_from_pem(server_ca_pem).map_err(TransportError::BadServerCa)?;
         Self::from_der(client_chain, client_key, server_ca)
     }
@@ -139,4 +139,41 @@ fn certs_from_pem(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, String> {
         out.push(item.map_err(|e| e.to_string())?);
     }
     Ok(out)
+}
+
+/// Classify a client private-key PEM failure without rendering the parser's message: it
+/// can quote the offending input (`IllegalSectionStart` carries the whole line, so a key
+/// flattened onto its BEGIN line is echoed byte-for-byte), so a failure on a secret buffer
+/// is reported as a fixed string.
+fn client_key_parse_error(e: rustls_pki_types::pem::Error) -> TransportError {
+    let message = match e {
+        rustls_pki_types::pem::Error::NoItemsFound => "no private key in client key PEM",
+        _ => "client private key PEM is malformed",
+    };
+    TransportError::BadClientMaterial(message.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_private_key_pem_failure_is_a_fixed_classification_never_parser_text() {
+        let cert = b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
+        let flattened = b"-----BEGIN PRIVATE KEY-----MIIEsecretkeybytes\n-----END PRIVATE KEY-----\n";
+        let Err(err) = ClientTlsConfig::from_pem(cert, flattened, cert) else {
+            panic!("a malformed key PEM must be refused");
+        };
+        assert_eq!(
+            err.to_string(),
+            "invalid client certificate/key PEM: client private key PEM is malformed"
+        );
+        let Err(err) = ClientTlsConfig::from_pem(cert, b"", cert) else {
+            panic!("an empty key PEM must be refused");
+        };
+        assert_eq!(
+            err.to_string(),
+            "invalid client certificate/key PEM: no private key in client key PEM"
+        );
+    }
 }

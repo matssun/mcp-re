@@ -4427,3 +4427,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `low`.
 **Root relationship.** Observability premise of the operator's trust-epoch kill switch (ADR-MCPRE-052 §7).
 **Recorded:** 2026-10-04, round-12 remediation of 0b8c4644c4121538.
+
+## NP-234 — a private-key PEM parse failure is reported as a fixed classification, never the parser's text
+
+**Controls:** `mcp-re-transport` `lib#tls_config::tests::a_private_key_pem_failure_is_a_fixed_classification_never_parser_text`.
+**Carrier:** `mcp-re-transport/src/tls_config.rs` (`ClientTlsConfig::from_pem`).
+**Statement.** *`ClientTlsConfig::from_pem` reports a client private-key PEM failure as one of two fixed strings and never renders the PEM parser's message, which can quote the secret buffer.*
+**If false.** A malformed key PEM is echoed byte-for-byte into logged `TransportError` text.
+**Likely owner:** none. client.transport_server_identity holds the carrier but states server authentication, which a key-error rendering test does not falsify.
+**Severity:** `high`.
+**Root relationship.** Secret-hygiene premise beside THM-0109: the client mTLS key never leaves through error text.
+**Recorded:** 2026-10-04, round-12 remediation of d40d98119dc965f6.

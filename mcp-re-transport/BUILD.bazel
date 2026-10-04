@@ -137,8 +137,10 @@ nt_rust_library(
     ],
 )
 
+# `testonly` makes Bazel refuse any non-test consumer, so the accept-any verifier cannot link into a shippable target.
 nt_rust_library(
     name = "mcp_re_transport_fault",
+    testonly = True,
     srcs = glob(["src/**/*.rs"]),
     crate_features = ["fault_accept_any_server"],
     crate_name = "mcp_re_transport",
