@@ -96,3 +96,60 @@ pub(super) fn refuse_over_ceiling(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn filled(entries: &[(&str, usize)]) -> RetainedSet {
+        let mut s = RetainedSet::default();
+        for (actor, n) in entries {
+            for i in 0..*n {
+                s.record(&format!("{actor}-{i}"), actor, 1_000);
+            }
+        }
+        s
+    }
+
+    fn is_unavailable(r: Result<(), ReplayStoreError>) -> bool {
+        matches!(r, Err(ReplayStoreError::Unavailable { .. }))
+    }
+
+    /// A `retain_until` at or before `now` is refused as Unavailable; one past it is admitted.
+    #[test]
+    fn a_retain_until_at_or_before_now_is_refused() {
+        assert!(is_unavailable(refuse_stale_retain_until(100, 100)));
+        assert!(is_unavailable(refuse_stale_retain_until(99, 100)));
+        assert!(refuse_stale_retain_until(101, 100).is_ok());
+    }
+
+    /// Under pressure an actor holding its whole budget is refused, at the `held == budget`
+    /// boundary, while an actor under it is admitted.
+    #[test]
+    fn an_actor_at_its_fair_share_is_refused_under_pressure() {
+        let mut s = filled(&[("a", 3), ("b", 5)]);
+        assert_eq!(per_actor_budget(10, 2), 4);
+        assert!(refuse_over_fair_share(&s, "a", 10).is_ok());
+        assert!(is_unavailable(refuse_over_fair_share(&s, "b", 10)));
+        s.record("a-3", "a", 1_000);
+        assert!(is_unavailable(refuse_over_fair_share(&s, "a", 10)));
+    }
+
+    /// Below the pressure threshold the fair share does not apply.
+    #[test]
+    fn the_fair_share_does_not_apply_below_pressure() {
+        let mut s = filled(&[("a", 6), ("b", 1)]);
+        assert!(refuse_over_fair_share(&s, "a", 10).is_ok());
+        s.record("b-1", "b", 1_000);
+        assert!(is_unavailable(refuse_over_fair_share(&s, "a", 10)));
+    }
+
+    /// The ceiling admits one below `max_entries` and refuses at it.
+    #[test]
+    fn the_ceiling_refuses_at_max_entries_and_admits_one_below() {
+        let mut s = filled(&[("a", 3)]);
+        assert!(refuse_over_ceiling(&s, 4).is_ok());
+        s.record("a-3", "a", 1_000);
+        assert!(is_unavailable(refuse_over_ceiling(&s, 4)));
+    }
+}

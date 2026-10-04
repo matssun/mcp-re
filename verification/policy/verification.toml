@@ -9040,6 +9040,16 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#async_replay::in_memory::tests::one_actor_cannot_spend_the_whole_ceiling_and_deny_another",
   "//mcp-re-proxy:proxy_unit_test#async_replay::in_memory::tests::pruning_releases_the_per_actor_charge",
   "//mcp-re-proxy:proxy_unit_test#async_replay::in_memory::tests::an_already_stale_retain_until_is_refused_pre_store",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::retained_set::tests::an_entry_is_kept_at_its_retain_until_and_dropped_strictly_past",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::retained_set::tests::eviction_releases_each_actors_charge_and_drops_its_name_at_zero",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::retained_set::tests::the_prune_waits_for_its_cadence",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::local_refusals::tests::a_retain_until_at_or_before_now_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::local_refusals::tests::an_actor_at_its_fair_share_is_refused_under_pressure",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::local_refusals::tests::the_fair_share_does_not_apply_below_pressure",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::local_refusals::tests::the_ceiling_refuses_at_max_entries_and_admits_one_below",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::charge::tests::a_committed_charge_is_held_until_its_retain_until",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::charge::tests::a_proven_absent_charge_is_handed_back_at_once",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::charge::tests::an_unsettled_charge_dropped_mid_flight_is_kept_until_its_retain_until",
 ]
 
 

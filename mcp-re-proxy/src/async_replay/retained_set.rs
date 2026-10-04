@@ -133,3 +133,71 @@ impl RetainedSet {
         state.seen.insert(key.to_string(), RetainedEntry { actor });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn due(set: &mut RetainedSet) {
+        set.inserts_since_prune = ASYNC_PRUNE_EVERY_N_INSERTS - 1;
+    }
+
+    /// An entry is still retained at its `retain_until` and is evicted only strictly past it.
+    #[test]
+    fn an_entry_is_kept_at_its_retain_until_and_dropped_strictly_past() {
+        let mut set = RetainedSet::default();
+        set.record("k", "a", 100);
+
+        let clock: UnixClock = Box::new(|| 100);
+        due(&mut set);
+        set.prune_if_due(&clock);
+        assert!(set.seen.contains_key("k"));
+        assert_eq!(set.per_actor.get("a").copied(), Some(1));
+
+        let clock: UnixClock = Box::new(|| 101);
+        due(&mut set);
+        set.prune_if_due(&clock);
+        assert!(set.seen.is_empty());
+        assert!(set.by_expiry.is_empty());
+        assert!(set.per_actor.is_empty());
+    }
+
+    /// Evicting an entry releases exactly its actor's charge, and the actor's name leaves
+    /// the accounting map with its last entry.
+    #[test]
+    fn eviction_releases_each_actors_charge_and_drops_its_name_at_zero() {
+        let mut set = RetainedSet::default();
+        set.record("k1", "a", 100);
+        set.record("k2", "a", 200);
+        set.record("k3", "b", 100);
+        assert!(Arc::ptr_eq(&set.seen["k1"].actor, &set.seen["k2"].actor));
+
+        let clock: UnixClock = Box::new(|| 150);
+        due(&mut set);
+        set.prune_if_due(&clock);
+        assert_eq!(set.seen.len(), 1);
+        assert!(set.seen.contains_key("k2"));
+        assert_eq!(set.per_actor.get("a").copied(), Some(1));
+        assert!(!set.per_actor.contains_key("b"));
+
+        let clock: UnixClock = Box::new(|| 201);
+        due(&mut set);
+        set.prune_if_due(&clock);
+        assert!(set.per_actor.is_empty());
+    }
+
+    /// Eviction runs only on the cadence: one call short of it evicts nothing, the
+    /// cadence-th call evicts.
+    #[test]
+    fn the_prune_waits_for_its_cadence() {
+        let mut set = RetainedSet::default();
+        set.record("k", "a", 100);
+        let clock: UnixClock = Box::new(|| 1_000);
+        for _ in 0..ASYNC_PRUNE_EVERY_N_INSERTS - 1 {
+            set.prune_if_due(&clock);
+        }
+        assert!(set.seen.contains_key("k"));
+        set.prune_if_due(&clock);
+        assert!(!set.seen.contains_key("k"));
+    }
+}
