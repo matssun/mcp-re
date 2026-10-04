@@ -32,10 +32,12 @@
 //! trustworthiness. A response bound to a request whose signature does not verify is
 //! refused by the floor, not by this.
 //!
-//! Both producers of a handle compute it exactly this way — the request floor at
-//! `verify/floor/request.rs` and the signer at `crate::sign` — so a derivation here agrees
-//! with a retained handle whenever the request is the one that was signed, and differs
-//! whenever it is not. That difference is the whole point.
+//! Both producers of a handle digest the base the same way, but over a covered set of at
+//! least `REQUIRED_REQUEST_COMPONENTS` and with no `;req`, while this derivation admits any
+//! parseable covered set. A derived handle equals a producer's only when the two bases are
+//! byte-identical; because the base's `@signature-params` line names the covered set, a
+//! request declaring any other set (including an empty one) derives a handle no producer
+//! emits, so the domain difference fails closed at the comparison.
 
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
@@ -70,6 +72,57 @@ pub(crate) fn request_evidence_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn signed_request() -> (HttpRequest, RequestEvidence) {
+        let mut request = HttpRequest {
+            method: "POST".to_owned(),
+            target_uri: "https://mcp.example.com/mcp".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_vec(),
+        };
+        let evidence = crate::sign::sign_request(
+            &mut request,
+            &mcp_re_core::SigningKey::from_seed_bytes(&[11u8; 32]),
+            "client-key-1",
+            1_700_000_000,
+            1_700_000_300,
+            "n-bound",
+        )
+        .expect("the fixture request signs");
+        (request, evidence)
+    }
+
+    #[test]
+    fn a_derived_handle_agrees_with_the_signers_handle() {
+        let (request, signed) = signed_request();
+        assert_eq!(
+            request_evidence_of(&request).expect("the signed request has a handle"),
+            signed
+        );
+    }
+
+    #[test]
+    fn a_request_differing_in_a_covered_component_derives_a_different_handle() {
+        let (request, signed) = signed_request();
+        let mut other = request.clone();
+        other.target_uri = "https://mcp.example.com/other".to_owned();
+        assert_ne!(request_evidence_of(&other).ok(), Some(signed));
+    }
+
+    #[test]
+    fn a_thin_covered_set_cannot_reproduce_a_signed_handle() {
+        let (request, signed) = signed_request();
+        let mut thin = request.clone();
+        for (name, value) in &mut thin.headers {
+            if !name.eq_ignore_ascii_case("signature-input") {
+                continue;
+            }
+            let open = value.find('(').expect("covered set opens");
+            let close = value.find(')').expect("covered set closes");
+            value.replace_range(open + 1..close, "");
+        }
+        assert_ne!(request_evidence_of(&thin).ok(), Some(signed));
+    }
 
     #[test]
     fn a_request_with_no_signature_input_has_no_handle() {
