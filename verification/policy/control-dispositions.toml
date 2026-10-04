@@ -13547,6 +13547,15 @@ consequence = "medium"
 root_relationship = "Beside NP-111: the request half of the plain surface, which no unit states."
 record = "docs/architecture/control-dispositions.md#np-231"
 
+[[proposition]]
+id = "NP-232"
+title = "An outbound agent bounds every request built from it"
+carrier = "mcp-re-proxy/src/outbound_fetch/binding.rs (VettedDestination::agent)"
+likely_owner = "none. proxy.remote_signer_egress_bound states the bound but this carrier is not in its paths; proxy.outbound_destination has the carrier in its paths but its statement is admissibility, which a timeout test does not falsify."
+consequence = "high"
+root_relationship = "The agent-side half of proxy.remote_signer_egress_bound's statement that the egress carries the same bound."
+record = "docs/architecture/control-dispositions.md#np-232"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -13906,4 +13915,20 @@ project = "mcp-re-client-proxy"
 control = "src/lib.rs#proxy::tests::non_object_params_are_refused_before_anything_is_signed"
 decision = "new-proposition"
 proposition = "NP-231"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20197"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#rejection::retry_contract::tests::a_post_dispatch_wire_code_outranks_a_pre_dispatch_disposition"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20198"
+project = "mcp-re-proxy"
+control = "src/lib.rs#outbound_fetch::binding::tests::an_agent_bounds_a_request_that_sets_no_timeout_of_its_own"
+decision = "new-proposition"
+proposition = "NP-232"
 recorded = "2026-10-04"

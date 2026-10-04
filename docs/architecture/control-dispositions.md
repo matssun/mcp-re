@@ -4405,3 +4405,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `medium`.
 **Root relationship.** Beside NP-111: the request half of the plain surface, which no unit states.
 **Recorded:** 2026-10-04, round-12 remediation of ce065a6090b1d7b8.
+
+## NP-232 — an outbound agent bounds every request built from it
+
+**Controls:** `mcp-re-proxy` `lib#outbound_fetch::binding::tests::an_agent_bounds_a_request_that_sets_no_timeout_of_its_own`.
+**Carrier:** `mcp-re-proxy/src/outbound_fetch/binding.rs` (`VettedDestination::agent`).
+**Statement.** *An agent from `VettedDestination::agent(t)` bounds connect and I/O of every request it builds by `t` when the request sets no timeout of its own.*
+**If false.** A black-holed KMS, STS, metadata or OCSP endpoint parks the credential-bearing call indefinitely.
+**Likely owner:** none. proxy.remote_signer_egress_bound states the bound but this carrier is not in its paths; proxy.outbound_destination has the carrier in its paths but its statement is admissibility, which a timeout test does not falsify.
+**Severity:** `high`.
+**Root relationship.** The agent-side half of proxy.remote_signer_egress_bound's statement that the egress carries the same bound.
+**Recorded:** 2026-10-04, round-12 remediation of 3ce1f18db0d470fc.
