@@ -13,29 +13,33 @@ use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::OnceLock;
 
-/// MCPS-88 (ADR-MCPS-049 W3): set on SIGTERM/SIGINT so the serve loop stops
-/// accepting NEW connections and returns for a clean exit. Graceful drain in the
-/// single-threaded inline model is exact: at most one request is ever in flight
-/// (on this same thread), and it always runs to completion — bounded by the
-/// existing per-request read/response deadlines (`ServerLimits`) — before the loop
-/// re-checks this flag. There is therefore no queue to drain and no in-flight
-/// request to abandon.
-static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+/// MCPS-88 (ADR-MCPS-049 W3): flipped by SIGTERM/SIGINT. `app::run` then stops
+/// the per-core async fleet from accepting and drains it via `shutdown_and_join`
+/// (bounded; THM-0104) before returning. Initialised by
+/// `install_shutdown_handlers` before any handler is installed.
+static SHUTDOWN: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
-/// Async-signal-safe handler: a lone atomic store (on the async-signal-safe list).
+/// Async-signal-safe handler: `OnceLock::get` on an initialised cell is an atomic
+/// acquire load plus a reference (no lock, no allocation), followed by a lone
+/// atomic store.
 extern "C" fn handle_shutdown_signal(_sig: libc::c_int) {
-    SHUTDOWN.store(true, Ordering::SeqCst);
+    if let Some(flag) = SHUTDOWN.get() {
+        flag.store(true, Ordering::SeqCst);
+    }
 }
 
 /// Install the graceful-shutdown handler for SIGTERM (k8s rollout / `docker stop`)
-/// and SIGINT (Ctrl-C). Best-effort: a failure to install leaves the previous
-/// (default-terminate) disposition, which is still safe — just not graceful.
-fn install_shutdown_handlers() {
+/// and SIGINT (Ctrl-C), returning the flag the handler flips. The flag is
+/// published before either `sigaction` call. Best-effort: a failure to install
+/// leaves the previous (default-terminate) disposition, which is still safe — just
+/// not graceful.
+fn install_shutdown_handlers() -> Arc<AtomicBool> {
+    let flag = Arc::clone(SHUTDOWN.get_or_init(|| Arc::new(AtomicBool::new(false))));
     // SAFETY: `sigaction` with a zeroed struct and a static `extern "C"` handler
-    // that only performs an atomic store. No `SA_RESTART`, so a signal interrupts
-    // the poll nap promptly.
+    // that only reads an initialised `OnceLock` and performs an atomic store. No
+    // `SA_RESTART`.
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = handle_shutdown_signal as *const () as libc::sighandler_t;
@@ -44,22 +48,11 @@ fn install_shutdown_handlers() {
         libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
         libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
     }
+    flag
 }
 
 fn main() -> ExitCode {
-    // Bridge the async-signal-safe global flag (flipped by the SIGTERM/SIGINT
-    // handler) to the Arc the library serve loop watches, so shutdown stays signal-
-    // driven in the binary while `app::run` takes an ordinary flag (testable).
-    let shutdown = Arc::new(AtomicBool::new(false));
-    install_shutdown_handlers();
-    let bridge = Arc::clone(&shutdown);
-    std::thread::spawn(move || loop {
-        if SHUTDOWN.load(Ordering::SeqCst) {
-            bridge.store(true, Ordering::SeqCst);
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    });
+    let shutdown = install_shutdown_handlers();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = mcp_re_proxy::cli::parse_args(&args)
         .and_then(|config| mcp_re_proxy::app::run(config, shutdown));
