@@ -202,6 +202,23 @@ mod tests {
         assert_eq!(silent.replica_clock_divergence_secs, None);
     }
 
+    /// The spelling a refusal names is the one the parser reads to produce that store.
+    #[test]
+    fn a_replay_store_flag_is_the_spelling_the_parser_reads_it_from() {
+        for store in [
+            ReplayStoreRequest::redis("redis://h:6379"),
+            ReplayStoreRequest::etcd("http://h:2379"),
+        ] {
+            assert!(StorageFlags::owns(store.flag()), "{}", store.flag());
+            let mut flags = StorageFlags::default();
+            flags
+                .take(store.flag(), store.locator())
+                .expect("the flag the store names is accepted");
+            let shared = flags.finish().expect("one store is coherent");
+            assert_eq!(shared.replay.store, Some(store.clone()));
+        }
+    }
+
     /// A coordinate with no store is refused; with one, it travels inside it.
     #[test]
     fn a_trust_epoch_key_needs_the_store_it_names_a_place_in() {

@@ -322,7 +322,16 @@ fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
     // "has no effect" refusals that explained the pair have no configuration to examine
     // (ADR-MCPRE-067 §7). What a request CAN still say is a tier its store cannot serve,
     // because the tier is a claim a deployment makes and not a property read off the store.
-    if store.flag() != flag {
+    if !matches!(
+        (&state, store),
+        (
+            RequestedState::SharedRedis { .. },
+            ReplayStoreRequest::Redis(_)
+        ) | (
+            RequestedState::SharedLinearizable,
+            ReplayStoreRequest::Etcd(_)
+        )
+    ) {
         return vec![format!(
             "{} names the replay store, but the declared --replay-durability-tier needs \
              {flag}: the tier is the guarantee, and this store does not deliver it. If a \
