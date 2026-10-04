@@ -7136,7 +7136,7 @@ anchor = """
         roots,
         startup_now_unix,
         Arc::clone(&shutdown),
-    )?);
+    )?)?;
 """
 weakening = """
     let rival = roots;
@@ -7145,7 +7145,7 @@ weakening = """
         rival,
         startup_now_unix,
         Arc::clone(&shutdown),
-    )?);
+    )?)?;
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#signing_credential_provenance_test::the_signing_plane_is_materialized_from_the_materialized_source",

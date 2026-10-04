@@ -15261,3 +15261,11 @@ control = "src/lib.rs#transparency::auditor::inputs::tests::an_issuer_seed_loads
 decision = "new-proposition"
 proposition = "NP-266"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20318"
+project = "mcp-re-proxy"
+control = "src/lib.rs#materializing_runtime::tests::a_second_install_is_refused_and_the_installed_plane_stays_owned"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-10-04"

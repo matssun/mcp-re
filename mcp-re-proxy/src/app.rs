@@ -390,7 +390,7 @@ fn run_validated(
     building.install_trust(crate::trust_plane::TrustPlane::materialize(
         &trust_plan,
         Arc::clone(&shutdown),
-    )?);
+    )?)?;
     let resolver = building.trust()?.resolver();
     // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
     // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
@@ -474,7 +474,7 @@ fn run_validated(
     // because the replay tier was declared after it and therefore dropped first.
     building.install_control(crate::control_runtime::ControlRuntime::start(
         crate::startup_plan::control_runtime_requirement(config, &replay_plan),
-    )?);
+    )?)?;
     // The redis store's reconnect machinery binds to the runtime it is CREATED in, so the
     // substrate must outlive every USE of the tier — discharged by draining the fleet
     // before anything is reclaimed, not by drop order. See `replay_plane`.
@@ -499,7 +499,7 @@ fn run_validated(
         client_ca,
         startup_now_unix,
         Arc::clone(&shutdown),
-    )?);
+    )?)?;
     let handshake_key_may_block =
         building.tls()?.key_exposure() == PrivateKeyExposure::NonExporting;
     let client_revocation = building.tls()?.revocation();
@@ -613,7 +613,7 @@ fn run_validated(
         roots,
         startup_now_unix,
         Arc::clone(&shutdown),
-    )?);
+    )?)?;
     // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner plane,
     // the authoritative replay tier, and the optional Mode-A channel binding.
     // Response-signature validity window: 300s.
@@ -747,7 +747,7 @@ fn run_validated(
     // order it owns — the one thing that type is for.
     let fleet_cfg = fleet_config(values, config.state().shard_topology(), in_flight_limit)?;
 
-    building.install_proxy(proxy);
+    building.install_proxy(proxy)?;
     let (runtime, lifecycle) = building.finish()?;
 
     runtime.serve(

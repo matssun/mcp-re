@@ -7,8 +7,9 @@
 //! prevent, so the set of required resources and the refusals naming them must not be
 //! restated anywhere else. Every refusal below is an INTERNAL error — none of these
 //! conditions is reachable from configuration, a peer, or a clock — but each is reported
-//! rather than asserted, because the composition root already returns this error type and a
-//! refusal to serve is strictly better than a panic on the startup path.
+//! rather than asserted (a second install of a resource included), because the composition
+//! root already returns this error type and a refusal to serve is strictly better than a
+//! panic on the startup path.
 //!
 //! The read-back accessors live here for the same reason as the assembly precondition:
 //! "this resource is not installed" is one fact, and the three projections a composition
@@ -33,6 +34,26 @@ pub(super) fn first_missing(present: [bool; REQUIRED.len()]) -> Option<&'static 
         .zip(present)
         .find(|(_, ok)| !ok)
         .map(|(name, _)| *name)
+}
+
+/// Install `value` into `slot` exactly once.
+///
+/// A second install is refused and leaves the installed resource untouched, so a resource
+/// leaves this owner only through reclaim or `finish`; the refused value is dropped here, it
+/// was never part of the graph.
+pub(super) fn install_once<T>(
+    slot: &mut Option<T>,
+    value: Option<T>,
+    what: &str,
+) -> Result<(), String> {
+    if slot.is_some() {
+        return Err(format!(
+            "internal error: the {what} was installed twice; the installed one is owned until \
+             reclaimed in order"
+        ));
+    }
+    *slot = value;
+    Ok(())
 }
 
 /// Why a composition root could not read back a resource it has not installed.

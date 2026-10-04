@@ -97,30 +97,34 @@ impl MaterializingRuntime {
 
     /// Take ownership of the trust plane.
     ///
-    /// Returns nothing. Handing back a borrow would tie it to the builder for the rest of
-    /// startup and block the next `install_*`; handing back the value would defeat the
-    /// point. The wiring that follows re-borrows through [`trust`](Self::trust), which is
-    /// what keeps ownership here across every fallible step in between.
-    pub(crate) fn install_trust(&mut self, trust: TrustPlane) {
-        self.trust = Some(trust);
+    /// Returns only a refusal, for a second install. Handing back a borrow would tie it to
+    /// the builder for the rest of startup and block the next `install_*`; handing back the
+    /// value would defeat the point. The wiring that follows re-borrows through
+    /// [`trust`](Self::trust), which is what keeps ownership here across every fallible
+    /// step in between.
+    pub(crate) fn install_trust(&mut self, trust: TrustPlane) -> Result<(), String> {
+        completeness::install_once(&mut self.trust, Some(trust), "trust plane")
     }
 
-    pub(crate) fn install_tls(&mut self, tls: TlsPlane) {
-        self.tls = Some(tls);
+    pub(crate) fn install_tls(&mut self, tls: TlsPlane) -> Result<(), String> {
+        completeness::install_once(&mut self.tls, Some(tls), "TLS plane")
     }
 
-    pub(crate) fn install_signing(&mut self, signing: SigningPlane) {
-        self.signing = Some(signing);
+    pub(crate) fn install_signing(&mut self, signing: SigningPlane) -> Result<(), String> {
+        completeness::install_once(&mut self.signing, Some(signing), "signing plane")
     }
 
-    pub(crate) fn install_proxy(&mut self, proxy: HttpProfileProxy) {
-        self.proxy = Some(proxy);
+    pub(crate) fn install_proxy(&mut self, proxy: HttpProfileProxy) -> Result<(), String> {
+        completeness::install_once(&mut self.proxy, Some(proxy), "proxy")
     }
 
     /// Take ownership WHERE THE RUNTIME IS STARTED — a local held to the assembly's end
     /// unwinds by declaration order on every `?` between (r12 R12-635).
-    pub(crate) fn install_control(&mut self, control: Option<ControlRuntime>) {
-        self.control = control;
+    pub(crate) fn install_control(
+        &mut self,
+        control: Option<ControlRuntime>,
+    ) -> Result<(), String> {
+        completeness::install_once(&mut self.control, control, "control runtime")
     }
 
     /// BORROWED, so a consumer built on it never becomes the thing that reclaims it.
@@ -264,10 +268,12 @@ mod tests {
         let mut building = MaterializingRuntime::begin(planned()).unwrap();
         assert_eq!(building.state(), RuntimeState::Materializing);
 
-        building.install_trust(TrustPlane::for_teardown_test(recording(
-            Arc::clone(&counter),
-            Arc::clone(&stopped),
-        )));
+        building
+            .install_trust(TrustPlane::for_teardown_test(recording(
+                Arc::clone(&counter),
+                Arc::clone(&stopped),
+            )))
+            .unwrap();
         // The signing plane never arrives — a later `?` failed.
         let err = match building.finish() {
             Err(e) => e,
@@ -334,14 +340,18 @@ mod tests {
         let stopped = Arc::new(AtomicUsize::new(0));
         let counter = Arc::new(AtomicUsize::new(0));
         let mut building = MaterializingRuntime::begin(planned()).unwrap();
-        building.install_trust(TrustPlane::for_teardown_test(recording(
-            Arc::clone(&counter),
-            Arc::clone(&stopped),
-        )));
-        building.install_signing(SigningPlane::for_teardown_test(recording(
-            Arc::clone(&counter),
-            Arc::clone(&stopped),
-        )));
+        building
+            .install_trust(TrustPlane::for_teardown_test(recording(
+                Arc::clone(&counter),
+                Arc::clone(&stopped),
+            )))
+            .unwrap();
+        building
+            .install_signing(SigningPlane::for_teardown_test(recording(
+                Arc::clone(&counter),
+                Arc::clone(&stopped),
+            )))
+            .unwrap();
 
         drop(building);
 
@@ -367,14 +377,18 @@ mod tests {
         let signing_at = Arc::new(AtomicUsize::new(0));
 
         let mut building = MaterializingRuntime::begin(planned()).unwrap();
-        building.install_signing(SigningPlane::for_teardown_test(recording(
-            Arc::clone(&counter),
-            Arc::clone(&signing_at),
-        )));
-        building.install_trust(TrustPlane::for_teardown_test(recording(
-            Arc::clone(&counter),
-            Arc::clone(&trust_at),
-        )));
+        building
+            .install_signing(SigningPlane::for_teardown_test(recording(
+                Arc::clone(&counter),
+                Arc::clone(&signing_at),
+            )))
+            .unwrap();
+        building
+            .install_trust(TrustPlane::for_teardown_test(recording(
+                Arc::clone(&counter),
+                Arc::clone(&trust_at),
+            )))
+            .unwrap();
 
         drop(building);
 
@@ -389,5 +403,39 @@ mod tests {
              (trust={trust}, signing={signing}); reverse-declaration unwinding is the \
              F3 defect this owner exists to remove"
         );
+    }
+
+    #[test]
+    fn a_second_install_is_refused_and_the_installed_plane_stays_owned() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let first_at = Arc::new(AtomicUsize::new(0));
+        let second_at = Arc::new(AtomicUsize::new(0));
+
+        let mut building = MaterializingRuntime::begin(planned()).unwrap();
+        assert_eq!(building.install_control(None), Ok(()));
+        building
+            .install_trust(TrustPlane::for_teardown_test(recording(
+                Arc::clone(&counter),
+                Arc::clone(&first_at),
+            )))
+            .unwrap();
+        let err = building
+            .install_trust(TrustPlane::for_teardown_test(recording(
+                Arc::clone(&counter),
+                Arc::clone(&second_at),
+            )))
+            .unwrap_err();
+        assert!(
+            err.contains("trust plane") && err.contains("installed twice"),
+            "{err}"
+        );
+        assert_eq!(
+            first_at.load(Ordering::SeqCst),
+            0,
+            "a refused install must not reclaim the installed plane inline"
+        );
+
+        drop(building);
+        assert!(first_at.load(Ordering::SeqCst) > 0);
     }
 }
