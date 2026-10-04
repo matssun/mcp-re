@@ -7,8 +7,10 @@
 //! PolicyError       the authorization-policy taxonomy: one variant per
 //!                   `mcp-re.authorization_*` wire token, and the sole authority
 //!                   over that mapping
-//! RevocationSource  an injected revocation seam (ADR-MCPS-021 Axis 2), DORMANT:
-//!                   no production path installs one
+//! RevocationSource  an injected grant deny-list seam (ADR-MCPS-021 Axis 2). Not
+//!                   `mcp_re_client_core::RevocationSource`, the client route's
+//!                   delegated-key seam. Whether a production path installs this one
+//!                   is stated by its installer, `mcp_re_proxy`'s `LiveTrustResolver`
 //! ```
 //!
 //! A mechanism adapter cannot mint a wire token; it chooses a [`PolicyError`]. Every layer
