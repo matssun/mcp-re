@@ -157,25 +157,31 @@ impl Service<Uri> for GatewayConnector {
     }
 
     fn call(&mut self, uri: Uri) -> Self::Future {
-        let mut http = self.http.clone();
-        let tls = self.tls.clone();
-        Box::pin(async move {
-            // The scheme is checked before any socket opens, so a mismatch writes nothing.
-            let tls = match (uri.scheme_str(), tls) {
-                (Some("https"), Some(tls)) => Some(tls),
-                (Some("http"), None) => None,
-                _ => return Err("connector does not serve this scheme".into()),
-            };
-            let tcp = http.call(uri.clone()).await?.into_inner();
-            let Some(tls) = tls else {
-                return Ok(TokioIo::new(GatewayStream::Plain(tcp)));
-            };
-            let host = uri.host().ok_or("uri has no host")?;
-            let name = ServerName::try_from(host.trim_matches(['[', ']']).to_owned())?;
-            let stream = tls.connect(name, tcp).await?;
-            Ok(TokioIo::new(GatewayStream::Tls(Box::new(stream))))
-        })
+        Box::pin(connect(self.http.clone(), self.tls.clone(), uri))
     }
+}
+
+/// One connection to `uri`: TLS exactly when the connector holds a TLS config and the
+/// scheme is `https`, plaintext exactly when it holds none and the scheme is `http`.
+async fn connect(
+    mut http: HttpConnector,
+    tls: Option<TlsConnector>,
+    uri: Uri,
+) -> Result<TokioIo<GatewayStream>, BoxError> {
+    // The scheme is checked before any socket opens, so a mismatch writes nothing.
+    let tls = match (uri.scheme_str(), tls) {
+        (Some("https"), Some(tls)) => Some(tls),
+        (Some("http"), None) => None,
+        _ => return Err("connector does not serve this scheme".into()),
+    };
+    let tcp = http.call(uri.clone()).await?.into_inner();
+    let Some(tls) = tls else {
+        return Ok(TokioIo::new(GatewayStream::Plain(tcp)));
+    };
+    let host = uri.host().ok_or("uri has no host")?;
+    let name = ServerName::try_from(host.trim_matches(['[', ']']).to_owned())?;
+    let stream = tls.connect(name, tcp).await?;
+    Ok(TokioIo::new(GatewayStream::Tls(Box::new(stream))))
 }
 
 #[cfg(test)]
