@@ -15500,3 +15500,11 @@ control = "tests/integration_async/main.rs#transparency_e2e_test::a_receipt_unde
 decision = "new-proposition"
 proposition = "NP-273"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20347"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::capability::tests::a_registration_begun_before_the_cutoff_whose_receipt_arrives_after_it_is_refused"
+decision = "new-proposition"
+proposition = "NP-273"
+recorded = "2026-10-04"

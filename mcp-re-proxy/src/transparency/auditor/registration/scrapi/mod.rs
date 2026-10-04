@@ -352,7 +352,7 @@ mod tests {
             &issuer().public_key(),
             &pin(),
             &ts_lifecycle,
-            NOW,
+            &|| NOW,
         )
         .expect("the receipt the service returned verifies against the statement and the pin");
         assert!(!registered.receipt_bytes().is_empty());
@@ -375,7 +375,7 @@ mod tests {
             &issuer().public_key(),
             &pin(),
             &ts_lifecycle,
-            NOW,
+            &|| NOW,
         )
         .expect("the polled receipt verifies");
         assert!(!registered.receipt_bytes().is_empty());
@@ -432,7 +432,7 @@ mod tests {
             &issuer().public_key(),
             &pin(),
             &ts_lifecycle,
-            NOW,
+            &|| NOW,
         )
         .expect("two failed polls inside the budget are not a lost receipt");
     }

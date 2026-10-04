@@ -83,7 +83,9 @@ impl TransparencyKeyLifecycle {
 
     /// Whether the key is acceptable at `now`, the verifier's trusted current time.
     ///
-    /// Revocation is reported ahead of expiry when both have passed: it is the stronger
+    /// Admissible exactly when `valid_from <= now < min(valid_until, revoked_at)` over the
+    /// upper bounds that are set: at `revoked_at` or `valid_until` itself the key is no
+    /// longer acceptable. Revocation is reported ahead of expiry when both have passed: it is the stronger
     /// statement about the key.
     pub fn admits_at(&self, now: i64) -> Result<(), KeyLifecycleRefusal> {
         if now < self.valid_from {

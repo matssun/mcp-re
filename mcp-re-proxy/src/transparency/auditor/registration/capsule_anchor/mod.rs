@@ -261,7 +261,7 @@ mod tests {
             &issuer().public_key(),
             &pin(),
             &ts_lifecycle,
-            NOW,
+            &|| NOW,
         )
         .expect("the receipt verifies");
 
@@ -283,7 +283,7 @@ mod tests {
             &issuer().public_key(),
             &pin(),
             &ts_lifecycle,
-            NOW,
+            &|| NOW,
         )
         .expect_err("a receipt about another statement is not this one's");
 
@@ -334,7 +334,7 @@ mod tests {
             &issuer().public_key(),
             &pin(),
             &ts_lifecycle,
-            NOW,
+            &|| NOW,
         )
         .expect("the receipt is what establishes the registration");
     }

@@ -81,7 +81,10 @@ so a key cannot be refused in one and honoured in the other.
 receipts with: `kid`, `valid_from`, and optionally `valid_until` and `revoked_at`, all Unix
 seconds. It is separate from `revoked_key_ids`, which names chain keys. Registration accepts a
 receipt only if the profile names its key and the key is acceptable at the auditor host's
-**current time** — `valid_from <= now`, `now < valid_until`, `now < revoked_at`. Neither `--at`
+**current time when the receipt is accepted** — read after the registration exchange answers,
+not when it began, so a key revoked while a registration polls is refused. The admissible
+interval is `valid_from <= now < min(valid_until, revoked_at)` over the bounds you state; at
+`revoked_at` or `valid_until` itself the key is no longer acceptable. Neither `--at`
 nor any time the receipt or the statement carries is consulted: `--at` dates the statement,
 and a time signed by the key under judgment is that key's own assertion. Keeping
 `valid_until` and `revoked_at` current with the service's actual key status is yours.
@@ -251,7 +254,8 @@ read its absence as evidence: a green run that skipped it says nothing about int
 
 Before reporting success the receipt is verified with the **offline** verifier against two
 things: the exact statement that was submitted, and the `ScittServiceTrustPin` you passed at
-the start of the run. Its service key must also be acceptable at the current time under the
+the start of the run. Its service key must also be acceptable, at the time the receipt is
+accepted, under the
 lifecycle your audit profile states for it (see `transparency_service_keys` above). No key is fetched or refreshed during that check — the pin was loaded
 before the audit began, and a verifier that reached out for a key while checking a receipt
 would be verifying against whatever the network offered at that moment.

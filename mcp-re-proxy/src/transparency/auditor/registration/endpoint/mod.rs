@@ -150,7 +150,7 @@ impl RegistrationTarget {
         issuer_key: &mcp_re_core::VerificationKey,
         pin: &ScittServiceTrustPin,
         ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
-        now: i64,
+        clock: &dyn Fn() -> i64,
     ) -> Result<RegisteredStatement, RegistrationError> {
         let exchange = super::ureq_exchange::UreqExchange::operator_configured(&self.base_url)
             .ok_or_else(|| {
@@ -176,7 +176,7 @@ impl RegistrationTarget {
                 issuer_key,
                 pin,
                 ts_key,
-                now,
+                clock,
             ),
             RegistrationProtocol::CapsuleAnchor => super::capability::register_and_verify(
                 &super::capsule_anchor::CapsuleAnchorRegistrationClient::new(
@@ -188,7 +188,7 @@ impl RegistrationTarget {
                 issuer_key,
                 pin,
                 ts_key,
-                now,
+                clock,
             ),
         }
     }
@@ -208,7 +208,7 @@ impl RegistrationTarget {
         _issuer_key: &mcp_re_core::VerificationKey,
         _pin: &ScittServiceTrustPin,
         _ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
-        _now: i64,
+        _clock: &dyn Fn() -> i64,
     ) -> Result<RegisteredStatement, RegistrationError> {
         Err(RegistrationError::Refused(
             "this build has no registration transport (feature `scitt_registration` is \

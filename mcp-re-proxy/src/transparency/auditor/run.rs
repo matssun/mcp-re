@@ -106,8 +106,9 @@ pub fn attest(invocation: &AuditInvocation) -> Result<AttestationArtifact, Audit
     let Some(target) = invocation.registration() else {
         return Ok(artifact);
     };
-    // The receipt's service key is judged at the host's current time, never at `--at`:
-    // that instant dates the statement, and a key revoked since must not be honoured.
+    // The receipt's service key is judged at the host's time when the receipt is accepted,
+    // never at `--at` (that instant dates the statement) and never at a time read before
+    // the registration exchange: a key revoked while it polls must not be honoured.
     let ts_key = |kid: &str| inputs.profile.transparency_key_lifecycle(kid).copied();
     let registered = target
         .register(
@@ -115,7 +116,7 @@ pub fn attest(invocation: &AuditInvocation) -> Result<AttestationArtifact, Audit
             &inputs.issuer.public_key(),
             &inputs.pin,
             &ts_key,
-            crate::clock::now_unix(),
+            &crate::clock::now_unix,
         )
         .map_err(AuditError::Registration)?;
     let artifact = artifact
