@@ -84,7 +84,9 @@ impl MachineStates {
             continuation_control: r
                 .continuation_control
                 .ok_or_else(|| unrecognised("continuation-control"))?,
-            crl_revocation: r.crl_revocation,
+            crl_revocation: r
+                .crl_revocation
+                .ok_or_else(|| unrecognised("crl-revocation"))?,
             custody: r.custody.ok_or_else(|| unrecognised("custody"))?,
             delegated_signing: r
                 .delegated_signing

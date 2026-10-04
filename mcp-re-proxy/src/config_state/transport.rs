@@ -10,8 +10,13 @@
 //!
 //! | State | Required | Forbidden | Guards |
 //! |---|---|---|---|
-//! | `Exact + UriSan` | — | every ingress parameter | — |
-//! | `Exact + DnsSan` | — | every ingress parameter | — |
+//! | `Exact + UriSan` | — | every ingress parameter | the SAN must be a URI |
+//! | `Exact + DnsSan` | — | every ingress parameter | the SAN must be a DNS name |
+//!
+//! The Guards column is discharged per handshake by `CertificateChainEvidence::interpret_identity`,
+//! which reads only the configured field, has no fallback and refuses a malformed value. The
+//! atlas's `reverse_proxy_*` Forbidden entry is discharged by unrepresentability: no such field
+//! exists on `DeploymentRequest`.
 //!
 //! `binding` and `identity_source` are **two selectors of one machine**, and the machine is
 //! named for what it owns rather than for either of them. `binding` contributes one
@@ -49,16 +54,16 @@ pub enum ChannelBindingState {
 
 /// Which client-CRL posture a configuration requests.
 ///
-/// The representation is private to this module and [`classify_and_validate`] is the only
-/// producer. A CRL-bearing state carries the files that put it in that state, and the
+/// The representation is private to this module and [`classify_and_validate_crl`] is the only
+/// producer, and it produces no state for a request it refuses. A CRL-bearing state carries the files that put it in that state, and the
 /// reloading state carries the cadence that distinguishes it from the static one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrlRevocationState {
     /// The CRL files. Empty is exactly what "no CRLs" means, so the posture and the set
     /// cannot disagree.
     paths: Vec<String>,
-    /// Seconds between re-reads, where the operator asked for them. Layer A holds it above
-    /// zero and refuses it beside an empty set (CF-04).
+    /// Seconds between re-reads, where the operator asked for them. Above zero, and absent
+    /// where `paths` is empty: the producer returns no state otherwise.
     cadence_secs: Option<u64>,
 }
 
@@ -216,16 +221,18 @@ fn classify_crl(config: &DeploymentRequest) -> CrlRevocationState {
 }
 
 /// Classify the CRL-revocation state and check its columns.
-pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationState, Vec<String>) {
+pub fn classify_and_validate_crl(
+    config: &DeploymentRequest,
+) -> (Option<CrlRevocationState>, Vec<String>) {
     let state = classify_crl(config);
     let mut violations = Vec::new();
     // Structure of the list itself, before anything that reads a member. Classification
-    // asks whether the list is empty, which a list holding `""` is not — so a deployment
+    // asks whether the list is empty, which a list holding `""` or only whitespace is not — so a deployment
     // could reach `Static`/`Reloading`, announce that offline revocation is enforced, and
     // hold one path that names no file. Placed ahead of the cadence clauses because those
     // are about a different field: a member that names nothing is a defect in the control
     // the cadence would be re-reading.
-    if state.paths().iter().any(String::is_empty) {
+    if state.paths().iter().any(|path| path.trim().is_empty()) {
         violations.push(
             "--client-crl contains an empty path: every listed CRL must name a file, or the \
              deployment reports offline revocation as enforced while one of its lists \
@@ -250,7 +257,7 @@ pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationSt
                 .to_string(),
         );
     }
-    (state, violations)
+    (violations.is_empty().then_some(state), violations)
 }
 
 /// The ceiling on `--max-client-cert-lifetime` (ADR-MCPS-023 §A1, MCPS-57). A
@@ -432,7 +439,9 @@ mod tests {
     /// A state this machine must recognise, and how to request it.
     type Form = ((Vec<String>, Option<u64>), fn(&mut DeploymentRequest));
 
-    fn crl(mutate: impl FnOnce(&mut DeploymentRequest)) -> (CrlRevocationState, Vec<String>) {
+    fn crl(
+        mutate: impl FnOnce(&mut DeploymentRequest),
+    ) -> (Option<CrlRevocationState>, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate_crl(&config)
@@ -589,6 +598,7 @@ mod tests {
         ];
         for ((paths, cadence), mutate) in cases {
             let (state, violations) = crl(mutate);
+            let state = state.expect("a legal CRL form names a state");
             assert_eq!(state.paths(), paths.as_slice());
             assert_eq!(state.reload_cadence_secs(), cadence);
             assert_eq!(state.is_enforced(), !paths.is_empty());
@@ -611,11 +621,13 @@ mod tests {
         for paths in [
             vec![String::new()],
             vec!["/crl.pem".to_string(), String::new()],
+            vec!["   ".to_string()],
+            vec!["/crl.pem".to_string(), " ".to_string()],
         ] {
             let (state, violations) = crl(|c| c.peer_revocation.lists.paths = paths.clone());
             assert!(
-                state.is_enforced(),
-                "{paths:?} classified as no CRL control at all, which would hide the defect"
+                state.is_none(),
+                "{paths:?}: a refused list must name no state"
             );
             assert!(
                 violations.iter().any(|v| v.contains("empty path")),
@@ -626,10 +638,11 @@ mod tests {
 
     #[test]
     fn a_zero_cadence_is_an_unbounded_reloader_not_a_disabled_one() {
-        let (_, violations) = crl(|c| {
+        let (state, violations) = crl(|c| {
             c.peer_revocation.lists.paths = vec!["/crl.pem".to_string()];
             c.peer_revocation.lists.reload_secs = Some(0);
         });
+        assert!(state.is_none(), "a zero cadence must name no state");
         assert!(
             violations.iter().any(|v| v.contains("spin")),
             "{violations:?}"
@@ -639,7 +652,7 @@ mod tests {
     #[test]
     fn a_cadence_with_no_list_to_re_read_is_refused() {
         let (state, violations) = crl(|c| c.peer_revocation.lists.reload_secs = Some(300));
-        assert!(!state.is_enforced());
+        assert!(state.is_none(), "a cadence over no list must name no state");
         assert!(
             violations
                 .iter()

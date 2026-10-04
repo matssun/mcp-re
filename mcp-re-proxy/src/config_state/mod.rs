@@ -594,7 +594,9 @@ pub(crate) mod test_support {
         let mut config = legal_config();
         config.peer_revocation.lists.paths = paths.iter().map(|p| p.to_string()).collect();
         config.peer_revocation.lists.reload_secs = cadence_secs;
-        super::transport::classify_and_validate_crl(&config).0
+        super::transport::classify_and_validate_crl(&config)
+            .0
+            .expect("the fixture CRL posture is legal")
     }
 
     /// The client-revocation plan such a deployment projects.
