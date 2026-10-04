@@ -84,12 +84,6 @@ impl SignedStatement {
         &self.sig_structure
     }
 
-    /// Parse a tagged `COSE_Sign1` into a statement WITHOUT verifying its signature.
-    ///
-    /// Parsing is not acceptance: nothing here is trustworthy until
-    /// [`verify_receipt_offline`] has checked the issuer signature over these exact
-    /// bytes. It is separate so a malformed statement fails as malformed rather than
-    /// as a bad signature.
     /// This statement with a DIFFERENT decoded commitment beside the same COSE bytes.
     ///
     /// `#[cfg(test)]`, and it is the point of the test it serves: a decoded view is a
