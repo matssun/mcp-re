@@ -490,3 +490,4 @@ attestations this view cannot see.
 | ASM-0061 | description, justification, scope or mechanism | proxy.etcd_replay_adapter, proxy.redis_replay_adapter | assumption review |
 | ASM-0062 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
 | ASM-0063 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
+| ASM-0064 | description, justification, scope or mechanism | http_profile.continuation_binding | assumption review |
