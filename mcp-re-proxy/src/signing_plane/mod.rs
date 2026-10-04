@@ -200,17 +200,9 @@ impl SigningPlane {
     }
 }
 
-/// ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5 (MCPRE-122): the cold-path delegated-key
-/// rotation thread. A single owner drives the rotor OFF the per-core serving runtimes,
-/// so the root issuer's blocking KMS/HSM calls never touch the request path. It wakes
-/// within the rotation-overlap window before the current key's `exp`, mints a
-/// successor, and republishes the hot-path snapshot; the fleet keeps signing off the
-/// current key until then (no gap). If issuance fails while the current key is still
-/// valid, serving continues until that key expires and THEN fails closed
-/// (ADR-MCPRE-052 §6) — never a stale-key extension or a direct-root fallback. The
-/// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
 /// A fresh random u64 from the OS CSPRNG for backoff jitter. On the (astronomically
 /// unlikely) CSPRNG failure, fall back to 0 (no jitter) rather than panicking the
+/// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
 fn rotation_jitter() -> u64 {
     let mut b = [0u8; 8];
     match getrandom::fill(&mut b) {
@@ -589,6 +581,10 @@ mod epoch_watch_wiring_tests {
     /// no `INCR` can revoke, behind a single warning line. The only thing that refused was
     /// the TRUST plane, in another file, and only because it happens to be materialized
     /// first.
+    ///
+    /// Runs in `//mcp-re-proxy:proxy_ext_unit_test`, the `redis_replay` lane, where the real
+    /// function is compiled.
+    #[cfg(feature = "redis_replay")]
     #[test]
     fn a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably() {
         let Err(err) =
@@ -596,6 +592,32 @@ mod epoch_watch_wiring_tests {
         else {
             panic!("a kill switch that cannot be wired must refuse the plane");
         };
+        assert!(
+            err.contains("--trust-epoch-redis-url"),
+            "the refusal must name the flag: {err}"
+        );
+        assert!(
+            err.contains("is not a usable Redis URL"),
+            "the refusal must come from the reader that could not be built: {err}"
+        );
+    }
+
+    /// A planned source in a build without `redis_replay` refuses on the build fact, not
+    /// on the URL. Measures the non-`redis_replay` form of `build_delegated_epoch_watch`
+    /// in `//mcp-re-proxy:proxy_unit_test`.
+    #[cfg(not(feature = "redis_replay"))]
+    #[test]
+    fn a_planned_source_this_build_cannot_read_refuses_instead_of_minting_unrevocably() {
+        let Err(err) = build_delegated_epoch_watch(
+            &planned("redis://epoch-store.invalid"),
+            "epoch-1".to_string(),
+        ) else {
+            panic!("a planned source this build cannot read must refuse the plane");
+        };
+        assert!(
+            err.contains("requires a build with the `redis_replay` feature"),
+            "the refusal must name the missing feature: {err}"
+        );
         assert!(
             err.contains("--trust-epoch-redis-url"),
             "the refusal must name the flag: {err}"
@@ -761,10 +783,11 @@ mod rotation_owner_tests {
             "a DUE rotation that published no successor must count as a failure, or \
              nothing drives the backoff"
         );
-        assert!(
-            metrics.rotations_ok() <= 1,
+        assert_eq!(
+            metrics.rotations_ok(),
+            0,
             "no successor was ever minted, yet {} rotations were recorded as successful: \
-             the loop read a root outage as steady state and spun on the root issuer",
+             the loop read a root outage as steady state",
             metrics.rotations_ok()
         );
     }

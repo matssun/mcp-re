@@ -33,7 +33,13 @@ use super::trust_epoch_advance::observe_trust_epoch;
 use super::trust_epoch_advance::EpochStep;
 use super::DelegatedEpochWatch;
 
-/// thread observes its halt between naps so it exits promptly on a rolling deploy.
+/// The cold-path delegated-key rotation thread (ADR-MCPRE-052 §4/§6, ADR-MCPRE-051 §5): a
+/// single owner drives the rotor OFF the per-core serving runtimes, so the root issuer's
+/// blocking KMS/HSM calls never touch the request path. It mints a successor within the
+/// overlap window before the current key's `exp` and republishes the hot-path snapshot; if
+/// issuance fails while the current key is valid, serving continues until that `exp` and
+/// THEN fails closed — never a stale-key extension or a direct-root fallback. The thread
+/// observes its halt between naps so it exits promptly on a rolling deploy.
 pub(super) fn spawn_delegated_rotation_task(
     workers: &mut crate::managed_worker::WorkerSet,
     mut rotor: crate::delegated_wiring::ProdDelegatedRotor,
