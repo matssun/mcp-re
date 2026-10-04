@@ -50,7 +50,10 @@ SIZE_GATE = "scripts/module_size_gate.py"
 # joins no unit, a fingerprint input no CI filter triggers on, a mutation anchor the change
 # made stale. Writers kept leaving these for the batch gate.
 REGISTRY_GATES = ("scripts/unit_closure_gate.py", "scripts/verification_trigger_gate.py",
-                  "tools/verification/test_mutation_lane.py", "scripts/control_census_gate.py")
+                  "tools/verification/test_mutation_lane.py", "scripts/control_census_gate.py",
+                  # The census itself, which also checks a new proposition's own fields (its
+                  # consequence class): the census GATE checks dispositions only.
+                  "tools/verification/control-census --gate")
 RUST_RULES = "rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro"
 _DIAGNOSTIC = re.compile(r"^error(?:\[E\d+\])?: ", re.M)
 _RUNNING = re.compile(r"^running (\d+) tests?$", re.M)
@@ -225,15 +228,16 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
                   **({"note": "size growth only in files this writer did not touch"}
                      if rc and soft and not debt else {})})
 
-    for script in REGISTRY_GATES:
+    for gate_cmd in REGISTRY_GATES:
+        script, *args = gate_cmd.split()
         if not os.path.isfile(script):
             continue
-        rc, out = _run([sys.executable, script],
+        rc, out = _run([sys.executable, script, *args],
                        os.path.join(work_dir, "%s-%s.log" % (os.path.basename(script), tag)))
         parts.append({"gate": "registry", "lane": os.path.basename(script),
                       "verdict": "ok" if rc == 0 else "new-failures", "exit": rc,
                       **({} if rc == 0 else {"head": [ln for ln in out.splitlines()
-                                                      if "FAIL" in ln or ln.startswith("  - ")][:5]})})
+                                                      if "FAIL" in ln or ln.startswith("  ")][:5]})})
 
     if any(p["verdict"] == "new-failures" for p in parts):
         return parts          # a tree that does not compile has no test result to add

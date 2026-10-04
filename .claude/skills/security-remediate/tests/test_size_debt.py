@@ -53,10 +53,16 @@ def test_rust_gate_records_size_and_still_tests() -> None:
     rust_gate.unit_test_targets = lambda targets: ["//alpha:test"]  # type: ignore[assignment]
     rust_gate._lint = lambda t, log: {"verdict": "ok"}  # type: ignore[assignment]
     rust_gate._rustfmt = lambda t, e, log: {"verdict": "ok"}  # type: ignore[assignment]
-    rust_gate._run = lambda cmd, log: ((1, "module-size gate: FAIL — 1 problem(s)\n" + GREW + "\n")  # type: ignore[assignment]
-                                       if cmd[-1] == rust_gate.SIZE_GATE else
-                                       (1, "unit-closure gate: FAIL — 1 problem(s)\n  - x.rs: UC-1")
-                                       if cmd[-1].endswith("unit_closure_gate.py") else (0, ""))
+    ran: list = []
+
+    def run(cmd, log):
+        ran.append(cmd[1:])
+        if cmd[-1] == rust_gate.SIZE_GATE:
+            return 1, "module-size gate: FAIL — 1 problem(s)\n" + GREW + "\n"
+        if cmd[-1].endswith("unit_closure_gate.py"):
+            return 1, "unit-closure gate: FAIL — 1 problem(s)\n  - x.rs: UC-1"
+        return 0, ""
+    rust_gate._run = run  # type: ignore[assignment]
     rust_gate._test = lambda t, f, log: {"verdict": "ok", "ran": 3}  # type: ignore[assignment]
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -70,7 +76,10 @@ def test_rust_gate_records_size_and_still_tests() -> None:
     assert by["module-size"]["verdict"] == "size-debt", by
     assert by["module-size"]["debt"][0]["measured"] == 606, by
     registry = [p for p in parts if p["gate"] == "registry"]
-    assert [p["verdict"] for p in registry] == ["new-failures", "ok", "ok", "ok"], registry
+    assert [p["verdict"] for p in registry] == ["new-failures", "ok", "ok", "ok", "ok"], registry
+    # The census proper runs in its gate mode: it checks a new proposition's own fields,
+    # which the census gate script does not (batches 70 and 81 declared consequence "low").
+    assert ["tools/verification/control-census", "--gate"] in ran, ran
     assert "test" not in by, "a registry failure is the writer's and stops the gate"
     print("  rust gate: size-only is size-debt; a registry failure (unit closure) blames the writer  OK")
 

@@ -256,7 +256,10 @@ judgment — that is where the turns belong.
      `verification/policy/control-dispositions.toml` citing an existing `[[proposition]]`
      whose statement the test establishes; only if none fits, a new proposition with its
      `## NP-nnn` record in `docs/architecture/control-dispositions.md`. Group tests by the
-     statement they establish, not one proposition per test.
+     statement they establish, not one proposition per test. A new proposition's
+     `consequence` (and its record's `**Severity:**`) is `medium`, `high` or `critical` —
+     the census refuses anything else; judge it from the proposition's "If false" line, not
+     from the finding's severity.
    - **not-evidence** — a row citing an `ND-nnn` family whose stated scope genuinely fits.
      Not for a real security test.
    Its `accept` is `tools/verification/control-census --residue` naming no control in the
