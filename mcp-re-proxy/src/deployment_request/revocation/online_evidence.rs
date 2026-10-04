@@ -29,7 +29,10 @@ pub enum OnlineRevocationEvidenceRequest {
 impl OnlineRevocationEvidenceRequest {
     /// Whether online evidence is required.
     pub fn is_required(&self) -> bool {
-        matches!(self, OnlineRevocationEvidenceRequest::Required(_))
+        match self {
+            OnlineRevocationEvidenceRequest::Required(_) => true,
+            OnlineRevocationEvidenceRequest::NotRequired => false,
+        }
     }
 
     /// The responder override, where the selection carries one.
