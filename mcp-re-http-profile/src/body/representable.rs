@@ -14,9 +14,14 @@
 //! emitted form. RFC 8259 §4 states object members are unordered, so no reader may depend on
 //! it, and unlike the refusals here it changes no value anyone reads.
 //!
-//! The scan runs AFTER the body has parsed, so it may assume well-formed JSON: it tracks
-//! string literals (to avoid reading their contents as structure), object nesting, and
-//! member names, and needs no error recovery.
+//! The scan is total over arbitrary bytes and may NOT assume well-formed JSON: it is called
+//! both after the body has parsed (`insert_meta_block`, `extract_meta_block`) and before it
+//! (`validate_request_envelope`, which must answer for the bytes the client signed rather
+//! than the document serde picks out of them). It tracks string literals (to avoid reading
+//! their contents as structure), object nesting, and member names, never panics or reads
+//! past the slice on any input, and does no error recovery: on bytes that are not JSON its
+//! verdict is not a JSON verdict, and the caller's own parse is what refuses them. The
+//! control for that totality is `the_representability_scan_never_reads_past_the_body`.
 //!
 //! ## Bounds and cursor arithmetic
 //!
