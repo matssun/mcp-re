@@ -455,6 +455,77 @@ mod evidence_precondition_tests {
         assert!(ArtifactBinding::opaque_from_digest(ArtifactType::OauthDpop, "").is_err());
     }
 
+    fn sign_triple(
+        target: &str,
+        nonce: &str,
+        created: i64,
+        expires: i64,
+    ) -> Result<SignedRequest, HttpProfileError> {
+        let params: Map<String, Value> = serde_json::json!({ "name": "read" })
+            .as_object()
+            .cloned()
+            .unwrap();
+        build_signed_request(
+            &Value::from(1),
+            "tools/call",
+            params,
+            target,
+            &RequestSigningInputs::new(
+                "client-key-1",
+                audience(),
+                vec![ArtifactBinding::opaque_digest(
+                    ArtifactType::OauthDpop,
+                    b"access-token",
+                )],
+                nonce,
+                created,
+                expires,
+            ),
+            &SigningKey::from_seed_bytes(&[11u8; 32]),
+        )
+    }
+
+    const PADDED_NONCE: &str = "nonce-1-padded-to-the-128-bit-floor";
+
+    #[test]
+    fn a_target_uri_the_audience_does_not_name_is_refused_locally() {
+        assert_eq!(
+            sign_triple(
+                "https://mcp.example.com/mcp?route=b",
+                PADDED_NONCE,
+                1_000,
+                1_300
+            )
+            .err(),
+            Some(HttpProfileError::AudienceMismatch)
+        );
+        assert!(sign_triple(TARGET, PADDED_NONCE, 1_000, 1_300).is_ok());
+    }
+
+    #[test]
+    fn a_non_positive_signature_window_is_refused_locally() {
+        let refused = Some(HttpProfileError::MalformedEvidence(
+            "signature window expires at or before created",
+        ));
+        assert_eq!(
+            sign_triple(TARGET, PADDED_NONCE, 1_000, 1_000).err(),
+            refused
+        );
+        assert_eq!(sign_triple(TARGET, PADDED_NONCE, 1_000, 999).err(), refused);
+        assert!(sign_triple(TARGET, PADDED_NONCE, 1_000, 1_001).is_ok());
+    }
+
+    #[test]
+    fn a_nonce_below_the_128_bit_floor_is_refused_locally() {
+        let refused = Some(HttpProfileError::MalformedEvidence(
+            "nonce is below the 128-bit entropy floor",
+        ));
+        let short = "a".repeat(MIN_NONCE_CHARS - 1);
+        assert_eq!(sign_triple(TARGET, &short, 1_000, 1_300).err(), refused);
+        assert_eq!(sign_triple(TARGET, "", 1_000, 1_300).err(), refused);
+        assert!(sign_triple(TARGET, &"a".repeat(MIN_NONCE_CHARS), 1_000, 1_300).is_ok());
+    }
+
     #[test]
     fn a_valid_binding_still_signs() {
         // The converse, so the precondition cannot be read as "bindings are broken".

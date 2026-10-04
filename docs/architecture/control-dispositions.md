@@ -3599,7 +3599,7 @@ state.
 
 ## NP-175 — a client nonce clears the 128-bit emission floor
 
-**Controls:** `mcp-re-client/src/lib.rs` (1).
+**Controls:** `mcp-re-client/src/lib.rs` (1), `mcp-re-client-core/src/request.rs` (1).
 **Carrier:** `mcp-re-client/src/lib.rs` — the client's nonce emission.
 **Statement.** *A nonce the client emits clears the 128-bit emission floor.*
 **If false.** The client emits a nonce with less entropy than the freshness argument assumes,
