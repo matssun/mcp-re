@@ -130,7 +130,7 @@ pub fn sign_delegated_response_full_with_owned_key(
 
 /// Full-profile response signing for the DELEGATED-key path with NO request
 /// binding (ADR-MCPRE-052; the preflight-unbound rejection case, MCPRE-122). Like
-/// [`sign_delegated_response_unbound_with_owned_key`] a directly-root-signed sibling of
+/// [`sign_delegated_response_full_with_owned_key`], a delegated-key sibling of
 /// [`sign_response_unbound`]: the response evidence block carries the inline
 /// `server_delegation` credential and the response is signed by the DELEGATED key,
 /// but the signature covers only the response components (`@status`,
@@ -269,4 +269,95 @@ pub(crate) fn base64_standard_decode(s: &str) -> Result<Vec<u8>, HttpProfileErro
     STANDARD
         .decode(s)
         .map_err(|_| HttpProfileError::InvalidSignature)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KID: &str = "delegated-kid-1";
+
+    fn signed(preloaded: &[(&str, &str)]) -> HttpResponse {
+        let key = SigningKey::from_seed_bytes(&[0x11; 32]);
+        let signer = ActorIdentity {
+            role: "server".to_owned(),
+            trust_domain: "example.test".to_owned(),
+            subject: "srv-1".to_owned(),
+            keyid: KID.to_owned(),
+        };
+        let evidence = RequestEvidence {
+            digest_alg: "none".into(),
+            digest_value: String::new(),
+        };
+        let mut headers = vec![("Content-Type".to_owned(), "application/json".to_owned())];
+        headers.extend(
+            preloaded
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned())),
+        );
+        let mut response = HttpResponse {
+            status: 200,
+            headers,
+            body: br#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_vec(),
+        };
+        sign_delegated_response_unbound_with_owned_key(
+            &mut response,
+            &signer,
+            "credential",
+            &evidence,
+            &key,
+            KID,
+            1_700_000_000,
+            1_700_000_300,
+        )
+        .expect("emission succeeds");
+        response
+    }
+
+    fn matching<'a>(response: &'a HttpResponse, name: &str) -> Vec<&'a str> {
+        response
+            .headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn caller_supplied_digest_and_signature_headers_do_not_survive_emission() {
+        let response = signed(&[
+            ("content-digest", "sha-256=:AAAA:"),
+            ("SIGNATURE-INPUT", "mcp-re-response=()"),
+            ("signature", "mcp-re-response=:AAAA:"),
+        ]);
+        let callers = [
+            ("Content-Digest", "sha-256=:AAAA:"),
+            ("Signature-Input", "mcp-re-response=()"),
+            ("Signature", "mcp-re-response=:AAAA:"),
+        ];
+        for (name, supplied) in callers {
+            let found = matching(&response, name);
+            assert_eq!(found.len(), 1, "{name} must appear exactly once");
+            assert_ne!(found[0], supplied, "{name} must be the emitted value");
+        }
+        assert_eq!(
+            matching(&response, "Content-Digest")[0],
+            content_digest_sha256(&response.body)
+        );
+    }
+
+    #[test]
+    fn the_delegated_response_block_is_inside_the_digested_body() {
+        let response = signed(&[]);
+        let body: serde_json::Value =
+            serde_json::from_slice(&response.body).expect("body is JSON");
+        assert_eq!(
+            body["_meta"][RESPONSE_EVIDENCE_BLOCK_KEY]["server_signer"]["keyid"],
+            KID
+        );
+        assert_eq!(
+            matching(&response, "Content-Digest")[0],
+            content_digest_sha256(&response.body)
+        );
+    }
 }
