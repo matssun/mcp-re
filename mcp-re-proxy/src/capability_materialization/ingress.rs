@@ -45,6 +45,11 @@ pub fn build_attested_ingress_binding(
                 .to_string(),
         );
     }
+    if attested.audience.trim() != attested.audience {
+        return Err("--ingress-audience carries surrounding whitespace: the verifier compares \
+             the audience verbatim, so it must be the exact route an attestor mints"
+            .to_string());
+    }
     let mut binding =
         crate::transport::ingress::LbAssertionV2Binding::new(source, &attested.audience);
     for (key_id, key_b64) in &attested.attestor_keys {
@@ -174,6 +179,21 @@ mod tests {
         assert!(
             err.contains("--ingress-audience"),
             "the failure must name the missing audience, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_mode_c_verifier_refuses_an_audience_it_would_not_use_verbatim() {
+        let mut config = mode_c_config();
+        config.peer_identity = mode_c_form(
+            vec!["spiffe://example.org/ingress-1".to_string()],
+            "did:example:server-1 ".to_string(),
+        );
+        let err = build_attested_ingress_binding(&config)
+            .expect_err("a padded audience must not be built into a verifier");
+        assert!(
+            err.contains("--ingress-audience"),
+            "the failure must name the audience, got: {err}"
         );
     }
 

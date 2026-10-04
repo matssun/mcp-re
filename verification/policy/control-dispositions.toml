@@ -8972,6 +8972,14 @@ proposition = "NP-143"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20252"
+project = "mcp-re-proxy"
+control = "src/lib.rs#capability_materialization::ingress::tests::a_mode_c_verifier_refuses_an_audience_it_would_not_use_verbatim"
+decision = "new-proposition"
+proposition = "NP-143"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-18062"
 project = "mcp-re-proxy"
 control = "src/lib.rs#capability_materialization::ingress::tests::a_mode_c_verifier_rejects_an_unusable_attestor_key_rather_than_dropping_it"
