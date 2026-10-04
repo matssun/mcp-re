@@ -182,7 +182,7 @@ count = 0
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "arithmetic_side_effects"
-count = 33
+count = 32
 
 # 72 -> 71: R11-014 replaced the enforcer's `.map(|_| ())` tail, which discarded the
 # verdict, with a match on its two arms. The nesting site went with the discarded value.
@@ -202,7 +202,7 @@ count = 1
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "indexing_slicing"
-count = 20
+count = 19
 
 # 0 -> 3: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]
