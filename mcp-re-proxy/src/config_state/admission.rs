@@ -42,6 +42,7 @@
 
 use crate::deployment_request::{
     AdmissionAvailabilityRequest, AdmissionRequest, DeploymentRequest, RedactedLocator,
+    SharedStoreRequest,
 };
 use mcp_re_core::VerificationKey;
 use std::num::NonZeroU64;
@@ -156,7 +157,7 @@ enum AdmissionKindState {
 struct ValidatedGate {
     authority_kid: String,
     authority: VerificationKey,
-    record_store: String,
+    record_store: SharedStoreRequest,
     availability: AdmissionAvailability,
     currentness: AdmissionRecordCurrentness,
 }
@@ -183,7 +184,7 @@ pub struct EnforcedAdmission<'a> {
     posture: AdmissionPosture,
     authority_kid: &'a str,
     authority: &'a VerificationKey,
-    record_store: &'a str,
+    record_store: &'a SharedStoreRequest,
     availability: AdmissionAvailability,
     currentness: AdmissionRecordCurrentness,
 }
@@ -206,7 +207,7 @@ impl<'a> EnforcedAdmission<'a> {
 
     /// The shared authoritative record currency is compared against.
     pub fn record_store(&self) -> &'a str {
-        self.record_store
+        self.record_store.locator()
     }
 
     /// What this deployment does when that record cannot be reached.
@@ -361,7 +362,7 @@ pub(crate) struct AdmissionAuthority {
     /// The key that verifies it.
     pub(crate) key: VerificationKey,
     /// The shared authoritative record currency is compared against.
-    pub(crate) record_store: String,
+    pub(crate) record_store: SharedStoreRequest,
     /// What this deployment does when that record cannot be reached. Derived here because
     /// the two flags behind it are legal only in the combinations this function accepts.
     pub(crate) availability: AdmissionAvailability,
@@ -437,7 +438,7 @@ pub(crate) fn validated_admission_authority(
     Ok(Some(AdmissionAuthority {
         kid: gate.authority_kid.clone(),
         key,
-        record_store: record_store.to_string(),
+        record_store: gate.store.clone(),
         availability: match gate.availability {
             AdmissionAvailabilityRequest::FailClosed => AdmissionAvailability::FailClosed,
             AdmissionAvailabilityRequest::Degraded { bound_secs } => {
@@ -514,6 +515,29 @@ mod tests {
             );
             assert!(state.is_enforced());
         }
+    }
+
+    #[test]
+    fn an_admission_state_and_its_gate_debug_print_carries_no_credential() {
+        let url = "redis://alice:hunter2@h:6379/0?token=s3cr3t";
+        let (state, violations) = run(|c| {
+            c.admission =
+                AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                    store: SharedStoreRequest::redis(url),
+                    ..gate()
+                });
+        });
+        assert!(violations.is_empty(), "{violations:?}");
+        let state = state.expect("a complete admission configuration names a state");
+        let gate = state
+            .enforced()
+            .expect("a complete admission configuration selects the enforcing state");
+        for printed in [format!("{state:?}"), format!("{gate:?}")] {
+            for secret in ["hunter2", "alice", "s3cr3t", url] {
+                assert!(!printed.contains(secret), "{secret} leaked: {printed}");
+            }
+        }
+        assert_eq!(gate.record_store(), url);
     }
 
     /// An enforcing state carries every fact it cannot be inhabited without, and carries

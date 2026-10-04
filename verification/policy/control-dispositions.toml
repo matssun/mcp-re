@@ -14765,3 +14765,11 @@ control = "src/lib.rs#async_serve::connection::tests::a_stalled_response_write_i
 decision = "new-proposition"
 proposition = "NP-257"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20268"
+project = "mcp-re-proxy"
+control = "src/lib.rs#config_state::admission::tests::an_admission_state_and_its_gate_debug_print_carries_no_credential"
+decision = "new-proposition"
+proposition = "NP-238"
+recorded = "2026-10-04"
