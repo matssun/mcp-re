@@ -4,9 +4,9 @@
 //! The durable question is *what this node is entitled to believe an identity because of*.
 //! Three answers exist, and they are alternatives: the credential that established the
 //! channel carries it, a load balancer signs a request-bound assertion carrying it, or a
-//! controlled attestor asserts it over a channel the operator has acknowledged. A fourth
-//! form — binding nothing at all — is a request an operator can make and the boundary
-//! refuses.
+//! controlled attestor asserts it over a channel the operator has acknowledged. Only the
+//! channel-credential form is deployable: the boundary refuses the load-balancer and
+//! attestor forms, as well as a further form binding nothing at all.
 //!
 //! ```text
 //! semantic role            which evidence carries the peer identity
@@ -55,7 +55,11 @@ pub enum PeerIdentityEvidenceRequest {
     /// the refusal can name what was asked for.
     IngressAssertion(IngressAssertionRequest),
     /// ADR-MCPS-023 §C Mode C: a controlled attestor asserts the identity over a pinned,
-    /// mutually authenticated channel the operator has acknowledged.
+    /// mutually authenticated channel the operator has acknowledged. Refused at the boundary
+    /// in every build (`config_state::transport::undeployable_transport_binding_refusal`) —
+    /// the rebinding of an attestation onto the RFC 9421 request evidence is not yet
+    /// specified — and retained as an input form so the refusal can name what was asked for.
+    /// The acknowledgement is a statement, not a control: it is not what keeps Mode C out.
     AttestedIngress(AttestedIngressRequest),
 }
 
