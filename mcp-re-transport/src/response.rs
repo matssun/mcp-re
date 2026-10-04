@@ -8,7 +8,8 @@
 //!
 //! Everything ambiguous is an error. A missing header terminator once returned the whole
 //! buffer AS the body, so a malformed reply reached the caller looking like content; a bare
-//! CR or LF in the header block, an obs-fold continuation, a duplicated or unparsable
+//! CR or LF in the header block, an obs-fold continuation, a body whose length the peer
+//! never declared, a duplicated or unparsable
 //! `Content-Length`, a length disagreeing with the bytes received, or a `Transfer-Encoding`
 //! this transport does not implement are each a second reading the peer's parser may take.
 //!
@@ -74,7 +75,7 @@ pub(super) fn parse_response(raw: &[u8]) -> Result<HttpResponseParts, TransportE
     let status = parse_status_line(status_line)?;
 
     let headers = parse_header_block(lines)?;
-    check_framing(&headers, body.len())?;
+    check_framing(status, &headers, body.len())?;
     Ok(HttpResponseParts {
         status,
         headers,
@@ -112,7 +113,13 @@ fn parse_header_block<'a>(
                 "header name is not an RFC 9110 token: {name:?}"
             )));
         }
-        headers.push((name.to_ascii_lowercase(), value.trim().to_string()));
+        let value = value.trim_matches([' ', '\t']);
+        if value.bytes().any(|b| (b < 0x20 && b != b'\t') || b == 0x7F) {
+            return Err(TransportError::MalformedResponse(format!(
+                "header {name} carries a control character"
+            )));
+        }
+        headers.push((name.to_ascii_lowercase(), value.to_string()));
     }
     Ok(headers)
 }
@@ -124,28 +131,38 @@ fn parse_header_block<'a>(
 /// `Content-Length` that is duplicated, unparsable, or disagrees with the bytes received is
 /// refused for the same reason — the last of those is a truncation the caller would
 /// otherwise read as content.
-fn check_framing(headers: &[(String, String)], body_len: usize) -> Result<(), TransportError> {
+fn check_framing(
+    status: u16,
+    headers: &[(String, String)],
+    body_len: usize,
+) -> Result<(), TransportError> {
     if headers.iter().any(|(name, _)| name == "transfer-encoding") {
         return Err(TransportError::MalformedResponse(
             "transfer-encoding is not supported by this transport".to_string(),
         ));
     }
     let mut declared = headers.iter().filter(|(name, _)| name == "content-length");
-    if let Some((_, value)) = declared.next() {
-        if declared.next().is_some() {
-            return Err(TransportError::MalformedResponse(
-                "duplicate content-length".to_string(),
-            ));
+    let Some((_, value)) = declared.next() else {
+        if body_len == 0 && matches!(status, 204 | 304) {
+            return Ok(());
         }
-        let declared_len: usize = value.parse().map_err(|_| {
-            TransportError::MalformedResponse(format!("unparsable content-length: {value:?}"))
-        })?;
-        if declared_len != body_len {
-            return Err(TransportError::MalformedResponse(format!(
-                "content-length {declared_len} disagrees with the {} bytes received",
-                body_len
-            )));
-        }
+        return Err(TransportError::MalformedResponse(
+            "response declares no content-length".to_string(),
+        ));
+    };
+    if declared.next().is_some() {
+        return Err(TransportError::MalformedResponse(
+            "duplicate content-length".to_string(),
+        ));
+    }
+    let declared_len: usize = value.parse().map_err(|_| {
+        TransportError::MalformedResponse(format!("unparsable content-length: {value:?}"))
+    })?;
+    if declared_len != body_len {
+        return Err(TransportError::MalformedResponse(format!(
+            "content-length {declared_len} disagrees with the {} bytes received",
+            body_len
+        )));
     }
     Ok(())
 }
@@ -296,6 +313,39 @@ mod framing_tests {
     fn a_reason_phrase_is_optional() {
         let parsed = parse_response(b"HTTP/1.1 204\r\n\r\n").expect("no reason phrase");
         assert_eq!(parsed.status, 204);
+    }
+
+    #[test]
+    fn a_length_less_response_is_rejected() {
+        for raw in [
+            &b"HTTP/1.1 200 OK\r\n\r\n{}"[..],
+            &b"HTTP/1.1 200 OK\r\n\r\n"[..],
+        ] {
+            assert!(matches!(
+                parse_response(raw),
+                Err(TransportError::MalformedResponse(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn a_control_character_in_a_header_value_is_rejected() {
+        for raw in [
+            &b"HTTP/1.1 200 OK\r\nSignature: sig1=:AAAA:\x00junk\r\nContent-Length: 2\r\n\r\n{}"[..],
+            &b"HTTP/1.1 200 OK\r\nSignature: sig1=:AA\x7fAA:\r\nContent-Length: 2\r\n\r\n{}"[..],
+        ] {
+            assert!(matches!(
+                parse_response(raw),
+                Err(TransportError::MalformedResponse(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn header_values_are_trimmed_of_ows_only() {
+        let raw = b"HTTP/1.1 200 OK\r\nX-Test: \xc2\xa0v\xc2\xa0\t\r\nContent-Length: 0\r\n\r\n";
+        let parsed = parse_response(raw).expect("well-framed response");
+        assert_eq!(parsed.headers[0], header("x-test", "\u{a0}v\u{a0}"));
     }
 
     // -- request emission: the evidence reaches the wire ---------------------
