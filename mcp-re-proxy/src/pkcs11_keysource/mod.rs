@@ -59,6 +59,7 @@ use crate::key_source::ResponseSigner;
 use crate::pkcs11_native::ObjectClass;
 use crate::pkcs11_native::Pkcs11Context;
 use crate::pkcs11_native::SessionRef;
+use crate::pkcs11_native::TokenIdentity;
 
 /// The session vocabulary: what a transient fault is, and what opening one costs.
 mod session;
@@ -155,6 +156,9 @@ struct Pkcs11Token {
     context: Arc<Pkcs11Context>,
     /// The id of the slot whose token holds the key objects.
     slot: CK_SLOT_ID,
+    /// The label and serial the token reported when it was selected; every login
+    /// re-checks the slot still holds it.
+    identity: TokenIdentity,
     /// The token User PIN, scrubbed on drop.
     pin: Zeroizing<String>,
 }
@@ -170,7 +174,7 @@ struct Pkcs11Token {
 //   * the only mutable shared state is the cached logged-in session handles, each
 //     behind its own `AmortizedSession` `Mutex`, which serializes the token operations
 //     on that session; the pool's cursor is an atomic that only selects one.
-// The slot and PIN (`Zeroizing<String>`) are ordinary `Send + Sync` values.
+// The slot, token identity and PIN (`Zeroizing<String>`) are ordinary `Send + Sync` values.
 unsafe impl Send for Pkcs11Token {}
 unsafe impl Sync for Pkcs11Token {}
 
@@ -183,7 +187,7 @@ impl LoginSessionFactory for Pkcs11Token {
     fn open_logged_in(&self) -> Result<LoggedInSession, KeyError> {
         let handle = self
             .context
-            .open_logged_in_handle(self.slot, &self.pin)
+            .open_logged_in_handle(self.slot, &self.identity, &self.pin)
             .map_err(|e| KeyError::NotFound(format!("pkcs11: open+login session: {e}")))?;
         Ok(LoggedInSession {
             handle,
@@ -233,7 +237,7 @@ impl Pkcs11KeySource {
                 "pkcs11: load+initialize module '{module_path}': {e}"
             ))
         })?;
-        let slot = find_token_slot(&context, token_label)?;
+        let (slot, identity) = find_token_slot(&context, token_label)?;
 
         // ONE token, several sessions: one for the cold issuance path and a pool for
         // the handshake path. PKCS#11 login is per-token-per-application, so they all
@@ -252,6 +256,7 @@ impl Pkcs11KeySource {
             tls_sessions: SessionPool::new(TLS_SESSION_POOL_SIZE),
             context,
             slot,
+            identity,
             pin: Zeroizing::new(pin.to_string()),
         });
 

@@ -20,6 +20,7 @@ use crate::pkcs11_native::AttributeTemplate;
 use crate::pkcs11_native::ObjectClass;
 use crate::pkcs11_native::Pkcs11Context;
 use crate::pkcs11_native::SessionRef;
+use crate::pkcs11_native::TokenIdentity;
 
 use super::session::classify_op_error;
 use super::session::SessionOpError;
@@ -74,7 +75,7 @@ pub(crate) fn class_name(class: ObjectClass) -> &'static str {
 pub(crate) fn find_token_slot(
     context: &Pkcs11Context,
     token_label: &str,
-) -> Result<CK_SLOT_ID, KeyError> {
+) -> Result<(CK_SLOT_ID, TokenIdentity), KeyError> {
     // `token_slots` enumerates present-token slots and reads each token's label
     // with the 32-byte 0x20 padding already trimmed. The comparison is over those
     // BYTES: this is what decides which physical device receives the User PIN, so
@@ -82,29 +83,34 @@ pub(crate) fn find_token_slot(
     let slots = context
         .token_slots()
         .map_err(|e| KeyError::NotFound(format!("pkcs11: enumerate token slots: {e}")))?;
-    select_token_slot(slots, token_label)
+    select_token_slot(slots, token_label, TokenIdentity::label)
 }
 
-/// The selection decision over enumerated `(slot, label)` pairs: exactly one
-/// byte-equal label selects its slot, none is `NotFound`, several are `Malformed`.
-fn select_token_slot(
-    slots: Vec<(CK_SLOT_ID, Vec<u8>)>,
+/// The selection decision over enumerated `(slot, token)` pairs: exactly one
+/// byte-equal label selects its slot and token, none is `NotFound`, several are
+/// `Malformed`.
+fn select_token_slot<T>(
+    slots: Vec<(CK_SLOT_ID, T)>,
     token_label: &str,
-) -> Result<CK_SLOT_ID, KeyError> {
-    let matching: Vec<CK_SLOT_ID> = slots
+    label_of: impl Fn(&T) -> &[u8],
+) -> Result<(CK_SLOT_ID, T), KeyError> {
+    let mut matching: Vec<(CK_SLOT_ID, T)> = slots
         .into_iter()
-        .filter(|(_, label)| label == token_label.as_bytes())
-        .map(|(slot, _)| slot)
+        .filter(|(_, token)| label_of(token) == token_label.as_bytes())
         .collect();
-    match matching.as_slice() {
-        [] => Err(KeyError::NotFound(format!(
+    match matching.len() {
+        0 => Err(KeyError::NotFound(format!(
             "pkcs11: no token with label '{token_label}'"
         ))),
-        [slot] => Ok(*slot),
-        ids => Err(KeyError::Malformed(format!(
-            "pkcs11: {} present tokens labelled '{token_label}' (slots {ids:?}); refusing to guess which receives the User PIN",
-            ids.len()
-        ))),
+        1 => matching.pop().ok_or_else(|| {
+            KeyError::Malformed("pkcs11: token selection lost its single match".to_string())
+        }),
+        n => {
+            let ids: Vec<CK_SLOT_ID> = matching.iter().map(|(slot, _)| *slot).collect();
+            Err(KeyError::Malformed(format!(
+                "pkcs11: {n} present tokens labelled '{token_label}' (slots {ids:?}); refusing to guess which receives the User PIN"
+            )))
+        }
     }
 }
 
@@ -160,7 +166,7 @@ mod tests {
             (5, b"prod".to_vec()),
         ];
         assert!(matches!(
-            select_token_slot(slots, "prod"),
+            select_token_slot(slots, "prod", |l: &Vec<u8>| l.as_slice()),
             Err(KeyError::Malformed(_))
         ));
     }
@@ -172,13 +178,18 @@ mod tests {
             (4, b"prod".to_vec()),
             (6, b"x".to_vec()),
         ];
-        assert!(matches!(select_token_slot(slots, "prod"), Ok(4)));
         assert!(matches!(
-            select_token_slot(Vec::new(), "prod"),
+            select_token_slot(slots, "prod", |l: &Vec<u8>| l.as_slice()),
+            Ok((4, _))
+        ));
+        assert!(matches!(
+            select_token_slot(Vec::<(CK_SLOT_ID, Vec<u8>)>::new(), "prod", |l| l
+                .as_slice()),
             Err(KeyError::NotFound(_))
         ));
         assert!(matches!(
-            select_token_slot(vec![(1, b"other".to_vec())], "prod"),
+            select_token_slot(vec![(1, b"other".to_vec())], "prod", |l: &Vec<u8>| l
+                .as_slice()),
             Err(KeyError::NotFound(_))
         ));
     }

@@ -15123,3 +15123,11 @@ control = "src/lib.rs#http_inner::selection::tests::an_open_backend_whose_trial_
 decision = "new-proposition"
 proposition = "NP-139"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20305"
+project = "mcp-re-proxy"
+control = "src/lib.rs#pkcs11_native::tests::a_token_under_the_selected_label_with_another_serial_does_not_receive_the_pin"
+decision = "new-proposition"
+proposition = "NP-210"
+recorded = "2026-10-04"

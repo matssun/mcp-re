@@ -97,7 +97,11 @@ impl Drop for LoggedInSession {
 
 /// Classify a wrapper [`Pkcs11Error`]: `true` when re-opening a fresh logged-in
 /// session could plausibly cure it (the current session handle is invalid/closed,
-/// the login lapsed, or the device had a transient fault). A `false` here means the
+/// the login lapsed, or the device had a transient fault). A retry after
+/// `CKR_DEVICE_REMOVED` / `CKR_DEVICE_ERROR` is safe only because the re-open re-checks
+/// the slot's token identity before `C_Login`
+/// ([`crate::pkcs11_native::Pkcs11Context::open_logged_in_handle`]), so a substituted
+/// token is refused rather than sent the PIN. A `false` here means the
 /// error is intrinsic to the operation (bad mechanism, malformed object, …) and a
 /// reconnect would not help — fail closed (a real sign/lookup error is NOT retried).
 ///
