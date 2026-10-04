@@ -8,9 +8,10 @@ build graph rather than reconstructed: each flavor of a library is its own targe
 own `crate_features`, and the targets that list the file in their `srcs` are exactly the
 configurations it is compiled in.
 
-  lint    `bazel build --config=lint` over the targets that compile the file (and, at the
-          `wide` tier, those that compile the related files), plus the unit-test targets
-          built from them: clippy under the workspace lint policy, warnings as errors.
+  lint    `bazel build --config=lint` over the targets that compile the file or any file
+          the writer touched (and, at the `wide` tier, those that compile the related
+          files), plus the unit-test targets built from the file's own: clippy under the
+          workspace lint policy, warnings as errors.
   format  `bazel build --config=rustfmt` over the targets that compile the touched files —
           the rustfmt lane, scoped. A diff in a touched file is the writer's; a diff only in
           files nobody touched means the lane did not start on a formatted tree (`infra`).
@@ -171,14 +172,15 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
     if not own:
         return [{"gate": "targets", "verdict": "infra",
                  "why": "%s is compiled by no Rust target in the build graph" % file}]
-    lint_scope = sorted(set(own + compiling_targets(related)))
+    edited = sorted({f for f in (touched or []) + [file] if f.endswith(".rs")})
+    touched_targets = compiling_targets([f for f in edited if f != file])
+    lint_scope = sorted(set(own + touched_targets + compiling_targets(related)))
     units = unit_test_targets(own)
     tag = _slug(file)
     parts: list[dict] = [dict(_lint(sorted(set(lint_scope + units)),
                                     os.path.join(work_dir, "lint-%s.log" % tag)),
                               gate="clippy", targets=lint_scope)]
-    edited = sorted({f for f in (touched or []) + [file] if f.endswith(".rs")})
-    fmt_scope = sorted(set(own + compiling_targets([f for f in edited if f != file])))
+    fmt_scope = sorted(set(own + touched_targets))
     parts.append(dict(_rustfmt(fmt_scope, edited, os.path.join(work_dir, "fmt-%s.log" % tag)),
                       gate="rustfmt", targets=fmt_scope))
 

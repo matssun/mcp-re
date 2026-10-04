@@ -213,6 +213,30 @@ def test_rust_gate_rustfmt_blames_only_touched_files() -> None:
     print("  rust gate: a rustfmt diff in the touched file is blamed; elsewhere or silent = infra  OK")
 
 
+def test_the_lint_covers_every_touched_files_targets() -> None:
+    """A writer that edits a caller in another crate is linted there by its own gate, not
+    first by the batch gate after five more writers have landed on top of it."""
+    seen: dict[str, list[str]] = {}
+    saved = (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+             rust_gate._rustfmt, rust_gate._run)
+    rust_gate.compiling_targets = lambda files: sorted(  # type: ignore[assignment]
+        {"//%s:lib" % f.split("/")[0] for f in files})
+    rust_gate.unit_test_targets = lambda targets: []  # type: ignore[assignment]
+    rust_gate._lint = lambda t, log: seen.setdefault("lint", t) and {"verdict": "new-failures"}  # type: ignore[assignment]
+    rust_gate._rustfmt = lambda t, e, log: seen.setdefault("fmt", t) and {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._run = lambda cmd, log: (0, "")  # type: ignore[assignment]
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            rust_gate.gate("alpha/src/keys.rs", [], [], td, RustResolver(td),
+                           touched=["beta/src/caller.rs", "verification/x.toml"])
+    finally:
+        (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+         rust_gate._rustfmt, rust_gate._run) = saved
+    assert seen["lint"] == ["//alpha:lib", "//beta:lib"], seen
+    assert seen["fmt"] == ["//alpha:lib", "//beta:lib"], seen
+    print("  rust gate: lint and rustfmt cover the targets of every touched .rs file  OK")
+
+
 def test_every_rust_gate_part_has_a_journal_line() -> None:
     """check.py journals one line per part. A part the summary does not name fell through to
     the Python-tree branch and crashed on `new_failures` — every writer's gate event was lost
