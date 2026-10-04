@@ -4870,6 +4870,14 @@ proposition = "NP-035"
 recorded = "2026-09-19"
 
 [[disposition]]
+id = "CD-20274"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::serving_flags::tests::each_flag_reaches_the_locator_named_after_it_and_no_other"
+decision = "new-proposition"
+proposition = "NP-035"
+recorded = "2026-10-04"
+
+[[disposition]]
 id = "CD-11052"
 project = "mcp-re-proxy"
 control = "src/lib.rs#cli::signing_source_flags::channel_role::tests::either_arm_alone_and_neither_are_coherent_command_lines"
