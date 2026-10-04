@@ -41,14 +41,16 @@ pub(super) struct AuditInputs {
 impl AuditInputs {
     /// Load every document `invocation` names, or name the first one that will not do.
     pub(super) fn load(invocation: &AuditInvocation) -> Result<Self, String> {
-        let profile = AuditProfile::parse(&read("--audit-profile", &invocation.audit_profile)?)?;
-        let trust = TrustDocument::parse(&read("--trust-document", &invocation.trust_document)?)?;
-        let pin: ScittServiceTrustPin =
-            serde_json::from_slice(&read("--service-trust-pin", &invocation.service_trust_pin)?)
-                .map_err(|e| format!("--service-trust-pin: {e}"))?;
+        let profile = AuditProfile::parse(&read("--audit-profile", invocation.audit_profile())?)?;
+        let trust = TrustDocument::parse(&read("--trust-document", invocation.trust_document())?)?;
+        let pin: ScittServiceTrustPin = serde_json::from_slice(&read(
+            "--service-trust-pin",
+            invocation.service_trust_pin(),
+        )?)
+        .map_err(|e| format!("--service-trust-pin: {e}"))?;
         let issuer = issuer_key(&Zeroizing::new(read(
             "--issuer-key-seed",
-            &invocation.issuer_key_seed,
+            invocation.issuer_key_seed(),
         )?))?;
         Ok(AuditInputs {
             profile,

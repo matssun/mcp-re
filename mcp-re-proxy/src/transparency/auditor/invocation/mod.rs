@@ -20,7 +20,7 @@
 //! default profile and no default output path: an auditor that guessed any of them would
 //! be attesting a record the operator did not name.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use mcp_re_http_profile::scitt::EvidenceDigest;
 
@@ -48,30 +48,30 @@ use usage::USAGE;
 #[derive(Debug, Clone)]
 pub struct AuditInvocation {
     /// The retained-evidence directory the deployment wrote.
-    pub(super) retained_evidence_dir: PathBuf,
+    retained_evidence_dir: PathBuf,
     /// The record's hops, IN ORDER. Order is a fact the archive does not carry: the store
     /// is content-addressed and flat, so which hop came first is the operator's to state.
-    pub(super) hops: Vec<EvidenceDigest>,
+    hops: Vec<EvidenceDigest>,
     /// The audit profile document.
-    pub(super) audit_profile: PathBuf,
+    audit_profile: PathBuf,
     /// The deployment's trust document.
-    pub(super) trust_document: PathBuf,
+    trust_document: PathBuf,
     /// The operator's transparency-service trust pin.
-    pub(super) service_trust_pin: PathBuf,
+    service_trust_pin: PathBuf,
     /// The `kid` this auditor issues its Signed Statement under.
-    pub(super) issuer_kid: String,
+    issuer_kid: String,
     /// The file holding this auditor's base64url Ed25519 statement-signing seed.
-    pub(super) issuer_key_seed: PathBuf,
+    issuer_key_seed: PathBuf,
     /// The audit instant, Unix seconds.
-    pub(super) at: i64,
+    at: i64,
     /// Where to write the attestation artifact.
-    pub(super) out: PathBuf,
+    out: PathBuf,
     /// Where to register the attestation, if this run registers at all.
     ///
     /// `None` is the default and is not a lesser audit: producing the attestation and
     /// submitting it are separate outcomes, and an operator with no service still gets
     /// everything up to the submission.
-    pub(super) registration: Option<RegistrationTarget>,
+    registration: Option<RegistrationTarget>,
 }
 
 impl AuditInvocation {
@@ -80,14 +80,15 @@ impl AuditInvocation {
         USAGE
     }
 
-    /// Whether `args` is a request for the usage text rather than an audit.
+    /// Whether `args` is a request for the usage text rather than an audit: the FIRST
+    /// argument asks for it, or there are none.
     ///
     /// Asking what a tool does is not a failed invocation, so it is answered on stdout at
     /// exit 0. An empty argument list is the same request: a bare `mcp-re-auditor` cannot
     /// be an audit — every input naming which record to attest is required — so treating
     /// it as one would print eight refusals where an operator asked one question.
     pub fn is_help_request(args: &[String]) -> bool {
-        args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h")
+        args.is_empty() || matches!(args.first().map(String::as_str), Some("--help" | "-h"))
     }
 
     /// The transparency service this run will register with, if it will.
@@ -95,8 +96,53 @@ impl AuditInvocation {
         self.registration.as_ref().map(RegistrationTarget::base_url)
     }
 
+    /// The retained-evidence directory the deployment wrote.
+    pub(super) fn retained_evidence_dir(&self) -> &Path {
+        &self.retained_evidence_dir
+    }
+
+    /// The record's hops, in the order the operator gave them.
+    pub(super) fn hops(&self) -> &[EvidenceDigest] {
+        &self.hops
+    }
+
+    /// The audit profile document.
+    pub(super) fn audit_profile(&self) -> &Path {
+        &self.audit_profile
+    }
+
+    /// The deployment's trust document.
+    pub(super) fn trust_document(&self) -> &Path {
+        &self.trust_document
+    }
+
+    /// The operator's transparency-service trust pin.
+    pub(super) fn service_trust_pin(&self) -> &Path {
+        &self.service_trust_pin
+    }
+
+    /// The `kid` this auditor issues its Signed Statement under.
+    pub(super) fn issuer_kid(&self) -> &str {
+        &self.issuer_kid
+    }
+
+    /// The file holding this auditor's statement-signing seed.
+    pub(super) fn issuer_key_seed(&self) -> &Path {
+        &self.issuer_key_seed
+    }
+
+    /// The audit instant, Unix seconds.
+    pub(super) fn at(&self) -> i64 {
+        self.at
+    }
+
+    /// The registration target, if this run registers.
+    pub(super) fn registration(&self) -> Option<&RegistrationTarget> {
+        self.registration.as_ref()
+    }
+
     /// Where the artifact will be written.
-    pub fn output_path(&self) -> &std::path::Path {
+    pub fn output_path(&self) -> &Path {
         &self.out
     }
 
@@ -182,7 +228,13 @@ fn hop_digest(token: &str) -> Result<EvidenceDigest, String> {
 
 /// The value following `flag`, or a refusal naming the flag that is short of one.
 fn value_for(flag: &str, args: &mut impl Iterator<Item = String>) -> Result<String, String> {
-    args.next().ok_or_else(|| format!("{flag}: needs a value"))
+    let value = args
+        .next()
+        .ok_or_else(|| format!("{flag}: needs a value"))?;
+    if value.starts_with("--") {
+        return Err(format!("{flag}: needs a value, found the flag {value:?}"));
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -402,6 +454,30 @@ mod tests {
             "a real invocation is not a help request",
         );
         assert!(AuditInvocation::usage().contains("--retained-evidence-dir"));
+    }
+
+    #[test]
+    fn a_help_flag_in_value_position_is_not_a_help_request() {
+        assert!(!AuditInvocation::is_help_request(&[
+            "--out".to_owned(),
+            "--help".to_owned()
+        ]));
+        let hop = token(b"hop-0");
+        assert!(AuditInvocation::parse(args(&["--hop", &hop, "--help"])).is_err());
+    }
+
+    #[test]
+    fn a_flag_where_a_value_belongs_is_refused() {
+        let hop = token(b"hop-0");
+        let mut given = args(&["--hop", &hop]);
+        for arg in &mut given {
+            if arg == "auditor-1" {
+                "--hop".clone_into(arg);
+            }
+        }
+        let refused = AuditInvocation::parse(given).expect_err("a flag as a value");
+        assert!(refused.contains("--issuer-kid"), "{refused}");
+        assert!(refused.contains("needs a value"), "{refused}");
     }
 
     /// With no `--at`, the instant is the system clock — and it is positive, so the

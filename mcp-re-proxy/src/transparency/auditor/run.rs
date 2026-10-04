@@ -80,7 +80,7 @@ pub fn attest(invocation: &AuditInvocation) -> Result<AttestationArtifact, Audit
     // before a statement exists, not after one has been signed and possibly submitted.
     let inputs = AuditInputs::load(invocation).map_err(AuditError::Input)?;
 
-    let archive = RetainedArchive::open_read_only(&invocation.retained_evidence_dir)
+    let archive = RetainedArchive::open_read_only(invocation.retained_evidence_dir())
         .map_err(AuditError::Archive)?;
 
     let attestation = reconstruct_and_issue(
@@ -93,17 +93,17 @@ pub fn attest(invocation: &AuditInvocation) -> Result<AttestationArtifact, Audit
     .map_err(AuditError::Attest)?;
 
     let artifact =
-        AttestationArtifact::of(&attestation, &invocation.hops, inputs.attested_service())
+        AttestationArtifact::of(&attestation, invocation.hops(), inputs.attested_service())
             .map_err(AuditError::Input)?;
 
-    write(&invocation.out, &artifact)?;
+    write(invocation.output_path(), &artifact)?;
 
     // Registration is a SEPARATE outcome, and it runs after the attestation is durable.
     // A failed submission must not cost the attestation: an operator who cannot reach a
     // transparency service still holds a portable, offline-verifiable record, and
     // re-running this audit with the same `--at` reproduces the same statement byte for
     // byte, so nothing is lost by trying again later.
-    let Some(target) = &invocation.registration else {
+    let Some(target) = invocation.registration() else {
         return Ok(artifact);
     };
     let registered = target
@@ -116,7 +116,7 @@ pub fn attest(invocation: &AuditInvocation) -> Result<AttestationArtifact, Audit
     let artifact = artifact
         .with_verified_receipt(&registered)
         .map_err(AuditError::ReceiptNotRecorded)?;
-    record_receipt(&invocation.out, &artifact)?;
+    record_receipt(invocation.output_path(), &artifact)?;
     Ok(artifact)
 }
 
@@ -165,13 +165,13 @@ fn reconstruct_and_issue(
     profile.with_delegation(|expect| {
         attest_chain(
             archive,
-            &invocation.hops,
+            invocation.hops(),
             &verifier,
             expect,
             &audit,
             &revoked,
-            invocation.at,
-            &invocation.issuer_kid,
+            invocation.at(),
+            invocation.issuer_kid(),
             // The auditor holds no PEP-side binding or verified-context digest — a
             // retained record is messages. `attest_chain` runs its own self-check with the
             // same absence, so the statement and the check are about the same thing.

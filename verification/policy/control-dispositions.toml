@@ -15269,3 +15269,19 @@ control = "src/lib.rs#materializing_runtime::tests::a_second_install_is_refused_
 decision = "new-proposition"
 proposition = "NP-067"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20320"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::invocation::tests::a_help_flag_in_value_position_is_not_a_help_request"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20321"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::invocation::tests::a_flag_where_a_value_belongs_is_refused"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-10-04"
