@@ -124,7 +124,7 @@ impl AdmissionRecordVerifier {
 mod tests {
     use super::*;
     use crate::admission_source::test_support::{
-        issue, signed_admitted, verifier_for, AUTHORITY_KID, PROFILE,
+        issue, signed_admitted, verifier_for, AUTHORITY_KID,
     };
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::AdmissionStatus;
@@ -202,7 +202,10 @@ mod tests {
             v.verify("wl-a", &issue(&key, &claims), 1_030),
             Err(AdmissionRecordRefusal::IssuerUntrusted)
         );
-        assert_ne!(claims.issuer_kid, AUTHORITY_KID);
-        assert_eq!(PROFILE, "mcp-re-http-v1");
+        claims.issuer_kid = AUTHORITY_KID.to_owned();
+        assert!(
+            v.verify("wl-a", &issue(&key, &claims), 1_030).is_ok(),
+            "under the configured issuer the same record verifies: the issuer alone refused it"
+        );
     }
 }
