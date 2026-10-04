@@ -39,11 +39,11 @@ fn sha256_hex(data: &[u8]) -> String {
     to_hex_lower(&h.finalize())
 }
 
+// `Hmac<D>`'s `KeyInit::new_from_slice` has no rejecting length: a key longer than the
+// block is hashed and a shorter one zero-padded, so the `InvalidLength` arm is uninhabited
+// for every input and no total constructor over a slice exists.
 #[allow(clippy::expect_used)]
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    // `Hmac<D>`'s `KeyInit::new_from_slice` has no rejecting length: a key longer than
-    // the block is hashed and a shorter one zero-padded, so the `InvalidLength` arm is
-    // uninhabited for every input and no total constructor over a slice exists.
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     mac.finalize().into_bytes().into()

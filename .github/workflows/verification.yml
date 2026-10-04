@@ -196,6 +196,7 @@ on:
       # still re-trigger every one of them.
       - "mcp-re-proxy/src/aws_kms_keysource.rs"
       - "mcp-re-proxy/src/aws_sigv4.rs"
+      - "mcp-re-proxy/src/aws_sigv4/amz_date.rs"
       - "mcp-re-proxy/src/aws_sts.rs"
       - "mcp-re-proxy/src/gcp_kms_keysource.rs"
       - "mcp-re-proxy/src/pkcs11_keysource/**"
@@ -588,6 +589,7 @@ on:
       # still re-trigger every one of them.
       - "mcp-re-proxy/src/aws_kms_keysource.rs"
       - "mcp-re-proxy/src/aws_sigv4.rs"
+      - "mcp-re-proxy/src/aws_sigv4/amz_date.rs"
       - "mcp-re-proxy/src/aws_sts.rs"
       - "mcp-re-proxy/src/gcp_kms_keysource.rs"
       - "mcp-re-proxy/src/pkcs11_keysource/**"
