@@ -2381,7 +2381,7 @@ which takes NP-089 and NP-090 jointly.
 
 ## NP-090 — the structured-field surface is closed and canonical
 
-**Controls:** `mcp-re-http-profile/tests/structured_fields_strictness_test.rs` (16).
+**Controls:** `mcp-re-http-profile/tests/structured_fields_strictness_test.rs` (16), `mcp-re-http-profile/src/verify/floor/covered_components.rs` (3).
 **Statement.** *The component set and the parameter set are CLOSED — a foreign component, a
 foreign parameter and a foreign tag are each rejected; a duplicated component or parameter
 fails closed; component and parameter reordering change the base and fail, while canonical
@@ -4605,3 +4605,13 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 `config/unit-closure-exclusions.toml`.
 **Root relationship.** A premise of the units above it.
 **Severity:** `high`.
+
+## NP-250 — the exported channel key is taken from the admission only when channel custody exports one
+
+**Controls:** `mcp-re-proxy/src/capability_materialization/key_source/mod.rs` (1) —
+`tests::the_exported_channel_key_is_taken_from_the_admission_only_when_custody_exports_one`.
+**Statement.** *The exported channel-key material is taken from the custody admission only when channel custody names an exported key, and is surrendered once; a custody that keeps its key on a device takes nothing.*
+**If false.** A device-held channel custody is handed key material it never exported, or an exported key is read twice, so the channel key a node presents is not the object custody observed.
+**Likely owner:** none.
+**Severity:** `critical`, carried from NP-184 rather than reassessed.
+**Root relationship.** A premise of the proxy units above it. No unit's `paths` holds `key_source/mod.rs`, and `proxy.key_file_custody_admission` covers only `key_file_custody/mod.rs` and is not widened to reach it.

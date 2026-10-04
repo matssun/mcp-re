@@ -33,15 +33,16 @@ use crate::key_source::{KeyError, KeySource};
 /// [`CustodyMaterial::EnvSeed`], where they name environment variables. The same is true of
 /// the exported channel-key locator carried by the exported channel-custody state.
 ///
-/// `key` is a LOCATOR. The environment arm reads it as a variable name; every file-backed
+/// `key` is a LOCATOR, present only where custody exports the channel key. The environment
+/// arm reads it as a variable name when present; every file-backed
 /// arm takes the key's material from the admission with [`exported_tls_key`] instead, and
 /// no arm reopens it as a path.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ChannelMaterial<'a> {
     /// The credential chain this node presents.
     pub(super) cert: &'a str,
-    /// The exported channel-key locator, empty where custody keeps it on a device.
-    pub(super) key: &'a str,
+    /// The exported channel-key locator, `None` where custody keeps it on a device.
+    pub(super) key: Option<&'a str>,
     /// The anchors peer credentials are verified against.
     pub(super) client_ca: &'a str,
 }
@@ -55,10 +56,10 @@ pub(super) fn exported_tls_key(
     admitted: &mut AdmittedKeyFiles<'_>,
     material: ChannelMaterial<'_>,
 ) -> Result<Option<CheckedKeyFile>, KeyError> {
-    if material.key.is_empty() {
-        return Ok(None);
+    match material.key {
+        None => Ok(None),
+        Some(path) => admitted.take(path).map(Some),
     }
-    admitted.take(material.key).map(Some)
 }
 
 /// Build the key source the admitted custody names.
@@ -76,7 +77,7 @@ pub fn build_key_source(
     let channel = admitted.channel_credential_custody().material();
     let material = ChannelMaterial {
         cert: tls_cert,
-        key: channel.exported_key_path().unwrap_or(""),
+        key: channel.exported_key_path(),
         client_ca,
     };
     let source = open_source(custody, channel, material, &mut admitted)?;
@@ -140,5 +141,52 @@ fn open_source(
             channel,
             material,
         ),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{exported_tls_key, ChannelMaterial};
+    use crate::capability_materialization::key_file_custody::admit_key_files;
+    use crate::config_state::test_support::{config_with, custody_states};
+    use crate::config_state::KeyFileAccessPolicy;
+    use crate::key_source::KeyError;
+
+    /// The exported channel key is surrendered by the admission only when custody names
+    /// one: `None` takes nothing, and a named key is yielded once.
+    #[test]
+    fn the_exported_channel_key_is_taken_from_the_admission_only_when_custody_exports_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let tls =
+            std::env::temp_dir().join(format!("mcp_re_exported_tls_{}.key", std::process::id()));
+        std::fs::write(&tls, b"tls-key-material").expect("write");
+        std::fs::set_permissions(&tls, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let tls_path = tls.to_string_lossy().into_owned();
+
+        let config = config_with("file", "/nonexistent/mcp_re_seed", &tls_path);
+        let (custody, channel) = custody_states(&config);
+        let mut admitted = admit_key_files(&custody, &channel, KeyFileAccessPolicy::OwnerOnly)
+            .expect("the exported key is legal and the seed is absent");
+        let _ = std::fs::remove_file(&tls);
+
+        let device = ChannelMaterial {
+            cert: "/c",
+            key: None,
+            client_ca: "/ca",
+        };
+        assert!(matches!(exported_tls_key(&mut admitted, device), Ok(None)));
+
+        let exported = ChannelMaterial {
+            key: Some(&tls_path),
+            ..device
+        };
+        let file = exported_tls_key(&mut admitted, exported)
+            .expect("the walked key")
+            .expect("custody exports a key");
+        assert_eq!(&file.into_bytes()[..], b"tls-key-material");
+        assert!(matches!(
+            exported_tls_key(&mut admitted, exported),
+            Err(KeyError::NotFound(_))
+        ));
     }
 }

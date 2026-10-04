@@ -10,10 +10,17 @@ pub(super) fn open(
     env_var: &str,
     material: ChannelMaterial<'_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
+    let Some(tls_key_var) = material.key else {
+        return Err(KeyError::NotFound(
+            "env key source needs an exported channel key variable; this channel custody \
+             keeps its key on a device"
+                .to_string(),
+        ));
+    };
     Ok(Box::new(crate::key_source::EnvKeySource {
         signing_key_seed_var: env_var.to_string(),
         tls_cert_var: material.cert.to_string(),
-        tls_key_var: material.key.to_string(),
+        tls_key_var: tls_key_var.to_string(),
         client_ca_var: material.client_ca.to_string(),
     }))
 }
