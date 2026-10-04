@@ -944,9 +944,10 @@ evidence = ["structural://http_profile/verifier/assurance_type_separation"]
 [[unit]]
 id = "proxy.client_revocation_currency"
 class = "V0"
-description = "That a replica's client-revocation posture states what it is enforcing NOW: a set of CRLs is installable only when every one of them is inside its own nextUpdate window, by whichever path installs it; each successful reload republishes what it installed; and a replica whose reload worker has died, or whose plane has retired, retracts the cadence it advertised rather than continuing to claim it."
+description = "That a replica's client-revocation posture states what it is enforcing NOW: a set of CRLs is installable only when every one of them is inside its own nextUpdate window, by whichever path installs it; each successful reload republishes what it installed; and a replica whose reload worker has died, or whose plane has retired, retracts the cadence it advertised rather than continuing to claim it; and a set may replace the one in force only if it succeeds it under RFC 5280 crlNumber, keyed by issuer key: no issuer dropped, no crlNumber regressed, no crlNumber reused with other bytes, and a CRL without crlNumber or authorityKeyIdentifier has no inhabitant."
 paths = [
   "mcp-re-proxy/src/tls_plane/crl_evidence.rs",
+  "mcp-re-proxy/src/tls_plane/crl_evidence/succession.rs",
   "mcp-re-proxy/src/tls_plane/revocation_currency.rs",
   "mcp-re-proxy/src/tls_plane/crl_reload_worker/supervision.rs",
   # Also in `proxy.tls_listener_state`, and deliberately: this file has two halves. Loading
@@ -984,6 +985,11 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::client_revocation_posture::revocation_posture_tests::every_loaded_crl_reports_its_own_digest_and_window",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_crl_that_never_falls_out_of_force_produces_no_evidence",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_near_expiry_crl_is_installable_and_names_its_deadline",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_crl_set_that_regresses_an_issuers_crl_number_does_not_succeed",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_reused_crl_number_with_other_bytes_does_not_succeed",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_crl_set_that_drops_an_issuer_does_not_succeed",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_re_read_or_newer_crl_set_succeeds",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_crl_without_a_crl_number_produces_no_evidence",
 ]
 
 # ---------------------------------------------------------------------------------------
@@ -11724,7 +11730,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.client_crl_reload_republish"
 class = "V0"
-description = "EACH SUCCESSFUL CLIENT-CRL RELOAD REPUBLISHES THE EVIDENCE IT INSTALLED, and a halted reload loop retracts the cadence it advertised: the reload loop installs a verifier and a per-request index only from evidence it has built through the freshness gate, and reports the CRLs now in force to the posture rather than leaving the boot digest and window standing. A failed rebuild keeps last-good and is degraded, not stopped. This is the republish and halt arms of the claim whose evidence-constructor, maintenance-algebra and worker-death arms `proxy.client_revocation_currency` measures; it is registered separately because the loop is `crl_reload_worker/mod.rs`, which that unit's paths do not name."
+description = "EACH SUCCESSFUL CLIENT-CRL RELOAD REPUBLISHES THE EVIDENCE IT INSTALLED, and a halted reload loop retracts the cadence it advertised: the reload loop installs a verifier and a per-request index only from evidence it has built through the freshness gate, and only evidence that succeeds the evidence in force (crlNumber succession), so a regressed CRL set keeps last-good, and reports the CRLs now in force to the posture rather than leaving the boot digest and window standing. A failed rebuild keeps last-good and is degraded, not stopped. This is the republish and halt arms of the claim whose evidence-constructor, maintenance-algebra and worker-death arms `proxy.client_revocation_currency` measures; it is registered separately because the loop is `crl_reload_worker/mod.rs`, which that unit's paths do not name."
 paths = ["mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -11738,6 +11744,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_halted_reload_loop_retracts_the_cadence_it_advertised",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_reloaded_crl_no_configured_ca_signed_is_not_installed",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_reload_worker::tests::a_reload_that_regresses_the_crl_number_keeps_last_good",
 ]
 
 # ---------------------------------------------------------------------------

@@ -138,6 +138,7 @@ fn attempt_reload(
         // unreachable rather than merely checked: there is no inhabitant to install.
         let evidence =
             ClientCrlEvidence::from_checked(crls, task.rebuild_state.trust_anchors(), now_unix)?;
+        evidence.succeeds(&task.currency.in_force().0)?;
         // The per-request index from the SAME bytes, BEFORE the verifier is rebuilt, so a
         // malformed CRL keeps last-good on both rather than swapping one and failing the
         // other.
@@ -379,5 +380,40 @@ mod tests {
         assert!(Arc::ptr_eq(&before, &revocation.load()));
         assert!(currency.in_force().0.is_empty());
         assert_eq!(currency.maintenance(), CrlMaintenance::Degraded);
+    }
+
+    #[test]
+    fn a_reload_that_regresses_the_crl_number_keeps_last_good() {
+        let (crls, issuer) =
+            crate::client_crl_publication::test_support::crls_from_one_ca(&[(2, &[]), (1, &[])]);
+        let path = std::env::temp_dir().join(format!(
+            "crl-reload-worker-regress-{}.der",
+            std::process::id()
+        ));
+        std::fs::write(&path, crls[1].as_ref()).expect("write crl");
+        let seeded = ClientCrlEvidence::from_checked(
+            vec![crls[0].clone()],
+            std::slice::from_ref(&issuer),
+            0,
+        )
+        .expect("seeded evidence");
+        let currency = Arc::new(ClientRevocationCurrency::new(seeded, Some(300)));
+        let (reader, publisher) = SharedClientRevocation::establish(ClientRevocationIndex::empty());
+        let revocation = Arc::new(reader);
+        let before = revocation.load();
+        let t = task(
+            chain_for_task(),
+            vec![path.to_string_lossy().into_owned()],
+            Some(publisher),
+            Arc::clone(&currency),
+            vec![issuer],
+        );
+
+        let (outcome, installed) = attempt_reload(&t);
+        let _ = std::fs::remove_file(&path);
+
+        assert!(matches!(outcome, ReloadOutcome::KeptLastGood { .. }));
+        assert!(installed.is_none());
+        assert!(Arc::ptr_eq(&before, &revocation.load()));
     }
 }

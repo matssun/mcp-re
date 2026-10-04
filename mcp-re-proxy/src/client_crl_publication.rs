@@ -233,6 +233,55 @@ pub(crate) mod test_support {
         );
         (crl, ca.der().clone())
     }
+
+    /// One fresh CA and one CRL per `(crlNumber, revoked serials)` entry, all from that CA.
+    pub(crate) fn crls_from_one_ca(
+        entries: &[(u64, &[u64])],
+    ) -> (
+        Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
+        rustls_pki_types::CertificateDer<'static>,
+    ) {
+        let key = rcgen::KeyPair::generate().expect("ca key");
+        let mut params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "crl-gate-ca");
+        let ca = params.self_signed(&key).expect("ca");
+        let crls = entries
+            .iter()
+            .map(|(number, serials)| {
+                let crl_params = rcgen::CertificateRevocationListParams {
+                    this_update: rcgen::date_time_ymd(2024, 1, 1),
+                    next_update: rcgen::date_time_ymd(2999, 1, 1),
+                    crl_number: rcgen::SerialNumber::from(*number),
+                    issuing_distribution_point: None,
+                    revoked_certs: serials
+                        .iter()
+                        .map(|serial| rcgen::RevokedCertParams {
+                            serial_number: rcgen::SerialNumber::from(*serial),
+                            revocation_time: rcgen::date_time_ymd(2024, 1, 1),
+                            reason_code: None,
+                            invalidity_date: None,
+                        })
+                        .collect(),
+                    key_identifier_method: rcgen::KeyIdMethod::Sha256,
+                };
+                rustls_pki_types::CertificateRevocationListDer::from(
+                    crl_params
+                        .signed_by(&rcgen::Issuer::from_params(&params, &key))
+                        .expect("crl")
+                        .der()
+                        .to_vec(),
+                )
+            })
+            .collect();
+        (crls, ca.der().clone())
+    }
 }
 
 #[cfg(test)]

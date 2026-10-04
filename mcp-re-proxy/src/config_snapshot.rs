@@ -106,6 +106,11 @@ pub enum ReloadOutcome {
 /// Pure of I/O and wall clock itself — the caller's `rebuild` closure owns the file
 /// reads, and staleness enforcement lives in the rustls verifier — so the
 /// swap/keep-last-good decision is deterministically testable.
+///
+/// `reload_once` swaps in whatever `rebuild` returns, so that a SUCCESSFUL reload never
+/// widens acceptance is the rebuild's to establish: the client-CRL reload builds only
+/// evidence that succeeds the set in force (`ClientCrlEvidence::succeeds`: no issuer
+/// dropped, no crlNumber regressed, no crlNumber reused with other bytes).
 pub fn reload_once<F>(publisher: &ServerConfigPublisher, rebuild: F) -> ReloadOutcome
 where
     F: FnOnce() -> Result<Arc<ServerConfig>, String>,
