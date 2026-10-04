@@ -8,11 +8,15 @@
 //!
 //! **What a SCITT receipt gives Layer 5 that a signed rejection does not.** A
 //! signed response proves the server said something. A SCITT receipt proves that a
-//! statement about a call was *registered on a transparency service* — so a later
-//! auditor can verify the record existed at a point in time, independently of the
-//! parties to the call, without trusting the log to replay honestly (the inclusion
-//! proof is checked offline against a signed tree head). That is the tamper-evident,
-//! portable audit record §2.4 asks for.
+//! statement about a call was *registered on a transparency service*, and an auditor
+//! checks the inclusion proof offline against the service's signed tree head without
+//! trusting the log to replay honestly. That is the tamper-evident, portable audit
+//! record §2.4 asks for. It establishes no time: the receipt carries no timestamp and
+//! the statement's CWT `iat` is the issuer's own assertion, compared to nothing, so a
+//! verified receipt neither dates nor orders a record. Nor does verification establish
+//! independence from the parties: the issuer and service keys come from two
+//! caller-supplied resolvers that nothing compares, so separation is a property of the
+//! deployment that wires them.
 //!
 //! **Retained vs committed (§4.6).** The Signed Statement does NOT carry the call's
 //! evidence — it carries HASH COMMITMENTS to it. The full request/response messages,
