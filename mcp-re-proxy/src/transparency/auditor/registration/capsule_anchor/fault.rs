@@ -82,6 +82,7 @@ pub(super) fn fault_to_error(fault: CapsuleAnchorFault) -> RegistrationError {
 pub(super) fn fault_for_status(status: u16) -> CapsuleAnchorFault {
     match status {
         429 => CapsuleAnchorFault::RateLimited { status },
+        408 | 409 | 425 => CapsuleAnchorFault::UnexpectedStatus { status },
         400..=499 => CapsuleAnchorFault::Refused { status },
         500..=599 => CapsuleAnchorFault::Unavailable { status },
         _ => CapsuleAnchorFault::UnexpectedStatus { status },
@@ -108,6 +109,15 @@ mod tests {
             fault_to_error(fault_for_status(429)),
             RegistrationError::Throttled(_)
         ));
+        for status in [408, 409, 425] {
+            assert!(
+                matches!(
+                    fault_to_error(fault_for_status(status)),
+                    RegistrationError::Indeterminate(_)
+                ),
+                "{status}: the service may hold the statement",
+            );
+        }
         for status in [500, 502, 503, 504] {
             assert!(
                 matches!(

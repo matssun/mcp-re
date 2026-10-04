@@ -425,11 +425,18 @@ mod tests {
     /// A client-error answer to the submission is the ONE definitive negative.
     #[test]
     fn a_client_error_is_a_definitive_refusal() {
-        for status in [400, 401, 403, 404, 409, 422] {
+        for status in [400, 401, 403, 404, 422] {
             let outcome = register(Canned::submitting(response(status, &[], b"")));
             assert!(
                 matches!(outcome, Err(RegistrationError::Refused(_))),
                 "{status}: the service read the submission and said no",
+            );
+        }
+        for status in [408, 409, 425] {
+            let outcome = register(Canned::submitting(response(status, &[], b"")));
+            assert!(
+                matches!(outcome, Err(RegistrationError::Indeterminate(_))),
+                "{status}: the service may hold the statement",
             );
         }
     }
