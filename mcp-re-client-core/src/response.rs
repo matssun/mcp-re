@@ -1111,6 +1111,80 @@ mod delegated_tests {
         .is_err());
     }
 
+    /// When neither verification path accepts a receipt, the verdict surfaced is the
+    /// request-bound one, not the preflight-unbound one.
+    #[test]
+    fn a_response_failing_both_paths_is_refused_with_the_bound_verdict() {
+        let mine = signed();
+        let inputs = RequestSigningInputs::new(
+            CLIENT_KEY_ID.to_string(),
+            audience(),
+            bindings(),
+            "nonce-2-padded-to-the-128-bit-floor",
+            CREATED,
+            EXPIRES,
+        );
+        let params: Map<String, Value> = json!({ "name": "attacker-chosen" })
+            .as_object()
+            .cloned()
+            .unwrap();
+        let theirs = build_signed_request(
+            &json!(99),
+            "tools/call",
+            params,
+            TARGET,
+            &inputs,
+            &client_key(),
+        )
+        .expect("the attacker signs its own request");
+
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
+        let resp = build_delegated_rejection(
+            theirs.request(),
+            theirs.evidence(),
+            &reason,
+            409,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snap.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
+        )
+        .expect("server builds a bound rejection for the other request");
+
+        let trust = trust_with(StaticRevocationList::new());
+        let (bound_err, unbound_err) = policy().with_expectations(|expect, vp| {
+            let resolve = |kid: &str, slot: SignerSlot| trust.resolve_issuer(kid, slot, NOW);
+            let v = Verifier::new(vp, &resolve);
+            (
+                v.verify_delegated_bound_response(
+                    &resp,
+                    mine.request(),
+                    expect,
+                    &|id: &str| trust.is_revoked(id),
+                    NOW,
+                )
+                .unwrap_err(),
+                v.verify_delegated_unbound_response(
+                    &resp,
+                    expect,
+                    &|id: &str| trust.is_revoked(id),
+                    NOW,
+                )
+                .unwrap_err(),
+            )
+        });
+        assert_ne!(bound_err, unbound_err, "the arm choice must be observable");
+
+        let err = verify_delegated_response(&resp, &trust, &expectation(&mine), &policy(), NOW)
+            .unwrap_err();
+        assert_eq!(err, bound_err);
+    }
+
     // ---- revocation seam (ADR-MCPRE-052 §3 step 7, MCPRE-122) ----------------
 
     /// A signed 200 whose delegated key is on the client's denylist fails closed with
