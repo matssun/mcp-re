@@ -184,13 +184,14 @@ mod tests {
     use mcp_re_http_profile::ResolvedActor;
     use mcp_re_http_profile::SignerSlot;
 
+    use super::bind_request_to_peer;
     use super::http_profile_adapter::verified_request_subject;
+    use super::RequestPeerBindingRefusal;
     use crate::communication_assurance::authenticate_relationship_peer;
     use crate::communication_assurance::certificate_identity_policy::CertificateIdentityPolicy;
     use crate::communication_assurance::channel_associated_credential::mechanism_harness::*;
     use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
     use crate::communication_assurance::AuthenticatedChannelPeer;
-    use crate::transport::TransportBinding;
 
     const PRINCIPAL: &str = "spiffe://example.org/agent-1";
 
@@ -234,12 +235,11 @@ mod tests {
         // THE POSITIVE. A certificate whose URI SAN is the resolved SUBJECT binds — which
         // is what the operator documentation has always described, and what the previous
         // implementation could not accept because it compared against the composite.
-        let bound = TransportBinding::exact_match()
-            .bind(
-                Some(&peer_authenticated_as(PRINCIPAL)),
-                verified_request_subject(&resolved("client", "example.org", PRINCIPAL, "key-a")),
-            )
-            .expect("the peer and the resolved actor are one principal");
+        let bound = bind_request_to_peer(
+            peer_authenticated_as(PRINCIPAL),
+            verified_request_subject(&resolved("client", "example.org", PRINCIPAL, "key-a")),
+        )
+        .expect("the peer and the resolved actor are one principal");
         assert_eq!(bound.principal().as_str(), PRINCIPAL);
         assert!(
             !bound.currency_was_evaluated(),
@@ -250,9 +250,9 @@ mod tests {
 
     #[test]
     fn a_certificate_naming_a_different_subject_is_refused() {
-        assert!(TransportBinding::exact_match()
-            .bind(
-                Some(&peer_authenticated_as(PRINCIPAL)),
+        assert_eq!(
+            bind_request_to_peer(
+                peer_authenticated_as(PRINCIPAL),
                 verified_request_subject(&resolved(
                     "client",
                     "example.org",
@@ -260,7 +260,12 @@ mod tests {
                     "key-a",
                 )),
             )
-            .is_err());
+            .unwrap_err(),
+            RequestPeerBindingRefusal::DifferentPrincipals {
+                peer: PRINCIPAL.to_owned(),
+                request: "spiffe://example.org/agent-2".to_owned(),
+            }
+        );
     }
 
     #[test]
@@ -274,17 +279,11 @@ mod tests {
         let peer = peer_authenticated_as(PRINCIPAL);
         for keyid in ["key-a", "key-b-rotated", "key-c-rotated-again"] {
             assert!(
-                TransportBinding::exact_match()
-                    .bind(
-                        Some(&peer),
-                        verified_request_subject(&resolved(
-                            "client",
-                            "example.org",
-                            PRINCIPAL,
-                            keyid,
-                        )),
-                    )
-                    .is_ok(),
+                bind_request_to_peer(
+                    peer.clone(),
+                    verified_request_subject(&resolved("client", "example.org", PRINCIPAL, keyid)),
+                )
+                .is_ok(),
                 "{keyid}: rotating a signing credential is not a change of principal"
             );
         }
@@ -297,23 +296,21 @@ mod tests {
         // SAN would assert a relation nothing proved. So it does not enter the relation,
         // while the subject remains decisive under an otherwise identical configuration.
         let peer = peer_authenticated_as(PRINCIPAL);
-        assert!(TransportBinding::exact_match()
-            .bind(
-                Some(&peer),
-                verified_request_subject(&resolved("client", "other.example", PRINCIPAL, "key-a")),
-            )
-            .is_ok());
-        assert!(TransportBinding::exact_match()
-            .bind(
-                Some(&peer),
-                verified_request_subject(&resolved(
-                    "client",
-                    "other.example",
-                    "spiffe://example.org/agent-2",
-                    "key-a",
-                )),
-            )
-            .is_err());
+        assert!(bind_request_to_peer(
+            peer.clone(),
+            verified_request_subject(&resolved("client", "other.example", PRINCIPAL, "key-a")),
+        )
+        .is_ok());
+        assert!(bind_request_to_peer(
+            peer,
+            verified_request_subject(&resolved(
+                "client",
+                "other.example",
+                "spiffe://example.org/agent-2",
+                "key-a",
+            )),
+        )
+        .is_err());
     }
 
     #[test]
@@ -326,23 +323,10 @@ mod tests {
             "client:example.org:{}:key-a",
             PRINCIPAL.replace('%', "%25").replace(':', "%3A")
         );
-        assert!(TransportBinding::exact_match()
-            .bind(
-                Some(&peer_authenticated_as(&composite)),
-                verified_request_subject(&resolved("client", "example.org", PRINCIPAL, "key-a")),
-            )
-            .is_err());
-    }
-
-    #[test]
-    fn a_request_presenting_no_authenticated_peer_is_refused() {
-        // The `identity.map(check).unwrap_or(true)` defect: a configured binding claims
-        // every served request is bound, and an absence does not satisfy that claim.
-        assert!(TransportBinding::exact_match()
-            .bind(
-                None,
-                verified_request_subject(&resolved("client", "example.org", PRINCIPAL, "key-a")),
-            )
-            .is_err());
+        assert!(bind_request_to_peer(
+            peer_authenticated_as(&composite),
+            verified_request_subject(&resolved("client", "example.org", PRINCIPAL, "key-a")),
+        )
+        .is_err());
     }
 }

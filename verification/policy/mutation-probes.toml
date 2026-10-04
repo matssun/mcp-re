@@ -1740,9 +1740,9 @@ expect_red = [
 # the declared battery green. That is the finding, not a gap. The trait now returns a
 # `RequestPeerBindingFacts`, and with no peer there is nothing to build one from, so an
 # admitting implementation cannot be written at all. The conjunct is enforced by the type
-# rather than by a deletable check, which is exactly what L-4 describes. Its control
-# (`a_request_presenting_no_authenticated_peer_is_refused`) is kept: it measures the boundary
-# that makes the weakening unwritable.
+# rather than by a deletable check, which is exactly what L-4 describes. The control that
+# measures that boundary is `transport::tests::an_absent_channel_peer_fails_closed`, under
+# `proxy.transport_binding_application`.
 
 [[probe]]
 id = "M51-the-binding-coordinate-is-the-subject-not-the-composite"

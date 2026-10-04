@@ -2837,7 +2837,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::request_peer_binding::tests::a_rotated_signing_key_does_not_break_the_binding",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::request_peer_binding::tests::a_different_trust_domain_does_not_break_the_binding_and_a_different_subject_does",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::request_peer_binding::tests::a_certificate_naming_the_composite_actor_id_no_longer_binds",
-  "//mcp-re-proxy:proxy_unit_test#communication_assurance::request_peer_binding::tests::a_request_presenting_no_authenticated_peer_is_refused",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::request_peer_binding::http_profile_adapter::tests::the_subject_is_taken_and_the_composite_actor_id_is_not",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::request_peer_binding::http_profile_adapter::tests::a_signing_key_rotation_does_not_change_the_binding_coordinate",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::request_peer_binding::http_profile_adapter::tests::a_different_subject_is_a_different_coordinate_under_the_same_role_and_domain",
