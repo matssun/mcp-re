@@ -275,10 +275,11 @@ def cmd_post(a) -> int:
             parts.append(dict(_bazel(a, t), gate="bazel"))
     verdict = min((p["verdict"] for p in parts), key=lambda v: RANK.get(v, 1)) if parts else "not-run"
     raw_exit = max((p.get("exit") or 0 for p in parts), default=0)
-    debt = [r for p in parts if p.get("verdict") == "size-debt" for r in p.get("debt", [])]
-    if debt:
-        # Not blocking: the fix lands and the growth is registered when it is committed.
-        size_debt.record(a.work_dir, a.file, debt)
+    record = [r for p in parts for r in p.get("record", [])]
+    if record:
+        # Not blocking: every oversized file this writer touched, grown or not, joins the
+        # structural-debt register when (and only if) the change is committed.
+        size_debt.record(a.work_dir, a.file, record)
 
     note = "; ".join(gate_summary(p) for p in parts) + "; prescan %s" % (
         pre["state"] if pre["state"] == "clean" else "%d hit(s)" % len(pre["hits"]))

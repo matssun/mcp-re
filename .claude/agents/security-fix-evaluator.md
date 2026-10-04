@@ -162,15 +162,21 @@ judgment — that is where the turns belong.
    owner could make the state unrepresentable is the band-aid the standards
    name — order the seal, or say why it cannot be one.
 
-   **Size never holds a fix back (owner direction, 2026-10-04).** `prepare.py`
-   prints the file's production lines and its headroom. Prefer a fix that fits, or
-   one that moves an authority out along a real seam when that seam is obvious —
-   but when the natural fix grows the file past its baseline, or a new file past
-   200 lines, or a function past 60, ORDER IT ANYWAY. The gate reports that as
-   `size-debt`, not a failure: the fix lands and the growth is written to
-   `docs/security/remediation-size-debt.jsonl`, to be reviewed or refactored in a
-   separate project after the run. Size is never a ruling and never a reason to
-   escalate, defer or shrink a remedy. Do not refactor unrelated code for room.
+   **Size is measured and recorded, never a reason (owner direction, 2026-10-04).**
+   The campaign order is: finish the security remediation; record every oversized
+   or growing file as structural debt; decompose in a separate campaign after this
+   one closes. So:
+   - order the CORRECT fix even when it grows a file past its baseline, a new file
+     past 200 lines, or a function past 60 — the gate reports `size-debt`, not a
+     failure, and `docs/security/remediation-size-debt.jsonl` records the file,
+     size before/after, delta, origin (pre-existing vs new oversized) and finding;
+   - never refactor or split an oversized file to make room, and never shrink,
+     contort or drop a correct fix to stay under a ceiling;
+   - order a decomposition ONLY when it is needed for the fix to be correct (a
+     seal that requires module privacy, an authority that must own its own file);
+   - every added line must belong to the work package — remediation is not
+     permission for unrelated growth, and review rejects unordered changes.
+   Size is never a ruling and never a reason to escalate or defer.
 
 6. **For everything left, write an EXECUTABLE work package.** Each item must be
    specific enough that a worker who has not read your reasoning cannot get it

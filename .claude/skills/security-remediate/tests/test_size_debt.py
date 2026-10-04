@@ -122,9 +122,14 @@ def test_committed_rows_settle_and_reverted_rows_drop() -> None:
         grown = [dict(rows[0], measured=610)]
         assert size_debt.register_rows(grown, "later", reg) == 1
         got = [json.loads(l) for l in open(reg)]
-        assert len(got) == 1 and got[0]["measured"] == 610 and got[0]["baseline"] == 599 \
-            and got[0]["commits"] == ["abc1234", "later"], got
-    print("  size: committed rows join the register with the commit; reverted rows are dropped  OK")
+        assert len(got) == 1 and got[0]["after"] == 610 and got[0]["before"] == 599 \
+            and got[0]["delta"] == 11 and got[0]["commits"] == ["abc1234", "later"], got
+        assert got[0]["origin"] == "pre-existing-oversized", got
+        size_debt.register_rows([{"metric": "module-size", "path": "fresh.rs", "before": 190,
+                                  "after": 230}], "c3", reg)
+        fresh = [json.loads(l) for l in open(reg) if '"fresh.rs"' in l][0]
+        assert fresh["origin"] == "new-oversized" and fresh["delta"] == 40, fresh
+    print("  size: rows carry before/after/delta/origin; reverted rows are dropped  OK")
 
 
 if __name__ == "__main__":

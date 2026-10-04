@@ -206,9 +206,11 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
     debt = size_debt.attributable(debt, edited) if soft else []
     size_verdict = ("ok" if rc == 0 or (soft and not debt) else
                     "size-debt" if soft else "new-failures")
+    record = size_debt.encountered(edited)
     parts.append({"gate": "module-size", "verdict": size_verdict, "exit": rc,
                   **({} if rc == 0 else {"head": out.strip().splitlines()[-5:]}),
                   **({"debt": debt} if debt else {}),
+                  **({"record": record} if record else {}),
                   **({"note": "size growth only in files this writer did not touch"}
                      if rc and soft and not debt else {})})
 

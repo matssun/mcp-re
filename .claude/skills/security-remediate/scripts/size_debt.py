@@ -8,6 +8,24 @@ clippy ratchet still fail in CI and in `local_gate.sh` — so the register is th
 must be settled (refactored, or growth-authorized by the owner) before the remediation
 branch is integrated.
 
+Owner correction (2026-10-04): the R11/R12 campaign order is (1) finish the security
+remediation, (2) record every oversized or growing file as structural debt, (3) after the
+campaign closes, run a separate decomposition campaign over that record. So the register is
+the machine-readable input to that run, and it records every oversized file a writer
+ENCOUNTERS (touches), grown or not, with:
+
+  path, metric        the file (module-size) or crate (too_many_lines; `site` names the fn)
+  before, after,      production lines before the first remediation commit that touched it,
+  delta               after the latest, and the difference
+  origin              `pre-existing-oversized` (over the threshold before this campaign
+                      touched it — in config/module-size-debt.toml or not) or
+                      `new-oversized` (crossed the threshold through this remediation)
+  registry            the config/module-size-debt.toml entry (status, baseline) or null
+  findings, commits   what caused each change
+
+Every added line must still belong to the accepted work package; review enforces that
+(`unordered_changes`), not this register.
+
 What counts as size, and therefore soft:
   module size   a registered file grew past its baseline; a file newly crossed the threshold
   function size `clippy::too_many_lines` above its per-crate baseline
@@ -78,9 +96,43 @@ def drop(work_dir: str, file: str) -> None:
         os.remove(p)
 
 
+def _registry_entry(path: str) -> dict | None:
+    try:
+        import tomllib
+        doc = tomllib.load(open("config/module-size-debt.toml", "rb"))
+    except (OSError, ValueError):
+        return None
+    for e in doc.get("debt", []):
+        if e.get("path") == path:
+            return {"status": e.get("status"), "baseline": e.get("baseline_prod_loc")}
+    return None
+
+
+def _shape(r: dict) -> dict:
+    """The decomposition-run row: before/after/delta and origin, from the gate's numbers."""
+    before = r.get("before", r.get("baseline"))
+    after = r.get("after", r.get("measured"))
+    out = {"metric": r["metric"], "path": r["path"], "before": before, "after": after}
+    if r.get("site"):
+        out["site"] = r["site"]
+    if r["metric"] == "module-size":
+        reg = _registry_entry(r["path"])
+        out["registry"] = reg
+        out["origin"] = ("pre-existing-oversized" if reg or (before or 0) > THRESHOLD
+                         else "new-oversized")
+    else:
+        out["registry"] = None
+        out["origin"] = "pre-existing-oversized" if (before or 0) > 0 else "new-oversized"
+    return out
+
+
+THRESHOLD = 200
+
+
 def _merge(register: str, rows: list[dict], commit: str, findings: list[str]) -> int:
-    """One register row per (metric, path): its first baseline, its latest measurement, and
-    every commit and finding that grew it. Returns how many rows changed."""
+    """One register row per (metric, path): the size before the first remediation commit
+    that touched it, the latest size, the delta, its origin, and every commit and finding
+    that changed it. Returns how many rows changed."""
     book: dict[tuple[str, str], dict] = {}
     if os.path.exists(register):
         for line in open(register, encoding="utf-8"):
@@ -88,18 +140,20 @@ def _merge(register: str, rows: list[dict], commit: str, findings: list[str]) ->
                 r = json.loads(line)
                 book[(r["metric"], r["path"])] = r
     changed = 0
-    for r in rows:
+    for raw in rows:
+        r = _shape(raw)
         key = (r["metric"], r["path"])
         cur = book.get(key)
         if cur is None:
-            book[key] = {"metric": r["metric"], "path": r["path"], "baseline": r["baseline"],
-                         "measured": r["measured"], "commits": [commit],
-                         "findings": sorted(set(findings))}
+            book[key] = dict(r, delta=(r["after"] or 0) - (r["before"] or 0),
+                             commits=[commit], findings=sorted(set(findings)))
             changed += 1
-        elif r["measured"] != cur["measured"]:
-            cur["measured"] = r["measured"]
-            cur["commits"] = cur["commits"] + [commit]
+        elif r["after"] != cur["after"]:
+            cur["after"] = r["after"]
+            cur["delta"] = (cur["after"] or 0) - (cur["before"] or 0)
+            cur["commits"] = cur["commits"] + ([commit] if commit not in cur["commits"] else [])
             cur["findings"] = sorted(set(cur["findings"]) | set(findings))
+            cur["registry"] = r["registry"]
             changed += 1
     os.makedirs(os.path.dirname(register) or ".", exist_ok=True)
     with open(register, "w", encoding="utf-8") as fh:
@@ -122,6 +176,32 @@ def register_rows(rows: list[dict], commit: str, register: str = REGISTER) -> in
     """Rows the batch gate measured: merged under the commit, so a re-run or a growth some
     writer already registered changes nothing."""
     return _merge(register, rows, commit, [])
+
+
+def encountered(touched: list[str], ref: str = "HEAD") -> list[dict]:
+    """Every touched .rs file over the threshold now, with its size at `ref` — grown or not.
+    The decomposition run needs the files the campaign worked in, not only the ones it grew."""
+    import subprocess
+    import sys
+    sys.path.insert(0, "scripts")
+    from module_size_gate import production_lines  # noqa: PLC0415
+    rows = []
+    for path in touched:
+        if not path.endswith(".rs") or not os.path.isfile(path):
+            continue
+        # The gate's own population: tests, benches, examples and build scripts are not
+        # production modules (module_size_gate.rust_sources).
+        if any(p in {"tests", "benches", "examples"} for p in path.split("/")) \
+                or path.endswith("build.rs"):
+            continue
+        after = production_lines(open(path, encoding="utf-8", errors="replace").read())
+        if after <= THRESHOLD:
+            continue
+        old = subprocess.run(["git", "show", "%s:%s" % (ref, path)], capture_output=True,
+                             text=True)
+        before = production_lines(old.stdout) if old.returncode == 0 else 0
+        rows.append({"metric": "module-size", "path": path, "before": before, "after": after})
+    return rows
 
 
 def attributable(rows: list[dict], touched: list[str]) -> list[dict]:
