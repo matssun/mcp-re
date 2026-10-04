@@ -14014,3 +14014,19 @@ control = "src/lib.rs#tls_config::tests::a_private_key_pem_failure_is_a_fixed_cl
 decision = "new-proposition"
 proposition = "NP-234"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20207"
+project = "mcp-re-client-core"
+control = "src/lib.rs#request::evidence_precondition_tests::a_nonce_below_the_128_bit_floor_is_refused_locally"
+decision = "new-proposition"
+proposition = "NP-175"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20208"
+project = "mcp-re-client-core"
+control = "src/lib.rs#delegated_trust::anchors::tests::retirement_wins_over_a_contradicting_current_entry"
+decision = "new-proposition"
+proposition = "NP-159"
+recorded = "2026-10-04"
