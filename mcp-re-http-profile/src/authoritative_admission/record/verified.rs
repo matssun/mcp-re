@@ -36,9 +36,12 @@ use super::ADMISSION_STATE_TYP;
 /// An authoritative admission state that was AUTHENTICATED and found current.
 ///
 /// Possession is the claim: this state was signed by the configured admission authority,
-/// is about the workload it was read for, and is inside the deployment's declared
-/// currentness budget. Nothing a caller remembers to check afterwards is part of that.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// is about the workload it was read for, and was inside the deployment's declared
+/// currentness budget at the `now` it was verified against. The value is scoped to the
+/// decision that verification served and is deliberately not `Clone`; a holder that keeps
+/// one past that decision holds a claim about the past and must re-verify the record.
+/// Nothing a caller remembers to check afterwards is part of that.
+#[derive(Debug, PartialEq, Eq)]
 pub struct CurrentAdmissionState {
     /// The semantic fact, as the currency check consumes it.
     state: AuthoritativeAdmission,
@@ -343,6 +346,9 @@ mod tests {
             Err(AdmissionRecordRefusal::Malformed)
         );
         header["typ"] = serde_json::Value::String(ADMISSION_STATE_TYP.to_owned());
+        let h = b64url_encode(&serde_json::to_vec(&header).expect("header"));
+        let sig = a.sign(format!("{h}.{p}").as_bytes());
+        assert!(verify_at(&format!("{h}.{p}.{sig}"), "wl-a", 1_030).is_ok());
     }
 
     /// **The rollback attack, end to end.** A legitimate ADMITTED record, a legitimate
