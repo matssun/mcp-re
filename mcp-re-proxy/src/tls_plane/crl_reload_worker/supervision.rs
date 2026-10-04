@@ -39,13 +39,13 @@ pub(super) fn spawn_crl_reload_task(
     workers: &mut crate::managed_worker::WorkerSet,
     task: CrlReloadTask,
     plan: crate::startup_plan::ChannelEstablishmentPlan,
-) {
+) -> Result<(), String> {
     let halt = workers.halt();
     let currency = Arc::clone(&task.currency);
     workers.spawn(
         "client CRL reload",
         supervise_crl_reload(currency, plan, move || crl_reload_loop(task, &halt)),
-    );
+    )
 }
 
 /// Wrap `body` so that a panic in it latches the fault and retracts the advertised cadence.

@@ -45,10 +45,10 @@ pub(super) fn start_reload_worker(
     publisher: Option<client_revocation::ClientRevocationPublisher>,
     rebuild_state: &Arc<TlsListenerSecurityState>,
     crls: ClientCrlEvidence,
-) -> (WorkerSet, Arc<ClientRevocationCurrency>) {
+) -> Result<(WorkerSet, Arc<ClientRevocationCurrency>), String> {
     let mut workers = WorkerSet::new(deployment);
     let Some(cadence_secs) = plan.client_revocation.reload_cadence_secs() else {
-        return (workers, Arc::new(ClientRevocationCurrency::new(crls, None)));
+        return Ok((workers, Arc::new(ClientRevocationCurrency::new(crls, None))));
     };
     let currency = Arc::new(ClientRevocationCurrency::new(crls, Some(cadence_secs)));
     let custody = material.label();
@@ -65,13 +65,13 @@ pub(super) fn start_reload_worker(
             currency: Arc::clone(&currency),
         },
         plan.clone(),
-    );
+    )?;
     eprintln!(
         "mcp-re-proxy: in-process CRL hot-reload enabled (every {cadence_secs}s, \
          {custody} TLS custody; refreshed --client-crl honored without restart; \
          failed reload keeps last-good)"
     );
-    (workers, currency)
+    Ok((workers, currency))
 }
 
 pub(super) struct CrlReloadTask {

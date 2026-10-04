@@ -14829,3 +14829,11 @@ control = "src/lib.rs#cli::signing_source_flags::channel_role::tests::naming_two
 decision = "new-proposition"
 proposition = "NP-026"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20276"
+project = "mcp-re-proxy"
+control = "src/lib.rs#managed_worker::tests::dropping_an_empty_set_raises_the_halt_it_handed_out"
+decision = "new-proposition"
+proposition = "NP-003"
+recorded = "2026-10-04"

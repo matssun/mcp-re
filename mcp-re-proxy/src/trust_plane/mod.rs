@@ -161,7 +161,9 @@ impl TrustPlane {
         ));
         let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
         let halt = workers.halt();
-        workers.spawn("test trust reload", move || body(halt));
+        workers
+            .spawn("test trust reload", move || body(halt))
+            .expect("spawn test worker");
         let inner: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> =
             Arc::new(crate::reloading_trust::SharedTrustStore(Arc::clone(&store)));
         TrustPlane {
@@ -300,7 +302,7 @@ impl TrustPlane {
                 response_kid.to_string(),
                 interval_secs.get(),
                 Arc::clone(&trust_freshness),
-            );
+            )?;
             // The window is stated as the SUM, not as the cadence. The cadence alone is
             // true only where the tier caches no positive trust; under bounded-cache and
             // push an entry cached just before the swap survives it by a further T, and
@@ -395,7 +397,7 @@ fn build_trust_epoch_channel(
             TRUST_EPOCH_POLL_SECS,
             move || halt.requested(),
         ),
-    );
+    )?;
     eprintln!(
         "mcp-re-proxy: revocation-tier PUSH: networked trust-epoch source ACTIVE (redis, \
          epoch key {key:?}, polled every {TRUST_EPOCH_POLL_SECS}s off the request path); \

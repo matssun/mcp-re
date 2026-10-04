@@ -120,7 +120,7 @@ impl WorkerSet {
 
     /// Start `body` on a named thread this set owns.
     ///
-    /// Returns nothing, deliberately. There is no way to obtain a `JoinHandle` from this
+    /// Returns no `JoinHandle`, deliberately. There is no way to obtain one from this
     /// type, so the shape that caused the original defect —
     ///
     /// ```text
@@ -128,22 +128,24 @@ impl WorkerSet {
     /// ```
     ///
     /// — cannot be written: a worker is owned from the instant it can execute, and no
-    /// intervening failure can strand it. Registration here is unconditional and has no
-    /// fallible step between the thread starting and the set owning it.
+    /// intervening failure can strand it. The one fallible step, thread creation, happens
+    /// before the thread exists, so `Err` means nothing was started and `Ok` means this set
+    /// owns it.
     ///
     /// `body` is expected to be the supervised wrapper (`catch_unwind` plus whatever
     /// fail-closed action the domain requires); this type deliberately takes no view on
     /// what a panic MEANS, because the answer differs per worker — retiring a signing
     /// snapshot is right for the rotor and wrong for the CRL reloader.
-    pub fn spawn<F>(&mut self, name: &'static str, body: F)
+    pub fn spawn<F>(&mut self, name: &'static str, body: F) -> Result<(), String>
     where
         F: FnOnce() + Send + 'static,
     {
         let handle = std::thread::Builder::new()
             .name(name.to_string())
             .spawn(body)
-            .unwrap_or_else(|e| panic!("spawn {name} worker: {e}"));
+            .map_err(|e| format!("could not start the {name} worker: {e}"))?;
         self.workers.push(ManagedWorker { name, handle });
+        Ok(())
     }
 
     /// Number of workers still owned. Drops to zero once reclamation has been attempted.
@@ -168,10 +170,10 @@ impl WorkerSet {
     /// The budget is spent in total, not per worker, so a set with many workers cannot
     /// multiply the shutdown time by its size.
     pub fn halt_and_reclaim(&mut self) -> Vec<&'static str> {
+        self.owner.store(true, Ordering::SeqCst);
         if self.is_empty() {
             return Vec::new();
         }
-        self.owner.store(true, Ordering::SeqCst);
         // Class R: this budget bounds how long shutdown may wait, so a deadline that
         // cannot be represented is treated as already reached.
         let now = Instant::now();
@@ -242,7 +244,8 @@ mod tests {
 
         {
             let mut set = WorkerSet::new(Arc::clone(&deployment));
-            set.spawn("test", cooperative(set.halt(), Arc::clone(&stopped)));
+            set.spawn("test", cooperative(set.halt(), Arc::clone(&stopped)))
+                .expect("spawn test worker");
             assert_eq!(set.len(), 1);
         }
 
@@ -261,7 +264,8 @@ mod tests {
         let deployment = flag();
         let mut set = WorkerSet::new(Arc::clone(&deployment));
         let stopped = Arc::new(AtomicBool::new(false));
-        set.spawn("test", cooperative(set.halt(), Arc::clone(&stopped)));
+        set.spawn("test", cooperative(set.halt(), Arc::clone(&stopped)))
+            .expect("spawn test worker");
 
         deployment.store(true, Ordering::SeqCst);
         assert!(set.halt_and_reclaim().is_empty(), "no stragglers expected");
@@ -274,7 +278,8 @@ mod tests {
     fn reclaiming_twice_is_harmless() {
         let mut set = WorkerSet::new(flag());
         let stopped = Arc::new(AtomicBool::new(false));
-        set.spawn("test", cooperative(set.halt(), stopped));
+        set.spawn("test", cooperative(set.halt(), stopped))
+            .expect("spawn test worker");
         assert!(set.halt_and_reclaim().is_empty());
         assert!(set.halt_and_reclaim().is_empty());
         assert!(set.is_empty());
@@ -294,7 +299,8 @@ mod tests {
             while !release_in_worker.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(5));
             }
-        });
+        })
+        .expect("spawn test worker");
 
         let started = Instant::now();
         let stragglers = set.halt_and_reclaim();
@@ -346,7 +352,8 @@ mod tests {
             // ...and only then asks whether it should still be running.
             halt_seen.store(halt.requested(), Ordering::SeqCst);
             answered_in_worker.store(true, Ordering::SeqCst);
-        });
+        })
+        .expect("spawn test worker");
 
         let stragglers = set.halt_and_reclaim();
         assert_eq!(stragglers, vec!["late"]);
@@ -376,6 +383,21 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(1),
             "an already-raised halt must be observed immediately"
+        );
+    }
+
+    /// The halt a set handed out is raised when the set dies, whether or not it ever
+    /// owned a worker.
+    #[test]
+    fn dropping_an_empty_set_raises_the_halt_it_handed_out() {
+        let deployment = flag();
+        let set = WorkerSet::new(Arc::clone(&deployment));
+        let halt = set.halt();
+        drop(set);
+        assert!(halt.requested(), "an empty set's death must raise its halt");
+        assert!(
+            !deployment.load(Ordering::SeqCst),
+            "the structural halt must not masquerade as the operator's"
         );
     }
 }

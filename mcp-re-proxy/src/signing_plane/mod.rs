@@ -90,7 +90,9 @@ impl SigningPlane {
         ));
         let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         let halt = workers.halt();
-        workers.spawn("test delegated rotation", move || body(halt));
+        workers
+            .spawn("test delegated rotation", move || body(halt))
+            .expect("spawn test worker");
         SigningPlane { signer, workers }
     }
 }
@@ -195,7 +197,7 @@ impl SigningPlane {
             Arc::clone(&signer),
             window.overlap(),
             epoch_watch,
-        );
+        )?;
         Ok(SigningPlane { signer, workers })
     }
 }
@@ -1022,12 +1024,14 @@ mod handle_lifetime_tests {
             let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
             let halt = workers.halt();
             let flag = Arc::clone(&observed);
-            workers.spawn("test delegated rotation", move || {
-                while !halt.requested() {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                flag.store(true, std::sync::atomic::Ordering::SeqCst);
-            });
+            workers
+                .spawn("test delegated rotation", move || {
+                    while !halt.requested() {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                })
+                .expect("spawn test worker");
             let inner = Arc::new(DelegatedServerSigner::new());
             inner.publish(active_key(now_unix() + 3600));
             let plane = SigningPlane {

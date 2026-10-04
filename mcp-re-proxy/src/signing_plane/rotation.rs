@@ -46,14 +46,14 @@ pub(super) fn spawn_delegated_rotation_task(
     signer: Arc<crate::delegated_server_signer::DelegatedServerSigner>,
     overlap: i64,
     epoch_watch: Option<DelegatedEpochWatch>,
-) {
+) -> Result<(), String> {
     let halt = workers.halt();
     workers.spawn(
         "delegated key rotation",
         supervise_delegated_rotation(Arc::clone(&signer), move || {
             rotation_loop(&mut rotor, &signer, overlap, epoch_watch.as_ref(), &halt);
         }),
-    );
+    )
 }
 
 /// The `catch_unwind` and the fail-closed action it converts a panic into, AS A VALUE.
@@ -283,7 +283,8 @@ mod tests {
             high_water: std::sync::Mutex::new(None),
         };
         let deployment = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let halt = crate::managed_worker::WorkerSet::new(Arc::clone(&deployment)).halt();
+        let workers = crate::managed_worker::WorkerSet::new(Arc::clone(&deployment));
+        let halt = workers.halt();
         let stopper = std::thread::spawn({
             let deployment = Arc::clone(&deployment);
             move || {

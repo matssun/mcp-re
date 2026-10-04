@@ -68,7 +68,7 @@ pub(super) fn spawn_trust_reload_task(
     response_kid: String,
     interval_secs: u64,
     freshness: Arc<TrustStoreFreshness>,
-) {
+) -> Result<(), String> {
     let halt = workers.halt();
     let loop_freshness = Arc::clone(&freshness);
     workers.spawn(
@@ -83,7 +83,7 @@ pub(super) fn spawn_trust_reload_task(
                 &halt,
             );
         }),
-    );
+    )
 }
 
 /// The reload loop proper. Split out so the supervisor above can catch a panic from

@@ -156,7 +156,9 @@ impl TlsPlane {
 
         let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         let halt = workers.halt();
-        workers.spawn("test crl reload", move || body(halt));
+        workers
+            .spawn("test crl reload", move || body(halt))
+            .expect("spawn test worker");
         TlsPlane {
             snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(server))),
             revocation: None,
@@ -281,7 +283,7 @@ impl TlsPlane {
             publisher,
             &rebuild_state,
             crls,
-        );
+        )?;
         Ok(TlsPlane {
             snapshot,
             revocation,
@@ -429,12 +431,14 @@ mod handle_lifetime_tests {
     fn plane(config: Arc<rustls::ServerConfig>, observed: Arc<AtomicBool>) -> TlsPlane {
         let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
         let halt = workers.halt();
-        workers.spawn("test client CRL reload", move || {
-            while !halt.requested() {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            observed.store(true, Ordering::SeqCst);
-        });
+        workers
+            .spawn("test client CRL reload", move || {
+                while !halt.requested() {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                observed.store(true, Ordering::SeqCst);
+            })
+            .expect("spawn test worker");
         TlsPlane {
             snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(config)),
             revocation: None,
