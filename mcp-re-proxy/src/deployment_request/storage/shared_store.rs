@@ -6,19 +6,48 @@
 //! thing to replay, continuation, admission and the trust epoch, while what each role does
 //! with its store does not (ADR-MCPRE-067 §10).
 
+use std::fmt;
+
+use crate::deployment_request::RedactedLocator;
+
 /// A Redis endpoint.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// Its `Debug` renders the locator through [`RedactedLocator`]; the raw string leaves only
+/// through the field or `locator()`, for connecting, never for printing.
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct RedisStoreRequest {
     /// A scheme-bearing URL, e.g. `redis://host:6379`. Whether it resolves is
     /// materialization's; whether it has a scheme is the configuration boundary's.
     pub url: String,
 }
 
+impl fmt::Debug for RedisStoreRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RedisStoreRequest")
+            .field("url", &format_args!("{}", RedactedLocator::of(&self.url)))
+            .finish()
+    }
+}
+
 /// An etcd v3 JSON-gateway endpoint.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// Its `Debug` renders the locator through [`RedactedLocator`]; the raw string leaves only
+/// through the field, for connecting, never for printing.
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct EtcdStoreRequest {
     /// A scheme-bearing URL, e.g. `http://host:2379`.
     pub endpoint: String,
+}
+
+impl fmt::Debug for EtcdStoreRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EtcdStoreRequest")
+            .field(
+                "endpoint",
+                &format_args!("{}", RedactedLocator::of(&self.endpoint)),
+            )
+            .finish()
+    }
 }
 
 /// Which store serves a role that needs one shared across replicas.
@@ -59,6 +88,30 @@ impl SharedStoreRequest {
 mod tests {
     use super::*;
 
+    /// A printed store payload carries the host and port, never the credential or the
+    /// configured string, while `locator()` still yields what a consumer connects to.
+    #[test]
+    fn a_store_payload_debug_print_carries_no_credential() {
+        let redis_url = "redis://alice:hunter2@h:6379/0?token=s3cr3t";
+        let etcd_url = "http://bob:pa55@e:2379/v3?token=s3cr3t";
+        let shared = SharedStoreRequest::redis(redis_url);
+        let SharedStoreRequest::Redis(redis) = &shared;
+        let etcd = EtcdStoreRequest {
+            endpoint: etcd_url.into(),
+        };
+        for (printed, host, url) in [
+            (format!("{shared:?}"), "h:6379", redis_url),
+            (format!("{redis:?}"), "h:6379", redis_url),
+            (format!("{etcd:?}"), "e:2379", etcd_url),
+        ] {
+            for secret in ["hunter2", "alice", "pa55", "bob", "s3cr3t", url] {
+                assert!(!printed.contains(secret), "{printed} leaks {secret}");
+            }
+            assert!(printed.contains(host), "{printed} lost {host}");
+        }
+        assert_eq!(shared.locator(), redis_url);
+    }
+
     /// The projection names no product, so a consumer of it needs no case for one.
     #[test]
     fn the_locator_projection_names_no_backend() {
@@ -68,8 +121,9 @@ mod tests {
         );
     }
 
-    /// The replacement negative control: a store this repository does not have answers the
-    /// same question, and the consumer of the answer is unchanged.
+    /// Demonstrates the shape of the selection seam: a store this repository does not have
+    /// answers the same question, and the consumer of the answer is unchanged. Its consumer
+    /// and second store are test-local, so it is not a control of any production property.
     #[test]
     fn a_store_that_does_not_exist_drives_the_same_consumer() {
         enum HypotheticalStore {

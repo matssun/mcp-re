@@ -322,6 +322,8 @@ inputs. On that day purity is a runtime property and this is the wrong family.
 
 **Added 2026-09-29 (r12 remediation residue):** `mcp-re-http-profile` `doc#dispatch::retained_continuation::RetainedContinuation` — the `#[non_exhaustive]` seal it documents is a shape rule: `from_correlation` is public over the same three slices, so a weakening changes what can be constructed by no value.
 
+**Added 2026-10-04 (r12 remediation):** `mcp-re-proxy` `lib#deployment_request::storage::shared_store::tests::a_store_that_does_not_exist_drives_the_same_consumer` — its consumer and its second store are test-local, so a weakening changes no runtime behaviour; it shows the ADR-MCPRE-067 §5 seam shape only.
+
 ## ND-009 — data-structure API robustness with no security proposition
 
 **Covers:** `sdk/python/tests/test_correlation.py::TestRecordAndTake::test_iterating_yields_the_outstanding_requests`,
@@ -3036,7 +3038,7 @@ request-signer seam).
 ## NP-133 — a request form carries only its own material
 
 **Controls:** `mcp-re-proxy/src/deployment_request`.
-**Statement.** *Each form carries ONLY ITS OWN MATERIAL: a replay store is one backend with only its own locator, a coordinate cannot exist without the store it names a place in, and the derived coordinates start unnamed; an attested form cannot exist without the acknowledgement and the off request supplies no parameter any machine could dangle; the unenforced form has no gate inputs to dangle and both enforcing forms carry the gate they apply, an applied gate always naming the record it compares against; a degraded window exists only where one opens and only above zero, and failing closed is the default and carries no window; the cadence is optional under exactly one tier and only the pushing tier can name an epoch source; an empty set is the unconfigured posture, configuring neither mechanism IS a posture, and the two mechanisms COMPOSE rather than excluding each other; the durability claim and the store are separately stated and the locator projection names no backend; one Redis can serve two roles without the roles becoming one; a source without a named key is still a source and a store that does not exist drives the same consumer; the default form is the channel credential and the default identity field is the URI SAN; a scope beside off is representable because refusing it is NOT THIS TYPE'S JOB; and the verification set can be empty and is judged at the boundary.*
+**Statement.** *Each form carries ONLY ITS OWN MATERIAL: a replay store is one backend with only its own locator, a coordinate cannot exist without the store it names a place in, and the derived coordinates start unnamed; an attested form cannot exist without the acknowledgement and the off request supplies no parameter any machine could dangle; the unenforced form has no gate inputs to dangle and both enforcing forms carry the gate they apply, an applied gate always naming the record it compares against; a degraded window exists only where one opens and only above zero, and failing closed is the default and carries no window; the cadence is optional under exactly one tier and only the pushing tier can name an epoch source; an empty set is the unconfigured posture, configuring neither mechanism IS a posture, and the two mechanisms COMPOSE rather than excluding each other; the durability claim and the store are separately stated and the locator projection names no backend; one Redis can serve two roles without the roles becoming one; a source without a named key is still a source; the default form is the channel credential and the default identity field is the URI SAN; a scope beside off is representable because refusing it is NOT THIS TYPE'S JOB; and the verification set can be empty and is judged at the boundary.*
 **If false.** A request value exists that carries a parameter no machine will read — the dangling-input class the classifiers refuse one layer up — or a form is inhabitable without the material it cannot operate without. The last clause is the layering, stated as a control: this type represents, and the boundary refuses.
 **Likely owner:** none.
 **Severity:** `critical`.
@@ -4471,3 +4473,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `medium`.
 **Root relationship.** Beside NP-229: the listener's own availability when the process fd budget is exhausted.
 **Recorded:** 2026-10-04, round-12 remediation of 44aa89bb2b7c864d.
+
+## NP-238 — a store request payload's Debug rendering never carries its locator's credential or the configured string
+
+**Controls:** `mcp-re-proxy` `lib#deployment_request::storage::shared_store::tests::a_store_payload_debug_print_carries_no_credential`.
+**Carrier:** `mcp-re-proxy/src/deployment_request/storage/shared_store.rs`.
+**Statement.** *The Debug rendering of `RedisStoreRequest` and `EtcdStoreRequest` — and so of every request value that carries one: replay, continuation, admission record, trust epoch, and `DeploymentRequest` — renders the locator only through `RedactedLocator`, never its userinfo, path, query or complete configured string, while `locator()` still yields the configured string.*
+**If false.** A `{:?}` of a deployment request prints a store credential verbatim into operator transcripts and the log pipeline behind them.
+**Likely owner:** none. proxy.operator_facing_redaction's paths are secret_string.rs and inner_backend_display.rs only, and NP-215 states refusal sites, not the Debug rendering of a request value.
+**Severity:** `high`.
+**Root relationship.** Beside NP-215: that proposition covers what a refusal says, and this one covers what a printed request value says.
+**Recorded:** 2026-10-04, round-12 remediation of 075ae01ec0c5721d.
