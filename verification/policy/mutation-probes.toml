@@ -9106,8 +9106,8 @@ unit = "proxy.continuation_control_subject_boundary"
 theorem = "THM-0077"
 conjunct = "the continuation-control machine decides only its own subject — the replay store does not switch it on"
 path = "mcp-re-proxy/src/config_state/continuation_control.rs"
-anchor = "            None => ContinuationKind::Disabled,\n"
-weakening = "            None => match &config.replay.store {\n                Some(store) => ContinuationKind::Shared {\n                    endpoint: store.locator().to_string(),\n                },\n                None => ContinuationKind::Disabled,\n            },\n"
+anchor = "            Some(ContinuationControlState {\n                kind: ContinuationKind::Disabled,\n            }),\n"
+weakening = "            Some(ContinuationControlState {\n                kind: match &config.replay.store {\n                    Some(store) => ContinuationKind::Shared {\n                        endpoint: SharedStoreRequest::redis(store.locator()),\n                    },\n                    None => ContinuationKind::Disabled,\n                },\n            }),\n"
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::continuation_control::tests::the_replay_tier_does_not_reach_this_machine",
 ]

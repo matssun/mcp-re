@@ -14262,3 +14262,11 @@ control = "src/lib.rs#trust_epoch::tests::a_trust_epoch_outage_is_announced_on_i
 decision = "new-proposition"
 proposition = "NP-242"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20227"
+project = "mcp-re-proxy"
+control = "src/lib.rs#config_state::continuation_control::tests::a_state_and_its_plan_debug_print_carries_no_credential"
+decision = "new-proposition"
+proposition = "NP-238"
+recorded = "2026-10-04"
