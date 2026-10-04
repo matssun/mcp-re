@@ -359,7 +359,8 @@ remote peer can drive. These three are driven by the test, not by a reply.
 **Covers:** `mcp-re-http-profile` `doc#verified_response::bound::VerifiedMcpResponse`,
 `doc#verified_response::bound::VerifiedDelegatedMcpResponse`,
 `doc#verified_request::VerifiedMcpRequest`, `doc#dispatch::outcome::PreparedDispatch`,
-`doc#dispatch::outcome::DispatchOutcome`; `mcp-re-client-core`
+`doc#dispatch::outcome::DispatchOutcome`,
+`doc#verified_response::facts::UnboundResponseSignatureFacts`; `mcp-re-client-core`
 `doc#delegated_trust::DelegatedResponseTrust`.
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 8; the client-core item added by
 the S-05/CL-CLIENT slice, which built its probes first.
@@ -367,7 +368,7 @@ the S-05/CL-CLIENT slice, which built its probes first.
 Six `compile_fail` examples over four items, each a hostile construction the type system
 must refuse. ADR-MCPRE-068 §12.1 called these "the best worked example of the defect in the
 repository" — they were registered as `test://` evidence for a claim only a compile refusal
-can make — and Phase 0B/0D moved the claim to `structural://` probes S01, S02, S03 and S05,
+can make — and Phase 0B/0D moved the claim to `structural://` probes S01, S02, S03, S05 and S35,
 each of which names the very `doc_item` above in `structural-probes.toml`. The two
 `dispatch::outcome` items joined on 2026-09-29 with probes S33 and S34 (owner ruling on
 NP-203): each also declares a relaxation under which its construction must compile.

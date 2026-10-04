@@ -1170,3 +1170,41 @@ pub struct DispatchOutcome {
 path = "mcp-re-http-profile/src/dispatch/replay_posture.rs"
 old = "pub(in crate::dispatch) enum PostureDecision {"
 new = "pub enum PostureDecision {"
+
+[[probe]]
+id = "S35"
+unit = "http_profile.verifier_result_separation"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "request-bound response signature facts cannot be passed where unbound response signature facts are required, though their fields are identical"
+doc_path = "mcp-re-http-profile/src/verified_response/facts.rs"
+doc_item = "doc#verified_response::facts::UnboundResponseSignatureFacts"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s35.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S35. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::{BoundResponseSignatureFacts, UnboundResponseSignatureFacts};
+
+fn needs_unbound(_: &UnboundResponseSignatureFacts) {}
+
+pub fn hostile(bound: &BoundResponseSignatureFacts) {
+    needs_unbound(bound); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "integration test: a separate crate against the public surface"
+alternate-constructors = "no From, Deref or other conversion exists between the bound and unbound facts types; their identical fields are kept apart only by the nominal split"
+generated-or-deserialization = "neither facts type derives Serialize/Deserialize"
+test-only-construction = "the probe itself is the downstream test-code route"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/verified_response/facts.rs"
+old = """
+#[derive(Debug, Clone)]
+pub struct UnboundResponseSignatureFacts {
+    /// The signer the signature was accepted under — WHO, not WHY.
+    pub accepted_signer: AcceptedResponseSigner,
+    /// The response signature-base handle, under the response role label.
+    pub response_signature_base_digest: RequestEvidence,
+}"""
+new = "pub type UnboundResponseSignatureFacts = BoundResponseSignatureFacts;"

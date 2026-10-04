@@ -65,6 +65,17 @@ pub struct BoundResponseSignatureFacts {
 /// admitted as current, and the signature verified over a base covering ONLY response
 /// components — a `;req` component is refused as malformed, because no request exists to
 /// resolve it against.
+///
+/// Its fields are identical to [`BoundResponseSignatureFacts`]; only the type keeps the two
+/// apart, so request-bound facts cannot be passed where unbound facts are required:
+///
+/// ```compile_fail
+/// use mcp_re_http_profile::{BoundResponseSignatureFacts, UnboundResponseSignatureFacts};
+/// fn needs_unbound(_: &UnboundResponseSignatureFacts) {}
+/// fn from_bound(bound: &BoundResponseSignatureFacts) {
+///     needs_unbound(bound);
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct UnboundResponseSignatureFacts {
     /// The signer the signature was accepted under — WHO, not WHY.
@@ -116,22 +127,6 @@ mod tests {
         };
         assert_eq!(facts.accepted_signer.identity.keyid, "resp-1");
         assert_eq!(facts.response_signature_base_digest.digest_alg, "sha256");
-    }
-
-    /// Bound and unbound facts are DIFFERENT TYPES because the coverage difference is the
-    /// security difference. Their fields are identical, which is exactly why a single type
-    /// would have been the tempting mistake.
-    #[test]
-    fn bound_and_unbound_facts_are_not_the_same_type() {
-        fn needs_unbound(_: &UnboundResponseSignatureFacts) {}
-        let unbound = UnboundResponseSignatureFacts {
-            accepted_signer: AcceptedResponseSigner {
-                identity: identity("resp-2"),
-                verification_key: SigningKey::from_seed_bytes(&[8u8; 32]).public_key(),
-            },
-            response_signature_base_digest: RequestEvidence::from_response_signature_base(b"r"),
-        };
-        needs_unbound(&unbound);
     }
 
     #[test]

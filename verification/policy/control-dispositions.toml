@@ -6886,14 +6886,6 @@ proposition = "NP-099"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-15096"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#verified_response::facts::tests::bound_and_unbound_facts_are_not_the_same_type"
-decision = "new-proposition"
-proposition = "NP-099"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-15097"
 project = "mcp-re-http-profile"
 control = "src/lib.rs#verified_response::facts::tests::the_shared_facts_carry_who_signed_and_no_authorization"
@@ -14812,4 +14804,12 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#trust_plane::trust_cache::tests::a_poisoned_cache_lock_is_recovered_rather_than_latched_into_refusal"
 decision = "new-proposition"
 proposition = "NP-258"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20273"
+project = "mcp-re-http-profile"
+control = "doc#verified_response::facts::UnboundResponseSignatureFacts"
+decision = "not-evidence"
+reason_family = "ND-010"
 recorded = "2026-10-04"
