@@ -355,6 +355,8 @@ mod tests {
             (true, None, None, Cell::Legal(Some(None))),
             (true, Some(false), Some(30), Cell::UnreachableBound),
             (true, Some(false), Some(-30), Cell::UnreachableBound),
+            (true, Some(false), Some(0), Cell::UnreachableBound),
+            (true, None, Some(0), Cell::UnreachableBound),
             (true, Some(true), Some(0), Cell::InvalidWidth),
             (true, Some(true), Some(-30), Cell::InvalidWidth),
             (true, Some(true), Some(30), Cell::Legal(Some(Some(30)))),

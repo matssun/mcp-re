@@ -41,7 +41,7 @@ impl AdmissionFlags {
     /// After assembly the availability is one tagged value and the bound is a `NonZeroU64`.
     pub(super) fn availability(&self) -> Result<AdmissionAvailabilityRequest, String> {
         if self.allow_degraded != Some(true) {
-            if self.degraded_bound_secs.is_some_and(|bound| bound != 0) {
+            if self.degraded_bound_secs.is_some() {
                 return Err(
                     "--admission-degraded-bound-secs is set but --admission-allow-degraded \
                      is false; the bound is read only when degraded mode is on, so this \
