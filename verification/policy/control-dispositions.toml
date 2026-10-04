@@ -13583,6 +13583,15 @@ consequence = "critical"
 root_relationship = "Law A-1 premise (ADR-MCPRE-065 s2.7): the authorization action coordinate reads the target from the signed body."
 record = "docs/architecture/control-dispositions.md#np-235"
 
+[[proposition]]
+id = "NP-236"
+title = "A verified request product never renders the covered credentials its signature base carries"
+carrier = "mcp-re-http-profile/src/verified_request/floor.rs (Debug for CryptographicFloorVerifiedRequest)"
+likely_owner = "none. http_profile.request_floor, http_profile.verifier_result_separation and http_profile.continuation_unbypassability hold floor.rs in paths but state verification establishment, product non-substitutability and continuation binding, none of which a Debug-redaction test falsifies; proxy.continuation_correlation_store states handle-only retention but does not list floor.rs in its paths."
+consequence = "high"
+root_relationship = "secret-hygiene premise beside THM-0014: the covered Authorization header it proves covered never leaves through a format string"
+record = "docs/architecture/control-dispositions.md#np-236"
+
 [[disposition]]
 id = "CD-20121"
 project = "mcp-re-proxy"
@@ -14046,4 +14055,12 @@ project = "mcp-re-http-profile"
 control = "src/lib.rs#mcp_name_source::tests::every_method_that_names_a_target_maps_to_the_key_carrying_it"
 decision = "new-proposition"
 proposition = "NP-235"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20210"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#verified_request::floor::tests::debug_never_renders_the_signature_base_or_its_credentials"
+decision = "new-proposition"
+proposition = "NP-236"
 recorded = "2026-10-04"

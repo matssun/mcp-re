@@ -4449,3 +4449,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `critical`.
 **Root relationship.** Law A-1 premise (ADR-MCPRE-065 s2.7): the target is read from the signed body.
 **Recorded:** 2026-10-04, round-12 remediation of 47930103f0358447.
+
+## NP-236 — a verified request product never renders the covered credentials its signature base carries
+
+**Controls:** `mcp-re-http-profile` `lib#verified_request::floor::tests::debug_never_renders_the_signature_base_or_its_credentials`.
+**Carrier:** `mcp-re-http-profile/src/verified_request/floor.rs` (`Debug for CryptographicFloorVerifiedRequest`).
+**Statement.** *`Debug` for the floor product renders the signature base only as a byte count, so a covered `Authorization` or DPoP value never appears in a format string.*
+**If false.** A `{:?}` of the floor product or of `VerifiedMcpRequest` prints a live bearer token into logs.
+**Likely owner:** none. http_profile.request_floor, http_profile.verifier_result_separation and http_profile.continuation_unbypassability hold floor.rs in paths but state verification establishment, product non-substitutability and continuation binding, none of which a Debug-redaction test falsifies; proxy.continuation_correlation_store states handle-only retention but does not list floor.rs in its paths.
+**Severity:** `high`.
+**Root relationship.** Secret-hygiene premise beside THM-0014: the covered Authorization header it proves covered never leaves through a format string.
+**Recorded:** 2026-10-04, round-12 remediation of 39a19630561cc617.
