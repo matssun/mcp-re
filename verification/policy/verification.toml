@@ -1110,7 +1110,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_listener_state::auth_epoch::tests::a_duplicated_anchor_does_not_change_the_epoch",
   "//mcp-re-proxy:proxy_unit_test#tls_listener_state::auth_epoch::tests::the_epoch_domain_names_the_current_definition",
   "//mcp-re-proxy:proxy_unit_test#tls_listener_state::auth_epoch::tests::storing_an_identical_epoch_reports_no_change",
-  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::auth_epoch::tests::storing_a_different_epoch_reports_the_previous_one",
+  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::auth_epoch::tests::storing_a_different_epoch_reports_the_previous_one",  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::auth_epoch::tests::a_stored_value_too_short_to_carry_a_tag_is_refused_and_evicted",
 ]
 
 [[unit]]
@@ -10104,6 +10104,7 @@ tested_symbols = [
   "//mcp-re-client:mcp_re_client_test#anchors::tests::a_refreshed_manifest_reaches_a_running_client",
   "//mcp-re-client:mcp_re_client_test#anchors::tests::a_failed_refresh_keeps_the_anchors_in_force",
   "//mcp-re-client:mcp_re_client_test#anchors::tests::an_expired_manifest_withdraws_the_anchors_rather_than_serving_on_them",
+  "//mcp-re-client:mcp_re_client_test#anchors::tests::an_unreadable_clock_withdraws_the_anchors_rather_than_holding_them",
   # The end-to-end witness: the rollback refusal reaching the RUNNING listener, not only the
   # loader. Without it the controls above are about a module rather than about the deployable.
   "//mcp-re-client:local_leg_e2e_test#a_replayed_older_manifest_cannot_restore_service_through_the_listener",
