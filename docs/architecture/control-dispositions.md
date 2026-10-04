@@ -4648,3 +4648,23 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Likely owner:** none of the units that measure this file; NP-088 states the composition side, and `http_profile.evidence_block_carriage` says nothing about which values the body may carry.
 **Root relationship.** A premise of every http_profile unit above it.
 **Severity:** `critical`.
+
+## NP-254 — the durable rollback floor directory is created owner-only
+
+**Controls:** `mcp-re-client-proxy` `manifest_floor::tests::a_created_floor_directory_is_owner_only`.
+**Carrier:** `mcp-re-client-proxy/src/manifest_floor.rs`.
+**Statement.** *A floor directory `FileManifestFloor::with_bounds` creates on Unix has no group/other permission bits whatever the umask.*
+**If false.** Any group/other account can unlink markers or plant a `u64::MAX` marker.
+**Likely owner:** `client.manifest_floor` measures the floor's monotonicity, not who may write its directory.
+**Root relationship.** A premise of `client.manifest_floor`.
+**Severity:** `high`.
+
+## NP-255 — a registration ends within the budget the operator configured
+
+**Controls:** `mcp-re-proxy` `transparency::auditor::registration::scrapi::tests::every_exchange_carries_the_one_registration_deadline`, `transparency::auditor::registration::ureq_exchange::tests::an_exchange_past_its_deadline_is_refused_before_any_connection`.
+**Carrier:** `mcp-re-proxy/src/transparency/auditor/registration` policy, exchange and mechanism leaves.
+**Statement.** *Every exchange of one registration carries the single deadline the policy's timeout sets at the start of `register`, and the transport refuses an exchange past it before any connection.*
+**If false.** A registration can outlive the operator's stated bound, each exchange restarting its own clock.
+**Likely owner:** `proxy.scrapi_registration_leaf` measures the certainty of an exhausted budget, not that one clock bounds every exchange.
+**Root relationship.** A premise of `proxy.scrapi_registration_leaf`.
+**Severity:** `medium`.

@@ -69,7 +69,12 @@ pub(super) enum Scrapi11Fault {
     /// happened. Nothing in the response tells the two apart, so this does not claim one.
     Unavailable { status: u16 },
     /// The budget ran out with the receipt still not ready.
-    TimedOut { after: Duration },
+    ///
+    /// Carries the last poll's transport failure, if the last poll never completed.
+    TimedOut {
+        after: Duration,
+        last_poll_failure: Option<String>,
+    },
 }
 
 /// The ONE place a protocol fault becomes a semantic one — and therefore the one place
@@ -123,9 +128,17 @@ pub(super) fn fault_to_error(fault: Scrapi11Fault) -> RegistrationError {
                 phase.as_str()
             ))
         }
-        Scrapi11Fault::TimedOut { after } => RegistrationError::Indeterminate(format!(
-            "{SCRAPI_REVISION}: the receipt was still not ready after {after:?}",
-        )),
+        Scrapi11Fault::TimedOut {
+            after,
+            last_poll_failure,
+        } => {
+            let detail = last_poll_failure
+                .map(|detail| format!("; the last poll did not complete ({detail})"))
+                .unwrap_or_default();
+            RegistrationError::Indeterminate(format!(
+                "{SCRAPI_REVISION}: the receipt was still not ready after {after:?}{detail}",
+            ))
+        }
     }
 }
 
@@ -181,6 +194,7 @@ mod tests {
             },
             Scrapi11Fault::TimedOut {
                 after: Duration::from_secs(300),
+                last_poll_failure: None,
             },
             // A `503` is NOT grouped with the rate limit: a reverse proxy answers the same
             // way over an origin that accepted, and nothing in the response separates them.
@@ -205,6 +219,7 @@ mod tests {
             Scrapi11Fault::MissingLocation,
             Scrapi11Fault::TimedOut {
                 after: Duration::from_secs(1),
+                last_poll_failure: None,
             },
         ] {
             let message = fault_to_error(fault).to_string();

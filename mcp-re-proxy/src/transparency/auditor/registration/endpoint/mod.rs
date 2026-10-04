@@ -128,10 +128,7 @@ impl RegistrationTarget {
         issuer_key: &mcp_re_core::VerificationKey,
         pin: &ScittServiceTrustPin,
     ) -> Result<RegisteredStatement, RegistrationError> {
-        let exchange = super::ureq_exchange::UreqExchange::operator_configured(
-            &self.base_url,
-            self.policy.timeout(),
-        )
+        let exchange = super::ureq_exchange::UreqExchange::operator_configured(&self.base_url)
         .ok_or_else(|| {
             // Defence in depth, and unreachable under the current legality model: `new`
             // already put this value through the same vetting. Redacted regardless — a
@@ -159,6 +156,7 @@ impl RegistrationTarget {
                 &super::capsule_anchor::CapsuleAnchorRegistrationClient::new(
                     exchange,
                     &self.base_url,
+                    self.policy,
                 ),
                 statement,
                 issuer_key,

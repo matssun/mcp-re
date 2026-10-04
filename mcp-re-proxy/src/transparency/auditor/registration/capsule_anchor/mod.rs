@@ -51,6 +51,8 @@ use super::capability::RegistrationResponse;
 use super::capability::TransparencyRegistration;
 use super::exchange::HttpExchange;
 use super::exchange::HttpRequest;
+use super::policy::RegistrationPolicy;
+use std::time::Instant;
 
 use fault::fault_for_status;
 use fault::fault_to_error;
@@ -68,23 +70,28 @@ pub struct CapsuleAnchorRegistrationClient<E> {
     exchange: E,
     /// The operator-configured service base URL, without a trailing separator.
     base_url: String,
+    policy: RegistrationPolicy,
 }
 
 impl<E: HttpExchange> CapsuleAnchorRegistrationClient<E> {
-    /// A client for the service at `base_url`.
+    /// A client for the service at `base_url`, bounded by `policy`.
     ///
-    /// No budget: this contract has no `202` and no polling, so there is nothing for a
-    /// deadline to bound beyond the one the transport already holds. A policy taken and
-    /// unused would be a knob that selects nothing.
-    pub fn new(exchange: E, base_url: &str) -> Self {
+    /// This contract has no `202` and no polling, so its single exchange is bounded by the
+    /// registration's deadline, which is the policy's timeout from the start of `register`.
+    pub fn new(exchange: E, base_url: &str, policy: RegistrationPolicy) -> Self {
         CapsuleAnchorRegistrationClient {
             exchange,
             base_url: base_url.trim_end_matches('/').to_owned(),
+            policy,
         }
     }
 
     /// POST the statement, and read what the service made of it.
-    fn submit(&self, signed_statement: &[u8]) -> Result<Vec<u8>, CapsuleAnchorFault> {
+    fn submit(
+        &self,
+        signed_statement: &[u8],
+        deadline: Instant,
+    ) -> Result<Vec<u8>, CapsuleAnchorFault> {
         let body = serde_json::to_vec(&wire::RegisterStatementRequest {
             signed_statement_b64: base64::engine::general_purpose::STANDARD
                 .encode(signed_statement),
@@ -102,6 +109,7 @@ impl<E: HttpExchange> CapsuleAnchorRegistrationClient<E> {
                     ("accept".to_owned(), wire::JSON_MEDIA_TYPE.to_owned()),
                 ],
                 body,
+                deadline,
             })
             .map_err(|detail| CapsuleAnchorFault::Transport { detail })?;
         if response.status != 200 {
@@ -135,7 +143,17 @@ impl<E: HttpExchange> TransparencyRegistration for CapsuleAnchorRegistrationClie
     }
 
     fn register(&self, signed_statement: &[u8]) -> Result<RegistrationResponse, RegistrationError> {
-        self.submit(signed_statement)
+        // Before anything is sent. A budget whose end is not representable is a run with
+        // no bound, and refusing here is a definitive negative: nothing went out.
+        let deadline = Instant::now()
+            .checked_add(self.policy.timeout())
+            .ok_or_else(|| {
+                RegistrationError::Refused(
+                    "the registration deadline is not representable on this host's clock"
+                        .to_owned(),
+                )
+            })?;
+        self.submit(signed_statement, deadline)
             .map(RegistrationResponse::of)
             .map_err(fault_to_error)
     }
@@ -148,6 +166,12 @@ mod tests {
     use super::super::fixtures::*;
     use super::*;
     use std::cell::RefCell;
+    use std::time::Duration;
+
+    fn policy() -> RegistrationPolicy {
+        RegistrationPolicy::new(Duration::from_secs(5), Duration::from_secs(1))
+            .expect("a bounded budget")
+    }
 
     /// A service that answers whatever it was built with, and records what it was asked.
     struct Canned {
@@ -202,7 +226,8 @@ mod tests {
     fn the_statement_is_submitted_verbatim_to_this_contracts_resource() {
         let statement = a_statement();
         let service = Canned::answering(200, answer_with(&receipt_for(&statement)));
-        let client = CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test/");
+        let client =
+            CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test/", policy());
 
         client
             .register(statement.to_cose())
@@ -233,7 +258,8 @@ mod tests {
     fn a_receipt_this_leaf_brings_back_is_accepted_only_after_it_verifies() {
         let statement = a_statement();
         let service = Canned::answering(200, answer_with(&receipt_for(&statement)));
-        let client = CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test");
+        let client =
+            CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test", policy());
 
         let registered = register_and_verify(&client, &statement, &issuer().public_key(), &pin())
             .expect("the receipt verifies");
@@ -247,7 +273,8 @@ mod tests {
     fn a_receipt_about_another_statement_is_refused() {
         let statement = a_statement();
         let service = Canned::answering(200, answer_with(&receipt_for(&another_statement())));
-        let client = CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test");
+        let client =
+            CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test", policy());
 
         let refused = register_and_verify(&client, &statement, &issuer().public_key(), &pin())
             .expect_err("a receipt about another statement is not this one's");
@@ -265,6 +292,7 @@ mod tests {
         let client = CapsuleAnchorRegistrationClient::new(
             Canned::answering(200, b"not the JSON this contract defines".to_vec()),
             "https://ts.example.test",
+            policy(),
         );
 
         let refused = client
@@ -289,6 +317,7 @@ mod tests {
         let client = CapsuleAnchorRegistrationClient::new(
             Canned::answering(200, body),
             "https://ts.example.test",
+            policy(),
         );
 
         register_and_verify(&client, &statement, &issuer().public_key(), &pin())
@@ -299,7 +328,8 @@ mod tests {
     #[test]
     fn a_submission_that_never_went_out_is_indeterminate() {
         let statement = a_statement();
-        let client = CapsuleAnchorRegistrationClient::new(Dead, "https://ts.example.test");
+        let client =
+            CapsuleAnchorRegistrationClient::new(Dead, "https://ts.example.test", policy());
 
         let refused = client
             .register(statement.to_cose())

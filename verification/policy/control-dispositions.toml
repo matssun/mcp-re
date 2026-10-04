@@ -577,6 +577,24 @@ consequence = "critical"
 root_relationship = "a premise of every http_profile unit above it"
 record = "docs/architecture/control-dispositions.md#np-253"
 
+[[proposition]]
+id = "NP-254"
+title = "The durable rollback floor directory is created owner-only"
+carrier = "mcp-re-client-proxy/src/manifest_floor.rs"
+likely_owner = "client.manifest_floor measures the floor's monotonicity, not who may write its directory"
+consequence = "high"
+root_relationship = "a premise of client.manifest_floor"
+record = "docs/architecture/control-dispositions.md#np-254"
+
+[[proposition]]
+id = "NP-255"
+title = "A registration ends within the budget the operator configured"
+carrier = "mcp-re-proxy/src/transparency/auditor/registration policy, exchange and mechanism leaves"
+likely_owner = "proxy.scrapi_registration_leaf measures the certainty of an exhausted budget, not that one clock bounds every exchange"
+consequence = "medium"
+root_relationship = "a premise of proxy.scrapi_registration_leaf"
+record = "docs/architecture/control-dispositions.md#np-255"
+
 [[disposition]]
 id = "CD-0001"
 project = ""
@@ -14616,4 +14634,28 @@ project = "mcp-re-proxy"
 control = "tests/pkcs11_keysource_e2e_test.rs#pkcs11_tls_signer_refuses_a_token_signature_that_does_not_verify"
 decision = "new-proposition"
 proposition = "NP-164"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20254"
+project = "mcp-re-client-proxy"
+control = "src/lib.rs#manifest_floor::tests::a_created_floor_directory_is_owner_only"
+decision = "new-proposition"
+proposition = "NP-254"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20255"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::scrapi::tests::every_exchange_carries_the_one_registration_deadline"
+decision = "new-proposition"
+proposition = "NP-255"
+recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20256"
+project = "mcp-re-proxy"
+control = "src/lib.rs#transparency::auditor::registration::ureq_exchange::tests::an_exchange_past_its_deadline_is_refused_before_any_connection"
+decision = "new-proposition"
+proposition = "NP-255"
 recorded = "2026-10-04"
