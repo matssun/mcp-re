@@ -59,24 +59,28 @@ fn check_tail_spelling(param_tail: &str) -> Result<(), HttpProfileError> {
     Ok(())
 }
 
-/// A parameter's canonical position in the closed, ordered set.
-///
-/// Strict Structured Fields (MCPRE-98): the profile's parameter set is closed AND ordered.
-/// The verifier normalizes to a canonical order when rebuilding the base, so a reordered
-/// wire form would silently verify under the same signature; it is rejected structurally
-/// instead. A rank that does not strictly increase catches reordering and duplication with
-/// one comparison.
-///
+/// The closed, ordered parameter set; declaration order is the canonical order, so the
+/// derived `Ord` is the rank that must strictly increase across the wire form.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Parameter {
+    Created,
+    Expires,
+    Nonce,
+    Keyid,
+    Alg,
+    Tag,
+}
+
 /// An unknown parameter would change the signature base this verifier rebuilds, so it fails
 /// closed rather than sign-what-you-did-not-say.
-fn parameter_rank(key: &str) -> Result<i32, HttpProfileError> {
+fn parameter(key: &str) -> Result<Parameter, HttpProfileError> {
     match key {
-        "created" => Ok(0),
-        "expires" => Ok(1),
-        "nonce" => Ok(2),
-        "keyid" => Ok(3),
-        "alg" => Ok(4),
-        "tag" => Ok(5),
+        "created" => Ok(Parameter::Created),
+        "expires" => Ok(Parameter::Expires),
+        "nonce" => Ok(Parameter::Nonce),
+        "keyid" => Ok(Parameter::Keyid),
+        "alg" => Ok(Parameter::Alg),
+        "tag" => Ok(Parameter::Tag),
         _ => Err(HttpProfileError::MalformedEvidence(
             "unknown signature parameter",
         )),
@@ -104,13 +108,12 @@ fn unquote(v: &str) -> Result<String, HttpProfileError> {
 
 /// Read one already-ranked parameter into the parsed set.
 ///
-/// The key has passed [`parameter_rank`], so the match is exhaustive over the closed set and
-/// there is no fallthrough to guess about.
-fn assign(params: &mut SignatureParams, key: &str, v: &str) -> Result<(), HttpProfileError> {
-    match key {
-        "created" => params.created = Some(parse_i64(v)?),
-        "expires" => params.expires = Some(parse_i64(v)?),
-        "nonce" => {
+/// The match is total over [`Parameter`].
+fn assign(params: &mut SignatureParams, param: Parameter, v: &str) -> Result<(), HttpProfileError> {
+    match param {
+        Parameter::Created => params.created = Some(parse_i64(v)?),
+        Parameter::Expires => params.expires = Some(parse_i64(v)?),
+        Parameter::Nonce => {
             let nonce = unquote(v)?;
             // A nonce is carried VERBATIM into the node-local replay key and retained for
             // up to `expires + skew`, and that tier bounds entry COUNT, not entry SIZE.
@@ -123,10 +126,9 @@ fn assign(params: &mut SignatureParams, key: &str, v: &str) -> Result<(), HttpPr
             crate::sigbase::validate_nonce_length(&nonce)?;
             params.nonce = Some(nonce);
         }
-        "keyid" => params.keyid = Some(unquote(v)?),
-        "alg" => params.alg = Some(unquote(v)?),
-        "tag" => params.tag = Some(unquote(v)?),
-        _ => unreachable!("parameter_rank is exhaustive over the closed set"),
+        Parameter::Keyid => params.keyid = Some(unquote(v)?),
+        Parameter::Alg => params.alg = Some(unquote(v)?),
+        Parameter::Tag => params.tag = Some(unquote(v)?),
     }
     Ok(())
 }
@@ -137,7 +139,7 @@ pub(super) fn parse_signature_parameters(
 ) -> Result<SignatureParams, HttpProfileError> {
     check_tail_spelling(param_tail)?;
     let mut params = SignatureParams::default();
-    let mut last_param_rank: i32 = -1;
+    let mut last: Option<Parameter> = None;
     for p in split_parameters(param_tail) {
         if p.is_empty() {
             continue;
@@ -145,14 +147,14 @@ pub(super) fn parse_signature_parameters(
         let (k, v) = p
             .split_once('=')
             .ok_or(HttpProfileError::MalformedEvidence("signature parameter"))?;
-        let rank = parameter_rank(k)?;
-        if rank <= last_param_rank {
+        let param = parameter(k)?;
+        if last.is_some_and(|prev| param <= prev) {
             return Err(HttpProfileError::MalformedEvidence(
                 "signature parameter order",
             ));
         }
-        last_param_rank = rank;
-        assign(&mut params, k, v)?;
+        last = Some(param);
+        assign(&mut params, param, v)?;
     }
     Ok(params)
 }
@@ -203,5 +205,60 @@ mod tests {
         assert!(parse_i64("-0").is_err(), "-0 is not an sf-integer");
         assert!(parse_i64("-00").is_err());
         assert_eq!(parse_i64("-17").expect("negatives parse"), -17);
+    }
+
+    #[test]
+    fn reordered_and_duplicated_parameters_are_refused() {
+        let order = HttpProfileError::MalformedEvidence("signature parameter order");
+        assert_eq!(
+            parse_signature_parameters(";expires=2;created=1").expect_err("reordered"),
+            order
+        );
+        assert_eq!(
+            parse_signature_parameters(";created=1;created=2").expect_err("duplicated"),
+            order
+        );
+        let ok = parse_signature_parameters(";created=1;expires=2").expect("ordered");
+        assert_eq!(ok.created, Some(1));
+        assert_eq!(ok.expires, Some(2));
+    }
+
+    #[test]
+    fn an_unknown_signature_parameter_is_refused() {
+        assert_eq!(
+            parse_signature_parameters(";created=1;foo=1").expect_err("unknown"),
+            HttpProfileError::MalformedEvidence("unknown signature parameter")
+        );
+    }
+
+    #[test]
+    fn plus_signed_and_leading_zero_integers_are_refused() {
+        let bad = HttpProfileError::MalformedEvidence("integer signature parameter");
+        for s in ["+1700000000", "0017", "-01"] {
+            assert_eq!(parse_i64(s).expect_err(s), bad);
+        }
+        assert_eq!(
+            parse_signature_parameters(";created=0017").expect_err("leading zero"),
+            bad
+        );
+        assert_eq!(parse_i64("1700000000").expect("plain"), 1_700_000_000);
+    }
+
+    #[test]
+    fn escaped_quoted_parameter_values_are_refused() {
+        assert_eq!(
+            parse_signature_parameters(r#";keyid="a\"b""#).expect_err("escaped"),
+            HttpProfileError::MalformedEvidence("quoted signature parameter")
+        );
+        let ok = parse_signature_parameters(r#";keyid="a b""#).expect("plain");
+        assert_eq!(ok.keyid, Some("a b".to_owned()));
+    }
+
+    #[test]
+    fn a_tab_outside_quotes_is_refused() {
+        assert_eq!(
+            parse_signature_parameters(";created=1;\tkeyid=\"k\"").expect_err("tab"),
+            HttpProfileError::MalformedEvidence("signature parameter spacing")
+        );
     }
 }
