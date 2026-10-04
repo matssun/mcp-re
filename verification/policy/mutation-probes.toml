@@ -10578,14 +10578,14 @@ conjunct = "bound evidence is bound to the exact request it answers"
 # answer to a different request the same deployment refused, and a client cannot tell.
 #
 # This unit owns the choice: `bound` is the only input that decides it, and `receipt/artifact.rs`
-# is where it is read. `Some(_ev)` keeps the arm compiling under the weakening; the binding
-# is what is deleted, not the argument.
+# is where it is read. The weakening keeps the arm and its pattern; only the builder it
+# routes to changes.
 path = "mcp-re-proxy/src/http_profile_serve/receipt/artifact.rs"
 anchor = """
-                    Some(ev) => build_delegated_rejection(request, ev, &reason, status, &w),
+                    Some(_) => build_delegated_rejection(request, &reason, status, &w),
 """
 weakening = """
-                    Some(_ev) => build_delegated_rejection_preflight(Some(request), &reason, status, &w),
+                    Some(_) => build_delegated_rejection_preflight(Some(request), &reason, status, &w),
 """
 expect_red = [
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::delegated_bound_rejection_verifies",
