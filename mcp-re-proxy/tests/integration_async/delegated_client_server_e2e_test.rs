@@ -465,12 +465,16 @@ fn plain_request() -> serde_json::Value {
 
 /// Test nonces are padded to the 128-bit emission floor the client core enforces —
 /// the floor is a property under test elsewhere, not something to work around here.
-fn params(nonce: &str) -> CallParams {
+fn fixed_now() -> i64 {
+    NOW
+}
+
+fn params(nonce: &str) -> CallParams<'static> {
     CallParams {
         nonce: format!("{nonce}-padded-to-the-128-bit-floor"),
         created: NOW - 100,
         expires: NOW + 200,
-        now_unix: NOW,
+        verification_clock: &fixed_now,
     }
 }
 

@@ -39,16 +39,28 @@ use crate::transport::RemoteTransport;
 
 /// Per-call parameters the mode-specific layer supplies (RFC 9421 freshness + the
 /// verification clock). The binary fills these from its nonce source and clock.
-#[derive(Debug, Clone)]
-pub struct CallParams {
+#[derive(Clone)]
+pub struct CallParams<'a> {
     /// A fresh anti-replay nonce (RFC 9421 `nonce`).
     pub nonce: String,
     /// Signature creation time, Unix seconds (RFC 9421 `created`).
     pub created: i64,
     /// Signature expiry time, Unix seconds (RFC 9421 `expires`).
     pub expires: i64,
-    /// Current time (Unix seconds) for response verification.
-    pub now_unix: i64,
+    /// Clock (Unix seconds) for response verification, read once by `handle` after the
+    /// transport returns so the reply is judged at the instant it arrived.
+    pub verification_clock: &'a dyn Fn() -> i64,
+}
+
+impl std::fmt::Debug for CallParams<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallParams")
+            .field("nonce", &self.nonce)
+            .field("created", &self.created)
+            .field("expires", &self.expires)
+            .field("verification_clock", &"<clock>")
+            .finish()
+    }
 }
 
 /// The proxy's response to the local client: plain MCP, plus the verified kind so
@@ -161,7 +173,7 @@ impl ClientProxy {
         &self,
         route_id: &str,
         plain_request: &Value,
-        params: &CallParams,
+        params: &CallParams<'_>,
     ) -> Result<ProxyResponse, ProxyError> {
         let route = self
             .registry
@@ -181,6 +193,7 @@ impl ClientProxy {
             .transport
             .round_trip(signed.request())
             .map_err(ProxyError::Transport)?;
+        let now_unix = (params.verification_clock)();
 
         // A NOTIFICATION is answered with a signed bodyless 202, not a bodied reply, so it
         // takes its own verification path. Nothing below applies: there is no result to
@@ -188,9 +201,9 @@ impl ClientProxy {
         // a bodyless 202 has no response block to bind one to — so the route's pin is
         // passed to it directly.
         if id.is_none() {
-            return self.verify_notification_ack(route, &signed, &response, params);
+            return self.verify_notification_ack(route, &signed, &response, now_unix);
         }
-        let verified = self.verify_reply(route, &signed, &response, params)?;
+        let verified = self.verify_reply(route, &signed, &response, now_unix)?;
 
         // The request id the PROXY signed, not the one the server echoed. The plain
         // reply is addressed to the local client's outstanding call, and taking the id
@@ -207,7 +220,7 @@ impl ClientProxy {
         &self,
         route: &crate::route::Route,
         plain_request: &Value,
-        params: &CallParams,
+        params: &CallParams<'_>,
         id: Option<&Value>,
     ) -> Result<mcp_re_client_core::SignedRequest, ProxyError> {
         let method = plain_request
@@ -265,7 +278,7 @@ impl ClientProxy {
         route: &crate::route::Route,
         signed: &mcp_re_client_core::SignedRequest,
         response: &HttpResponse,
-        params: &CallParams,
+        now_unix: i64,
     ) -> Result<mcp_re_client_core::VerifiedDelegatedResponse, ProxyError> {
         // Verify the signed response bound to THIS request under the route's required
         // profile (configured profile = required profile). Fail closed on any failure;
@@ -295,7 +308,7 @@ impl ClientProxy {
                 // consulted at this request's `now`.
                 let trust =
                     CompositeResponseTrust::new(resolve_actor.as_ref(), revocation.as_ref());
-                verify_delegated_response(response, &trust, &expectation, policy, params.now_unix)?
+                verify_delegated_response(response, &trust, &expectation, policy, now_unix)?
             }
             // Trust-anchor lifecycle: the set is BOTH the root resolver and the
             // revocation source, evaluated at THIS request's `now` so a retiring root's
@@ -308,7 +321,7 @@ impl ClientProxy {
                     &*anchors.load(),
                     &expectation,
                     policy,
-                    params.now_unix,
+                    now_unix,
                 )?
             }
         };
@@ -331,12 +344,12 @@ impl ClientProxy {
         route: &crate::route::Route,
         signed: &mcp_re_client_core::SignedRequest,
         response: &HttpResponse,
-        params: &CallParams,
+        now_unix: i64,
     ) -> Result<ProxyResponse, ProxyError> {
         // A non-2xx answer is a signed refusal verified exactly as a reply is.
         if !(200..300).contains(&response.status) {
             return read_notification_rejection(
-                self.verify_reply(route, signed, response, params)?,
+                self.verify_reply(route, signed, response, now_unix)?,
             );
         }
         let pin = route.expected_server_keyid.as_deref();
@@ -350,7 +363,7 @@ impl ClientProxy {
                     &trust,
                     policy,
                     pin,
-                    params.now_unix,
+                    now_unix,
                 )?;
             }
             // The trust-anchor set is read at THIS message's `now`, exactly as the
@@ -363,7 +376,7 @@ impl ClientProxy {
                     &*anchors.load(),
                     policy,
                     pin,
-                    params.now_unix,
+                    now_unix,
                 )?;
             }
         }
@@ -936,6 +949,7 @@ mod tests {
     use mcp_re_http_profile::DelegationClaims;
     use mcp_re_http_profile::DelegationHeader;
     use mcp_re_http_profile::PROFILE_TAG;
+    use std::sync::atomic::AtomicI64;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -1032,12 +1046,12 @@ mod tests {
         )]
     }
 
-    fn call_params(now_unix: i64) -> CallParams {
+    fn call_params(verification_clock: &dyn Fn() -> i64) -> CallParams<'_> {
         CallParams {
             nonce: NONCE.into(),
             created: CREATED,
             expires: EXPIRES,
-            now_unix,
+            verification_clock,
         }
     }
 
@@ -1182,7 +1196,7 @@ mod tests {
         for verification in variants() {
             let (proxy, _) = proxy_over(verification(), Some(ROOT_KID), Some(response.clone()));
             let out = proxy
-                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
                 .expect("a verified refusal is an answer");
             assert_eq!(
                 out.kind,
@@ -1208,7 +1222,7 @@ mod tests {
         for verification in variants() {
             let (proxy, _) = proxy_over(verification(), Some(ROOT_KID), Some(response.clone()));
             let out = proxy
-                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
                 .expect("the pinned root's reply verifies");
             assert_eq!(out.kind, ResponseKind::Success);
 
@@ -1218,7 +1232,7 @@ mod tests {
                 Some(response.clone()),
             );
             let err = proxy
-                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
                 .expect_err("a reply from another root must be refused");
             assert_eq!(
                 err,
@@ -1236,7 +1250,7 @@ mod tests {
         for verification in variants() {
             let (proxy, _) = proxy_over(verification(), Some(ROOT_KID), Some(response.clone()));
             let out = proxy
-                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
                 .expect("the pinned root's 202 verifies");
             assert_eq!(out.kind, ResponseKind::AcceptedNotification);
 
@@ -1246,7 +1260,7 @@ mod tests {
                 Some(response.clone()),
             );
             let err = proxy
-                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
                 .expect_err("a 202 from another root must be refused");
             assert_eq!(
                 err,
@@ -1277,12 +1291,69 @@ mod tests {
         };
         let (proxy, _) = proxy_over(verification(), None, Some(response.clone()));
         proxy
-            .handle(ROUTE_ID, &plain, &call_params(NOW))
+            .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
             .expect("trusted before the deadline");
         let (proxy, _) = proxy_over(verification(), None, Some(response));
         let err = proxy
-            .handle(ROUTE_ID, &plain, &call_params(NOW + 20))
+            .handle(ROUTE_ID, &plain, &call_params(&|| NOW + 20))
             .expect_err("untrusted after the deadline");
+        assert_eq!(
+            err,
+            ProxyError::FailedClosed(HttpProfileError::DelegationIssuerUntrusted)
+        );
+    }
+
+    /// A transport whose round trip advances the shared clock, as a slow network would.
+    struct SlowTransport {
+        response: HttpResponse,
+        clock: Arc<AtomicI64>,
+    }
+
+    impl RemoteTransport for SlowTransport {
+        fn round_trip(&self, _request: &HttpRequest) -> Result<HttpResponse, TransportError> {
+            self.clock.store(NOW + 20, Ordering::SeqCst);
+            Ok(self.response.clone())
+        }
+    }
+
+    /// The reply is verified at the instant it arrived, not when the request was built.
+    #[test]
+    fn the_reply_is_judged_at_the_instant_it_arrived() {
+        let plain = reply_request();
+        let clock = Arc::new(AtomicI64::new(NOW));
+        let route = Route {
+            route_id: ROUTE_ID.into(),
+            target_uri: TARGET.into(),
+            audience: audience(),
+            artifact_bindings: bindings(),
+            extra_headers: Vec::new(),
+            expected_server_keyid: None,
+            verification: ClientVerification::DelegatedRequired(
+                policy(),
+                Box::new(|kid: &str, slot: SignerSlot, now: i64| -> ResolverOutcome {
+                    match (kid, slot) {
+                        (ROOT_KID, SignerSlot::Response) if now < NOW + 10 => {
+                            Some(root_actor()).into()
+                        }
+                        _ => None::<ResolvedActor>.into(),
+                    }
+                }),
+                Box::new(StaticRevocationList::new()),
+            ),
+        };
+        let proxy = ClientProxy::new(
+            RouteRegistry::new().register(route),
+            SigningKey::from_seed_bytes(&CLIENT_SEED),
+            CLIENT_KEY_ID,
+            Box::new(SlowTransport {
+                response: delegated_reply(&plain),
+                clock: Arc::clone(&clock),
+            }),
+        );
+        let read_clock = || clock.load(Ordering::SeqCst);
+        let err = proxy
+            .handle(ROUTE_ID, &plain, &call_params(&read_clock))
+            .expect_err("the reply arrived after the root's deadline");
         assert_eq!(
             err,
             ProxyError::FailedClosed(HttpProfileError::DelegationIssuerUntrusted)
@@ -1298,7 +1369,7 @@ mod tests {
             let plain =
                 json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params});
             let err = proxy
-                .handle(ROUTE_ID, &plain, &call_params(NOW))
+                .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
                 .expect_err("non-object params are refused");
             assert_eq!(err, ProxyError::MalformedRequest);
             assert_eq!(calls.load(Ordering::SeqCst), 0, "nothing may be sent");
@@ -1306,7 +1377,7 @@ mod tests {
         let (proxy, calls) = proxy_over(required_verification(), None, None);
         let plain = json!({"jsonrpc": "2.0", "id": 1, "method": "ping"});
         let err = proxy
-            .handle(ROUTE_ID, &plain, &call_params(NOW))
+            .handle(ROUTE_ID, &plain, &call_params(&|| NOW))
             .expect_err("the canned transport holds no response");
         assert!(matches!(err, ProxyError::Transport(_)));
         assert_eq!(calls.load(Ordering::SeqCst), 1, "absent params are sent");

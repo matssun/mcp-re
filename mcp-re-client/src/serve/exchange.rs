@@ -137,7 +137,7 @@ fn dispatch(
         nonce: (context.nonce)(),
         created: now,
         expires,
-        now_unix: now,
+        verification_clock: &*context.clock,
     };
 
     match context.proxy.handle(&route_id, &plain, &params) {

@@ -452,12 +452,16 @@ fn client_proxy(transport: MtlsRemoteTransport) -> ClientProxy {
 }
 
 /// Test nonces are padded to the 128-bit emission floor the client core enforces.
-fn call_params(nonce: &str) -> CallParams {
+fn fixed_now() -> i64 {
+    NOW
+}
+
+fn call_params(nonce: &str) -> CallParams<'static> {
     CallParams {
         nonce: format!("{nonce}-padded-to-the-128-bit-floor"),
         created: NOW,
         expires: NOW + 60,
-        now_unix: NOW,
+        verification_clock: &fixed_now,
     }
 }
 

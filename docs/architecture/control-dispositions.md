@@ -4389,9 +4389,9 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-230 — every trust control a client route configures is applied on both the bodied and the 202 path
 
-**Controls:** `mcp-re-client-proxy/src/proxy.rs` (3).
+**Controls:** `mcp-re-client-proxy/src/proxy.rs` (4).
 **Carrier:** `mcp-re-client-proxy/src/proxy.rs` (`verify_reply`, `verify_notification_ack`).
-**Statement.** *The route's issuer pin and its resolver's time-bounded decision reach verification through `ClientProxy::handle` on both variants and both paths: a reply or a notification 202 from a root other than the pinned one is refused as a binding mismatch, and a `DelegatedRequired` resolver is called with the request's own `now`.*
+**Statement.** *The route's issuer pin and its resolver's time-bounded decision reach verification through `ClientProxy::handle` on both variants and both paths: a reply or a notification 202 from a root other than the pinned one is refused as a binding mismatch, and a `DelegatedRequired` resolver is called with the instant the reply arrived, read after the round trip returns.*
 **If false.** A pin or a deadline an operator configured governs one path and not the other, so a sibling holding a delegated key under another listed root answers for the route, or a root trusted only until a deadline is trusted past it.
 **Likely owner:** none; `client.response_signer_authorization` takes the pin as given.
 **Severity:** `high`.
@@ -4780,4 +4780,13 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **If false.** The auditor signs its statement under a key other than the one the operator named, or a refused seed file prints key material into an operator transcript.
 **Likely owner:** none. NP-039 states the invocation parse, and NP-040 states what the profile enrolls; neither states the loading of the issuing key.
 **Root relationship.** Beside NP-039.
+**Severity:** `high`.
+
+## NP-267 — the formatter returns text only inside the era the parser admits, and refuses every instant outside it
+
+**Controls:** `mcp-re-core/src/time/mod.rs`.
+**Statement.** *`unix_to_rfc3339_utc` returns `None` for every instant before 0000-01-01T00:00:00Z or after 9999-12-31T23:59:59Z, and returns text for both ends of that era, so every string it returns is in the grammar `parse_rfc3339_utc` reads.*
+**If false.** The formatter emits a year field the grammar does not admit (a negative or five-digit year) with no signal, and a peer stamps or compares a time it cannot parse back.
+**Likely owner:** none. NP-109 states the in-era round trip, THM-0002 states the parser's containment, and `core.time_civil_from_days` states totality; none states the refusal.
+**Root relationship.** Beside NP-109.
 **Severity:** `high`.
