@@ -14237,3 +14237,11 @@ control = "src/lib.rs#aws_sigv4::tests::aws_credentials_debug_names_the_key_id_a
 decision = "new-proposition"
 proposition = "NP-241"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20226"
+project = "mcp-re-proxy"
+control = "src/lib.rs#tls::routing_header_tests::the_ingress_assertion_header_is_read_only_when_exactly_one_is_present"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-10-04"

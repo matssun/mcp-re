@@ -647,6 +647,33 @@ mod routing_header_tests {
         let malformed = RequestHeaders::from_pairs([("Mcp-Name", "echo\r\nX-Spoof: evil")]);
         assert!(super::routing_header_rejection(&malformed, req).is_some());
     }
+
+    #[test]
+    fn the_ingress_assertion_header_is_read_only_when_exactly_one_is_present() {
+        use crate::communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
+        use crate::transport::RequestHeaders;
+
+        let asserting = super::ServerOptions {
+            peer_identity_provenance: PeerIdentityProvenance::IngressAssertion,
+            ..super::ServerOptions::default()
+        };
+        let name = super::MCP_INGRESS_ASSERTION_HEADER;
+        let one = RequestHeaders::from_pairs([(name, "token-a")]);
+        assert_eq!(super::assertion_header(&asserting, &one), Some("token-a"));
+
+        let two =
+            RequestHeaders::from_pairs([(name, "token-a"), (&name.to_uppercase(), "token-b")]);
+        assert_eq!(super::assertion_header(&asserting, &two), None);
+
+        let none = RequestHeaders::from_pairs([("x-other", "v")]);
+        assert_eq!(super::assertion_header(&asserting, &none), None);
+
+        let channel = super::ServerOptions {
+            peer_identity_provenance: PeerIdentityProvenance::ChannelCredential,
+            ..super::ServerOptions::default()
+        };
+        assert_eq!(super::assertion_header(&channel, &one), None);
+    }
 }
 
 /// MCPS-079 fault-injection module ("test of the tests"), the symmetric mirror of
