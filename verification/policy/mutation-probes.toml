@@ -11635,3 +11635,55 @@ expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_padded_coordinate_leaves_no_identity_and_names_itself",
   "//mcp-re-proxy:proxy_unit_test#config_state::coordinate::tests::a_value_unequal_to_its_trim_is_padded",
 ]
+
+[[probe]]
+id = "M463-the-root-may-clamp-the-window-never-extend-it"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "an adopted credential's window lies inside the one requested and is open at the instant it was requested"
+path = "mcp-re-http-profile/src/custody/active_key.rs"
+anchor = """
+        if claims.exp > requested_claims.exp || claims.exp <= requested_claims.nbf {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_root_that_extends_the_window_past_the_one_requested_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_credential_already_expired_at_the_requested_instant_is_refused",
+]
+
+[[probe]]
+id = "M464-a-displaced-expired-key-is-retired-in-the-audit"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "the lifecycle audit bounds when every delegated key was authoritative, including one displaced after its own expiry"
+path = "mcp-re-http-profile/src/custody/mod.rs"
+anchor = """
+        if let Some(expired) = self.active.take().filter(|_| !is_rotation) {
+            let event = self.retired(&expired, now);
+            self.audit.push(event);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::an_expired_predecessor_displaced_by_a_recovered_root_is_retired_first",
+]
+
+[[probe]]
+id = "M465-proxy-a-silent-reloader-is-a-stale-store"
+unit = "proxy.trust_resolution_window"
+conjunct = "a snapshot that has stopped being maintained refuses with Unavailable rather than serving, including one whose reloader has stopped producing reads"
+# Both staleness flags are written by the reloader, so a wedged one leaves them saying
+# fresh. The liveness bound is what turns its silence into a refusal; with it gone, the
+# frozen store answers indefinitely.
+path = "mcp-re-proxy/src/trust_plane/freshness.rs"
+anchor = """
+        bound != 0 && since > bound
+"""
+weakening = """
+        let _ = (bound, since);
+        false
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::freshness::tests::a_store_with_no_successful_read_within_its_bound_is_stale_until_one_succeeds",
+]

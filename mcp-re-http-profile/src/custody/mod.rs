@@ -300,8 +300,14 @@ where
 
     /// Publish what the root issued, and audit the window it issued — which is what the
     /// fleet verifies against and what this node will serve under, not the one requested.
+    /// A predecessor this displaces after its own `exp` is retired in the audit first, so
+    /// the trail bounds when that key was authoritative.
     fn adopt(&mut self, active: ActiveDelegatedKey, is_rotation: bool, now: i64) {
         self.next_attempt_at = None;
+        if let Some(expired) = self.active.take().filter(|_| !is_rotation) {
+            let event = self.retired(&expired, now);
+            self.audit.push(event);
+        }
         self.audit.push(KeyLifecycleEvent {
             event_type: if is_rotation {
                 event_type::DELEGATED_KEY_ROTATED
@@ -801,6 +807,41 @@ mod tests {
             "the retire names the credential it retires"
         );
     }
+    /// A predecessor that expired while the root was declining, displaced when it recovers,
+    /// is retired in the audit before the successor is issued.
+    #[test]
+    fn an_expired_predecessor_displaced_by_a_recovered_root_is_retired_first() {
+        let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+        let mut calls = 0u32;
+        let issuer = move |h: &DelegationHeader, cl: &DelegationClaims| {
+            calls += 1;
+            (calls != 2).then(|| issue_delegation_credential(&root, h, cl))
+        };
+        let mut c = DelegatedSigningCustody::new(cfg(), issuer, factory());
+        c.ensure_active(1_000).expect("first issue ok");
+        let first_jti = c.audit()[0].jti.clone();
+        assert!(
+            c.ensure_active(1_250).is_ok(),
+            "declined, predecessor still valid"
+        );
+        c.ensure_active(1_400).expect("the root recovered");
+        let kinds: Vec<_> = c.audit().iter().map(|e| e.event_type).collect();
+        assert_eq!(
+            kinds,
+            [
+                "mcp-re.delegated_key.issued",
+                "mcp-re.delegated_key.retired",
+                "mcp-re.delegated_key.issued",
+            ]
+        );
+        assert_eq!(
+            c.audit()[1].jti,
+            first_jti,
+            "the retire names the displaced key"
+        );
+        assert_eq!(c.audit()[1].at, 1_400);
+    }
+
     /// The signature `expires` is clamped to the credential's own `exp`.
     ///
     /// `exp` is the fail-closed bound — a signer MUST stop signing off this snapshot

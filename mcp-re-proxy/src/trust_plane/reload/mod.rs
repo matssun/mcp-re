@@ -69,6 +69,13 @@ pub(super) fn spawn_trust_reload_task(
     interval_secs: u64,
     freshness: Arc<TrustStoreFreshness>,
 ) -> Result<(), String> {
+    // The budget in time, plus one cadence for the read in flight: a reloader that stops
+    // producing reads fails closed as one that keeps failing them does.
+    freshness.require_success_within(Duration::from_secs(
+        interval_secs
+            .max(1)
+            .saturating_mul(u64::from(TRUST_RELOAD_FAILURE_BUDGET).saturating_add(1)),
+    ));
     let halt = workers.halt();
     let loop_freshness = Arc::clone(&freshness);
     workers.spawn(

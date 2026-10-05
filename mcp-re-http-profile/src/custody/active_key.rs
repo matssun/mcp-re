@@ -103,7 +103,7 @@ impl ActiveDelegatedKey {
 
         // The static delegation context: issuer, audience, profile, scope, epoch, key use,
         // `jti`, `cnf`. Exempt are the window (`nbf`/`exp`), which the root owns within the
-        // activation bound below, and `iat`,
+        // bounds below, and `iat`,
         // the root's own issuance stamp: no verifier stores or consumes it, so it is taken as
         // the root states it.
         let mut as_requested = requested_claims.clone();
@@ -126,6 +126,14 @@ impl ActiveDelegatedKey {
         // verifier still refuses it. A root whose clock runs ahead therefore FAILS the
         // issuance, and the predecessor keeps serving through the overlap.
         if claims.nbf > requested_claims.nbf {
+            return Err(HttpProfileError::DelegationCredentialInvalid);
+        }
+
+        // The root may clamp the window, never extend it: an `exp` past the one requested
+        // would serve this key beyond the TTL the deployment chose. And the window must be
+        // open at the instant it was requested, or the issuance adopts a key that is
+        // already expired.
+        if claims.exp > requested_claims.exp || claims.exp <= requested_claims.nbf {
             return Err(HttpProfileError::DelegationCredentialInvalid);
         }
 
@@ -416,6 +424,45 @@ mod tests {
                 "nbf={NBF} exp={exp} was accepted as a window"
             );
         }
+    }
+
+    /// A root may clamp `exp`, never extend it: one second past the requested `exp` is not a
+    /// key to serve on, because it outlives the TTL the deployment chose.
+    #[test]
+    fn a_root_that_extends_the_window_past_the_one_requested_is_refused() {
+        let key = delegated();
+        let (header, request, _) = requested(&key);
+        let mut extended = request.clone();
+        extended.exp = EXP + 1;
+        assert!(offer(&request, &header, &extended).is_err());
+        assert!(
+            offer(&request, &header, &request).is_ok(),
+            "the requested exp itself"
+        );
+    }
+
+    /// A backdated window that has already closed at the requested instant is refused, even
+    /// though `nbf < exp` holds and `nbf` is not ahead of the request.
+    #[test]
+    fn a_credential_already_expired_at_the_requested_instant_is_refused() {
+        let key = delegated();
+        let (header, request, _) = requested(&key);
+        for exp in [NBF, NBF - 1] {
+            let mut expired = request.clone();
+            expired.nbf = NBF - 10;
+            expired.exp = exp;
+            assert!(
+                offer(&request, &header, &expired).is_err(),
+                "exp={exp} at requested nbf={NBF} was adopted"
+            );
+        }
+        let mut live = request.clone();
+        live.nbf = NBF - 10;
+        live.exp = NBF + 1;
+        assert!(
+            offer(&request, &header, &live).is_ok(),
+            "open at the requested instant"
+        );
     }
 
     /// A root that stamps a `nbf` later than the instant requested yields no serving key; one

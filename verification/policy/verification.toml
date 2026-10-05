@@ -8151,7 +8151,7 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.delegated_signing_custody"
 class = "V0"
-description = "The delegated-signing credential lifecycle: the root is never touched within a key's life, a successor is minted in the overlap window and under an advanced trust epoch, a signature window never outlives the credential it was issued under, and an issuance that fails after expiry fails closed rather than continuing on the predecessor."
+description = "The delegated-signing credential lifecycle: the root is never touched within a key's life, a successor is minted in the overlap window and under an advanced trust epoch, a signature window never outlives the credential it was issued under, an adopted credential's window lies inside the one requested and is open when requested, a predecessor displaced after its own expiry is retired in the lifecycle audit, and an issuance that fails after expiry fails closed rather than continuing on the predecessor."
 paths = [
   "mcp-re-http-profile/src/custody/mod.rs",
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
@@ -8180,6 +8180,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::reissue_under_advanced_trust_epoch_mints_a_fresh_key",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::continuous_availability_across_rotations",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::fail_closed_when_issuance_fails_after_expiry",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::an_expired_predecessor_displaced_by_a_recovered_root_is_retired_first",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_signature_expiry_never_outlives_the_credential",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_failing_root_is_retried_on_a_bounded_interval_not_once_per_request",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_declined_reissue_leaves_the_predecessor_untouched",
@@ -8197,6 +8198,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_header_the_root_did_not_echo_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_credential_that_is_not_yet_valid_at_the_requested_instant_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_window_that_is_not_a_window_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_root_that_extends_the_window_past_the_one_requested_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_credential_already_expired_at_the_requested_instant_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::an_unreadable_credential_publishes_nothing",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_credential_attesting_another_key_fails_the_issuance_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_audit_records_the_issued_window_not_the_requested_one",
@@ -8988,6 +8991,8 @@ tested_symbols = [
   # reopen the resolver", and "always under the live tier".
   "//mcp-re-proxy:proxy_unit_test#trust_plane::freshness::tests::a_recoverable_staleness_is_undone_by_a_successful_reload",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::freshness::tests::a_terminal_staleness_survives_a_straggler_reporting_fresh",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::freshness::tests::a_store_with_no_successful_read_within_its_bound_is_stale_until_one_succeeds",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::freshness::tests::a_store_with_no_bound_is_not_made_stale_by_time",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::live_trust::tests::no_positive_caching_consults_inner_every_call",
 ]
 # Every selector names the default-feature `//mcp-re-proxy:proxy_unit_test`: nothing in this
