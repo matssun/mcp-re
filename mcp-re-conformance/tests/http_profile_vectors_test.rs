@@ -410,34 +410,9 @@ fn build_fixtures() -> Vec<Fixture> {
         .verify_request_floor(&req, NOW)
         .expect("fixture verifies");
     assert_eq!(&evidence, verified.evidence(), "writer sanity");
-    // Reconstruct the exact base the verifier accepted, for the oracle.
-    let base = {
-        use mcp_re_http_profile::sigbase::signature_base;
-        use mcp_re_http_profile::sigbase::SourceMessage;
-        use mcp_re_http_profile::CoveredComponent;
-        use mcp_re_http_profile::SignatureParams;
-        let components: Vec<CoveredComponent> = [
-            "@method",
-            "@target-uri",
-            "content-digest",
-            "content-type",
-            "mcp-method",
-            "mcp-name",
-            "mcp-protocol-version",
-        ]
-        .iter()
-        .map(|n| CoveredComponent::new(n))
-        .collect();
-        let params = SignatureParams {
-            created: Some(CREATED),
-            expires: Some(EXPIRES),
-            nonce: Some("vec-nonce-1".into()),
-            keyid: Some(CLIENT_KEY_ID.into()),
-            alg: Some("ed25519".into()),
-            tag: Some("mcp-re-http-v1".into()),
-        };
-        signature_base(&components, &params, &SourceMessage::Request(&req)).expect("base builds")
-    };
+    // The oracle's base is the one the verifier accepted, taken from the verified product
+    // rather than rebuilt over a component list that can drift from what the signer covers.
+    let base = verified.request_signature_base().to_vec();
     let content_digest = req
         .headers
         .iter()
@@ -2152,6 +2127,12 @@ fn frozen_http_profile_corpus_verifies() {
                                 verified.evidence().digest_value(),
                                 oracle.request_evidence_digest_value,
                                 "{name}: evidence handle drifted from frozen oracle"
+                            );
+                            assert_eq!(
+                                mcp_re_core::b64url_encode(verified.request_signature_base()),
+                                oracle.signature_base_b64url,
+                                "{name}: the reconstructed signature base drifted from the \
+                                 frozen oracle"
                             );
                             let digest_header = request
                                 .headers
