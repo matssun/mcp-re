@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:a2165d15a71940b148e04fd559bb7b0925981ebe4d00616aa2a86ac34f36f753",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0134",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner ratification of 2026-10-04, OWNER-RULINGS.md Ruling 13 (bounded ratification of the sign-offs), recorded in docs/security/owner-approvals-2026-10-04.jsonl as owner-signature:hp-1-wire-surface-closure-ratification, sha256 8cbd4d69b6632a23a0c63704604081bcaaf0293514cdf53b06f221a70f5b67af: land the prepared HP-1 packet, verification/reviews/packets/adr069-np-089-np-090-ratification-2026-09-19.md. The statement, security consequence and scope are the packet's section 5 text verbatim; depends_on is empty as the packet proposes.",
+  "reviewed_fingerprint": "sha256:d1ffb1ccb7fcc459111f51d9798c8759fceb314ea16485fe64052742334df66b",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0134"
+}

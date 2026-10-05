@@ -2363,7 +2363,7 @@ Packet at `verification/reviews/packets/adr069-np-088-ratification-2026-09-19.md
 
 ## NP-089 — the signature base is exactly the covered components
 
-**Controls:** `mcp-re-http-profile/src/sigbase.rs` (12).
+**Controls:** `mcp-re-http-profile/src/sigbase.rs` (1).
 **Statement.** *A missing covered field and a duplicated one each fail closed; CRLF in a
 field value and in a derived component each fail closed; a `req` component on a request or on a response-only source fails
 closed; CRLF at the edge of a field value fails closed; userinfo in the target URI has no authority; derived components resolve; the method case is carried VERBATIM into the base; and a
@@ -2391,9 +2391,17 @@ verification establishes. All eight rows stay; the record is whole-R6, not R2(1)
 Packet at `verification/reviews/packets/adr069-np-089-np-090-ratification-2026-09-19.md`,
 which takes NP-089 and NP-090 jointly.
 
+**Registered, owner ruling 13 (`owner-signature:hp-1-wire-surface-closure-ratification`, sha256 `8cbd4d69…`).** Eleven of the twelve controls are `unit://http_profile.signature_base_composition`
+under **THM-0134**, falsified by `M453-http-profile-duplicate-and-crlf-guards-are-dropped`.
+`req_component_on_a_response_only_source_fails_closed` REMAINS: THM-0134 states a `;req`
+component on a REQUEST signature, and a `;req` component on a response-only source is the
+refusal THM-0022's clause names, not this theorem's.
+
 ## NP-090 — the structured-field surface is closed and canonical
 
-**Controls:** `mcp-re-http-profile/tests/structured_fields_strictness_test.rs` (16), `mcp-re-http-profile/src/verify/floor/covered_components.rs` (3).
+**Controls:** none remain in this registry — the sixteen in
+`mcp-re-http-profile/tests/structured_fields_strictness_test.rs` and the three in
+`mcp-re-http-profile/src/verify/floor/covered_components.rs` are claimed by `http_profile.wire_surface_closure`.
 **Statement.** *The component set and the parameter set are CLOSED — a foreign component, a
 foreign parameter and a foreign tag are each rejected; a duplicated component or parameter
 fails closed; component and parameter reordering change the base and fail, while canonical
@@ -2409,6 +2417,10 @@ the parser-differential attack this file is entirely about. "Never signed" rathe
 enter the base in the first place.
 **Likely owner:** none. This file is in no unit's `paths` at all, unlike the three above it.
 **Severity:** `critical`.
+**Ratified whole as THM-0134, owner ruling 13 (`owner-signature:hp-1-wire-surface-closure-ratification`, sha256 `8cbd4d69…`).** All nineteen controls are
+`unit://http_profile.wire_surface_closure`, falsified by
+`M451-http-profile-a-foreign-covered-component-is-admitted` and
+`M452-http-profile-a-non-canonical-integer-is-normalised`; no row remains.
 
 ---
 
@@ -2435,6 +2447,7 @@ this record's sixteen structured-field rows jointly with NP-089's eight.
 measures the generic component allowlist rather than a transport header, so it is argued in
 `verification/reviews/packets/adr069-np-089-np-090-ratification-2026-09-19.md` §2.2. This
 record's other thirty-one rows are unpacketed.
+**Registered, owner ruling 13 (`owner-signature:hp-1-wire-surface-closure-ratification`, sha256 `8cbd4d69…`):** that one row is `unit://http_profile.wire_surface_closure` under THM-0134.
 
 ## NP-092 — a result is classified once, and never read as terminal by default
 
@@ -2514,6 +2527,14 @@ Packet at `verification/reviews/packets/adr069-np-094-ratification-2026-09-19.md
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
 **Registered in part, ADR-MCPRE-069 S1.** Six controls are now in `unit://http_profile.request_floor_result`, whose description states *"the RFC 9421 signature verified over the reconstructed base under a policy-accepted algorithm ... and the presented keyid resolved through the trust seam for the Request slot"* — the three algorithm-confusion controls are what makes *policy-accepted* non-vacuous (the unit already carries `an_ed25519_signature_declaring_ml_dsa_is_rejected`), and `unsigned_request_fails_closed`, `verified_request_exposes_resolved_actor_identity` and `same_keyid_different_slots_do_not_collapse_actor_id` are the signature and the slot-resolution clauses. `verified_response_exposes_resolved_server_actor` is in `unit://http_profile.bound_response_seam_result` (*"the actor the seam returned IS the accepted signer"*). Ten rows REMAIN: the five floor parser-strictness controls (*refused, not normalised* — NP-090's family, stated by no theorem), `foreign_tag_fails_closed` and `signer_and_verifier_derive_the_same_evidence_handle` (NP-087 / NP-100 handle family), `content_encoding_fails_closed` and `duplicate_authorization_fails_closed` (body representation and header strictness, and the second measures `sign_request`, not the verifier's return at all), and `a_request_with_no_signature_input_has_no_handle`, which measures `request_evidence_of` rather than `Verifier::verify_request_floor` — the function the unit's description names. Packet at `verification/reviews/packets/adr069-np-098-ratification-2026-09-19.md`.
+**Registered in part, owner ruling 13 (`owner-signature:hp-1-wire-surface-closure-ratification`, sha256 `8cbd4d69…`).** The floor parser-strictness controls are
+`unit://http_profile.wire_surface_closure` under THM-0134: the five above and the six
+`sf_dictionary` / `signature_parameters` controls added since. Five rows REMAIN:
+`foreign_tag_fails_closed`, `signer_and_verifier_derive_the_same_evidence_handle`,
+`content_encoding_fails_closed` and `a_request_with_no_signature_input_has_no_handle`, for the
+reasons above, and `duplicate_authorization_fails_closed`, whose refusal is
+`DuplicateHeader` raised in `src/message.rs` — a file in neither THM-0134 unit's `paths`,
+so registering it would attribute a control to code the unit does not cover.
 
 ## NP-099 — each verifier product states what it established, without an Option
 

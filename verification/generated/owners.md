@@ -102,6 +102,7 @@ not an omission to hide.
 | http_profile.scitt_retained_correspondence | V0 | THM-0042 | 0 |
 | http_profile.scitt_service_pin | V0 | THM-0068, THM-0072 | 0 |
 | http_profile.scitt_statement_attribution | V0 | _none_ | 0 |
+| http_profile.signature_base_composition | V0 | _none_ | 0 |
 | http_profile.submitted_hop_identity | V0 | _none_ | 0 |
 | http_profile.unauthenticated_context_claim | V0 | _none_ | 2 |
 | http_profile.unbound_response_seam_result | V0 | THM-0017 | 2 |
@@ -109,6 +110,7 @@ not an omission to hide.
 | http_profile.verified_context_block_schema | V0 | _none_ | 0 |
 | http_profile.verified_context_conclusion | V0 | _none_ | 2 |
 | http_profile.verifier_result_separation | V0 | THM-0047 | 0 |
+| http_profile.wire_surface_closure | V0 | THM-0134 | 0 |
 | mcp-re-operator-display.locator_projection | V0 | _none_ | 0 |
 | policy.authorization_taxonomy | V0 | _none_ | 0 |
 | proxy.admission_configuration_state | V0 | _none_ | 0 |

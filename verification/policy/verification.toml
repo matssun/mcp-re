@@ -12721,3 +12721,81 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::body_boundary::tests::prepare_fails_closed_under_trusted_when_the_block_cannot_be_written",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::body_boundary::tests::the_seeding_report_names_positions_escapes_the_actor_and_is_bounded",
 ]
+
+[[unit]]
+id = "http_profile.signature_base_composition"
+class = "V0"
+description = "The signature base this profile composes is exactly the covered components in exactly their declared order, with derived components resolved from the message and the method carried verbatim: a duplicated covered field, a value carrying CR or LF, a `;req` component on a request and a nonce or string parameter RFC 8941 cannot carry each fail closed rather than being joined, split, dropped or truncated, on the signing side as on the verifying side."
+paths = ["mcp-re-http-profile/src/sigbase.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/signature_base/composition",
+  "mutation://http_profile/signature_base/duplicate_and_crlf",
+]
+tested_symbols = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::a_nonce_the_profile_cannot_carry_is_never_emitted",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::crlf_in_a_derived_component_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::crlf_in_a_field_value_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::derived_components_resolve",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::duplicated_covered_field_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::method_case_is_carried_verbatim_into_the_base",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::missing_covered_field_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::req_component_on_request_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::a_string_parameter_the_profile_cannot_carry_is_never_emitted",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::crlf_at_the_edge_of_a_field_value_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::userinfo_in_the_target_uri_has_no_authority",
+]
+
+[[unit]]
+id = "http_profile.wire_surface_closure"
+class = "V0"
+description = "The `Signature-Input` surface this profile parses is CLOSED and ORDERED: a covered component or signature parameter outside the set, a duplicated or reordered one, and a non-canonical RFC 8941 form (an alternate integer spelling, a member spacing, an empty or valueless dictionary member, an escaped quoted value) each fail closed as malformed evidence rather than being normalised; quoting and escaping do not merge adjacent members; and canonical order and ordinary string parameters still sign and verify."
+paths = [
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/wire_surface/closure",
+  "mutation://http_profile/wire_surface/closed_component_set",
+  "mutation://http_profile/wire_surface/parameter_canonical_form",
+]
+tested_symbols = [
+  "//mcp-re-http-profile:structured_fields_strictness_test#a_decoy_signature_member_does_not_merge_into_this_profiles_member",
+  "//mcp-re-http-profile:structured_fields_strictness_test#a_duplicated_covered_component_fails_closed",
+  "//mcp-re-http-profile:structured_fields_strictness_test#a_semicolon_inside_a_quoted_value_does_not_split_parameters",
+  "//mcp-re-http-profile:structured_fields_strictness_test#a_string_parameter_carrying_an_escape_fails_closed_on_verify",
+  "//mcp-re-http-profile:structured_fields_strictness_test#a_string_parameter_that_rfc_8941_cannot_carry_is_never_signed",
+  "//mcp-re-http-profile:structured_fields_strictness_test#an_escaped_quote_in_a_neighbouring_member_does_not_merge_it",
+  "//mcp-re-http-profile:structured_fields_strictness_test#canonical_order_still_verifies",
+  "//mcp-re-http-profile:structured_fields_strictness_test#closed_component_set_rejects_a_foreign_component",
+  "//mcp-re-http-profile:structured_fields_strictness_test#closed_parameter_set_rejects_a_foreign_parameter",
+  "//mcp-re-http-profile:structured_fields_strictness_test#component_reordering_changes_the_base_and_fails",
+  "//mcp-re-http-profile:structured_fields_strictness_test#duplicated_parameter_fails_closed",
+  "//mcp-re-http-profile:structured_fields_strictness_test#foreign_tag_fails_closed",
+  "//mcp-re-http-profile:structured_fields_strictness_test#non_canonical_integer_parameter_forms_fail_closed",
+  "//mcp-re-http-profile:structured_fields_strictness_test#ordinary_string_parameters_still_sign_and_verify",
+  "//mcp-re-http-profile:structured_fields_strictness_test#parameter_reordering_fails_closed",
+  "//mcp-re-http-profile:structured_fields_strictness_test#req_component_on_a_request_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::covered_components::tests::every_allowlisted_identifier_parses_and_a_foreign_one_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::covered_components::tests::an_exact_name_and_req_repeat_is_refused_but_req_distinguishes",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::covered_components::tests::an_unquoted_identifier_is_refused",
+  "//mcp-re-http-profile:mcp_transport_headers_test#the_component_allowlist_is_still_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::sf_dictionary::tests::an_empty_dictionary_member_is_refused_not_ignored",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::sf_dictionary::tests::dictionary_member_spacing_is_refused_not_normalised",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_input::tests::a_space_inside_a_quoted_parameter_value_is_kept",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_input::tests::alternate_signature_input_spellings_are_refused_not_normalised",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_parameters::tests::negative_zero_is_not_an_sf_integer",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::sf_dictionary::tests::a_label_member_without_a_value_is_refused_not_skipped",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_parameters::tests::reordered_and_duplicated_parameters_are_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_parameters::tests::an_unknown_signature_parameter_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_parameters::tests::plus_signed_and_leading_zero_integers_are_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_parameters::tests::escaped_quoted_parameter_values_are_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_parameters::tests::a_tab_outside_quotes_is_refused",
+]

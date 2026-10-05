@@ -11456,3 +11456,85 @@ The clock is read when registration begins. A registration that polls for an hou
 its start, so a receipt that arrives after the key's `revoked_at` — the D3 acceptance-time case,
 owner Ruling 15 — is accepted under a key the operator had already revoked.
 """
+
+[[probe]]
+id = "M451-http-profile-a-foreign-covered-component-is-admitted"
+unit = "http_profile.wire_surface_closure"
+theorem = "THM-0134"
+conjunct = "a covered component outside the set fails closed as malformed evidence"
+path = "mcp-re-http-profile/src/verify/floor/covered_components.rs"
+anchor = """
+            _ => {
+                return Err(HttpProfileError::MalformedEvidence(
+                    "unknown covered component",
+                ))
+            }
+"""
+weakening = """
+            other => Box::leak(other.to_owned().into_boxed_str()),
+"""
+expect_red = [
+  "//mcp-re-http-profile:structured_fields_strictness_test#closed_component_set_rejects_a_foreign_component",
+  "//mcp-re-http-profile:mcp_transport_headers_test#the_component_allowlist_is_still_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::covered_components::tests::every_allowlisted_identifier_parses_and_a_foreign_one_is_refused",
+]
+
+[[probe]]
+id = "M452-http-profile-a-non-canonical-integer-is-normalised"
+unit = "http_profile.wire_surface_closure"
+theorem = "THM-0134"
+conjunct = "a non-canonical RFC 8941 form fails closed as malformed evidence rather than being normalised"
+path = "mcp-re-http-profile/src/verify/floor/signature_parameters.rs"
+anchor = """
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(malformed());
+    }
+    // No leading zeros: "0" is fine, "00" / "0017" / "-01" are not.
+    if digits.len() > 1 && digits.starts_with('0') {
+        return Err(malformed());
+    }
+"""
+weakening = """
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    let digits = digits.strip_prefix('+').unwrap_or(digits);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(malformed());
+    }
+"""
+expect_red = [
+  "//mcp-re-http-profile:structured_fields_strictness_test#non_canonical_integer_parameter_forms_fail_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_parameters::tests::plus_signed_and_leading_zero_integers_are_refused",
+]
+
+[[probe]]
+id = "M453-http-profile-duplicate-and-crlf-guards-are-dropped"
+unit = "http_profile.signature_base_composition"
+theorem = "THM-0134"
+conjunct = "a duplicated covered field and a value carrying CRLF fail closed rather than being joined into, or splitting, the signature base"
+path = "mcp-re-http-profile/src/sigbase.rs"
+anchor = '''
+    if value.bytes().any(|b| b == b'\r' || b == b'\n') {
+        return Err(HttpProfileError::MalformedEvidence(
+            "covered component value contains CR or LF",
+        ));
+    }
+    Ok(value)
+'''
+weakening = """
+    Ok(value)
+"""
+also = [
+  { path = "mcp-re-http-profile/src/sigbase.rs", anchor = """
+            if found.is_some() {
+                // RFC 9421 would join duplicates; this profile fails closed on
+                // duplicated covered fields (v0.11 grill B.1 exactly-once rule).
+                return Err(HttpProfileError::MissingCoveredComponent(component.name));
+            }
+""", weakening = "" },
+]
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::duplicated_covered_field_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::crlf_in_a_field_value_fails_closed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::crlf_in_a_derived_component_fails_closed",
+]

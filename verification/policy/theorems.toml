@@ -7545,3 +7545,50 @@ owner = "proxy.delegated_epoch_label"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.delegated_epoch_label"]
 depends_on = []
+
+[[theorem]]
+id = "THM-0134"
+title = "The RFC 9421 wire surface is closed, and refuses rather than normalises"
+statement = """
+This profile parses and composes the RFC 9421 surface under a CLOSED, ORDERED component set and
+a CLOSED, ORDERED parameter set. A covered component outside the set, a signature parameter
+outside the set, a duplicated component or parameter, a reordering of either, a non-canonical
+RFC 8941 form, a value carrying CRLF, a string parameter RFC 8941 cannot carry, and a `;req`
+component on a request signature each fail closed as malformed evidence. Quoting and escaping do
+not merge adjacent members: a semicolon inside a quoted value does not split parameters and an
+escaped quote in a neighbouring member does not absorb it. The signature base is exactly the
+covered components in exactly their declared order, with derived components resolved from the
+message and the method carried verbatim; a nonce the profile cannot carry is never emitted
+rather than being truncated. The closure is not vacuous: canonical order, ordinary string
+parameters, and the resolvable derived components still sign and verify.
+"""
+security_consequence = """
+The excluded outcome is a parser differential: two readers of one `Signature-Input` disagreeing
+about what was covered. Every tolerated form is a way to make the verifier's view of the base
+differ from the signer's, or from an intermediary's — a merged member, a silently dropped
+duplicate, a normalised integer, a CRLF splitting a field value into a header the base never
+claimed. A permissive parser does not fail; it succeeds over a different message. The
+emission-side arm excludes the mirror failure: a value the profile cannot carry exactly is
+refused at the point of signing rather than being altered into something the signature then
+covers.
+"""
+direct_consequence_severity = "critical"
+scope = """
+THE SURFACE AND THE BASE, NOT WHAT THEY PROVE. It establishes nothing about whether a signature
+verifies, which keys are trusted, or what a successful verification returns — those are
+THM-0014, THM-0021 and THM-0022. It is not a claim that RFC 8941 is implemented completely: what
+is claimed is that the forms this profile accepts are a closed subset and everything else is
+refused, which is strictly stronger than conformance for this purpose and strictly weaker as an
+interop claim (that is HP-8's question). It says nothing about the body, whose
+representability boundary is HP-3's, and nothing about the evidence block's contents, which is
+THM-0015's. It does not establish that the closed sets are the RIGHT sets — which components a
+deployment ought to cover is a policy question, and a closed set can be closed around the wrong
+members.
+"""
+owner = "http_profile.wire_surface_closure"
+review_requirement = "Owner security-specification review"
+supported_by = [
+  "unit://http_profile.signature_base_composition",
+  "unit://http_profile.wire_surface_closure",
+]
+depends_on = []

@@ -460,3 +460,10 @@ graph BT
 graph BT
     THM_0133["THM-0133<br/>The delegated-signing plane mints only under the trust-epoch label its own read names, and never under a regressed one"]
 ```
+
+## Component 24
+
+```mermaid
+graph BT
+    THM_0134["THM-0134<br/>The RFC 9421 wire surface is closed, and refuses rather than normalises"]
+```

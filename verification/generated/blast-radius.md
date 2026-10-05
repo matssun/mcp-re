@@ -106,6 +106,7 @@ attestations this view cannot see.
 | unit://http_profile.scitt_retained_correspondence | source, contracts or evidence | THM-0042 | _no consumer_ |
 | unit://http_profile.scitt_service_pin | source, contracts or evidence | THM-0068, THM-0072 | _no consumer_ |
 | unit://http_profile.scitt_statement_attribution | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.signature_base_composition | source, contracts or evidence | THM-0134 | _no consumer_ |
 | unit://http_profile.submitted_hop_identity | source, contracts or evidence | THM-0042 | http_profile.scitt_retained_correspondence (PROOF_DEPENDENCY) |
 | unit://http_profile.unauthenticated_context_claim | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.unbound_response_seam_result | source, contracts or evidence | THM-0017 | _no consumer_ |
@@ -113,6 +114,7 @@ attestations this view cannot see.
 | unit://http_profile.verified_context_block_schema | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.verified_context_conclusion | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.verifier_result_separation | source, contracts or evidence | THM-0047, THM-0051 | _no consumer_ |
+| unit://http_profile.wire_surface_closure | source, contracts or evidence | THM-0134 | _no consumer_ |
 | unit://mcp-re-operator-display.locator_projection | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://policy.authorization_taxonomy | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://proxy.admission_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
@@ -434,6 +436,7 @@ attestations this view cannot see.
 | THM-0131 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0132 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0133 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0134 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 
