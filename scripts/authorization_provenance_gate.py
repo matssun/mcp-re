@@ -222,8 +222,11 @@ def production_text(text: str) -> str:
 
 
 def signature_re(name: str) -> re.Pattern:
-    """`fn <name>( .. ) -> ..` up to the opening brace."""
-    return re.compile(r"fn\s+" + name + r"\s*\((?P<params>.*?)\)\s*->[^{]*\{", re.S)
+    """`fn <name>( .. ) -> ..` up to the opening brace, with or without a generic or
+    lifetime parameter list after the name."""
+    return re.compile(
+        r"fn\s+" + name + r"\s*(?:<[^{(]*?>)?\s*\((?P<params>.*?)\)\s*->[^{]*\{", re.S
+    )
 
 
 def body_of(text: str, name: str) -> str | None:
@@ -575,7 +578,7 @@ def selftest() -> int:
             "the Mode-1 linkage form made selectable as evidence",
             lambda s: {**s, f"{AUTHORITY_DIR}/pdp/evidence.rs":
                        s[f"{AUTHORITY_DIR}/pdp/evidence.rs"].replace(
-                           "&& b.binding_type == BindingType::OpaqueDigest", "")},
+                           "&& b.binding_type() == BindingType::OpaqueDigest", "")},
             1,
         ),
         (
@@ -647,7 +650,7 @@ def selftest() -> int:
         # of the two the next reader has to restore.
         ("the serving stage removed", check_serving,
          read(REPO, SERVING).replace(
-             ".authorization_stage(ex, &decided_over)", ".no_decision()"), 2),
+             ".authorization_stage(ex, &envelope, &decided_over)", ".no_decision()"), 2),
         # The region assembly is a link of its own: an assembly that stopped entering the
         # pre-admission region would dispatch without ever reaching the decision.
         ("the pre-admission region no longer ordered", check_serving,
@@ -687,9 +690,17 @@ def selftest() -> int:
             for problem in found:
                 print(f"        {problem}")
 
+    # A function with a lifetime or generic parameter list is still found: the region
+    # assembly is `admit_request<'a>`, and a matcher that wanted `(` straight after the name
+    # reported it missing.
+    generic = "pub(super) async fn admit_request<'a>(ex: &mut X<'a>) -> R<'a> { go() }"
+    found = body_of(generic, "admit_request") == "{ go() }"
+    failures += 0 if found else 1
+    print(f"  {'ok ' if found else 'FAIL'} a function with a lifetime parameter list is found")
+
     print(
         f"\nauthorization-provenance selftest: "
-        f"{'PASS' if failures == 0 else 'FAIL'} — {len(cases) + len(text_cases) + 2} case(s)"
+        f"{'PASS' if failures == 0 else 'FAIL'} — {len(cases) + len(text_cases) + 3} case(s)"
     )
     return 1 if failures else 0
 
