@@ -12773,3 +12773,36 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_parameters::tests::escaped_quoted_parameter_values_are_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#verify::floor::signature_parameters::tests::a_tab_outside_quotes_is_refused",
 ]
+
+[[unit]]
+id = "http_profile.body_representability"
+class = "V0"
+description = "THE BODY IS SIGNED AS WRITTEN, OR REFUSED — the decision half: which JSON the profile can carry through its own re-serialization unchanged. A number the carrier's round trip would alter is REFUSED, NOT REWRITTEN — an integer outside i64/u64 and a decimal the f64 carrier cannot hold — while a representable one, including a wide but exactly carried decimal, is carried with its value; one number written many ways is one value and numbers that differ are not equal, compared digit for digit across a wide significand, with an unstateable exponent and a non-number both reading as none; a duplicate member name is refused on its decoded spelling and lookalikes are not; and the scan never reads past the body. It says nothing about the composer that consults it, whose call is measured in body/mod.rs and stays in the ADR-069 census under NP-088."
+paths = [
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/body/representability",
+  "mutation://http_profile/body/representability",
+]
+tested_symbols = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::decimal_token::tests::a_wide_significand_is_compared_digit_for_digit",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::decimal_token::tests::an_unstateable_exponent_is_none",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::decimal_token::tests::numbers_that_differ_are_not_equal",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::decimal_token::tests::one_number_written_many_ways_is_one_value",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::decimal_token::tests::what_is_not_a_number_is_none_and_never_a_value",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::carried_number::tests::an_integer_the_round_trip_would_alter_is_refused_not_rewritten",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::carried_number::tests::representable_numbers_are_carried",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::carried_number::tests::a_decimal_the_round_trip_would_alter_is_refused_not_rewritten",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::carried_number::tests::a_representable_decimal_keeps_its_value_through_the_carrier",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::carried_number::tests::a_wide_but_exactly_carried_decimal_is_carried_not_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::carried_number::tests::the_boundary_still_refuses_what_the_carrier_alters",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::representable::tests::a_duplicate_member_name_is_refused_and_lookalikes_are_not",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::representable::tests::an_escaped_duplicate_member_name_is_refused_like_a_plain_one",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::representable::tests::the_representability_scan_never_reads_past_the_body",
+]

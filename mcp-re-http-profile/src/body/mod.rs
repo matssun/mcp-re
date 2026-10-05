@@ -154,224 +154,27 @@ mod tests {
         assert_eq!(err, HttpProfileError::MalformedEvidence("demo block"));
     }
 
-    /// The composer re-serializes the whole body before it is digested and signed,
-    /// so anything the round trip alters is signed and delivered as authentic. An
-    /// integer wider than `i64`/`u64` came back thirteen significant digits short —
-    /// a 128-bit id, a nanosecond timestamp or a fixed-point amount rewritten by the
-    /// enforcement boundary and verified by the client as correctly bound.
+    /// The composer asks the representability scan before it re-serializes anything, so
+    /// what the scan refuses is never composed: a body the carrier would alter is refused
+    /// with the scan's own verdict, and a representable one composes. The scan's decisions
+    /// are measured by its owners; this measures that the composer consults them.
     #[test]
-    fn an_integer_the_round_trip_would_alter_is_refused_not_rewritten() {
-        let body = br#"{"jsonrpc":"2.0","id":1,"result":{"big":123456789012345678901234567890}}"#;
-        assert_eq!(
-            insert_meta_block(body, "k.demo", &Demo { a: 1 }).unwrap_err(),
-            HttpProfileError::MalformedEvidence(
-                "body carries an integer this profile cannot sign without altering it"
-            ),
-        );
-        // The negative control: had it been composed, the payload would have been
-        // mutated inside the signed bytes.
-        let mutated = serde_json::to_vec(&serde_json::from_slice::<Value>(body).expect("parses"))
-            .expect("re-serializes");
-        let mutated = String::from_utf8(mutated).unwrap();
-        assert!(
-            !mutated.contains("123456789012345678901234567890"),
-            "the round trip really is lossy — the refusal is not decoration; got {mutated}"
-        );
-    }
-
-    /// Every integer that fits is carried unchanged, so nothing legitimate was
-    /// narrowed away — including the extremes and the negative side.
-    #[test]
-    fn representable_numbers_still_compose() {
-        for value in [
-            "0",
-            "-1",
-            "9223372036854775807",
-            "-9223372036854775808",
-            "18446744073709551615",
-            "1.0",
-            "-2.5e-3",
-            "1e2",
-        ] {
-            let body = format!(r#"{{"jsonrpc":"2.0","result":{{"v":{value}}}}}"#);
-            let out = insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 })
-                .unwrap_or_else(|e| panic!("{value} must still compose: {e:?}"));
-            let root: Value = serde_json::from_slice(&out).unwrap();
-            assert_eq!(root["_meta"]["k.demo"]["a"], Value::from(1));
-        }
-    }
-
-    /// A duplicate member name loses every value but the last, inside the signed
-    /// bytes. Digits inside a STRING must not be read as a number token, and a
-    /// repeated name in two SIBLING objects is not a duplicate.
-    #[test]
-    fn a_duplicate_member_name_is_refused_and_lookalikes_are_not() {
-        assert_eq!(
-            insert_meta_block(br#"{"r":{"dup":1,"dup":2}}"#, "k.demo", &Demo { a: 1 }).unwrap_err(),
-            HttpProfileError::MalformedEvidence("body object has a duplicate member name"),
-        );
-        for ok in [
-            r#"{"a":{"same":1},"b":{"same":2}}"#,
-            r#"{"note":"999999999999999999999999 and \"dup\":1,\"dup\":2","x":1}"#,
-            r#"{"list":[{"same":1},{"same":2}]}"#,
-        ] {
-            insert_meta_block(ok.as_bytes(), "k.demo", &Demo { a: 1 })
-                .unwrap_or_else(|e| panic!("{ok} must still compose: {e:?}"));
-        }
-    }
-
-    /// Two escaping-variant spellings of one member name are ONE member to
-    /// `serde_json::Map`, so the earlier value vanishes from the signed bytes exactly as
-    /// the plain duplicate would. The refusal is decided on the decoded name.
-    #[test]
-    fn an_escaped_duplicate_member_name_is_refused_like_a_plain_one() {
+    fn the_composer_refuses_what_the_scan_refuses() {
         for body in [
-            r#"{"result":{"amount":100,"\u0061mount":1}}"#,
-            r#"{"result":{"\u0061mount":1,"amount":100}}"#,
-            r#"{"result":{"a\u0062":1,"ab":2}}"#,
-            r#"{"result":{"\ud83d\ude00":1,"😀":2}}"#,
+            &br#"{"jsonrpc":"2.0","id":1,"result":{"big":123456789012345678901234567890}}"#[..],
+            br#"{"jsonrpc":"2.0","result":{"v":1234567890123456789.5}}"#,
+            br#"{"r":{"dup":1,"dup":2}}"#,
         ] {
+            let scanned = reject_unrepresentable_json(body).expect_err("the scan refuses it");
             assert_eq!(
-                insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 }).unwrap_err(),
-                HttpProfileError::MalformedEvidence("body object has a duplicate member name"),
-                "{body} was composed rather than refused",
+                insert_meta_block(body, "k.demo", &Demo { a: 1 }).unwrap_err(),
+                scanned,
+                "{}",
+                String::from_utf8_lossy(body)
             );
         }
-        // The negative control: composing it really does delete a value.
-        let mutated = serde_json::to_vec(
-            &serde_json::from_slice::<Value>(br#"{"result":{"amount":100,"\u0061mount":1}}"#)
-                .expect("parses"),
-        )
-        .expect("re-serializes");
-        assert!(
-            !String::from_utf8(mutated).unwrap().contains("100"),
-            "the escaped spelling really does collapse last-wins"
-        );
-        // An escaped name that is NOT a duplicate still composes.
-        insert_meta_block(
-            br#"{"result":{"\u0061mount":1,"other":2}}"#,
-            "k.demo",
-            &Demo { a: 1 },
-        )
-        .expect("a lone escaped name is not a duplicate");
-    }
-
-    /// A decimal wider than the `f64` carrier is rewritten by the round trip just as an
-    /// oversized integer is, and is refused on the same ground.
-    #[test]
-    fn a_decimal_the_round_trip_would_alter_is_refused_not_rewritten() {
-        for value in [
-            "1234567890123456789.5",
-            "0.12345678901234567890123",
-            "1.0000000000000000001",
-            "1e-400",
-            "-1234567890123456789.5",
-        ] {
-            let body = format!(r#"{{"jsonrpc":"2.0","result":{{"v":{value}}}}}"#);
-            let err = insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 })
-                .expect_err(&format!("{value} must be refused"));
-            assert_eq!(
-                err,
-                HttpProfileError::MalformedEvidence(
-                    "body carries a number this profile cannot sign without altering it"
-                ),
-                "{value}",
-            );
-        }
-        // An exponent past the carrier's range is refused by the parse itself, one step
-        // earlier — still refused, never composed.
-        assert!(insert_meta_block(
-            br#"{"jsonrpc":"2.0","result":{"v":1e400}}"#,
-            "k.demo",
-            &Demo { a: 1 }
-        )
-        .is_err());
-    }
-
-    /// The mirror: a decimal the carrier holds exactly composes AND arrives with its
-    /// value intact. Asserting composition alone would not have caught the rewrite.
-    #[test]
-    fn a_representable_decimal_keeps_its_value_through_the_composer() {
-        for (value, expect) in [
-            ("1.5", 1.5f64),
-            ("-2.5e-3", -2.5e-3),
-            ("1e2", 100.0),
-            ("0.1", 0.1),
-            ("123456789012345.0", 123456789012345.0),
-            ("0.000", 0.0),
-        ] {
-            let body = format!(r#"{{"jsonrpc":"2.0","result":{{"v":{value}}}}}"#);
-            let out = insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 })
-                .unwrap_or_else(|e| panic!("{value} must still compose: {e:?}"));
-            let root: Value = serde_json::from_slice(&out).unwrap();
-            assert_eq!(
-                root["result"]["v"].as_f64().expect("a number"),
-                expect,
-                "{value} did not survive the composer",
-            );
-        }
-    }
-
-    /// The over-refusal a digit count produced. Every one of these is a shortest
-    /// round-trip form with sixteen or seventeen significant digits — what a formatter
-    /// emits for an ordinary computed `f64` — and every one survives the carrier exactly.
-    /// A count of 15 refused them all; a count of 17 would refuse the next set. The
-    /// property is round-tripping, so it is round-tripping that is tested.
-    #[test]
-    fn a_wide_but_exactly_carried_decimal_is_composed_not_refused() {
-        for value in [
-            // 0.1 + 0.2, and the reason anyone meets this at all.
-            "0.30000000000000004",
-            "-0.30000000000000004",
-            "1.7976931348623157e308",
-            "2.2250738585072014e-308",
-            "5e-324",
-            "0.6000000000000001",
-            "1.2345678901234567",
-            // 2^53 exactly. Its immediate successor is refused below, at the same width.
-            "9007199254740992.0",
-        ] {
-            let body = format!(r#"{{"jsonrpc":"2.0","result":{{"v":{value}}}}}"#);
-            let out = insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 })
-                .unwrap_or_else(|e| panic!("{value} survives the carrier and must compose: {e:?}"));
-            let root: Value = serde_json::from_slice(&out).unwrap();
-            assert_eq!(
-                root["result"]["v"].as_f64().expect("a number"),
-                value.parse::<f64>().expect("a number"),
-                "{value} did not survive the composer",
-            );
-        }
-    }
-
-    /// The refusal is not widened by testing the real property: what the carrier alters
-    /// is still refused, and the two sides are the same length so neither control can be
-    /// satisfied by a predicate that answers one way for everything.
-    #[test]
-    fn the_boundary_still_refuses_what_the_carrier_alters() {
-        for value in [
-            // Seventeen digits again — width is not what decides it.
-            "0.30000000000000005",
-            "1.23456789012345678",
-            // 2^53 + 1, which no `f64` holds: it comes back as 2^53, the value the
-            // control above admits. Sixteen digits in both, and the answers differ.
-            "9007199254740993.0",
-            "1.0000000000000000001",
-            "1e-400",
-            "1234567890123456789.5",
-            "0.12345678901234567890123",
-        ] {
-            let body = format!(r#"{{"jsonrpc":"2.0","result":{{"v":{value}}}}}"#);
-            let err = insert_meta_block(body.as_bytes(), "k.demo", &Demo { a: 1 }).expect_err(
-                &format!("{value} is altered by the carrier and must be refused"),
-            );
-            assert_eq!(
-                err,
-                HttpProfileError::MalformedEvidence(
-                    "body carries a number this profile cannot sign without altering it"
-                ),
-                "{value}",
-            );
-        }
+        insert_meta_block(br#"{"jsonrpc":"2.0","result":{"v":0.1}}"#, "k.demo", &Demo { a: 1 })
+            .expect("a representable body composes");
     }
 
     #[test]
@@ -383,37 +186,4 @@ mod tests {
         );
     }
 
-    /// The representability scan is TOTAL: it never reads past the body it was handed.
-    ///
-    /// Every cursor in that scanner is derived from bytes the caller supplied, and one of
-    /// them — the escape skip — deliberately steps TWO positions, so it can leave the body
-    /// entirely when a string's last byte is a backslash. The walk is bounded by `get`
-    /// rather than by that arithmetic staying in range, and this is what measures it:
-    /// truncations of a body at every byte offset, which is exactly the family that puts a
-    /// cursor one past the end, plus the degenerate and non-JSON inputs.
-    ///
-    /// It asserts a verdict for none of them. Whether a given truncation is refused is the
-    /// job of the tests above; the property here is that answering at all does not panic.
-    #[test]
-    fn the_representability_scan_never_reads_past_the_body() {
-        let seeds: &[&[u8]] = &[
-            br#"{"a":"b\"c","n":1.5e10,"m":[1,2,{"k":"v"}]}"#,
-            br#"{"escape":"trailing\\"}"#,
-            br#"{"a":"\"#,
-            b"\\",
-            b"\"",
-            b"",
-            b"{",
-            b"[[[[",
-            b"}]}]",
-            b"-",
-            b"1e",
-            b"\xff\xfe\x00\x80",
-        ];
-        for seed in seeds {
-            for cut in 0..=seed.len() {
-                let _ = reject_unrepresentable_json(&seed[..cut]);
-            }
-        }
-    }
 }

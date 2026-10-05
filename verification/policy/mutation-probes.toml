@@ -11518,3 +11518,20 @@ expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::crlf_in_a_field_value_fails_closed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sigbase::tests::crlf_in_a_derived_component_fails_closed",
 ]
+
+[[probe]]
+id = "M454-http-profile-a-rewritten-decimal-is-carried"
+unit = "http_profile.body_representability"
+conjunct = "a decimal the f64 carrier would rewrite is refused, never carried into the signed bytes"
+path = "mcp-re-http-profile/src/body/carried_number.rs"
+anchor = """
+    received == emitted
+"""
+weakening = """
+    let _ = (received, emitted);
+    true
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::carried_number::tests::a_decimal_the_round_trip_would_alter_is_refused_not_rewritten",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#body::carried_number::tests::the_boundary_still_refuses_what_the_carrier_alters",
+]

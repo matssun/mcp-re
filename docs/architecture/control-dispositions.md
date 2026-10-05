@@ -2323,8 +2323,7 @@ Packet at `verification/reviews/packets/adr069-np-087-ratification-2026-09-19.md
 
 ## NP-088 — the body is signed as written, or refused
 
-**Controls:** `mcp-re-http-profile/src/body/mod.rs` (9),
-`src/body/decimal_token.rs` (5).
+**Controls:** `mcp-re-http-profile/src/body/mod.rs` (1).
 **Statement.** *A number the carrier's round trip would alter is REFUSED, NOT REWRITTEN —
 decimal or integer — while a representable one, including a wide but exactly carried
 decimal, composes unchanged; one number written many ways is one value and numbers that
@@ -2361,6 +2360,18 @@ fixed, and THM-0125's scope hands the carrier's composition here in terms.
 
 Packet at `verification/reviews/packets/adr069-np-088-ratification-2026-09-19.md`.
 
+
+**Registered, owner ruling 13 (`owner-signature:np-088-body-representability-unit`, sha256
+`9063da61…`).** The decision half is `unit://http_profile.body_representability` over
+`body/representable.rs`, `body/carried_number.rs` and `body/decimal_token.rs`, falsified by
+`M454-http-profile-a-rewritten-decimal-is-carried`. Its fourteen controls are the five
+`decimal_token` tests and the nine representability tests moved out of `body/mod.rs` into the
+owners they measure: the six number tests into `carried_number` against `scan_number`, the
+three structure tests into `representable` against `reject_unrepresentable_json`. ONE control
+REMAINS, and it is new: `the_composer_refuses_what_the_scan_refuses` measures that
+`insert_meta_block` consults the scan. It sits in `body/mod.rs`, which the ratified unit
+deliberately does not reach (the battery-scope rule), and `http_profile.evidence_block_carriage`
+— the unit that owns that file — disclaims which values a body may carry, so it stays here.
 ## NP-089 — the signature base is exactly the covered components
 
 **Controls:** `mcp-re-http-profile/src/sigbase.rs` (1).

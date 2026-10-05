@@ -143,3 +143,95 @@ fn decoded_member_name(raw: &[u8]) -> Result<String, HttpProfileError> {
     quoted.push(b'"');
     serde_json::from_slice::<String>(&quoted).map_err(|_| malformed())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    const DUPLICATE: HttpProfileError =
+        HttpProfileError::MalformedEvidence("body object has a duplicate member name");
+
+    /// A duplicate member name loses every value but the last, inside the signed bytes.
+    /// Digits inside a STRING must not be read as a number token, and a repeated name in
+    /// two SIBLING objects is not a duplicate.
+    #[test]
+    fn a_duplicate_member_name_is_refused_and_lookalikes_are_not() {
+        assert_eq!(reject_unrepresentable_json(br#"{"r":{"dup":1,"dup":2}}"#), Err(DUPLICATE));
+        for ok in [
+            r#"{"a":{"same":1},"b":{"same":2}}"#,
+            r#"{"note":"999999999999999999999999 and \"dup\":1,\"dup\":2","x":1}"#,
+            r#"{"list":[{"same":1},{"same":2}]}"#,
+        ] {
+            assert_eq!(reject_unrepresentable_json(ok.as_bytes()), Ok(()), "{ok}");
+        }
+    }
+
+    /// Two escaping-variant spellings of one member name are ONE member to
+    /// `serde_json::Map`, so the earlier value vanishes from the signed bytes exactly as the
+    /// plain duplicate would. The refusal is decided on the decoded name.
+    #[test]
+    fn an_escaped_duplicate_member_name_is_refused_like_a_plain_one() {
+        for body in [
+            r#"{"result":{"amount":100,"\u0061mount":1}}"#,
+            r#"{"result":{"\u0061mount":1,"amount":100}}"#,
+            r#"{"result":{"a\u0062":1,"ab":2}}"#,
+            r#"{"result":{"\ud83d\ude00":1,"😀":2}}"#,
+        ] {
+            assert_eq!(
+                reject_unrepresentable_json(body.as_bytes()),
+                Err(DUPLICATE),
+                "{body} was carried rather than refused",
+            );
+        }
+        // The negative control: carrying it really does delete a value.
+        let carried = serde_json::to_vec(
+            &serde_json::from_slice::<Value>(br#"{"result":{"amount":100,"\u0061mount":1}}"#)
+                .expect("parses"),
+        )
+        .expect("re-serializes");
+        assert!(
+            !String::from_utf8(carried).expect("utf-8").contains("100"),
+            "the escaped spelling really does collapse last-wins"
+        );
+        // An escaped name that is NOT a duplicate is carried.
+        assert_eq!(
+            reject_unrepresentable_json(br#"{"result":{"\u0061mount":1,"other":2}}"#),
+            Ok(())
+        );
+    }
+
+    /// The representability scan is TOTAL: it never reads past the body it was handed.
+    ///
+    /// Every cursor in that scanner is derived from bytes the caller supplied, and one of
+    /// them — the escape skip — deliberately steps TWO positions, so it can leave the body
+    /// entirely when a string's last byte is a backslash. The walk is bounded by `get`
+    /// rather than by that arithmetic staying in range, and this is what measures it:
+    /// truncations of a body at every byte offset, which is exactly the family that puts a
+    /// cursor one past the end, plus the degenerate and non-JSON inputs.
+    ///
+    /// It asserts a verdict for none of them. Whether a given truncation is refused is the
+    /// job of the tests above; the property here is that answering at all does not panic.
+    #[test]
+    fn the_representability_scan_never_reads_past_the_body() {
+        let seeds: &[&[u8]] = &[
+            br#"{"a":"b\"c","n":1.5e10,"m":[1,2,{"k":"v"}]}"#,
+            br#"{"escape":"trailing\\"}"#,
+            br#"{"a":"\"#,
+            b"\\",
+            b"\"",
+            b"",
+            b"{",
+            b"[[[[",
+            b"}]}]",
+            b"-",
+            b"1e",
+            b"\xff\xfe\x00\x80",
+        ];
+        for seed in seeds {
+            for cut in 0..=seed.len() {
+                let _ = reject_unrepresentable_json(&seed[..cut]);
+            }
+        }
+    }
+}

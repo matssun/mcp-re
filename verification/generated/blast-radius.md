@@ -70,6 +70,7 @@ attestations this view cannot see.
 | unit://http_profile.admission_state_provenance | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://http_profile.artifact_typing | source, contracts or evidence | THM-0007 | _no consumer_ |
 | unit://http_profile.artifact_verification_boundary | source, contracts or evidence | THM-0008, THM-0015 | _no consumer_ |
+| unit://http_profile.body_representability | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.bodyless_acknowledgement | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.bound_response_full_result | source, contracts or evidence | THM-0018 | _no consumer_ |
 | unit://http_profile.bound_response_seam_result | source, contracts or evidence | THM-0016 | _no consumer_ |

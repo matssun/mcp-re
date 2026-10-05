@@ -5997,6 +5997,14 @@ consequence = "critical"
 root_relationship = "a premise of every http_profile unit above it"
 record = "docs/architecture/control-dispositions.md#np-088"
 
+[[disposition]]
+id = "CD-20350"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#body::tests::the_composer_refuses_what_the_scan_refuses"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-10-05"
+
 [[proposition]]
 id = "NP-089"
 title = "The signature base is exactly the covered components"
@@ -6070,118 +6078,6 @@ project = "mcp-re-http-profile"
 control = "src/lib.rs#block::tests::the_escape_marker_itself_does_not_create_a_collision"
 decision = "new-proposition"
 proposition = "NP-087"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14012"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::decimal_token::tests::a_wide_significand_is_compared_digit_for_digit"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14013"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::decimal_token::tests::an_unstateable_exponent_is_none"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14014"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::decimal_token::tests::numbers_that_differ_are_not_equal"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14015"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::decimal_token::tests::one_number_written_many_ways_is_one_value"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14016"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::decimal_token::tests::what_is_not_a_number_is_none_and_never_a_value"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14017"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::tests::a_decimal_the_round_trip_would_alter_is_refused_not_rewritten"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14018"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::tests::a_duplicate_member_name_is_refused_and_lookalikes_are_not"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14019"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::tests::a_representable_decimal_keeps_its_value_through_the_composer"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14020"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::tests::a_wide_but_exactly_carried_decimal_is_composed_not_refused"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14022"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::tests::an_escaped_duplicate_member_name_is_refused_like_a_plain_one"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14023"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::tests::an_integer_the_round_trip_would_alter_is_refused_not_rewritten"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14028"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::tests::representable_numbers_still_compose"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14029"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::tests::the_boundary_still_refuses_what_the_carrier_alters"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14030"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#body::tests::the_representability_scan_never_reads_past_the_body"
-decision = "new-proposition"
-proposition = "NP-088"
 recorded = "2026-09-19"
 
 [[proposition]]

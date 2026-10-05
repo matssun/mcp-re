@@ -66,6 +66,7 @@ not an omission to hide.
 | http_profile.admission_state_provenance | V0 | THM-0129 | 0 |
 | http_profile.artifact_typing | V1 | THM-0007 | 9 |
 | http_profile.artifact_verification_boundary | V0 | THM-0008 | 0 |
+| http_profile.body_representability | V0 | _none_ | 0 |
 | http_profile.bodyless_acknowledgement | V0 | _none_ | 0 |
 | http_profile.bound_response_full_result | V0 | THM-0018 | 1 |
 | http_profile.bound_response_seam_result | V0 | THM-0016 | 2 |
