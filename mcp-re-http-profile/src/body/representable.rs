@@ -157,7 +157,10 @@ mod tests {
     /// two SIBLING objects is not a duplicate.
     #[test]
     fn a_duplicate_member_name_is_refused_and_lookalikes_are_not() {
-        assert_eq!(reject_unrepresentable_json(br#"{"r":{"dup":1,"dup":2}}"#), Err(DUPLICATE));
+        assert_eq!(
+            reject_unrepresentable_json(br#"{"r":{"dup":1,"dup":2}}"#),
+            Err(DUPLICATE)
+        );
         for ok in [
             r#"{"a":{"same":1},"b":{"same":2}}"#,
             r#"{"note":"999999999999999999999999 and \"dup\":1,\"dup\":2","x":1}"#,

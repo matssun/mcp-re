@@ -173,8 +173,12 @@ mod tests {
                 String::from_utf8_lossy(body)
             );
         }
-        insert_meta_block(br#"{"jsonrpc":"2.0","result":{"v":0.1}}"#, "k.demo", &Demo { a: 1 })
-            .expect("a representable body composes");
+        insert_meta_block(
+            br#"{"jsonrpc":"2.0","result":{"v":0.1}}"#,
+            "k.demo",
+            &Demo { a: 1 },
+        )
+        .expect("a representable body composes");
     }
 
     #[test]
@@ -185,5 +189,4 @@ mod tests {
             HttpProfileError::MalformedEvidence("body not a json object")
         );
     }
-
 }

@@ -203,7 +203,11 @@ mod tests {
                     .expect("re-serializes"),
             )
             .expect("re-parses");
-            assert_eq!(carried.as_f64(), Some(expect), "{value} did not survive the carrier");
+            assert_eq!(
+                carried.as_f64(),
+                Some(expect),
+                "{value} did not survive the carrier"
+            );
         }
     }
 
