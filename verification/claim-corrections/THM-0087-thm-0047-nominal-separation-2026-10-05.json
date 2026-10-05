@@ -1,0 +1,33 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "The verification products are distinct nominal types. The API provides no conversion, `Deref`,\nor field projection from a weaker verification product to a stronger one; projections from\nstronger products to weaker products are permitted.\n",
+      "old": "The products the verifier operations return are distinct types whose representations are\nprivate to their own modules, so a product that establishes a weaker proposition cannot be\npassed where a stronger one is required: a floor-verified request is not a full-profile\nverified request, a bound response is not an unbound one, and a delegated response is not a\ntrust-seam one.\n",
+      "reason": "THM-0047, in this theorem's dependency closure, fields statement and scope, replaced by the owner's Ruling 16.1 text. The old statement said the products' representations are private to their own modules; every field of the two request products is pub, so it was false. The new statement claims what the code establishes: distinct nominal types with no API conversion, Deref or field projection from a weaker product to a stronger one, stronger-to-weaker projections permitted. The new scope states that request products can be assembled by hand and that possession provenance is THM-0051's."
+    },
+    {
+      "field": "scope",
+      "id": "C2",
+      "new": "This is a one-way nominal-separation claim, not an unconstructibility claim. The request\nproducts `CryptographicFloorVerifiedRequest` and `VerifiedMcpRequest` retain public fields, so\nvalues can be assembled by hand. Possession provenance is addressed separately by THM-0051.\n",
+      "old": "Type separation only. It does not establish that the value a consumer holds was produced by\nthe operation whose type it has for THAT consumer's exchange \u2014 possession provenance is a\nproposition about the caller and is registered against the serving composition. It\nestablishes nothing about what any of the operations verify.\n",
+      "reason": "THM-0047, in this theorem's dependency closure, fields statement and scope, replaced by the owner's Ruling 16.1 text. The old statement said the products' representations are private to their own modules; every field of the two request products is pub, so it was false. The new statement claims what the code establishes: distinct nominal types with no API conversion, Deref or field projection from a weaker product to a stronger one, stronger-to-weaker projections permitted. The new scope states that request products can be assembled by hand and that possession provenance is THM-0051's."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is unchanged. The dependency digest moved solely because THM-0047's claim digest moved.",
+  "from_fingerprint": "sha256:bea1dffdd2ca3e79e8ab86fc3b9a9401ad3495078a4ee1b45a73e76afed1d6bd",
+  "packet": "docs/security/owner-approvals-2026-10-04.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION from the owner-ratified correction of THM-0047 (Ruling 16.1). THM-0087's own statement, security_consequence and scope are byte-identical to the text at the previous link of its correction chain (or its review); only the dependency digest moved. No consequence in this closure relied on the products being unconstructible: the one that touches construction, THM-0051, rests on a source-text provenance gate, not on THM-0047.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5, applied to a dependency edit the owner ratified in OWNER-RULINGS.md Ruling 16.1 (owner-signature:thm-0047-one-way-nominal-separation, sha256 42aa70d33a34c3018358c4485e8b2c5d2fd5219236cb667625c9363a0b42f057, docs/security/owner-approvals-2026-10-04.jsonl). A correction record is not an approval: it does not make the specification-review axis fresh, and release-mode establishment still asks for the owner.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0087",
+  "to_fingerprint": "sha256:de1fec451906a54cb881309460845a8156e90d806d1e21666d22ae12996eea34"
+}

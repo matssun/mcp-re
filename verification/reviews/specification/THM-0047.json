@@ -2,13 +2,13 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:9b77e3660176bc1bfb2d09da1184c1a684f823b581c1c6c5762c8700133edd96",
+    "theorem_claim": "sha256:4838af03a51c26d17191574ae1dab1646a2f7c5420aa7f4c87f48fec4d0cd39d",
     "theorem_dependencies": {},
     "theorem_id": "THM-0047",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-08-31, given over verification/reviews/packets/owner-specification-review-2026-08-31.md. The ruling declared the consolidated review COMPLETE and approved every packet theorem not named in its bounded correction set at its current fingerprint. This theorem was not named, and its statement, security consequence and scope are unchanged from the packet the owner read.",
-  "reviewed_fingerprint": "sha256:4065de5819862619d0d7280729d8842c1c3026556fbd6ff96991da9354b6aebb",
+  "notes": "Owner ratification of 2026-10-05, OWNER-RULINGS.md Ruling 16.1, recorded in docs/security/owner-approvals-2026-10-04.jsonl as owner-signature:thm-0047-one-way-nominal-separation, sha256 42aa70d33a34c3018358c4485e8b2c5d2fd5219236cb667625c9363a0b42f057. The statement and scope are the owner's text verbatim (line-wrapped only); title, security consequence, severity, owner and support are unchanged. The ratification was conditional on three checks reproducing at 72574a40, and they did: no From/Into/TryFrom (or AsRef/Borrow) impl and no Deref from any weaker verification product to a stronger one anywhere in the tree; no field or public accessor of a weaker product that yields a stronger one (the only floor-to-full assembly, VerifiedMcpResponse::from_block, is pub(crate) and is the full verification path itself). This SUPERSEDES the review of 2026-08-31 at sha256:4065de58…: that wording ('representations private to their own modules') was false at its approval baseline and on the current implementation — every field of CryptographicFloorVerifiedRequest and VerifiedMcpRequest is pub — so the owner's earlier approval could not make it true.",
+  "reviewed_fingerprint": "sha256:8b003c234362d9c9ecb4a621d804d11307e76ae33d1c80505eb3c29dca144107",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0047"
 }

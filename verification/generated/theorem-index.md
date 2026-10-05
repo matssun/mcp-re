@@ -679,11 +679,11 @@ any of them is closed.
 
 ### THM-0047 — The verifier's assurance products are not substitutable
 
-**Statement.** The products the verifier operations return are distinct types whose representations are private to their own modules, so a product that establishes a weaker proposition cannot be passed where a stronger one is required: a floor-verified request is not a full-profile verified request, a bound response is not an unbound one, and a delegated response is not a trust-seam one.
+**Statement.** The verification products are distinct nominal types. The API provides no conversion, `Deref`, or field projection from a weaker verification product to a stronger one; projections from stronger products to weaker products are permitted.
 
 **Security consequence.** A serving path cannot satisfy a consumer that requires a full-profile verification by handing it a value that only cleared the cryptographic floor, and the substitution is a compile error rather than a silently weaker check.
 
-**Scope — what this does NOT establish.** Type separation only. It does not establish that the value a consumer holds was produced by the operation whose type it has for THAT consumer's exchange — possession provenance is a proposition about the caller and is registered against the serving composition. It establishes nothing about what any of the operations verify.
+**Scope — what this does NOT establish.** This is a one-way nominal-separation claim, not an unconstructibility claim. The request products `CryptographicFloorVerifiedRequest` and `VerifiedMcpRequest` retain public fields, so values can be assembled by hand. Possession provenance is addressed separately by THM-0051.
 
 **Review requirement.** Owner security-specification review
 
