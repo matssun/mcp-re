@@ -1026,6 +1026,7 @@ mod tests {
                 server_subject: "did:example:server".into(),
                 window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
             },
+            root_key().public_key(),
             issue,
             factory,
         )

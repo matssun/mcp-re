@@ -186,6 +186,7 @@ attestations this view cannot see.
 | unit://proxy.delegated_epoch_label | source, contracts or evidence | THM-0133 | _no consumer_ |
 | unit://proxy.delegated_resolver_materialization | source, contracts or evidence | THM-0027 | _no consumer_ |
 | unit://proxy.delegated_resolver_materialization_sole_producer | source, contracts or evidence | THM-0027 | _no consumer_ |
+| unit://proxy.delegated_signer_write_authority | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.delegated_signing_configuration_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.delegated_signing_credential | source, contracts or evidence | THM-0062, THM-0063 | _no consumer_ |
 | unit://proxy.delegated_tls_depth_refusal | source, contracts or evidence | _no theorem_ | _no consumer_ |

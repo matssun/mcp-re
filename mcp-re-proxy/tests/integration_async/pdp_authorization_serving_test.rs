@@ -331,7 +331,6 @@ fn counting_inner(calls: Arc<AtomicUsize>) -> Box<dyn AsyncInnerServer> {
 }
 
 fn ready_signer() -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue_cred = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -341,25 +340,24 @@ fn ready_signer() -> Arc<DelegatedServerSigner> {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(
-            CustodyConfig {
-                issuer_kid: ROOT_KID.into(),
-                iss: "did:example:server".into(),
-                profile: PROFILE_TAG.into(),
-                aud: VERIFIER_AUD.into(),
-                audience_hash: "aud-scope-1".into(),
-                trust_epoch: "epoch-1".into(),
-                server_role: "server".into(),
-                server_trust_domain: TRUST_DOMAIN.into(),
-                server_subject: "did:example:server".into(),
-                window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
-            },
-            issue_cred,
-            factory,
-        ),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        CustodyConfig {
+            issuer_kid: ROOT_KID.into(),
+            iss: "did:example:server".into(),
+            profile: PROFILE_TAG.into(),
+            aud: VERIFIER_AUD.into(),
+            audience_hash: "aud-scope-1".into(),
+            trust_epoch: "epoch-1".into(),
+            server_role: "server".into(),
+            server_trust_domain: TRUST_DOMAIN.into(),
+            server_subject: "did:example:server".into(),
+            window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
+        },
+        root_key().public_key(),
+        issue_cred,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     std::mem::forget(rotor);
     signer

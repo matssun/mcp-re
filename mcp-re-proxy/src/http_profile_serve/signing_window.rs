@@ -65,12 +65,11 @@ mod tests {
     /// `open` yields a window only while the signer holds a live credential.
     #[test]
     fn open_yields_a_window_only_while_the_signer_holds_a_live_credential() {
-        let signer = Arc::new(crate::delegated_server_signer::DelegatedServerSigner::new());
-        let reader = signer.reader();
+        let mut rotor = crate::delegated_wiring::test_support::rotor_from(7);
+        let reader = rotor.signer().reader();
         assert!(open(&reader, 0, 60).is_none());
-        signer.publish(crate::delegated_wiring::test_support::issued_expiring_at(
-            100, 7,
-        ));
+        let ttl = crate::delegated_wiring::test_support::FIXTURE_TTL;
+        rotor.rotate(100 - ttl).expect("the software root issues");
         assert_eq!(
             open(&reader, 50, 60)
                 .expect("a live credential opens a window")

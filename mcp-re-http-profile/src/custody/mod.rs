@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use mcp_re_core::audit::event_type;
 use mcp_re_core::SigningKey;
+use mcp_re_core::VerificationKey;
 
 use crate::keyid::jwk_thumbprint_ed25519;
 
@@ -112,17 +113,16 @@ pub struct CustodyConfig {
 
 /// The delegated-signing custody state machine.
 ///
-/// `Issue` is the root-issuance seam (KMS/HSM in production). Its contract: given a
-/// header and claims, a `Some` it returns MUST verify under the deployment's root key as
-/// a compact JWS over exactly that header and those claims; it returns `None` when the
-/// root is unavailable or its signature does not verify. This owner does not check the
-/// root signature: it checks only that the returned credential attests this issuance (see
-/// `ActiveDelegatedKey::issued`). A `Some` that does not verify is the seam implementer's
-/// bug, and every fleet verifier refuses it. The production implementer,
-/// `mcp_re_proxy::build_delegated_signing`, re-verifies the root signature before returning.
+/// `Issue` is the root-issuance seam (KMS/HSM in production): given a header and claims it
+/// returns the root's compact JWS over exactly those, or `None` when the root is unavailable.
+/// It is not believed on its word: an issuance adopts a credential only if `root`, the
+/// deployment root's public key, verifies it under the configured `issuer_kid`, by the
+/// verifier's own check (see `ActiveDelegatedKey::issued`), so every snapshot this machine
+/// holds chains to the root it was built with.
 /// `Factory` yields a fresh in-memory delegated signing key.
 pub struct DelegatedSigningCustody<Issue, Factory> {
     cfg: CustodyConfig,
+    root: VerificationKey,
     issue: Issue,
     factory: Factory,
     active: Option<ActiveDelegatedKey>,
@@ -141,9 +141,10 @@ where
 {
     /// Build a custody state machine. No key is issued until the first
     /// [`sign_response`](Self::sign_response) or [`ensure_active`](Self::ensure_active).
-    pub fn new(cfg: CustodyConfig, issue: Issue, factory: Factory) -> Self {
+    pub fn new(cfg: CustodyConfig, root: VerificationKey, issue: Issue, factory: Factory) -> Self {
         Self {
             cfg,
+            root,
             issue,
             factory,
             active: None,
@@ -287,7 +288,9 @@ where
         // serving until its own `exp` and then the deployment fails closed — because the
         // outcome is the same one: this node has nothing it can publish.
         let issued = (self.issue)(&header, &claims).and_then(|credential| {
-            ActiveDelegatedKey::issued(Arc::new(key), signer, (&header, &claims), credential).ok()
+            let requested = (&header, &claims);
+            ActiveDelegatedKey::issued(Arc::new(key), signer, requested, credential, &self.root)
+                .ok()
         });
         match issued {
             Some(active) => {
@@ -487,6 +490,11 @@ mod tests {
         }
     }
 
+    /// The public key of the root every issuer below signs with.
+    fn root_key() -> mcp_re_core::VerificationKey {
+        SigningKey::from_seed_bytes(&[33u8; 32]).public_key()
+    }
+
     /// A software root issuer over a fixed key (stands in for the KMS/HSM).
     fn ok_issuer() -> impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String> {
         let root = SigningKey::from_seed_bytes(&[33u8; 32]);
@@ -508,7 +516,7 @@ mod tests {
     /// issuer is invoked exactly once (the initial issuance).
     #[test]
     fn signing_never_touches_the_root_within_a_key_life() {
-        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
         assert_eq!(c.root_invocations(), 1);
         // 50 signs well within [1_000, 1_000 + T - O) — no rotation.
@@ -537,6 +545,7 @@ mod tests {
         let stranger = SigningKey::from_seed_bytes(&[200u8; 32]);
         let mut c = DelegatedSigningCustody::new(
             cfg(),
+            root_key(),
             move |h: &DelegationHeader, claims: &DelegationClaims| {
                 // Everything the issuance asked for, over a key it did not generate.
                 let x = stranger.public_key().to_b64url();
@@ -568,6 +577,7 @@ mod tests {
         let root = SigningKey::from_seed_bytes(&[33u8; 32]);
         let mut c = DelegatedSigningCustody::new(
             cfg(),
+            root_key(),
             move |h: &DelegationHeader, claims: &DelegationClaims| {
                 let mut clamped = claims.clone();
                 clamped.exp = claims.exp - 100;
@@ -590,6 +600,7 @@ mod tests {
         let mut first = true;
         let mut c = DelegatedSigningCustody::new(
             cfg(),
+            root_key(),
             move |h: &DelegationHeader, claims: &DelegationClaims| {
                 let mut stamped = claims.clone();
                 if !std::mem::take(&mut first) {
@@ -611,7 +622,7 @@ mod tests {
     /// while the predecessor is still valid — no gap.
     #[test]
     fn rotation_mints_successor_in_the_overlap_window() {
-        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
         let first = c.active_kid().unwrap().to_string();
         // Predecessor exp = 1_300; overlap opens at 1_240.
@@ -643,8 +654,10 @@ mod tests {
         // Two independently-started custody instances — a fleet, or one replica before
         // and after a restart. Same config, same issuer, both from a cold counter, over
         // different keys.
-        let mut replica_a = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory_seeded(10));
-        let mut replica_b = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory_seeded(200));
+        let mut replica_a =
+            DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory_seeded(10));
+        let mut replica_b =
+            DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory_seeded(200));
         replica_a.ensure_active(1_000).expect("A issues");
         replica_b.ensure_active(1_000).expect("B issues");
 
@@ -666,7 +679,7 @@ mod tests {
     /// the retire event is revocable by the same identifier the issue event carried.
     #[test]
     fn a_reissue_retires_the_predecessor_under_its_own_credential_id_and_window() {
-        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
         c.reissue(1_010).expect("reissue").expect("minted");
         let issued = &c.audit()[0];
@@ -690,7 +703,7 @@ mod tests {
     /// node with no signing key at all.
     #[test]
     fn successive_issuances_in_one_process_have_distinct_credential_ids() {
-        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
         c.reissue(1_000)
             .expect("re-issue at the SAME instant")
@@ -740,7 +753,7 @@ mod tests {
     /// reject the new credential as `delegation_trust_epoch_stale`.
     #[test]
     fn reissue_under_advanced_trust_epoch_mints_a_fresh_key() {
-        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
         let base_epoch = c.trust_epoch().to_string();
         let first_kid = c.active_kid().unwrap().to_string();
@@ -771,7 +784,7 @@ mod tests {
     /// usable key while issuance succeeds — no signing gap.
     #[test]
     fn continuous_availability_across_rotations() {
-        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
         for now in (1_000..1_000 + 3 * T).step_by(30) {
             c.ensure_active(now)
                 .unwrap_or_else(|e| panic!("gap at {now}: {e:?}"));
@@ -794,7 +807,7 @@ mod tests {
                 None
             }
         };
-        let mut c = DelegatedSigningCustody::new(cfg(), issuer, factory());
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), issuer, factory());
         c.ensure_active(1_000).expect("first issue ok");
         // Before expiry, a failed successor is tolerated (current key still valid).
         assert!(c.ensure_active(1_250).is_ok());
@@ -825,7 +838,7 @@ mod tests {
             calls += 1;
             (calls != 2).then(|| issue_delegation_credential(&root, h, cl))
         };
-        let mut c = DelegatedSigningCustody::new(cfg(), issuer, factory());
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), issuer, factory());
         c.ensure_active(1_000).expect("first issue ok");
         let first_jti = c.audit()[0].jti.clone();
         assert!(
@@ -860,7 +873,7 @@ mod tests {
     /// crate's own public signer.
     #[test]
     fn the_signature_expiry_never_outlives_the_credential() {
-        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
         let exp = c.active_snapshot().expect("active").exp();
         assert_eq!(exp, 1_000 + T, "issued at 1_000 for one TTL");
@@ -934,7 +947,8 @@ mod tests {
     /// call, so an ungated retry converts a root blip into a per-request root storm.
     #[test]
     fn a_failing_root_is_retried_on_a_bounded_interval_not_once_per_request() {
-        let mut c = DelegatedSigningCustody::new(cfg(), issuer_failing_after(1), factory());
+        let mut c =
+            DelegatedSigningCustody::new(cfg(), root_key(), issuer_failing_after(1), factory());
         c.ensure_active(1_000).expect("first issue ok");
         assert_eq!(c.root_invocations(), 1);
 
@@ -962,7 +976,8 @@ mod tests {
     /// nothing was minted.
     #[test]
     fn a_declined_reissue_leaves_the_predecessor_untouched() {
-        let mut c = DelegatedSigningCustody::new(cfg(), issuer_failing_after(1), factory());
+        let mut c =
+            DelegatedSigningCustody::new(cfg(), root_key(), issuer_failing_after(1), factory());
         c.ensure_active(1_000).expect("first issue ok");
         let before = c.active_kid().expect("a key is active").to_string();
 
@@ -1029,7 +1044,7 @@ mod tests {
         let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
             Some(issue_delegation_credential(&root, h, c))
         };
-        let mut c = DelegatedSigningCustody::new(cfg(), issue, factory());
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), issue, factory());
 
         c.ensure_active(1_000).expect("issue");
         let first = c.active_snapshot().expect("a key is active");
@@ -1093,7 +1108,7 @@ mod tests {
         let mut cfg = cfg();
         cfg.window = DelegatedKeyWindow::of(i64::MAX, 1)
             .expect("the relation holds; the ceiling is not this type's");
-        let mut c = DelegatedSigningCustody::new(cfg, ok_issuer(), factory());
+        let mut c = DelegatedSigningCustody::new(cfg, root_key(), ok_issuer(), factory());
         assert_eq!(
             c.ensure_active(1_000).unwrap_err(),
             CustodyError::FailClosedIssuance

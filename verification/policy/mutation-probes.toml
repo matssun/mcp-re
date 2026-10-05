@@ -2474,7 +2474,7 @@ conjunct = "every claim except the window comes back exactly as the issuance ask
 # the point: the failure would be discovered at the next request instead of at issuance.
 path = "mcp-re-http-profile/src/custody/active_key.rs"
 anchor = """
-        if header != *requested_header || claims != as_requested {
+        if claims != as_requested {
             return Err(HttpProfileError::DelegationCredentialInvalid);
         }
 """
@@ -2482,7 +2482,6 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_claim_the_root_did_not_echo_is_refused_field_by_field",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_header_the_root_did_not_echo_is_refused",
 ]
 
 [[probe]]
@@ -3945,7 +3944,7 @@ conjunct = "every transition out of a valid delegated key fails closed rather th
 # cannot be satisfied by "expired on its own".
 path = "mcp-re-proxy/src/signing_plane/rotation.rs"
 anchor = """
-        signer.retire_permanently();
+        retirement.retire_permanently();
         signer.metrics().record_failure();
 """
 weakening = """
@@ -4295,28 +4294,6 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#transparency::durable_job::tests::an_accounted_job_holds_its_slot_after_its_caller_is_gone",
-]
-
-[[probe]]
-id = "M159-root-issuance-verifies-under-the-advertised-key"
-unit = "proxy.delegated_signing_credential"
-conjunct = "a published delegated credential is one this deployment can demonstrate verifies"
-# The weakening restores the code as it shipped: the root's bytes accepted on length alone.
-# Under it a KMS or PKCS#11 adapter wired to the wrong key publishes a credential of exactly
-# the right shape that every verifier in the fleet rejects — discovered at the next request
-# rather than at the first issuance, and after the fleet has already rotated onto it.
-path = "mcp-re-proxy/src/delegated_wiring.rs"
-anchor = """
-    verify_ed25519(input, &b64, public_key).map_err(|_| {
-        "root issuer CONTRACT VIOLATION: its signature does not verify under the key it advertises"
-            .to_string()
-    })?;
-"""
-weakening = """
-    let _ = public_key;
-"""
-expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#delegated_wiring::tests::a_root_signing_under_a_key_it_does_not_advertise_publishes_no_credential",
 ]
 
 [[probe]]
@@ -11873,3 +11850,38 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#shared_replay::tests::skew_folded_into_retain_until_matches_in_memory_semantics",
 ]
+
+[[probe]]
+id = "M477-an-issuance-adopts-only-what-the-configured-root-signed"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "an adopted credential verifies under the root the custody was built with, under the requested issuer name"
+# The weakening is the custody as it stood before Ruling 19 B4b: the issuer seam's answer
+# taken on its word. The header test goes red with it because the root check is also what
+# pins the header — `typ`, `alg`, and a `kid` that is the requested root's.
+path = "mcp-re-http-profile/src/custody/active_key.rs"
+anchor = """
+        crate::delegation::root_signed(&credential, &requested_header.kid, root)?;
+"""
+weakening = """
+        let _ = root;
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_credential_the_configured_root_did_not_sign_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_header_the_root_did_not_echo_is_refused",
+]
+
+[[probe]]
+id = "M478-proxy-a-credential-past-the-ttl-ceiling-is-never-published"
+unit = "proxy.delegated_signing_credential"
+conjunct = "a delegated credential living longer than the deployment's ceiling is refused before the snapshot changes"
+path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
+anchor = """
+        if active.exp().saturating_sub(active.nbf()) > ceiling {
+"""
+weakening = """
+        if active.exp().saturating_sub(active.nbf()) > ceiling.saturating_mul(2) {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#delegated_server_signer::tests::a_credential_living_past_the_ceiling_is_not_published",
+]
+

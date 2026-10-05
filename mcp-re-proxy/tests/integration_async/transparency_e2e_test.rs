@@ -190,7 +190,8 @@ fn build_server_counting(
     dispatches: Arc<std::sync::atomic::AtomicUsize>,
 ) -> HttpProfileProxy {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {
@@ -227,7 +228,8 @@ fn build_server_counting(
 
 fn build_server(retention: Option<Arc<EvidenceRetention>>) -> HttpProfileProxy {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {
@@ -537,7 +539,8 @@ fn build_server_refusing(
     dispatches: Arc<std::sync::atomic::AtomicUsize>,
 ) -> HttpProfileProxy {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {
@@ -829,7 +832,8 @@ fn build_server_breaking_store_on_dispatch(
     evidence: std::path::PathBuf,
 ) -> HttpProfileProxy {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {

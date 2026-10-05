@@ -42,7 +42,6 @@ use mcp_re_proxy::async_serve::ServedHttpRequest;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::DelegatedRotor;
-use mcp_re_proxy::DelegatedServerSigner;
 use mcp_re_proxy::HttpProfileProxy;
 
 use std::sync::Arc;
@@ -119,7 +118,6 @@ fn custody_cfg() -> CustodyConfig {
 
 /// A delegated-signing proxy with its first key already published.
 fn build_proxy() -> HttpProfileProxy {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -129,10 +127,13 @@ fn build_proxy() -> HttpProfileProxy {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue the first delegated key");
     let inner = Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
         |_forwarded: &[u8]| -> Vec<u8> {

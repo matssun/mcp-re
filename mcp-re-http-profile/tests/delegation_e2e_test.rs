@@ -437,7 +437,8 @@ fn custody_signed_response_verifies_via_attestation_chain() {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut custody = DelegatedSigningCustody::new(custody_cfg(), issue, factory);
+    let mut custody =
+        DelegatedSigningCustody::new(custody_cfg(), root_key().public_key(), issue, factory);
 
     let mut rsp = HttpResponse {
         status: 200,

@@ -277,7 +277,8 @@ fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
 
 fn build_server() -> HttpProfileProxy {
     let config = server_config_args();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("issue the first delegated key");
     HttpProfileProxy::new_delegated(

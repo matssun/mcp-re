@@ -56,9 +56,6 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::DelegatedRotor;
-use mcp_re_proxy::DelegatedServerSigner;
-
-use std::sync::Arc;
 
 use serde_json::json;
 use serde_json::Map;
@@ -182,7 +179,9 @@ fn mint_under(
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut custody = DelegatedSigningCustody::new(custody_cfg(issuer_kid), issue, factory);
+    let root_public = SigningKey::from_seed_bytes(&root_seed).public_key();
+    let mut custody =
+        DelegatedSigningCustody::new(custody_cfg(issuer_kid), root_public, issue, factory);
     let mut resp = HttpResponse {
         status: 200,
         headers: vec![("content-type".into(), "application/json".into())],
@@ -445,9 +444,11 @@ fn root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed() {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let custody = DelegatedSigningCustody::new(custody_cfg(ROOT_A_KID), issue, factory);
-    let mut rotor = DelegatedRotor::new(custody, Arc::clone(&signer));
+    let root_public = SigningKey::from_seed_bytes(&ROOT_A_SEED).public_key();
+    let custody =
+        DelegatedSigningCustody::new(custody_cfg(ROOT_A_KID), root_public, issue, factory);
+    let mut rotor = DelegatedRotor::new(custody);
+    let signer = rotor.signer();
 
     // K1 mints and serves.
     rotor.rotate(NOW).expect("K1 mints via the root");

@@ -14,15 +14,14 @@
 //! - [`DelegatedRotor`] is the **cold-path** half a single owner drives (a
 //!   background thread in production; a test directly). It owns the
 //!   [`DelegatedSigningCustody`] state machine — where the root issuer (KMS/HSM in
-//!   production) is invoked at issuance/rotation only — and republishes the fresh
-//!   snapshot after each rotation. Fail-closed issuance retires the snapshot.
+//!   production) is invoked at issuance/rotation only — and is the ONLY publisher into the
+//!   signer it creates: publication and retirement are private to this module, a shared
+//!   `Arc<DelegatedServerSigner>` reads, and the one other mutation, terminal retirement,
+//!   is a [`SigningRetirement`] the rotor issues. Fail-closed issuance retires the snapshot.
 //!
 //! The root issuer is never on the request path: the fleet reads snapshots, the
 //! rotor mints them. This is the load-bearing property of ADR-MCPRE-051 §5.
 
-use std::sync::atomic::AtomicI64;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -34,72 +33,14 @@ use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::KeyLifecycleEvent;
 
+mod metrics;
 mod reader;
+mod retirement;
 mod retry_schedule;
+pub use metrics::DelegatedRotationMetrics;
 pub use reader::DelegatedSigningReader;
+pub use retirement::SigningRetirement;
 pub use retry_schedule::rotation_backoff;
-
-/// Cold-path rotation observability (ADR-MCPRE-052 §6, MCPRE-122). Plain atomic
-/// counters the single rotor owner writes and any observer (a logging line today, a
-/// metrics exporter later) reads without locking. NONE of these touch the hot signing
-/// path — they describe the rotor's health, not per-request work.
-///
-/// `time-to-expiry` is intentionally NOT stored here: it is a function of the live
-/// snapshot and `now`, so it is computed on demand from
-/// [`DelegatedServerSigner::seconds_to_expiry`] rather than cached and left to go stale.
-#[derive(Debug, Default)]
-pub struct DelegatedRotationMetrics {
-    /// Total successful issue/rotate cycles.
-    rotations_ok: AtomicU64,
-    /// Total failed rotation attempts (root issuer unavailable at attempt time).
-    rotation_failures: AtomicU64,
-    /// Failures since the last success — the exponential-backoff attempt counter. Reset
-    /// to 0 on any success. A non-zero value means the rotor is retrying issuance.
-    consecutive_failures: AtomicU64,
-    /// Unix seconds of the last successful rotation (0 before the first).
-    last_success_unix: AtomicI64,
-}
-
-impl DelegatedRotationMetrics {
-    /// Record a successful rotation at `now`: bump the success counter, reset the
-    /// consecutive-failure streak, and stamp the success time.
-    pub fn record_success(&self, now: i64) {
-        self.rotations_ok.fetch_add(1, Ordering::Relaxed);
-        self.consecutive_failures.store(0, Ordering::Relaxed);
-        self.last_success_unix.store(now, Ordering::Relaxed);
-    }
-
-    /// Record a failed rotation attempt and return the new consecutive-failure count
-    /// (≥ 1) that drives the backoff schedule.
-    pub fn record_failure(&self) -> u32 {
-        self.rotation_failures.fetch_add(1, Ordering::Relaxed);
-        let prev = self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
-        // Saturating, then clamped to the width the backoff schedule reads. A streak
-        // counter's ceiling is the most-backed-off end; wrapping would restore the
-        // shortest retry interval for a rotation that has never succeeded.
-        prev.saturating_add(1).min(u32::MAX as u64) as u32
-    }
-
-    /// Total successful rotations.
-    pub fn rotations_ok(&self) -> u64 {
-        self.rotations_ok.load(Ordering::Relaxed)
-    }
-
-    /// Total failed rotation attempts.
-    pub fn rotation_failures(&self) -> u64 {
-        self.rotation_failures.load(Ordering::Relaxed)
-    }
-
-    /// Failures since the last success (0 in steady state).
-    pub fn consecutive_failures(&self) -> u64 {
-        self.consecutive_failures.load(Ordering::Relaxed)
-    }
-
-    /// Unix seconds of the last successful rotation (0 before the first).
-    pub fn last_success_unix(&self) -> i64 {
-        self.last_success_unix.load(Ordering::Relaxed)
-    }
-}
 
 /// What a [`DelegatedServerSigner`] holds, moved only under its write guard.
 ///
@@ -119,8 +60,8 @@ enum Snapshot {
 /// The shared hot-path signer: an atomically-swappable delegated-key snapshot.
 ///
 /// One instance is shared across every per-core runtime. `sign`-side callers read
-/// [`current`](Self::current); the rotor writes via [`publish`](Self::publish) /
-/// [`retire`](Self::retire). The `RwLock` is read-mostly — a brief write only at
+/// [`current`](Self::current); only the [`DelegatedRotor`] that created it writes, through
+/// methods private to this module. The `RwLock` is read-mostly — a brief write only at
 /// rotation — so per-request reads are uncontended in steady state.
 ///
 /// Every access recovers a poisoned lock rather than propagating the panic. Poison is
@@ -138,8 +79,8 @@ pub struct DelegatedServerSigner {
 }
 
 impl DelegatedServerSigner {
-    /// A signer with no key yet — every [`current`](Self::current) fails closed
-    /// until the rotor publishes the first key.
+    /// A signer with no key yet — every [`current`](Self::current) fails closed until the
+    /// rotor that created it publishes. One built here has no rotor and stays empty.
     pub fn new() -> Self {
         DelegatedServerSigner {
             active: RwLock::new(Snapshot::Empty),
@@ -149,12 +90,8 @@ impl DelegatedServerSigner {
 
     /// Narrow this shared signer to its READ half, for a value on the serving path.
     ///
-    /// The serving path needs [`current`](Self::current) and nothing else, while an
-    /// `Arc<Self>` also confers [`publish`](Self::publish), [`retire`](Self::retire) and
-    /// [`retire_permanently`](Self::retire_permanently). A receipt path holding the wide
-    /// handle can withdraw the very key it signs under; holding a
-    /// [`DelegatedSigningReader`] it cannot, and that is a fact about the type rather than
-    /// about which methods the serving code happens to call.
+    /// The serving path needs [`current`](Self::current) and nothing else; the reader
+    /// carries exactly that, not the metrics or the expiry a rotation owner reads.
     pub fn reader(self: &Arc<Self>) -> DelegatedSigningReader {
         DelegatedSigningReader::over(Arc::clone(self))
     }
@@ -183,23 +120,27 @@ impl DelegatedServerSigner {
 
     /// Publish a freshly-issued/rotated delegated key snapshot for the hot path.
     ///
-    /// Refused once retirement is terminal. The rotor and the owner run on different
-    /// threads and the rotor checks its halt only between cycles, so a mint already in
-    /// flight when the owner retired would otherwise land afterwards and restore signing
-    /// authority the owner had withdrawn.
-    pub fn publish(&self, active: ActiveDelegatedKey) {
-        let mut guard = self
-            .active
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    /// Refused, before anything changes, when the credential lives longer than the
+    /// deployment's [`MAX_DELEGATED_TTL_SECS`](crate::config_state::delegated_signing::MAX_DELEGATED_TTL_SECS):
+    /// the custody that issued it verified the root's signature and the claims it asked
+    /// for, but the ceiling is this deployment's, not the custody's. Ignored once
+    /// retirement is terminal: a mint already in flight when the owner retired must not
+    /// restore signing authority the owner had withdrawn.
+    fn publish(&self, active: ActiveDelegatedKey) -> Result<(), CustodyError> {
+        let ceiling = crate::config_state::delegated_signing::MAX_DELEGATED_TTL_SECS;
+        if active.exp().saturating_sub(active.nbf()) > ceiling {
+            return Err(CustodyError::FailClosedIssuance);
+        }
+        let mut guard = self.active.write().unwrap_or_else(|p| p.into_inner());
         if !matches!(*guard, Snapshot::Terminal) {
             *guard = Snapshot::Active(Arc::new(active));
         }
+        Ok(())
     }
 
     /// Retire the current snapshot — the hot path then fails closed until a new key
     /// is published. Used on fail-closed issuance (ADR-MCPRE-052 §6).
-    pub fn retire(&self) {
+    fn retire(&self) {
         let mut guard = self
             .active
             .write()
@@ -211,11 +152,11 @@ impl DelegatedServerSigner {
 
     /// Retire, permanently: no later [`publish`](Self::publish) can restore signing.
     ///
-    /// For the two cases from which this signer is not meant to recover — the owning
+    /// Reached through the [`SigningRetirement`] the rotor issues, for the two cases from
+    /// which this signer is not meant to recover — the owning
     /// [`SigningPlane`](crate::signing_plane::SigningPlane) being dropped, and the
-    /// rotation thread dying — both of which state exactly that, and neither of which
-    /// could enforce it while the flag they set was one a live rotor could overwrite.
-    pub fn retire_permanently(&self) {
+    /// rotation thread dying.
+    fn retire_permanently(&self) {
         *self
             .active
             .write()
@@ -280,12 +221,28 @@ where
     Issue: FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
     Factory: FnMut() -> SigningKey,
 {
-    /// Bind a custody state machine to the shared hot-path signer.
-    pub fn new(
-        custody: DelegatedSigningCustody<Issue, Factory>,
-        signer: Arc<DelegatedServerSigner>,
-    ) -> Self {
+    /// Bind a custody state machine to a fresh hot-path signer, which only this rotor
+    /// publishes into.
+    pub fn new(custody: DelegatedSigningCustody<Issue, Factory>) -> Self {
+        let signer = Arc::new(DelegatedServerSigner::new());
         DelegatedRotor { custody, signer }
+    }
+
+    /// The signer this rotor publishes into, as the fleet holds it: readable, not writable.
+    pub fn signer(&self) -> Arc<DelegatedServerSigner> {
+        Arc::clone(&self.signer)
+    }
+
+    /// The authority to retire this rotor's signer for good, and nothing else.
+    pub fn retirement(&self) -> SigningRetirement {
+        SigningRetirement::of(Arc::clone(&self.signer))
+    }
+
+    /// Publish `snapshot`, or retire and fail the issuance when the signer refuses it.
+    fn publish(&self, snapshot: ActiveDelegatedKey) -> Result<(), CustodyError> {
+        self.signer
+            .publish(snapshot)
+            .inspect_err(|_| self.signer.retire())
     }
 
     /// Issue or rotate the delegated key as of `now`, then publish the fresh
@@ -299,10 +256,7 @@ where
             // fail-closed path rather than asserted: an absent snapshot means nothing to
             // sign with, which is what `retire` + `FailClosedIssuance` already say.
             Ok(()) => match self.custody.active_snapshot() {
-                Some(snapshot) => {
-                    self.signer.publish(snapshot);
-                    Ok(())
-                }
+                Some(snapshot) => self.publish(snapshot),
                 None => {
                     self.signer.retire();
                     Err(CustodyError::FailClosedIssuance)
@@ -350,10 +304,9 @@ where
     ) -> Result<TrustEpochAdvance, CustodyError> {
         self.custody.set_trust_epoch(epoch);
         match self.custody.reissue(now) {
-            Ok(Some(successor)) => {
-                self.signer.publish(successor);
-                Ok(TrustEpochAdvance::Advanced)
-            }
+            Ok(Some(successor)) => self
+                .publish(successor)
+                .map(|()| TrustEpochAdvance::Advanced),
             // The predecessor keeps serving until its own `exp` (ADR-MCPRE-052 §6) — not
             // retired, because a root blip must not compose an epoch advance into an outage.
             Ok(None) => Ok(TrustEpochAdvance::Declined),
@@ -387,6 +340,11 @@ mod tests {
     const T: i64 = 300;
     const O: i64 = 60;
     const NOW: i64 = 1_700_000_100;
+
+    /// The public key of the root every issuer below signs with.
+    fn root_public() -> mcp_re_core::VerificationKey {
+        SigningKey::from_seed_bytes(&[33u8; 32]).public_key()
+    }
 
     fn cfg() -> CustodyConfig {
         CustodyConfig {
@@ -422,9 +380,10 @@ mod tests {
             n = n.wrapping_add(1);
             SigningKey::from_seed_bytes(&[n; 32])
         });
-        let signer = Arc::new(DelegatedServerSigner::new());
-        let custody = DelegatedSigningCustody::new(cfg(), issue, factory);
-        (DelegatedRotor::new(custody, Arc::clone(&signer)), signer)
+        let custody = DelegatedSigningCustody::new(cfg(), root_public(), issue, factory);
+        let rotor = DelegatedRotor::new(custody);
+        let signer = rotor.signer();
+        (rotor, signer)
     }
 
     #[test]
@@ -506,9 +465,9 @@ mod tests {
             n = n.wrapping_add(1);
             SigningKey::from_seed_bytes(&[n; 32])
         };
-        let signer = Arc::new(DelegatedServerSigner::new());
-        let custody = DelegatedSigningCustody::new(cfg(), issue, factory);
-        let mut rotor = DelegatedRotor::new(custody, Arc::clone(&signer));
+        let custody = DelegatedSigningCustody::new(cfg(), root_public(), issue, factory);
+        let mut rotor = DelegatedRotor::new(custody);
+        let signer = rotor.signer();
 
         rotor.rotate(NOW).expect("K1 issues");
         let k1 = signer
@@ -549,9 +508,9 @@ mod tests {
         // An issuer that always fails, with no prior key: rotate must retire.
         let issue = |_: &DelegationHeader, _: &DelegationClaims| None;
         let factory = || SigningKey::from_seed_bytes(&[7u8; 32]);
-        let signer = Arc::new(DelegatedServerSigner::new());
-        let custody = DelegatedSigningCustody::new(cfg(), issue, factory);
-        let mut rotor = DelegatedRotor::new(custody, Arc::clone(&signer));
+        let custody = DelegatedSigningCustody::new(cfg(), root_public(), issue, factory);
+        let mut rotor = DelegatedRotor::new(custody);
+        let signer = rotor.signer();
         assert_eq!(rotor.rotate(NOW), Err(CustodyError::FailClosedIssuance));
         assert!(signer.current(NOW).is_none());
     }
@@ -579,9 +538,9 @@ mod tests {
             n = n.wrapping_add(1);
             SigningKey::from_seed_bytes(&[n; 32])
         };
-        let signer = Arc::new(DelegatedServerSigner::new());
-        let custody = DelegatedSigningCustody::new(cfg(), issue, factory);
-        let mut rotor = DelegatedRotor::new(custody, Arc::clone(&signer));
+        let custody = DelegatedSigningCustody::new(cfg(), root_public(), issue, factory);
+        let mut rotor = DelegatedRotor::new(custody);
+        let signer = rotor.signer();
 
         // K1 issues and serves.
         rotor.rotate(NOW).expect("K1 issues");
@@ -696,6 +655,37 @@ mod tests {
         assert_in_band(50, Some(-120), 30_000);
         assert_in_band(50, None, 30_000);
     }
+
+    /// A credential living past the deployment's ceiling is refused BEFORE the snapshot
+    /// changes, and the rotor that offered it retires rather than serving on: the custody
+    /// verified the root's signature and its own request, but the ceiling is this
+    /// deployment's. The mirror, a credential at the ceiling, still publishes.
+    #[test]
+    fn a_credential_living_past_the_ceiling_is_not_published() {
+        let ceiling = crate::config_state::delegated_signing::MAX_DELEGATED_TTL_SECS;
+        let now = crate::clock::now_unix();
+        let signer = DelegatedServerSigner::new();
+        let at_ceiling = crate::delegated_wiring::test_support::issued_living(ceiling, now + 60, 3);
+        signer
+            .publish(at_ceiling)
+            .expect("a credential at the ceiling publishes");
+        let held = signer
+            .current(now)
+            .expect("published")
+            .delegated_kid()
+            .to_owned();
+
+        let past = crate::delegated_wiring::test_support::issued_living(ceiling + 1, now + 60, 4);
+        assert_eq!(
+            signer.publish(past),
+            Err(mcp_re_http_profile::CustodyError::FailClosedIssuance)
+        );
+        assert_eq!(
+            signer.current(now).expect("unchanged").delegated_kid(),
+            held,
+            "a refused publication changes nothing"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -720,13 +710,13 @@ mod terminal_retirement_tests {
     #[test]
     fn a_mint_landing_after_the_owner_is_gone_cannot_restore_signing() {
         let signer = DelegatedServerSigner::new();
-        signer.publish(key(NOW + 300));
+        signer.publish(key(NOW + 300)).expect("inside the ceiling");
         assert!(signer.current(NOW).is_some(), "a live signer signs");
 
         // The owner goes away while a rotation is in flight.
         signer.retire_permanently();
         // The straggler finishes minting and publishes.
-        signer.publish(key(NOW + 300));
+        signer.publish(key(NOW + 300)).expect("inside the ceiling");
 
         assert!(
             signer.current(NOW).is_none(),
@@ -741,10 +731,10 @@ mod terminal_retirement_tests {
     #[test]
     fn a_rotor_retire_after_permanent_retirement_cannot_reopen_publish() {
         let signer = DelegatedServerSigner::new();
-        signer.publish(key(NOW + 300));
+        signer.publish(key(NOW + 300)).expect("inside the ceiling");
         signer.retire_permanently();
         signer.retire();
-        signer.publish(key(NOW + 300));
+        signer.publish(key(NOW + 300)).expect("inside the ceiling");
         assert!(signer.current(NOW).is_none());
         assert_eq!(signer.seconds_to_expiry(NOW), None);
     }
@@ -755,7 +745,7 @@ mod terminal_retirement_tests {
         let signer = DelegatedServerSigner::new();
         let k = key(NOW + 300);
         let nbf = k.nbf();
-        signer.publish(k);
+        signer.publish(k).expect("inside the ceiling");
         assert!(signer.current(nbf - 1).is_none());
         assert!(signer.current(nbf).is_some());
     }
@@ -768,13 +758,13 @@ mod terminal_retirement_tests {
     #[test]
     fn a_rotor_retirement_is_still_undone_by_the_next_successful_mint() {
         let signer = DelegatedServerSigner::new();
-        signer.publish(key(NOW + 300));
+        signer.publish(key(NOW + 300)).expect("inside the ceiling");
         signer.retire();
         assert!(
             signer.current(NOW).is_none(),
             "retired means failing closed"
         );
-        signer.publish(key(NOW + 300));
+        signer.publish(key(NOW + 300)).expect("inside the ceiling");
         assert!(
             signer.current(NOW).is_some(),
             "a recovered rotor must sign again; only the owner's retirement is terminal"
@@ -796,7 +786,7 @@ mod terminal_retirement_tests {
     #[test]
     fn a_poisoned_snapshot_lock_is_recovered_and_retirement_still_dominates() {
         let signer = Arc::new(DelegatedServerSigner::new());
-        signer.publish(key(NOW + 300));
+        signer.publish(key(NOW + 300)).expect("inside the ceiling");
 
         // Poison the lock the way production does: a panic while the write guard is held.
         let poisoner = Arc::clone(&signer);
@@ -823,7 +813,7 @@ mod terminal_retirement_tests {
             signer.current(NOW).is_none(),
             "retire must still fail closed"
         );
-        signer.publish(key(NOW + 300));
+        signer.publish(key(NOW + 300)).expect("inside the ceiling");
         assert!(
             signer.current(NOW).is_some(),
             "a poisoned lock must not cost the replica its ability to self-heal"

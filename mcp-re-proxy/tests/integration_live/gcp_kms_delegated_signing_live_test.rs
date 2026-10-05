@@ -289,7 +289,7 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
         SigningKey::from_seed_bytes(&[seed; 32])
     };
 
-    let mut custody = DelegatedSigningCustody::new(custody_cfg(), issue, factory);
+    let mut custody = DelegatedSigningCustody::new(custody_cfg(), root_pub.clone(), issue, factory);
 
     // --- Batch 1: N per-request signs under one delegated key -----------------
     // Keep one predecessor-signed response to re-verify across the rotation.

@@ -15,10 +15,8 @@
 //! all. Delete every comparison in this file and an inconsistent inhabitant is still
 //! unconstructible, because there is no second representation left to disagree.
 //!
-//! **What this file does NOT establish.** That the credential verifies under the root. That
-//! is the `Issue` contract on [`DelegatedSigningCustody`](super::DelegatedSigningCustody), and
-//! this owner adds no second signature check — what it establishes is the different claim
-//! that the bytes `Issue` returned attest *this* issuance: this key, this identity, this
+//! It also establishes, by the verifier's own check, that the configured root signed the
+//! credential, and that its bytes attest *this* issuance: this key, this identity, this
 //! deployment's delegation context, and a window that is a window.
 
 use std::sync::Arc;
@@ -80,9 +78,12 @@ impl ActiveDelegatedKey {
         server_signer: ActorIdentity,
         requested: (&DelegationHeader, &DelegationClaims),
         credential: String,
+        root: &mcp_re_core::VerificationKey,
     ) -> Result<Self, HttpProfileError> {
         let (requested_header, requested_claims) = requested;
-        let (header, claims) = parse_credential(&credential)?;
+        // Before any claim is read: the configured root, under the requested name, signed it.
+        crate::delegation::root_signed(&credential, &requested_header.kid, root)?;
+        let (_, claims) = parse_credential(&credential)?;
 
         // The delegated key identity and its binding to the key actually held. `cnf` is the
         // rule that a wrong key type, a wrong curve, or a `jwk.kid` that is not the
@@ -103,14 +104,14 @@ impl ActiveDelegatedKey {
 
         // The static delegation context: issuer, audience, profile, scope, epoch, key use,
         // `jti`, `cnf`. Exempt are the window (`nbf`/`exp`), which the root owns within the
-        // bounds below, and `iat`,
-        // the root's own issuance stamp: no verifier stores or consumes it, so it is taken as
-        // the root states it.
+        // bounds below, and `iat`, the root's own issuance stamp: no verifier stores or
+        // consumes it. The header needs no comparison: `root_signed` pinned `typ` and `alg`
+        // and resolved its `kid` as the requested root's.
         let mut as_requested = requested_claims.clone();
         as_requested.iat = claims.iat;
         as_requested.nbf = claims.nbf;
         as_requested.exp = claims.exp;
-        if header != *requested_header || claims != as_requested {
+        if claims != as_requested {
             return Err(HttpProfileError::DelegationCredentialInvalid);
         }
 
@@ -279,6 +280,7 @@ mod tests {
             server_signer,
             (header, requested_claims),
             credential,
+            &root().public_key(),
         )
     }
 
@@ -339,6 +341,7 @@ mod tests {
             other_signer,
             (&header, &other_request),
             credential,
+            &root().public_key(),
         )
         .is_err());
     }
@@ -388,6 +391,7 @@ mod tests {
             signer,
             (&header, &request),
             credential,
+            &root().public_key(),
         )
         .is_err());
     }
@@ -406,6 +410,25 @@ mod tests {
             server_signer,
             (&header, &request),
             credential,
+            &root().public_key(),
+        )
+        .is_err());
+    }
+
+    /// A credential the configured root did not sign is not this issuance's answer, however
+    /// exactly it echoes the request: the issuer seam is not believed on its word.
+    #[test]
+    fn a_credential_the_configured_root_did_not_sign_is_refused() {
+        let key = delegated();
+        let (header, request, server_signer) = requested(&key);
+        let impostor = SigningKey::from_seed_bytes(&[34u8; 32]);
+        let credential = issue_delegation_credential(&impostor, &header, &request);
+        assert!(ActiveDelegatedKey::issued(
+            Arc::new(delegated()),
+            server_signer,
+            (&header, &request),
+            credential,
+            &root().public_key(),
         )
         .is_err());
     }
@@ -506,6 +529,7 @@ mod tests {
                 signer.clone(),
                 (&header, &request),
                 jws,
+                &root().public_key(),
             )
         };
         assert!(offer_jws(compact(&plain)).is_ok(), "positive control");
@@ -527,6 +551,7 @@ mod tests {
             signer,
             (&header, &request),
             credential,
+            &root().public_key(),
         )
         .is_err());
     }
@@ -543,6 +568,7 @@ mod tests {
                     server_signer.clone(),
                     (&header, &request),
                     bad.to_owned(),
+                    &root().public_key(),
                 )
                 .is_err(),
                 "{bad:?} was accepted as a credential"

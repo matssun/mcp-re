@@ -268,8 +268,10 @@ _PROXY_LIB_SRCS = [
     "src/delegated_response_signer.rs",
     # ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5: hot-path delegated response signing — the
     # atomically-swappable delegated-key snapshot + cold-path rotor. Always compiled.
+    "src/delegated_server_signer/metrics.rs",
     "src/delegated_server_signer/mod.rs",
     "src/delegated_server_signer/reader.rs",
+    "src/delegated_server_signer/retirement.rs",
     "src/delegated_server_signer/retry_schedule.rs",
     # ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — builds the delegated signer
     # + cold-path rotor from a parsed Config + a ROOT issuer. Always compiled.

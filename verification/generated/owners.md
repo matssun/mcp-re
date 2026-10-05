@@ -182,6 +182,7 @@ not an omission to hide.
 | proxy.delegated_epoch_label | V0 | THM-0133 | 1 |
 | proxy.delegated_resolver_materialization | V0 | THM-0027 | 1 |
 | proxy.delegated_resolver_materialization_sole_producer | V0 | _none_ | 0 |
+| proxy.delegated_signer_write_authority | V0 | _none_ | 0 |
 | proxy.delegated_signing_configuration_state | V0 | _none_ | 0 |
 | proxy.delegated_signing_credential | V0 | THM-0062 | 1 |
 | proxy.delegated_tls_depth_refusal | V0 | _none_ | 0 |

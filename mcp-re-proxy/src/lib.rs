@@ -304,6 +304,7 @@ pub use aws_kms_keysource::AwsKmsEd25519Backend;
 pub use delegated_response_signer::DelegatedResponseSigner;
 pub use delegated_server_signer::DelegatedRotor;
 pub use delegated_server_signer::DelegatedServerSigner;
+pub use delegated_server_signer::SigningRetirement;
 pub use delegated_wiring::build_delegated_signing;
 pub use delegated_wiring::DelegatedSigningWiring;
 pub use delegated_wiring::ProdDelegatedRotor;

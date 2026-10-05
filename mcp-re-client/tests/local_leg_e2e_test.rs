@@ -182,7 +182,8 @@ fn server_resolver() -> ActorResolver {
 
 fn build_server(backend_reply: &'static str) -> HttpProfileProxy {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {

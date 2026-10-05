@@ -60,6 +60,7 @@ use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::DelegatedRotor;
 use mcp_re_proxy::DelegatedServerSigner;
 use mcp_re_proxy::HttpProfileProxy;
+use mcp_re_proxy::SigningRetirement;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const CLIENT_SEED_2: [u8; 32] = [12u8; 32];
@@ -148,9 +149,7 @@ fn custody_cfg() -> CustodyConfig {
     }
 }
 
-fn make_rotor(
-    signer: Arc<DelegatedServerSigner>,
-) -> DelegatedRotor<
+fn make_rotor() -> DelegatedRotor<
     impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
     impl FnMut() -> SigningKey,
 > {
@@ -163,10 +162,12 @@ fn make_rotor(
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        signer,
-    )
+    DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ))
 }
 
 /// The JSON-RPC `id` of the forwarded request, rendered for splicing into a canned reply.
@@ -237,12 +238,18 @@ fn replica(
 }
 
 fn ready_signer() -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    ready_signer_and_retirement().0
+}
+
+/// A ready signer, and the authority its rotor issues to withdraw it for good.
+fn ready_signer_and_retirement() -> (Arc<DelegatedServerSigner>, SigningRetirement) {
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
+    let retirement = rotor.retirement();
     rotor.rotate(NOW).expect("issue first delegated key");
     // Keep the rotor alive for the whole test so the published snapshot stays valid.
     std::mem::forget(rotor);
-    signer
+    (signer, retirement)
 }
 
 fn served_of(req: &HttpRequest) -> ServedHttpRequest {
@@ -2030,7 +2037,6 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
 
 /// A delegated signer whose credential expires in `ttl` seconds rather than [`TTL`].
 fn signer_with_credential_ttl(ttl: i64) -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -2051,10 +2057,13 @@ fn signer_with_credential_ttl(ttl: i64) -> Arc<DelegatedServerSigner> {
         window: DelegatedKeyWindow::of(ttl, ttl / 2).expect("0 < ttl/2 < ttl for ttl > 1"),
         ..custody_cfg()
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(cfg, issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        cfg,
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue the short-lived key");
     std::mem::forget(rotor);
     signer
@@ -2590,7 +2599,7 @@ async fn a_delivered_notification_is_still_acknowledged_with_a_202() {
 }
 
 /// An inner plane that retires the delegated signer mid-flight, then fails the dispatch.
-struct SignerRetiringInner(Arc<DelegatedServerSigner>);
+struct SignerRetiringInner(SigningRetirement);
 
 impl AsyncInnerServer for SignerRetiringInner {
     fn prepare<'a>(
@@ -2600,12 +2609,12 @@ impl AsyncInnerServer for SignerRetiringInner {
         mcp_re_proxy::async_inner::PreparedInnerDispatch<'a>,
         mcp_re_proxy::async_inner::NotAdmitted,
     > {
-        let signer = Arc::clone(&self.0);
+        let retirement = self.0.clone();
         Ok(mcp_re_proxy::async_inner::PreparedInnerDispatch::over(
             move || {
                 // At the DISPATCH, not at the preparation: the point of the fixture is a
                 // signer that goes away while the exchange is past its threshold.
-                signer.retire();
+                retirement.retire_permanently();
                 Box::pin(async { DispatchedOutcome::Indeterminate("inner request timed out") })
             },
             // A fixture inner still states a finite bound; the serving path refuses an
@@ -2631,7 +2640,7 @@ impl AsyncInnerServer for SignerRetiringInner {
 /// did-not-run.
 #[tokio::test]
 async fn a_post_dispatch_refusal_is_signed_with_the_key_the_exchange_snapshotted() {
-    let signer = ready_signer();
+    let (signer, retirement) = ready_signer_and_retirement();
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
@@ -2643,7 +2652,7 @@ async fn a_post_dispatch_refusal_is_signed_with_the_key_the_exchange_snapshotted
             fleet_strict: false,
             tier: None,
         },
-        Box::new(SignerRetiringInner(Arc::clone(&signer))),
+        Box::new(SignerRetiringInner(retirement)),
         300,
         Arc::clone(&signer),
     );

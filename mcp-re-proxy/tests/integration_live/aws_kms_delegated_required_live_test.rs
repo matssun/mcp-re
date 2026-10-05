@@ -386,7 +386,8 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     // Build the serving proxy EXACTLY as `app::run` does in delegated-required mode:
     // `build_delegated_signing` off the KMS root, then `new_delegated`.
     let config = delegated_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), counting);
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), counting)
+        .expect("the root states its key");
     let signer = Arc::clone(&wiring.signer);
     let mut rotor = wiring.rotor;
 
@@ -538,6 +539,7 @@ fn kms_custody(
     impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
     impl FnMut() -> SigningKey,
 > {
+    let root_pub = signer.response_public_key().expect("KMS root public key");
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| -> Option<String> {
         issue_delegation_credential_with_signer(h, c, |input| {
             kms_calls.fetch_add(1, Ordering::SeqCst);
@@ -553,7 +555,7 @@ fn kms_custody(
         seed = seed.wrapping_add(1);
         SigningKey::from_seed_bytes(&[seed; 32])
     };
-    DelegatedSigningCustody::new(custody_cfg(), issue, factory)
+    DelegatedSigningCustody::new(custody_cfg(), root_pub, issue, factory)
 }
 
 fn run_kms_authority_flip(root: KmsResponseSigner) {

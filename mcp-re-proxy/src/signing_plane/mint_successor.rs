@@ -171,6 +171,11 @@ mod tests {
         crate::delegated_wiring::test_support::issued_expiring_at(exp, seed)
     }
 
+    /// A signer its rotor has published the key `key(seed, exp)` into.
+    fn published(seed: u8, exp: i64) -> std::sync::Arc<DelegatedServerSigner> {
+        crate::delegated_wiring::test_support::published(exp, seed).signer()
+    }
+
     /// The defect this guards: `ensure_active` reports `Ok(())` both when a successor
     /// was minted AND when issuance failed while the current key is still valid. Taking
     /// the second as success reset `consecutive_failures`, collapsed the steady-state
@@ -179,12 +184,10 @@ mod tests {
     /// keypair each pass, for the entire overlap window.
     #[test]
     fn unchanged_kid_inside_the_overlap_window_is_not_progress() {
-        let signer = DelegatedServerSigner::new();
         let now = crate::clock::now_unix();
         // Published key is inside its overlap window: a rotation is DUE.
-        let published = key(1, now + OVERLAP - 1);
-        let before = Some(published.delegated_kid().to_owned());
-        signer.publish(published);
+        let signer = published(1, now + OVERLAP - 1);
+        let before = Some(key(1, now + OVERLAP - 1).delegated_kid().to_owned());
         assert!(
             !rotation_made_progress(&signer, &before, OVERLAP),
             "a due rotation that did not change the kid means issuance failed"
@@ -193,9 +196,8 @@ mod tests {
 
     #[test]
     fn a_new_kid_is_progress() {
-        let signer = DelegatedServerSigner::new();
         let now = crate::clock::now_unix();
-        signer.publish(key(2, now + 300));
+        let signer = published(2, now + 300);
         let before = Some(key(1, now + 300).delegated_kid().to_owned());
         assert!(rotation_made_progress(&signer, &before, OVERLAP));
     }
@@ -204,11 +206,9 @@ mod tests {
     /// backoff must not engage in steady state.
     #[test]
     fn unchanged_kid_outside_the_overlap_window_is_not_a_failure() {
-        let signer = DelegatedServerSigner::new();
         let now = crate::clock::now_unix();
-        let published = key(1, now + 10 * OVERLAP);
-        let before = Some(published.delegated_kid().to_owned());
-        signer.publish(published);
+        let signer = published(1, now + 10 * OVERLAP);
+        let before = Some(key(1, now + 10 * OVERLAP).delegated_kid().to_owned());
         assert!(rotation_made_progress(&signer, &before, OVERLAP));
     }
 

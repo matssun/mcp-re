@@ -167,7 +167,6 @@ mod serving_path {
     use mcp_re_proxy::trust_epoch::SharedEpochChannel;
     use mcp_re_proxy::trust_epoch::TrustEpochSource;
     use mcp_re_proxy::DelegatedRotor;
-    use mcp_re_proxy::DelegatedServerSigner;
     use mcp_re_proxy::HttpProfileProxy;
     use mcp_re_proxy::PushInvalidationTrustCache;
 
@@ -266,7 +265,6 @@ mod serving_path {
             root_key().public_key(),
         );
 
-        let signer = Arc::new(DelegatedServerSigner::new());
         let root = root_key();
         let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
             Some(issue_delegation_credential(&root, h, c))
@@ -288,10 +286,13 @@ mod serving_path {
             server_subject: "did:example:server".into(),
             window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
         };
-        let mut rotor = DelegatedRotor::new(
-            DelegatedSigningCustody::new(custody, issue, factory),
-            Arc::clone(&signer),
-        );
+        let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+            custody,
+            root_key().public_key(),
+            issue,
+            factory,
+        ));
+        let signer = rotor.signer();
         rotor.rotate(now()).expect("issue the first delegated key");
 
         Replica {

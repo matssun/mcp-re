@@ -9,8 +9,8 @@
 //! # What it owns, and what leaves it
 //!
 //! It owns the rotation worker and, inside it, the rotor and the trust-epoch watch. What
-//! leaves is one `Arc<DelegatedServerSigner>`, moved into the proxy. The root issuer never
-//! leaves: nothing outside this plane can mint.
+//! leaves is one `Arc<DelegatedServerSigner>`, moved into the proxy, which reads the snapshot
+//! and cannot change it. The root issuer never leaves: nothing outside this plane can mint.
 //!
 //! # A surviving signer must not keep signing
 //!
@@ -39,6 +39,7 @@
 use std::sync::Arc;
 
 use crate::delegated_server_signer::DelegatedServerSigner;
+use crate::delegated_server_signer::SigningRetirement;
 use crate::managed_worker::WorkerSet;
 
 /// Keeping a delegated key in force: when to mint the successor, and what a root outage
@@ -59,6 +60,8 @@ use rotation::spawn_delegated_rotation_task;
 /// Response-signing custody: the delegated snapshot and the worker that maintains it.
 pub struct SigningPlane {
     signer: Arc<DelegatedServerSigner>,
+    /// What [`Drop`] withdraws signing with; the rotor that publishes has moved onto the worker.
+    retirement: SigningRetirement,
     /// Owns the delegated rotation worker. Halted in [`Drop`] AFTER the snapshot is
     /// retired; the order is written out there rather than left to field position.
     workers: WorkerSet,
@@ -87,17 +90,30 @@ impl SigningPlane {
     pub(crate) fn for_teardown_test(
         body: impl FnOnce(crate::managed_worker::Halt) + Send + 'static,
     ) -> Self {
-        let signer = Arc::new(DelegatedServerSigner::new());
-        signer.publish(crate::delegated_wiring::test_support::issued_expiring_at(
-            crate::clock::now_unix() + 3600,
-            3,
-        ));
+        Self::for_teardown_test_with_rotor(move |halt, _rotor| body(halt))
+    }
+
+    /// The same, with the worker handed the rotor that published the key — as the
+    /// production worker is — for the tests of what a rotor may still do after teardown.
+    #[cfg(test)]
+    pub(crate) fn for_teardown_test_with_rotor(
+        body: impl FnOnce(crate::managed_worker::Halt, crate::delegated_wiring::ProdDelegatedRotor)
+            + Send
+            + 'static,
+    ) -> Self {
+        let rotor =
+            crate::delegated_wiring::test_support::published(crate::clock::now_unix() + 3600, 3);
+        let (signer, retirement) = (rotor.signer(), rotor.retirement());
         let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         let halt = workers.halt();
         workers
-            .spawn("test delegated rotation", move || body(halt))
+            .spawn("test delegated rotation", move || body(halt, rotor))
             .expect("spawn test worker");
-        SigningPlane { signer, workers }
+        SigningPlane {
+            signer,
+            retirement,
+            workers,
+        }
     }
 }
 
@@ -113,7 +129,7 @@ impl Drop for SigningPlane {
         //    PERMANENTLY, because step 2 does not stop the rotor instantly: it observes
         //    its halt only between cycles, so an in-flight mint could otherwise publish
         //    after this line and hand a signer that outlives this plane a fresh key.
-        self.signer.retire_permanently();
+        self.retirement.retire_permanently();
         // 2. Halt and reclaim. One worker, no cross-worker shutdown dependency, so
         //    `WorkerSet`'s termination semantics are the whole guarantee.
         self.workers.halt_and_reclaim();
@@ -150,7 +166,7 @@ impl SigningPlane {
             signer,
             mut rotor,
             window,
-        } = crate::delegated_wiring::build_delegated_signing(plan, root_signer);
+        } = crate::delegated_wiring::build_delegated_signing(plan, root_signer)?;
         // Resolve the shared trust epoch BEFORE the first key is minted, so the very
         // first credential carries the globally comparable `<base>#<counter>` label
         // rather than the bare base. Minting under the bare label is what let a
@@ -193,15 +209,14 @@ impl SigningPlane {
         // per-core runtimes, and re-issues on a trust-epoch advance so an operator `INCR`
         // revokes outstanding delegated keys fleet-wide (ADR-MCPRE-052 §7). Its halt is
         // this plane's alone, so it keeps the key maintained through the fleet drain.
+        let retirement = rotor.retirement();
         let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
-        spawn_delegated_rotation_task(
-            &mut workers,
-            rotor,
-            Arc::clone(&signer),
-            window.overlap(),
-            epoch_watch,
-        )?;
-        Ok(SigningPlane { signer, workers })
+        spawn_delegated_rotation_task(&mut workers, rotor, window.overlap(), epoch_watch)?;
+        Ok(SigningPlane {
+            signer,
+            retirement,
+            workers,
+        })
     }
 }
 
@@ -771,7 +786,8 @@ mod rotation_owner_tests {
         let mut wiring = build_delegated_signing(
             &plan(TrustEpochPlan::NoNetworkChannel),
             root(&offline, &calls),
-        );
+        )
+        .expect("the root states its key");
         wiring
             .rotor
             .rotate(now_unix())
@@ -806,7 +822,8 @@ mod rotation_owner_tests {
         let mut wiring = build_delegated_signing(
             &plan(TrustEpochPlan::NoNetworkChannel),
             root(&offline, &calls),
-        );
+        )
+        .expect("the root states its key");
         wiring
             .rotor
             .rotate(now_unix())
@@ -916,13 +933,8 @@ mod rotation_owner_tests {
 mod handle_lifetime_tests {
     use super::*;
     use crate::clock::now_unix;
-    use mcp_re_http_profile::ActiveDelegatedKey;
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
-
-    fn active_key(exp: i64) -> ActiveDelegatedKey {
-        crate::delegated_wiring::test_support::issued_expiring_at(exp, 3)
-    }
 
     /// The signing child machine's terminal transition, staged through the REAL
     /// `SigningPlane::drop` (ADR-MCPRE-057 §5.2).
@@ -940,25 +952,15 @@ mod handle_lifetime_tests {
     /// advance can revoke.
     #[test]
     fn a_mint_completing_inside_the_drop_join_window_cannot_restore_signing() {
-        // The rotor cannot be handed the signer at construction — the plane that owns it
-        // does not exist yet — so the test passes it in once the plane is built. The
-        // rotor blocks on that handover, which is also what keeps it from publishing
-        // before the plane is dropped.
-        let (handover, awaiting) = std::sync::mpsc::channel::<Arc<DelegatedServerSigner>>();
-        let plane = SigningPlane::for_teardown_test(move |halt| {
-            let signer = awaiting
-                .recv()
-                .expect("the test hands the rotor its signer");
+        // The worker holds the rotor, as production's does, and mints once the owner has
+        // gone away: a successor under an advanced epoch, a fresh key and a fresh `exp`.
+        let plane = SigningPlane::for_teardown_test_with_rotor(move |halt, mut rotor| {
             while !halt.requested() {
                 std::thread::sleep(Duration::from_millis(2));
             }
-            // The mint that was already in flight when the owner went away now lands.
-            signer.publish(active_key(now_unix() + 3600));
+            let _ = rotor.advance_trust_epoch("epoch-1#2".into(), now_unix());
         });
         let signer = plane.signer();
-        handover
-            .send(plane.signer())
-            .expect("the rotor is waiting for it");
         assert!(
             signer.current(now_unix()).is_some(),
             "a live plane must publish a usable delegated key"
@@ -1032,10 +1034,10 @@ mod handle_lifetime_tests {
                     flag.store(true, std::sync::atomic::Ordering::SeqCst);
                 })
                 .expect("spawn test worker");
-            let inner = Arc::new(DelegatedServerSigner::new());
-            inner.publish(active_key(now_unix() + 3600));
+            let rotor = crate::delegated_wiring::test_support::published(now_unix() + 3600, 3);
             let plane = SigningPlane {
-                signer: Arc::clone(&inner),
+                signer: rotor.signer(),
+                retirement: rotor.retirement(),
                 workers,
             };
             signer = plane.signer();

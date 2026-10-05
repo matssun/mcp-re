@@ -190,7 +190,8 @@ fn build_server() -> HttpProfileProxy {
 /// than assume a kid it can spell.
 fn build_server_with_kid() -> (HttpProfileProxy, String) {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor
         .rotate(NOW)
@@ -652,7 +653,8 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         .build()
         .expect("rt");
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first key");
     let first_kid = wiring

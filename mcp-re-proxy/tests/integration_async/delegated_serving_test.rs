@@ -146,11 +146,9 @@ fn custody_cfg() -> CustodyConfig {
     }
 }
 
-/// An in-memory-rooted rotor bound to `signer`. The root issuer is a fixed
+/// An in-memory-rooted rotor over a signer of its own. The root issuer is a fixed
 /// in-memory key (the KMS-as-root swap is proven elsewhere through the same seam).
-fn make_rotor(
-    signer: Arc<DelegatedServerSigner>,
-) -> DelegatedRotor<
+fn make_rotor() -> DelegatedRotor<
     impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
     impl FnMut() -> SigningKey,
 > {
@@ -163,10 +161,12 @@ fn make_rotor(
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        signer,
-    )
+    DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ))
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
@@ -315,8 +315,8 @@ fn wire_code_of(body: &[u8]) -> String {
 
 #[tokio::test]
 async fn delegated_success_response_verifies_and_root_touched_once() {
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
 
     let proxy = delegated_proxy(Arc::clone(&signer));
@@ -361,8 +361,8 @@ async fn delegated_success_response_verifies_and_root_touched_once() {
 
 #[tokio::test]
 async fn delegated_bound_rejection_verifies() {
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
@@ -391,8 +391,8 @@ async fn delegated_bound_rejection_verifies() {
 
 #[tokio::test]
 async fn delegated_preflight_rejection_verifies_unbound() {
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
@@ -583,8 +583,8 @@ fn proxy_over(
 #[tokio::test]
 async fn a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backend_runs() {
     let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW - 280).expect("issue a nearly-closed key");
 
     let proxy = proxy_over(
@@ -617,8 +617,8 @@ async fn a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backen
 #[tokio::test]
 async fn a_credential_with_room_for_the_dispatch_still_reaches_the_backend() {
     let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue a fresh key");
 
     let proxy = proxy_over(
@@ -673,8 +673,8 @@ async fn an_inner_plane_that_states_no_completion_bound_is_refused_before_the_ba
     }
 
     let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue a fresh key");
 
     let proxy = proxy_over(
@@ -754,8 +754,8 @@ fn signed_notification(nonce: &str) -> HttpRequest {
 async fn a_notification_is_served_a_verifiable_delegated_202() {
     use mcp_re_http_profile::verify_delegated_accepted_202;
 
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
@@ -814,8 +814,8 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
     use mcp_re_client_core::verify_delegated_accepted_202 as client_verify_202;
     use mcp_re_client_core::DelegationPolicy;
 
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     let proxy = delegated_proxy(Arc::clone(&signer));
 
@@ -864,8 +864,8 @@ async fn the_client_cores_own_notification_envelope_earns_a_202() {
     use mcp_re_client_core::build_signed_notification;
     use mcp_re_client_core::RequestSigningInputs;
 
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     let proxy = delegated_proxy(Arc::clone(&signer));
 

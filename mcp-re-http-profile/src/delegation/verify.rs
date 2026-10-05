@@ -41,7 +41,7 @@ use super::KEY_USE_RESPONSE_SIGNING;
 /// `none` included, is refused. The issuer must resolve to a trusted root anchor that the
 /// header `kid` also names; `cnf` must not attest that root's own key, since a credential
 /// delegating to its issuer is not a delegation and refuses as a bad signature does.
-fn check_root_signature(
+pub(super) fn check_root_signature(
     segments: (&str, &str, &str),
     header: &DelegationHeader,
     claims: &DelegationClaims,

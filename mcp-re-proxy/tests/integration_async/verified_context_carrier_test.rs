@@ -34,7 +34,6 @@ use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
 use mcp_re_proxy::delegated_server_signer::DelegatedRotor;
-use mcp_re_proxy::delegated_server_signer::DelegatedServerSigner;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::http_profile_serve::HttpProfileProxy;
 
@@ -127,7 +126,6 @@ fn recording_inner(seen: Seen) -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerS
 }
 
 fn proxy(policy: VerifiedContextPolicy, seen: Seen) -> HttpProfileProxy {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -137,10 +135,13 @@ fn proxy(policy: VerifiedContextPolicy, seen: Seen) -> HttpProfileProxy {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue a delegated key");
     HttpProfileProxy::new_delegated(
         actor_resolver(),

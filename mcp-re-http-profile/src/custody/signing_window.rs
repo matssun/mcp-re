@@ -120,8 +120,10 @@ pub(super) mod tests {
             server_subject: "did:example:server".into(),
             window: DelegatedKeyWindow::of(TTL, TTL / 6).expect("0 < overlap < ttl"),
         };
+        let root_key = root.public_key();
         let mut custody = DelegatedSigningCustody::new(
             cfg,
+            root_key,
             move |h, c| Some(issue_delegation_credential(&root, h, c)),
             || SigningKey::from_seed_bytes(&[7u8; 32]),
         );

@@ -1628,3 +1628,110 @@ old = """
 new = """
     pub fn check_and_insert("""
 
+[[probe]]
+id = "S46"
+unit = "proxy.delegated_signer_write_authority"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside the rotor's module can publish a delegated key into the shared signer"
+insertion_parent = "mcp-re-proxy/src/signing_plane/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S46. Injected into a scratch copy by verify-structural.
+use std::sync::Arc;
+
+use crate::delegated_server_signer::DelegatedServerSigner;
+
+pub fn hostile(signer: &Arc<DelegatedServerSigner>, key: mcp_re_http_profile::ActiveDelegatedKey) {
+    let _ = signer.publish(key); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Injected into the signing plane, the module that holds the shared signer and every handle
+the rotation worker uses: the neighbour with the most reason to write, and still refused.
+`E0624` and not `E0599`: `publish` exists and the rotor's module calls it.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`publish` is a private method of `DelegatedServerSigner`, visible to `delegated_server_signer` and its descendants only (`reader`, `retirement`, `metrics`, `retry_schedule`); no `pub(crate)` or `pub(super)` widening exists"
+alternate-constructors = "the call is attacked, not a construction. The only routes to it are `DelegatedRotor` (publish and retire, over the signer it created) and `SigningRetirement::retire_permanently`, which the rotor alone issues"
+generated-or-deserialization = "no derive or macro generates a forwarding method; `DelegatedServerSigner` derives only Default, which yields an empty signer no rotor publishes into"
+test-only-construction = "no `#[cfg(test)]` method or visibility widens the write side: tests outside the rotor's module publish through a rotor (`delegated_wiring::test_support::published`)"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
+old = """
+    fn publish(&self, active: ActiveDelegatedKey) -> Result<(), CustodyError> {"""
+new = """
+    pub(crate) fn publish(&self, active: ActiveDelegatedKey) -> Result<(), CustodyError> {"""
+
+[[probe]]
+id = "S47"
+unit = "proxy.delegated_signer_write_authority"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside the rotor's module can withdraw the published delegated key"
+insertion_parent = "mcp-re-proxy/src/signing_plane/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S47. Injected into a scratch copy by verify-structural.
+use std::sync::Arc;
+
+use crate::delegated_server_signer::DelegatedServerSigner;
+
+pub fn hostile(signer: &Arc<DelegatedServerSigner>) {
+    signer.retire(); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Injected into the signing plane, the module that holds the shared signer and every handle
+the rotation worker uses: the neighbour with the most reason to write, and still refused.
+`E0624` and not `E0599`: `retire` exists and the rotor's module calls it.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`retire` is a private method of `DelegatedServerSigner`, visible to `delegated_server_signer` and its descendants only (`reader`, `retirement`, `metrics`, `retry_schedule`); no `pub(crate)` or `pub(super)` widening exists"
+alternate-constructors = "the call is attacked, not a construction. The only routes to it are `DelegatedRotor` (publish and retire, over the signer it created) and `SigningRetirement::retire_permanently`, which the rotor alone issues"
+generated-or-deserialization = "no derive or macro generates a forwarding method; `DelegatedServerSigner` derives only Default, which yields an empty signer no rotor publishes into"
+test-only-construction = "no `#[cfg(test)]` method or visibility widens the write side: tests outside the rotor's module publish through a rotor (`delegated_wiring::test_support::published`)"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
+old = """
+    fn retire(&self) {"""
+new = """
+    pub(crate) fn retire(&self) {"""
+
+[[probe]]
+id = "S48"
+unit = "proxy.delegated_signer_write_authority"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside the rotor's module retires signing for good except through the SigningRetirement the rotor issues"
+insertion_parent = "mcp-re-proxy/src/signing_plane/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S48. Injected into a scratch copy by verify-structural.
+use std::sync::Arc;
+
+use crate::delegated_server_signer::DelegatedServerSigner;
+
+pub fn hostile(signer: &Arc<DelegatedServerSigner>) {
+    signer.retire_permanently(); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Injected into the signing plane, the module that holds the shared signer and every handle
+the rotation worker uses: the neighbour with the most reason to write, and still refused.
+`E0624` and not `E0599`: `retire_permanently` exists and the rotor's module calls it.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`retire_permanently` is a private method of `DelegatedServerSigner`, visible to `delegated_server_signer` and its descendants only (`reader`, `retirement`, `metrics`, `retry_schedule`); no `pub(crate)` or `pub(super)` widening exists"
+alternate-constructors = "the call is attacked, not a construction. The only routes to it are `DelegatedRotor` (publish and retire, over the signer it created) and `SigningRetirement::retire_permanently`, which the rotor alone issues"
+generated-or-deserialization = "no derive or macro generates a forwarding method; `DelegatedServerSigner` derives only Default, which yields an empty signer no rotor publishes into"
+test-only-construction = "no `#[cfg(test)]` method or visibility widens the write side: tests outside the rotor's module publish through a rotor (`delegated_wiring::test_support::published`)"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
+old = """
+    fn retire_permanently(&self) {"""
+new = """
+    pub(crate) fn retire_permanently(&self) {"""

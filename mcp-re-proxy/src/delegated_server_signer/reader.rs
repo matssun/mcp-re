@@ -10,23 +10,12 @@ use super::DelegatedServerSigner;
 /// What a serving value may do with the deployment's delegated signing key: read the
 /// snapshot that is valid now.
 ///
-/// # Why this is a value and not a convention
+/// # What it narrows
 ///
-/// [`DelegatedServerSigner`] carries `publish`, `retire`, `retire_permanently` and
-/// `current`, and one `Arc` confers all four. The hot path holds it to call `current` — and
-/// thereby holds the authority to retire the deployment's signing key. *Only the rotor
-/// publishes* was a property of who happened to hold the `Arc`, which nothing could check.
-///
-/// The inner `Arc` is private to this module, so a holder of a reader reaches the write side
-/// of nothing. The narrowing is one-way: [`DelegatedServerSigner::reader`] hands one out and
-/// no method here hands the signer back.
-///
-/// # What this does NOT claim
-///
-/// The composition root still holds the wide `Arc`, and must: the rotor publishes, and
-/// `SigningPlane::drop` retires permanently. This does not make the write side unreachable.
-/// It makes it unreachable *from a serving value*, which is the reachability the finding was
-/// about — a receipt path that can sign can no longer also withdraw the key it signs under.
+/// A shared [`DelegatedServerSigner`] can no longer write: publication and retirement are
+/// private to the rotor's module. What it still carries beside `current` is the rotation
+/// owner's view — the rotor metrics and the time to expiry — which a serving value has no
+/// use for. The inner `Arc` is private to this module and no method hands it back.
 #[derive(Clone)]
 pub struct DelegatedSigningReader {
     signer: Arc<DelegatedServerSigner>,
@@ -68,19 +57,18 @@ mod tests {
         let reader = signer.reader();
         assert!(reader.current(0).is_none(), "no key is published yet");
 
-        signer.publish(key(100));
+        signer.publish(key(100)).expect("inside the ceiling");
         assert!(reader.current(50).is_some());
         assert!(reader.clone().current(50).is_some());
         assert!(reader.current(100).is_none(), "fails closed at exp");
     }
 
-    /// The write side stays the SIGNER's. A reader observes a retirement it could not
-    /// itself have caused, which is the whole of what the narrowing buys.
+    /// A reader observes a retirement it could not itself have caused.
     #[test]
     fn a_reader_observes_a_retirement_it_cannot_perform() {
         let signer = Arc::new(DelegatedServerSigner::new());
         let reader = signer.reader();
-        signer.publish(key(100));
+        signer.publish(key(100)).expect("inside the ceiling");
         assert!(reader.current(50).is_some());
 
         signer.retire();

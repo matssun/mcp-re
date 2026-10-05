@@ -317,7 +317,6 @@ fn custody_cfg() -> CustodyConfig {
 }
 
 fn ready_signer() -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -327,10 +326,13 @@ fn ready_signer() -> Arc<DelegatedServerSigner> {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     std::mem::forget(rotor);
     signer

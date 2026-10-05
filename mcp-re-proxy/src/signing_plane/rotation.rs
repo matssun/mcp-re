@@ -43,14 +43,14 @@ use super::DelegatedEpochWatch;
 pub(super) fn spawn_delegated_rotation_task(
     workers: &mut crate::managed_worker::WorkerSet,
     mut rotor: crate::delegated_wiring::ProdDelegatedRotor,
-    signer: Arc<crate::delegated_server_signer::DelegatedServerSigner>,
     overlap: i64,
     epoch_watch: Option<DelegatedEpochWatch>,
 ) -> Result<(), String> {
     let halt = workers.halt();
+    let (signer, retirement) = (rotor.signer(), rotor.retirement());
     workers.spawn(
         "delegated key rotation",
-        supervise_delegated_rotation(Arc::clone(&signer), move || {
+        supervise_delegated_rotation(Arc::clone(&signer), retirement, move || {
             rotation_loop(&mut rotor, &signer, overlap, epoch_watch.as_ref(), &halt);
         }),
     )
@@ -83,14 +83,15 @@ pub(super) fn spawn_delegated_rotation_task(
 /// signature" then holds however the worker came to stop.
 fn supervise_delegated_rotation(
     signer: Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    retirement: crate::delegated_server_signer::SigningRetirement,
     body: impl FnOnce() + Send + 'static,
 ) -> impl FnOnce() + Send + 'static {
     move || {
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).is_ok() {
-            signer.retire_permanently();
+            retirement.retire_permanently();
             return;
         }
-        signer.retire_permanently();
+        retirement.retire_permanently();
         signer.metrics().record_failure();
         eprintln!(
             "mcp-re-proxy: FATAL: the delegated rotation thread PANICKED. Delegated key \
@@ -200,14 +201,13 @@ fn wait_for_window(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mcp_re_http_profile::ActiveDelegatedKey;
 
     const NOW: i64 = 1_700_000_100;
 
-    /// A snapshot valid for another hour, so "retired at once" is distinguishable from
-    /// "expired on its own".
-    fn live_key() -> ActiveDelegatedKey {
-        crate::delegated_wiring::test_support::issued_expiring_at(NOW + 3600, 9)
+    /// A rotor whose snapshot is valid for another hour, so "retired at once" is
+    /// distinguishable from "expired on its own".
+    fn live_rotor() -> crate::delegated_wiring::ProdDelegatedRotor {
+        crate::delegated_wiring::test_support::published(NOW + 3600, 9)
     }
 
     /// T2. A panic in the rotor retires the snapshot AT ONCE, while its key is still
@@ -227,9 +227,10 @@ mod tests {
     /// may sign under it, whoever stopped the worker.
     #[test]
     fn a_rotor_that_stops_cleanly_retires_the_snapshot() {
-        let signer = Arc::new(crate::delegated_server_signer::DelegatedServerSigner::new());
-        signer.publish(live_key());
-        let supervised = supervise_delegated_rotation(Arc::clone(&signer), || {});
+        let mut rotor = live_rotor();
+        let signer = rotor.signer();
+        let supervised =
+            supervise_delegated_rotation(Arc::clone(&signer), rotor.retirement(), || {});
         std::thread::spawn(supervised)
             .join()
             .expect("the worker ends");
@@ -237,7 +238,9 @@ mod tests {
             signer.current(NOW).is_none(),
             "a key nothing maintains must not keep signing until its exp"
         );
-        signer.publish(live_key());
+        rotor
+            .rotate(NOW)
+            .expect("a mint after retirement is ignored, not refused");
         assert!(
             signer.current(NOW).is_none(),
             "a straggler mint cannot reopen signing after maintenance stopped"
@@ -246,8 +249,8 @@ mod tests {
 
     #[test]
     fn a_panicking_rotor_retires_the_snapshot_immediately_not_at_exp() {
-        let signer = Arc::new(crate::delegated_server_signer::DelegatedServerSigner::new());
-        signer.publish(live_key());
+        let mut rotor = live_rotor();
+        let signer = rotor.signer();
         assert!(
             signer.current(NOW).is_some(),
             "a live rotor signs with a key inside its window"
@@ -257,9 +260,10 @@ mod tests {
         // The panic is this test's INPUT, so the hook is quieted for the duration.
         let hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
-        let supervised = supervise_delegated_rotation(Arc::clone(&signer), || {
-            panic!("injected: the rotation body died");
-        });
+        let supervised =
+            supervise_delegated_rotation(Arc::clone(&signer), rotor.retirement(), || {
+                panic!("injected: the rotation body died");
+            });
         let joined = std::thread::spawn(supervised).join();
         std::panic::set_hook(hook);
 
@@ -277,7 +281,9 @@ mod tests {
         );
 
         // Terminal: a straggler mint that lands after the panic cannot restore signing.
-        signer.publish(live_key());
+        rotor
+            .rotate(NOW)
+            .expect("a mint after retirement is ignored, not refused");
         assert!(
             signer.current(NOW).is_none(),
             "after a panic the rotor's state is not known good; continuing to mint from it \
@@ -297,11 +303,8 @@ mod tests {
     /// only when the window opens an hour later; the wait keeps polling until halted.
     #[test]
     fn an_unreadable_epoch_is_recorded_when_first_seen_not_when_the_window_opens() {
-        let signer = Arc::new(crate::delegated_server_signer::DelegatedServerSigner::new());
-        signer.publish(crate::delegated_wiring::test_support::issued_expiring_at(
-            now_unix() + 3600,
-            9,
-        ));
+        let signer =
+            crate::delegated_wiring::test_support::published(now_unix() + 3600, 9).signer();
         let watch = DelegatedEpochWatch {
             reader: Box::new(Unreadable),
             base_label: "epoch-1".into(),

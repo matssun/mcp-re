@@ -176,6 +176,10 @@ mod verify;
 pub(crate) use verify::delegated_key as delegated_key_of;
 pub use verify::verify_delegation_credential;
 
+/// Steps 2–3 again, for the issuing side: whether the configured root signed a credential.
+mod root_signed;
+pub(crate) use root_signed::root_signed;
+
 /// Minting a credential — the root custody seam, which is a different authority from
 /// deciding whether one may be believed.
 mod issue;
@@ -218,7 +222,7 @@ mod tests {
     const AUDIENCE_HASH: &str = "audhash-abc";
     const SERVER_SIGNER: &str = "server:example:api:root-kid";
     const EPOCH: &str = "epoch-7";
-    const ISSUER_KID: &str = "root-kid";
+    pub(super) const ISSUER_KID: &str = "root-kid";
     const DELEGATED_KID: &str = "root-kid/delegated/1";
 
     fn root() -> SigningKey {
@@ -233,7 +237,7 @@ mod tests {
         issue_delegation_credential(root_key, header, claims)
     }
 
-    fn good_header() -> DelegationHeader {
+    pub(super) fn good_header() -> DelegationHeader {
         DelegationHeader {
             typ: DELEGATION_TYP.into(),
             alg: DELEGATION_ALG.into(),
@@ -241,7 +245,7 @@ mod tests {
         }
     }
 
-    fn good_claims(delegated_key: &VerificationKey) -> DelegationClaims {
+    pub(super) fn good_claims(delegated_key: &VerificationKey) -> DelegationClaims {
         DelegationClaims {
             iss: "did:example:api".into(),
             iat: 1_000,

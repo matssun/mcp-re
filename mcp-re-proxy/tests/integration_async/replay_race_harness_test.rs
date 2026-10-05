@@ -511,7 +511,6 @@ mod http_profile_full_stack {
     use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
     use mcp_re_proxy::ActorResolver;
     use mcp_re_proxy::DelegatedRotor;
-    use mcp_re_proxy::DelegatedServerSigner;
     use mcp_re_proxy::HttpProfileProxy;
 
     const CLIENT_SEED: [u8; 32] = [11u8; 32];
@@ -601,7 +600,6 @@ mod http_profile_full_stack {
         seed_base: u8,
         now: i64,
     ) -> HttpProfileProxy {
-        let signer = Arc::new(DelegatedServerSigner::new());
         let root = root_key();
         let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
             Some(issue_delegation_credential(&root, h, c))
@@ -611,10 +609,13 @@ mod http_profile_full_stack {
             n = n.wrapping_add(1);
             SigningKey::from_seed_bytes(&[n; 32])
         };
-        let mut rotor = DelegatedRotor::new(
-            DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-            Arc::clone(&signer),
-        );
+        let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+            custody_cfg(),
+            root_key().public_key(),
+            issue,
+            factory,
+        ));
+        let signer = rotor.signer();
         rotor.rotate(now).expect("issue the first delegated key");
         let inner = Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
             |_forwarded: &[u8]| -> Vec<u8> {
