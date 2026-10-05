@@ -49,11 +49,13 @@ use crate::message::HttpResponse;
 use crate::sign::sign_delegated_response_full_with_owned_key;
 
 mod active_key;
+mod issuance_refusal;
 mod issuance_terms;
 mod key_window;
 mod signing_window;
 mod window_emission;
 pub use active_key::ActiveDelegatedKey;
+pub use issuance_refusal::IssuanceRefusal;
 pub use key_window::{DelegatedKeyWindow, KeyWindowError};
 pub use signing_window::SigningWindow;
 pub use window_emission::{
@@ -132,6 +134,8 @@ pub struct DelegatedSigningCustody<Issue, Factory> {
     /// The earliest `now` at which a scheduled issuance may touch the root again.
     /// `None` while nothing has failed.
     next_attempt_at: Option<i64>,
+    /// Why the most recent issuance attempt adopted nothing; `None` once one adopts.
+    last_refusal: Option<IssuanceRefusal>,
 }
 
 impl<Issue, Factory> DelegatedSigningCustody<Issue, Factory>
@@ -152,12 +156,18 @@ where
             root_invocations: 0,
             counter: 0,
             next_attempt_at: None,
+            last_refusal: None,
         }
     }
 
     /// The audited lifecycle events so far.
     pub fn audit(&self) -> &[KeyLifecycleEvent] {
         &self.audit
+    }
+
+    /// Why the most recent issuance attempt adopted nothing, while no later one has adopted.
+    pub fn last_refusal(&self) -> Option<IssuanceRefusal> {
+        self.last_refusal
     }
 
     /// How many times the ROOT issuer was invoked (issuance + rotation only). A
@@ -283,21 +293,22 @@ where
         // A metric an operator reads, not a value any decision is taken on: the count
         // stops being exact at the ceiling rather than wrapping through zero.
         self.root_invocations = self.root_invocations.saturating_add(1);
-        // A credential that does not attest THIS issuance is not a key to serve on. It
-        // fails the issuance exactly as an unavailable root does — the predecessor keeps
-        // serving until its own `exp` and then the deployment fails closed — because the
-        // outcome is the same one: this node has nothing it can publish.
-        let issued = (self.issue)(&header, &claims).and_then(|credential| {
-            let requested = (&header, &claims);
-            ActiveDelegatedKey::issued(Arc::new(key), signer, requested, credential, &self.root)
-                .ok()
-        });
+        // An unavailable root and a credential that is not this issuance's answer have one
+        // outcome — nothing to publish, so the predecessor serves until its own `exp` and then
+        // the deployment fails closed — and different remedies, so the cause is kept.
+        let issued = (self.issue)(&header, &claims)
+            .ok_or(IssuanceRefusal::RootUnavailable)
+            .and_then(|credential| {
+                let requested = (&header, &claims);
+                ActiveDelegatedKey::issued(Arc::new(key), signer, requested, credential, &self.root)
+            });
+        self.last_refusal = issued.as_ref().err().copied();
         match issued {
-            Some(active) => {
+            Ok(active) => {
                 self.adopt(active, is_rotation, now);
                 Ok(())
             }
-            None => self.hold_off(now),
+            Err(_) => self.hold_off(now),
         }
     }
 
@@ -563,6 +574,7 @@ mod tests {
             Err(CustodyError::FailClosedIssuance)
         );
         assert!(c.active_snapshot().is_none(), "nothing may be published");
+        assert_eq!(c.last_refusal(), Some(IssuanceRefusal::NotAsRequested));
         assert!(
             c.audit().is_empty(),
             "an issuance that published nothing is not an issuance event"
@@ -1118,6 +1130,60 @@ mod tests {
         assert!(
             c.audit().is_empty(),
             "no lifecycle event describes a non-key"
+        );
+    }
+
+    /// An outage and a root signing under a key other than the one it advertises fail the
+    /// issuance identically — nothing is published — and the cause the custody keeps is what
+    /// tells them apart. An issuance that adopts clears it.
+    #[test]
+    fn the_refusal_cause_tells_an_outage_from_a_root_signing_under_another_key() {
+        let mut answers = 0u32;
+        let mut down_then_up = DelegatedSigningCustody::new(
+            cfg(),
+            root_key(),
+            move |h: &DelegationHeader, c: &DelegationClaims| {
+                answers += 1;
+                let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+                (answers > 1).then(|| issue_delegation_credential(&root, h, c))
+            },
+            factory(),
+        );
+        assert_eq!(down_then_up.last_refusal(), None);
+        assert_eq!(
+            down_then_up.ensure_active(1_000),
+            Err(CustodyError::FailClosedIssuance)
+        );
+        assert_eq!(
+            down_then_up.last_refusal(),
+            Some(IssuanceRefusal::RootUnavailable)
+        );
+        assert!(down_then_up
+            .reissue(1_000)
+            .expect("the root is back")
+            .is_some());
+        assert_eq!(down_then_up.last_refusal(), None);
+
+        let impostor = SigningKey::from_seed_bytes(&[34u8; 32]);
+        let mut misconfigured = DelegatedSigningCustody::new(
+            cfg(),
+            root_key(),
+            move |h: &DelegationHeader, c: &DelegationClaims| {
+                Some(issue_delegation_credential(&impostor, h, c))
+            },
+            factory(),
+        );
+        assert_eq!(
+            misconfigured.ensure_active(1_000),
+            Err(CustodyError::FailClosedIssuance)
+        );
+        assert!(
+            misconfigured.active_snapshot().is_none(),
+            "refusal, unchanged"
+        );
+        assert_eq!(
+            misconfigured.last_refusal(),
+            Some(IssuanceRefusal::RootKeyMismatch)
         );
     }
 }

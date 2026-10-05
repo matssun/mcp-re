@@ -194,10 +194,11 @@ impl SigningPlane {
             rotor.set_trust_epoch_before_first_issue(label);
         }
         // Initial issuance MUST succeed before serving (fail closed, ADR-MCPRE-052 §6).
-        rotor.rotate(startup_now_unix).map_err(|e| {
+        rotor.rotate(startup_now_unix).map_err(|_| {
             format!(
-                "delegated-signing: initial delegated key issuance FAILED at startup ({e:?}); \
-                 the root issuer must be available before serving (fail closed, ADR-MCPRE-052 §6)"
+                "delegated-signing: initial delegated key issuance FAILED at startup ({}); \
+                 the root issuer must be available before serving (fail closed, ADR-MCPRE-052 §6)",
+                mint_successor::issuance_failure(rotor.last_refusal())
             )
         })?;
         eprintln!(
@@ -726,6 +727,18 @@ mod rotation_owner_tests {
         }
     }
 
+    /// A root that advertises one public key and signs with another.
+    struct MisadvertisingRoot;
+
+    impl ResponseSigner for MisadvertisingRoot {
+        fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
+            SigningKey::from_seed_bytes(&[34u8; 32]).sign_response(preimage)
+        }
+        fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
+            SigningKey::from_seed_bytes(&ROOT_SEED).response_public_key()
+        }
+    }
+
     /// A shared epoch that is never readable — an outage, or a counter that regressed.
     struct UnreadableEpoch;
 
@@ -850,6 +863,24 @@ mod rotation_owner_tests {
             signer.metrics().consecutive_failures() >= 1,
             "the refusal to mint must be recorded as a failure and backed off"
         );
+    }
+
+    /// A root signing under a key it does not advertise is refused at startup exactly as an
+    /// offline one is, and the refusal says which of the two happened.
+    #[test]
+    fn a_startup_refusal_tells_an_offline_root_from_one_signing_under_another_key() {
+        let offline = Arc::new(AtomicBool::new(true));
+        let calls = Arc::new(AtomicU64::new(0));
+        let plan = plan(TrustEpochPlan::NoNetworkChannel);
+        let down = SigningPlane::materialize_over(&plan, root(&offline, &calls), now_unix())
+            .err()
+            .expect("an offline root issues nothing");
+        assert!(down.contains("(cause=root-unavailable: "), "{down}");
+        let broken = SigningPlane::materialize_over(&plan, MisadvertisingRoot, now_unix())
+            .err()
+            .expect("a credential the advertised key did not sign publishes nothing");
+        assert!(broken.contains("(cause=root-key-mismatch: "), "{broken}");
+        assert!(broken.contains("CONTRACT VIOLATION"), "{broken}");
     }
 
     /// Startup is fail-closed on issuance: no active delegated key, no serving.

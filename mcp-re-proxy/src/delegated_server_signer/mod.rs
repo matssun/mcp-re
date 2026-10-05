@@ -322,6 +322,11 @@ where
         self.custody.audit()
     }
 
+    /// Why the most recent issuance adopted nothing, while no later one has adopted.
+    pub fn last_refusal(&self) -> Option<mcp_re_http_profile::custody::IssuanceRefusal> {
+        self.custody.last_refusal()
+    }
+
     /// How many times the ROOT issuer has been invoked (issuance + rotation only) —
     /// never incremented by the hot-path signing that reads published snapshots.
     pub fn root_invocations(&self) -> u64 {

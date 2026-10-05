@@ -6283,6 +6283,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::mint_successor::tests::unchanged_kid_inside_the_overlap_window_is_not_progress",
   "//mcp-re-proxy:proxy_unit_test#signing_plane::mint_successor::tests::unchanged_kid_outside_the_overlap_window_is_not_a_failure",
   "//mcp-re-proxy:proxy_unit_test#signing_plane::mint_successor::tests::nothing_published_is_not_progress",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::mint_successor::tests::the_rotation_warning_names_the_cause_the_custody_kept",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::rotation_owner_tests::a_startup_refusal_tells_an_offline_root_from_one_signing_under_another_key",
   # And the epoch half, through the loop. `trust_epoch_advance.rs` carries NO in-file battery
   # and deliberately gets none: its two functions take a `ProdDelegatedRotor` and a
   # `managed_worker::Halt` whose constructors are `pub(super)` to the worker owner, so an
@@ -8301,6 +8303,7 @@ paths = [
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
   "mcp-re-http-profile/src/custody/key_window.rs",
   "mcp-re-http-profile/src/custody/active_key.rs",
+  "mcp-re-http-profile/src/custody/issuance_refusal.rs",
   "mcp-re-http-profile/src/custody/signing_window.rs",
   "mcp-re-http-profile/src/custody/window_emission.rs",
 ]
@@ -8318,6 +8321,8 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_credential_the_configured_root_did_not_sign_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_refusal_cause_tells_an_outage_from_a_root_signing_under_another_key",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::issuance_refusal::tests::each_cause_renders_its_own_token_first",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::signing_never_touches_the_root_within_a_key_life",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::rotation_mints_successor_in_the_overlap_window",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_credential_id_differs_whenever_the_key_does",

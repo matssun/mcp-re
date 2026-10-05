@@ -512,9 +512,15 @@ pub(crate) mod test_support {
     /// gets a key into a signer, which is the way production does.
     pub(crate) fn rotor_from(seed: u8) -> super::ProdDelegatedRotor {
         let root = SigningKey::from_seed_bytes(&[33u8; 32]);
-        let root_public = root.public_key();
-        let issue: super::BoxedIssuer =
-            Box::new(move |h, c| Some(issue_delegation_credential(&root, h, c)));
+        rotor_over(
+            Box::new(move |h, c| Some(issue_delegation_credential(&root, h, c))),
+            seed,
+        )
+    }
+
+    /// A rotor configured with the fixture root's public key, whose issuer seam is `issue`.
+    pub(crate) fn rotor_over(issue: super::BoxedIssuer, seed: u8) -> super::ProdDelegatedRotor {
+        let root_public = SigningKey::from_seed_bytes(&[33u8; 32]).public_key();
         let mut next = seed;
         let factory: super::BoxedKeyFactory = Box::new(move || {
             let key = SigningKey::from_seed_bytes(&[next; 32]);

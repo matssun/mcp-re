@@ -11870,7 +11870,8 @@ conjunct = "an adopted credential verifies under the root the custody was built 
 # pins the header — `typ`, `alg`, and a `kid` that is the requested root's.
 path = "mcp-re-http-profile/src/custody/active_key.rs"
 anchor = """
-        crate::delegation::root_signed(&credential, &requested_header.kid, root)?;
+        crate::delegation::root_signed(&credential, &requested.0.kid, root)
+            .map_err(|_| IssuanceRefusal::RootKeyMismatch)?;
 """
 weakening = """
         let _ = root;
@@ -12083,4 +12084,37 @@ expect_red = [
   "//mcp-re-proxy:proxy_unit_test#delegated_tls::tests::handshake_signature_budget_bounds_remote_signer_invocations",
   "//mcp-re-proxy:proxy_unit_test#delegated_tls::tests::concurrent_callers_cannot_overspend_the_global_budget",
   "//mcp-re-proxy:proxy_unit_test#tls_plane::custody_agreement_tests::the_served_listener_enforces_the_plans_handshake_signing_capacity",
+]
+
+[[probe]]
+id = "M490-a-root-signing-under-another-key-is-not-recorded-as-an-outage"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "a credential the configured root key did not sign is refused with the root-key-mismatch cause, distinct from an unavailable root"
+path = "mcp-re-http-profile/src/custody/active_key.rs"
+anchor = """
+            .map_err(|_| IssuanceRefusal::RootKeyMismatch)?;
+"""
+weakening = """
+            .map_err(|_| IssuanceRefusal::RootUnavailable)?;
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_credential_the_configured_root_did_not_sign_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::active_key::tests::a_header_the_root_did_not_echo_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_refusal_cause_tells_an_outage_from_a_root_signing_under_another_key",
+]
+
+[[probe]]
+id = "M491-proxy-the-issuance-warning-renders-the-kept-cause"
+unit = "proxy.delegated_signing_credential"
+conjunct = "the rotation and startup issuance-failure lines carry the cause the custody kept, not a generic outage"
+path = "mcp-re-proxy/src/signing_plane/mint_successor.rs"
+anchor = """
+    refusal.map_or_else(|| "cause=none-recorded".to_owned(), |r| r.to_string())
+"""
+weakening = """
+    refusal.map_or_else(|| "cause=none-recorded".to_owned(), |_| IssuanceRefusal::RootUnavailable.to_string())
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::mint_successor::tests::the_rotation_warning_names_the_cause_the_custody_kept",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::rotation_owner_tests::a_startup_refusal_tells_an_offline_root_from_one_signing_under_another_key",
 ]
