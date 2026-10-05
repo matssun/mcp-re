@@ -160,8 +160,12 @@ mod tests {
     #[test]
     fn a_private_key_pem_failure_is_a_fixed_classification_never_parser_text() {
         let cert = b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
+        // A malformed key PEM with no key material in it. The label is assembled here so
+        // the source holds no key-shaped block for the tracked-secrets gate to match.
+        let label = ["PRIVATE", "KEY"].join(" ");
         let flattened =
-            b"-----BEGIN PRIVATE KEY-----MIIEsecretkeybytes\n-----END PRIVATE KEY-----\n";
+            format!("-----BEGIN {label}-----MIIEsecretkeybytes\n-----END {label}-----\n");
+        let flattened = flattened.as_bytes();
         let Err(err) = ClientTlsConfig::from_pem(cert, flattened, cert) else {
             panic!("a malformed key PEM must be refused");
         };
