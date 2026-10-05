@@ -222,6 +222,12 @@ def main() -> int:
             results.append({"gate": name, "targets": len(targets),
                             "verdict": "ok" if rc == 0 else "new-failures", "log": log,
                             **({} if rc == 0 else {"tail": _tail(log)})})
+        # The merge path's format lane is a Bazel build, which `merge_path_gates` does not
+        # read; the closure's lint targets are the ones whose sources it formats.
+        if rust:
+            results.append({"gate": "format the touched closure", "targets": len(rust),
+                            **rust_gate._rustfmt(rust, files,
+                                                 os.path.join(a.work_dir, "batch-format.log"))})
 
     worst = "new-failures" if any(r["verdict"] == "new-failures" for r in results) else \
         "infra" if any(r["verdict"] == "infra" for r in results) else "ok"
