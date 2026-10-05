@@ -83,12 +83,7 @@ fn insert(
     retain_until: i64,
 ) -> Result<ReplayDecision, ReplayStoreError> {
     let key = composite_key(signer, AUD, nonce);
-    rt.block_on(store.atomic_insert_if_absent(ReplayInsert::new(
-        &key,
-        TEST_ACTOR,
-        retain_until,
-        0,
-    )))
+    rt.block_on(store.atomic_insert_if_absent(ReplayInsert::new(&key, TEST_ACTOR, retain_until, 0)))
 }
 
 /// A per-exchange replay key: length-prefixed `(signer, audience, nonce)` then

@@ -790,7 +790,10 @@ mod tests {
             if path == "/v3/lease/grant" {
                 return ok_json(r#"{"ID":"7","TTL":"300"}"#);
             }
-            let key = request["compare"][0]["key"].as_str().unwrap_or_default().to_string();
+            let key = request["compare"][0]["key"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             let fresh = keys.lock().expect("keys").insert(key);
             ok_json(&format!("{{\"succeeded\":{fresh}}}"))
         }))
@@ -832,7 +835,10 @@ mod tests {
             .await
             .expect_err("an erroring gateway must fail closed");
         let ReplayStoreError::Unavailable { details } = err;
-        assert!(details.contains("503"), "the status is the reason: {details}");
+        assert!(
+            details.contains("503"),
+            "the status is the reason: {details}"
+        );
     }
 
     /// A gateway that answers a redirect is not followed: its target is never reached,

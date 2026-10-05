@@ -695,9 +695,9 @@ mod http_profile_full_stack {
     }
 
     #[cfg(all(
-    feature = "async_serve",
-    any(feature = "redis_replay", feature = "cpstore_etcd")
-))]
+        feature = "async_serve",
+        any(feature = "redis_replay", feature = "cpstore_etcd")
+    ))]
     fn require_live_infra() -> bool {
         std::env::var("MCP_RE_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.trim().is_empty())
     }
@@ -858,9 +858,9 @@ mod http_profile_full_stack {
     /// when live infra is optional, by panic when it is required (so an absent
     /// store can never be scored as a pass).
     #[cfg(all(
-    feature = "async_serve",
-    any(feature = "redis_replay", feature = "cpstore_etcd")
-))]
+        feature = "async_serve",
+        any(feature = "redis_replay", feature = "cpstore_etcd")
+    ))]
     fn live_url(var: &str, what: &str) -> Option<String> {
         match std::env::var(var).ok().filter(|u| !u.trim().is_empty()) {
             Some(url) => Some(url),

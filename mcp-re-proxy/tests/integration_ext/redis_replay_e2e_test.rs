@@ -122,12 +122,7 @@ fn insert(
     retain_until: i64,
 ) -> Result<ReplayDecision, ReplayStoreError> {
     let key = composite_key(signer, AUD, nonce);
-    rt.block_on(store.atomic_insert_if_absent(ReplayInsert::new(
-        &key,
-        TEST_ACTOR,
-        retain_until,
-        0,
-    )))
+    rt.block_on(store.atomic_insert_if_absent(ReplayInsert::new(&key, TEST_ACTOR, retain_until, 0)))
 }
 
 /// The load-bearing cross-node proof: a nonce accepted on node A is rejected as a
@@ -301,7 +296,10 @@ const WAIT_TIMEOUT_MS: u64 = 1_500;
 
 /// A `WAIT 1`-quorum store over a fresh primary connection: a fresh insert must be
 /// acknowledged by at least one replica within `WAIT_TIMEOUT_MS` or it fails closed.
-fn wait_quorum_node(rt: &tokio::runtime::Runtime, primary_url: &str) -> RedisAsyncAtomicReplayStore {
+fn wait_quorum_node(
+    rt: &tokio::runtime::Runtime,
+    primary_url: &str,
+) -> RedisAsyncAtomicReplayStore {
     rt.block_on(RedisAsyncAtomicReplayStore::connect_with_wait_quorum(
         primary_url,
         mcp_re_proxy::async_redis_store::system_clock(),

@@ -196,8 +196,8 @@ mod tests {
             },
         })
         .to_string();
-        let validated = ValidatedReply::of(reply(&body), &request_id_1())
-            .expect("a legal envelope");
+        let validated =
+            ValidatedReply::of(reply(&body), &request_id_1()).expect("a legal envelope");
         match validated.classify().expect("a legal classification") {
             ReplyClass::Open(state) => assert_eq!(state, "s-1"),
             ReplyClass::Terminal => panic!("an input_required reply opens a leg"),

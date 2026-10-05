@@ -23,9 +23,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+use mcp_re_proxy::async_redis_store::system_clock;
 use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
 use mcp_re_proxy::async_replay::ReplayInsert;
-use mcp_re_proxy::async_redis_store::system_clock;
 use mcp_re_proxy::RedisAsyncAtomicReplayStore;
 
 const ACTOR: &str = "did:example:bench-signer";

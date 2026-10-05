@@ -103,9 +103,9 @@ pub(crate) mod retention_promise;
 
 use protocol::classify_wait_acks;
 use protocol::compute_ttl_ms;
-use protocol::WaitQuorum;
 pub use protocol::system_clock;
 pub use protocol::UnixClock;
+use protocol::WaitQuorum;
 
 use self::retention_promise::retention_verdict;
 
