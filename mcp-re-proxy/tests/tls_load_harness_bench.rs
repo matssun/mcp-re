@@ -1034,10 +1034,11 @@ fn signed_request_with_decision(nonce: &str, decision: &str) -> SignedRequest {
     )])
     .with_authorization_decision(decision);
     let mut params = Map::new();
-    params.insert("text".to_string(), Value::String("hello".to_string()));
+    params.insert("name".to_string(), Value::String(DECIDED_TOOL.to_string()));
+    params.insert("arguments".to_string(), json!({ "text": "hello" }));
     build_signed_request(
         &Value::String("req-1".to_string()),
-        "echo",
+        "tools/call",
         params,
         TARGET_URI,
         &inputs,
@@ -1864,6 +1865,9 @@ fn acceptance_trust_file(material: &Material, enrol_authority: bool) -> std::pat
     path
 }
 
+/// The tool every decorated request calls, and every decision is about.
+const DECIDED_TOOL: &str = "echo";
+
 /// A decision about this deployment's client, issued by the enrolled authority.
 ///
 /// Every knob a matrix row turns is a parameter: the outcome, the decided operation, the
@@ -1891,11 +1895,11 @@ fn acceptance_decision(
             trust_domain: TRUST_DOMAIN.into(),
             subject: subject.into(),
         },
-        // The harness client signs `{"method":"echo","params":{"text":...}}`, so the
-        // action coordinate the PEP reads from the SIGNED BODY is the operation `echo`
-        // with no target. A decision must be about exactly that.
+        // The decorated request signs `tools/call` naming the tool `DECIDED_TOOL`, so the
+        // action coordinate the PEP reads from the SIGNED BODY is that operation and that
+        // target. A decision must be about exactly that.
         mcp_re_decided_operation: operation.into(),
-        mcp_re_decided_target: None,
+        mcp_re_decided_target: Some(DECIDED_TOOL.into()),
         mcp_re_decision: outcome,
         mcp_re_policy_version: "acceptance-v1".into(),
     };
@@ -2023,7 +2027,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
     // Row 1 — a Permit from the enrolled authority, about this actor and this action.
     let permit = acceptance_decision(
         PdpDecisionOutcome::Permit,
-        "echo",
+        "tools/call",
         SUBJECT_A,
         &acceptance_pdp_key(),
         ACCEPTANCE_PDP_KID,
@@ -2046,7 +2050,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-deny",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Deny,
-                "echo",
+                "tools/call",
                 SUBJECT_A,
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
@@ -2060,7 +2064,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-other-action",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "tools/call",
+                "prompts/get",
                 SUBJECT_A,
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
@@ -2071,7 +2075,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-other-actor",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "echo",
+                "tools/call",
                 "did:example:someone-else",
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
@@ -2083,7 +2087,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-untrusted-issuer",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "echo",
+                "tools/call",
                 SUBJECT_A,
                 &SigningKey::from_seed_bytes(&[92u8; 32]),
                 "pdp-not-enrolled",
@@ -2095,7 +2099,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-stale",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "echo",
+                "tools/call",
                 SUBJECT_A,
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
