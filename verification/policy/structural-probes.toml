@@ -1772,3 +1772,37 @@ new = """
 pub struct ServerIdentityFacts {
     pub(super) actor: ActorIdentity,"""
 
+
+[[probe]]
+id = "S50"
+unit = "core.max_clock_skew_bound"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-core:mcp_re_core"
+invariant = "no code outside `MaxClockSkew`'s own module can build one around an unchecked tolerance"
+insertion_parent = "mcp-re-core/src/time/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0423"
+construction = """
+// ADR-MCPRE-068 structural probe S50. Injected into a scratch copy by verify-structural.
+use crate::time::MaxClockSkew;
+
+pub fn hostile() -> MaxClockSkew {
+    MaxClockSkew(-30) // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Injected into `time`, the module that declares `clock_skew` and re-exports the type: the
+nearest neighbour, and still refused. `E0423` because the tuple field is private to
+`clock_skew`.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the tuple field of `MaxClockSkew` is private to `time::clock_skew`, which has no submodules besides its tests"
+alternate-constructors = "`MaxClockSkew::new` is the only constructor and refuses a value outside `0..=BOUND_SECS`; `InMemoryReplayCache::new`, `FreshnessWindow::new` and `VerifierPolicy::new` reach a tolerance only through it"
+generated-or-deserialization = "`MaxClockSkew` derives Debug, Clone, Copy, PartialEq and Eq only; no Default, From or Deserialize exists"
+test-only-construction = "tests build one through `MaxClockSkew::new`; no `#[cfg(test)]` constructor exists"
+[[probe.relaxation]]
+path = "mcp-re-core/src/time/clock_skew.rs"
+old = """
+pub struct MaxClockSkew(i64);"""
+new = """
+pub struct MaxClockSkew(pub(crate) i64);"""

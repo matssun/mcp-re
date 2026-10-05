@@ -40,7 +40,9 @@
 
 use crate::error::McpReError;
 
+mod clock_skew;
 mod format;
+pub use clock_skew::MaxClockSkew;
 pub use format::unix_to_rfc3339_utc;
 
 // ADR-MCPRE-059 Phase 2. Absent from every production build: the import is

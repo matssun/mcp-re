@@ -195,6 +195,11 @@ impl ReplayKey {
 mod tests {
     use super::*;
     use mcp_re_core::InMemoryReplayCache;
+    use mcp_re_core::MaxClockSkew;
+
+    fn no_skew() -> MaxClockSkew {
+        MaxClockSkew::new(0).expect("0 s is inside the bound")
+    }
 
     /// Mutates one component of a replay key, to check that component discriminates.
     type KeyMutator = fn(&mut HttpReplayKey);
@@ -218,7 +223,7 @@ mod tests {
 
     #[test]
     fn first_insert_is_fresh_replay_is_detected() {
-        let cache = InMemoryReplayCache::new(0);
+        let cache = InMemoryReplayCache::new(no_skew());
         assert_eq!(admit(&cache, &key()), ReplayDecision::Fresh);
         assert_eq!(admit(&cache, &key()), ReplayDecision::Replay);
     }
@@ -239,7 +244,7 @@ mod tests {
             ("nonce", |k| k.nonce = "nonce-2".into()),
         ];
         for (name, mutate) in variants {
-            let cache = InMemoryReplayCache::new(0);
+            let cache = InMemoryReplayCache::new(no_skew());
             assert_eq!(admit(&cache, &key()), ReplayDecision::Fresh, "{name}: seed");
             let mut other = key();
             mutate(&mut other);
@@ -316,7 +321,7 @@ mod tests {
         ];
 
         // ONE cache, so a later row colliding with an earlier one is detected as a replay.
-        let cache = InMemoryReplayCache::new(0);
+        let cache = InMemoryReplayCache::new(no_skew());
         for (profile_id, signature_label, actor_id, boundary) in boundary_shifted {
             let k = HttpReplayKey {
                 profile_id: profile_id.into(),

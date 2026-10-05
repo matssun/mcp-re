@@ -282,7 +282,9 @@ fn replayed_request_is_rejected_by_the_replay_tier() {
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("verifies");
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(
+        mcp_re_core::MaxClockSkew::new(0).expect("0 s is inside the bound"),
+    );
     // The posture is stated, not defaulted: this vector is not a fleet-strict deployment,
     // and the dispatcher decides the cache's durability class before it admits anything.
     let posture = mcp_re_http_profile::DispatchConfig {

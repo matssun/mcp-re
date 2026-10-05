@@ -59,6 +59,7 @@ attestations this view cannot see.
 | unit://core.audit_vocabulary | source, contracts or evidence | THM-0122 | _no consumer_ |
 | unit://core.content_address | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://core.ed25519_primitive | source, contracts or evidence | THM-0014 | _no consumer_ |
+| unit://core.max_clock_skew_bound | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://core.replay_seam | source, contracts or evidence | THM-0118 | _no consumer_ |
 | unit://core.time_civil_from_days | source, contracts or evidence | THM-0128 | _no consumer_ |
 | unit://core.time_rfc3339 | source, contracts or evidence | THM-0002 | _no consumer_ |

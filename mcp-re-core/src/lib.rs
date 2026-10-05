@@ -95,6 +95,7 @@ pub use resolver::InMemoryTrustResolver;
 pub use resolver::TrustResolver;
 pub use resolver::TrustResolverError;
 pub use time::parse_rfc3339_utc;
+pub use time::MaxClockSkew;
 pub use time::unix_to_rfc3339_utc;
 pub use wire::json_rpc_error_object;
 pub use wire::MCP_RE_JSON_RPC_ERROR_CODE;

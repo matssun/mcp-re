@@ -9,6 +9,7 @@
 //! layer (the core `is_single_process_reference` signal), not the proxy tier.
 
 use mcp_re_core::InMemoryReplayCache;
+use mcp_re_core::MaxClockSkew;
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
@@ -38,6 +39,10 @@ use mcp_re_http_profile::PROFILE_TAG;
 const CLIENT_A_SEED: [u8; 32] = [11u8; 32];
 const CLIENT_B_SEED: [u8; 32] = [33u8; 32];
 const NOW: i64 = 1_700_000_100;
+
+fn no_skew() -> MaxClockSkew {
+    MaxClockSkew::new(0).expect("0 s is inside the bound")
+}
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
 const TARGET: &str = "https://mcp.example.com/mcp?route=a";
@@ -157,7 +162,7 @@ fn verified_request(
 fn duplicate_nonce_same_actor_audience_profile_is_replay() {
     let block = request_block(audience("verifier-1"), None);
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(no_skew());
     let cfg = permissive_cfg();
 
     let first = dispatch_request(&ev, &cache, None, &cfg).expect("first admit");
@@ -171,7 +176,7 @@ fn duplicate_nonce_same_actor_audience_profile_is_replay() {
 /// Acceptance #2: the same nonce under a different audience does not collide.
 #[test]
 fn same_nonce_different_audience_does_not_collide() {
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(no_skew());
     let cfg = permissive_cfg();
 
     let block_a = request_block(audience("verifier-1"), None);
@@ -187,7 +192,7 @@ fn same_nonce_different_audience_does_not_collide() {
 /// Acceptance #3: the same nonce for a different resolved actor does not collide.
 #[test]
 fn same_nonce_different_resolved_actor_does_not_collide() {
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(no_skew());
     let cfg = permissive_cfg();
 
     let block = request_block(audience("verifier-1"), None);
@@ -228,7 +233,7 @@ impl ReplayCache for DurableTestCache {
 fn fleet_strict_rejects_single_process_reference_cache() {
     let block = request_block(audience("verifier-1"), None);
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(no_skew());
     let cfg = DispatchConfig { fleet_strict: true };
 
     let err = dispatch_request(&ev, &cache, None, &cfg).expect_err("strict must refuse");
@@ -242,7 +247,7 @@ fn fleet_strict_rejects_single_process_reference_cache() {
 fn fleet_strict_admits_durable_cache() {
     let block = request_block(audience("verifier-1"), None);
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let cache = DurableTestCache(InMemoryReplayCache::new(0));
+    let cache = DurableTestCache(InMemoryReplayCache::new(no_skew()));
     let cfg = DispatchConfig { fleet_strict: true };
 
     dispatch_request(&ev, &cache, None, &cfg).expect("durable cache admitted under strict");
@@ -289,7 +294,7 @@ fn matching_ctx() -> RetainedContinuation<'static> {
 fn continuation_round_trips_through_dispatch() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(no_skew());
 
     let outcome = dispatch_request(&ev, &cache, Some(matching_ctx()), &permissive_cfg())
         .expect("continuation must verify");
@@ -301,7 +306,7 @@ fn continuation_round_trips_through_dispatch() {
 fn continuation_changed_request_state_fails() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(no_skew());
     let ctx = retained_over(PREV_BASE, IRR_BASE, b"tampered-request-state");
 
     let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
@@ -318,7 +323,7 @@ fn continuation_changed_request_state_fails() {
 fn continuation_wrong_previous_request_evidence_fails() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(no_skew());
     let ctx = retained_over(b"a-different-previous-request", IRR_BASE, REQ_STATE);
 
     let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
@@ -334,7 +339,7 @@ fn continuation_wrong_previous_request_evidence_fails() {
 fn continuation_wrong_input_required_response_evidence_fails() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(no_skew());
     let ctx = retained_over(PREV_BASE, b"a-different-input-required-response", REQ_STATE);
 
     let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
@@ -351,7 +356,7 @@ fn continuation_wrong_input_required_response_evidence_fails() {
 fn continuation_without_retained_context_fails_closed() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(no_skew());
 
     let err = dispatch_request(&ev, &cache, None, &permissive_cfg())
         .expect_err("missing continuation context must fail closed");
@@ -367,7 +372,7 @@ fn continuation_without_retained_context_fails_closed() {
 fn failed_continuation_does_not_burn_the_nonce() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(no_skew());
     let bad_ctx = retained_over(PREV_BASE, IRR_BASE, b"tampered");
 
     // First attempt fails on the continuation, before the replay insert.

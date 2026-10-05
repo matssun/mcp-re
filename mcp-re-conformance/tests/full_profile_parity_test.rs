@@ -231,7 +231,9 @@ impl ReplayCache for DurableCache {
     }
 }
 fn strict_cache() -> DurableCache {
-    DurableCache(InMemoryReplayCache::new(0))
+    DurableCache(InMemoryReplayCache::new(
+        mcp_re_core::MaxClockSkew::new(0).expect("0 s is inside the bound"),
+    ))
 }
 fn strict_cfg() -> DispatchConfig {
     DispatchConfig { fleet_strict: true }

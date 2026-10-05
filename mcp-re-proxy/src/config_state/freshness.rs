@@ -36,6 +36,7 @@
 
 use super::replica_clock::ReplicaClockDivergence;
 use crate::deployment_request::DeploymentRequest;
+use mcp_re_core::MaxClockSkew;
 
 /// The accepted temporal uncertainty, and what each mechanism derives from it.
 ///
@@ -43,7 +44,7 @@ use crate::deployment_request::DeploymentRequest;
 /// producer, so possessing one IS the statement that the skew is within the §5.1 bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FreshnessWindow {
-    max_clock_skew_secs: i64,
+    max_clock_skew: MaxClockSkew,
     /// How far two replicas' clocks may disagree. A second dimension of temporal
     /// uncertainty beside the skew, and it widens only the STORE's retention: the verifier's
     /// window above does not move.
@@ -53,18 +54,17 @@ pub struct FreshnessWindow {
 impl FreshnessWindow {
     /// The only public constructor, and it performs the check.
     ///
-    /// `None` outside the §5.1 bound: construction itself validates, so possessing a
+    /// `None` outside the §5.1 bound [`MaxClockSkew`] owns: construction itself validates, so
+    /// possessing a
     /// `FreshnessWindow` means the skew was bounded no matter which crate built it. That is
     /// what lets this be public without weakening the seal — an embedding binary or an
     /// integration test gets the same guarantee the classifier gets, rather than a way
     /// around it.
     pub fn new(max_clock_skew_secs: i64) -> Option<Self> {
-        (0..=mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
-            .contains(&max_clock_skew_secs)
-            .then_some(Self {
-                max_clock_skew_secs,
-                replica_clock_divergence: ReplicaClockDivergence::deployment_default(),
-            })
+        MaxClockSkew::new(max_clock_skew_secs).map(|max_clock_skew| Self {
+            max_clock_skew,
+            replica_clock_divergence: ReplicaClockDivergence::deployment_default(),
+        })
     }
 
     /// The same window under a declared inter-replica clock divergence bound.
@@ -83,7 +83,12 @@ impl FreshnessWindow {
 
     /// The skew the RFC 9421 verifier applies to `created` and `expires` (§5.1).
     pub fn verifier_skew_secs(&self) -> i64 {
-        self.max_clock_skew_secs
+        self.max_clock_skew.secs()
+    }
+
+    /// The bounded skew itself, for a replay store that derives its own retain-until.
+    pub fn max_clock_skew(&self) -> MaxClockSkew {
+        self.max_clock_skew
     }
 
     /// How long a replay record for a request expiring at `expires_at_unix` must be kept.
@@ -92,7 +97,7 @@ impl FreshnessWindow {
     /// the verifier would still accept the request carrying it, which is a statement about
     /// the verifier's window and therefore about the same skew.
     pub fn replay_retain_until(&self, expires_at_unix: i64) -> i64 {
-        expires_at_unix.saturating_add(self.max_clock_skew_secs)
+        expires_at_unix.saturating_add(self.max_clock_skew.secs())
     }
 }
 

@@ -724,7 +724,7 @@ mod tests {
     fn skew_folded_into_retain_until_matches_in_memory_semantics() {
         let store = fixture_store();
         let shared = SharedReplayCache::new(Box::new(store.clone()), window());
-        let core = mcp_re_core::InMemoryReplayCache::new(SKEW);
+        let core = mcp_re_core::InMemoryReplayCache::new(window().max_clock_skew());
         let retain_until = EXPIRES + SKEW;
         assert_eq!(
             shared.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),

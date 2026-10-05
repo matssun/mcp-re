@@ -39,6 +39,7 @@ use vstd::prelude::*;
 
 use crate::error::HttpProfileError;
 use crate::ids::ALG_ED25519;
+use mcp_re_core::MaxClockSkew;
 
 /// A signature algorithm this crate can actually VERIFY.
 ///
@@ -106,10 +107,9 @@ impl VerifierPolicy {
     /// two different notions of "close enough" on the same message.
     pub const DEFAULT_MAX_CLOCK_SKEW: i64 = 30;
 
-    /// The hard cap on configurable skew (§5.1 "bounded"). Five minutes is the
-    /// widest disagreement a deployment can declare and still call itself
-    /// conforming; beyond this the freshness gate stops being a freshness gate.
-    pub const MAX_CLOCK_SKEW_BOUND: i64 = 300;
+    /// The hard cap on configurable skew (§5.1 "bounded"), owned by
+    /// [`MaxClockSkew`]: beyond it the freshness gate stops being a freshness gate.
+    pub const MAX_CLOCK_SKEW_BOUND: i64 = MaxClockSkew::BOUND_SECS;
 
     /// The default ceiling on a signature's own validity window (`expires - created`).
     ///
@@ -147,14 +147,14 @@ impl VerifierPolicy {
                 resolved.push(alg);
             }
         }
-        if !(0..=Self::MAX_CLOCK_SKEW_BOUND).contains(&max_clock_skew) {
+        let Some(max_clock_skew) = MaxClockSkew::new(max_clock_skew) else {
             return Err(HttpProfileError::MalformedEvidence(
                 "clock skew out of bounds",
             ));
-        }
+        };
         Ok(VerifierPolicy {
             algorithms: resolved,
-            max_clock_skew,
+            max_clock_skew: max_clock_skew.secs(),
             max_signature_validity: Self::DEFAULT_MAX_SIGNATURE_VALIDITY,
             mcp_transport: crate::mcp_transport::McpTransportPolicy::profile_default(),
         })
