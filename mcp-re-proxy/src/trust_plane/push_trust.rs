@@ -13,14 +13,14 @@
 //! handling. The in-process reference channel here does NOT prove that, so:
 //!
 //! - while the channel is **healthy**, pushed evictions take effect before `T` →
-//!   *near-zero* window;
+//!   window bounded by the store's re-read cadence;
 //! - if the channel is **unhealthy** (a missed heartbeat / disconnect), a
 //!   revocation push may be lost, so the cache MUST fall back to the bounded `T`:
 //!   entries still expire after `t_secs`, capping the exposure window at `T`
 //!   exactly as Tier 1 does. It NEVER serves an entry past `T` on the assumption a
 //!   push "would have" arrived.
 //!
-//! The surfaced guarantee is therefore "near-zero with bounded-`T` fallback"
+//! The surfaced guarantee is therefore "the re-read bound with bounded-`T` fallback"
 //! ([`RevocationTier::Push`](crate::RevocationTier)) and NEVER the zero-window
 //! claim. A reliable-ordering networked channel (e.g. an ordered Redis pub/sub
 //! with sequence numbers and gap detection) could justify a stronger claim; that

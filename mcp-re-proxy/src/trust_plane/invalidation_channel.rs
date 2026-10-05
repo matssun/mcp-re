@@ -48,7 +48,7 @@ pub enum InvalidationEvent {
 ///
 /// The cache drains pending events before each lookup and evicts the named entries. The
 /// trait makes no delivery or ordering guarantee, which is exactly why the reference Tier 3
-/// is "near-zero + bounded fallback" rather than zero-window.
+/// is "re-read bound + bounded fallback" rather than zero-window.
 ///
 /// # `is_healthy` reports; it does not gate
 ///
@@ -60,7 +60,7 @@ pub enum InvalidationEvent {
 /// was down.
 ///
 /// Reading it as a gate is worse than useless: it suggests a control that would have to
-/// exist for the near-zero claim to be honest, and none does. The witness is worth keeping
+/// exist for the push claim to be honest, and none does. The witness is worth keeping
 /// — it is the difference between "no events arrived" and "nothing could have arrived", and
 /// a reader with only `drain_pending` cannot tell those apart — but it is evidence for an
 /// operator, not an input to a decision.
@@ -83,7 +83,7 @@ pub trait InvalidationChannel {
 /// settable health flag, for deterministic unit tests and single-process
 /// deployments. It does NOT prove reliable ordering/delivery across nodes (it is
 /// in-process), which is precisely why Tier 3 over this channel surfaces the
-/// near-zero+bounded-fallback guarantee, never zero-window.
+/// re-read-bound + bounded-fallback guarantee, never zero-window.
 #[derive(Clone)]
 pub struct InMemoryInvalidationChannel {
     pending: Arc<Mutex<VecDeque<InvalidationEvent>>>,

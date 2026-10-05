@@ -257,7 +257,7 @@ impl RedisEpochReader {
     ///
     ///   * a `--trust-epoch-key` naming a key nobody INCRs, in the wrong database, or
     ///     since deleted would leave the Tier-3 kill switch inert while the startup
-    ///     line advertised a near-zero revocation window;
+    ///     line advertised a pushed revocation window;
     ///   * a counter lost to a snapshot restore, FLUSHDB, LRU eviction or a failover
     ///     would let a restarting replica re-mint under `<base>#0`, silently undoing
     ///     a revocation inside the `{current, previous}` acceptance window.

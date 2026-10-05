@@ -7,8 +7,8 @@
 //! | State | Required | Forbidden | Guards |
 //! |---|---|---|---|
 //! | `BoundedCache{T}` | — | epoch url, epoch key | `reload <= T` if set |
-//! | `Live` | reload | epoch url, epoch key | `reload <= MAX_NEAR_ZERO` |
-//! | `PushInert{T}` | reload | epoch key | `reload <= min(MAX_NEAR_ZERO, T)` |
+//! | `Live` | reload | epoch url, epoch key | `reload <= MAX_LIVE_OR_PUSH` |
+//! | `PushInert{T}` | reload | epoch key | `reload <= min(MAX_LIVE_OR_PUSH, T)` |
 //! | `PushNetworked{T}` | reload, epoch url | — | same, plus a scheme-bearing url |
 //!
 //! **Each state carries what its Required column names.** The three states that require a
@@ -219,8 +219,8 @@ impl TrustRevocationState {
         }
     }
 
-    /// The window the state claims, in seconds — `None` for `Live`, whose claim is
-    /// near-zero rather than a bound.
+    /// The window the state claims, in seconds — `None` for `Live`, which caches nothing
+    /// and is bounded by its re-read cadence alone.
     pub fn declared_window_secs(&self) -> Option<i64> {
         match &self.kind {
             RevocationKind::Live { .. } => None,
@@ -325,16 +325,16 @@ fn cadence_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
     }
     let (ceiling, claim) = match state {
         RequestedState::Live => (
-            MAX_NEAR_ZERO_TRUST_RELOAD_SECS,
-            "--revocation-tier live states a NEAR-ZERO revocation window (the store is \
-             consulted on every verification)"
+            MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS,
+            "--revocation-tier live states a window bounded by the re-read cadence (the \
+             store is consulted on every verification)"
                 .to_string(),
         ),
         RequestedState::PushInert { t_secs } | RequestedState::PushNetworked { t_secs } => (
-            MAX_NEAR_ZERO_TRUST_RELOAD_SECS.min(t_secs.max(1) as u64),
+            MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS.min(t_secs.max(1) as u64),
             format!(
-                "--revocation-tier push:{t_secs} states a near-zero window with a bounded \
-                 {t_secs}s fallback"
+                "--revocation-tier push:{t_secs} states a re-read-bounded window with a \
+                 bounded {t_secs}s fallback"
             ),
         ),
         RequestedState::BoundedCache { t_secs } => (
@@ -411,16 +411,16 @@ pub fn classify_and_validate(
     (state, violations)
 }
 
-/// The ceiling on `--trust-reload-secs` for the tiers that advertise a NEAR-ZERO
-/// revocation window (`live`, `push`).
+/// The ceiling on `--trust-reload-secs` for the tiers whose window is bounded by the
+/// re-read cadence rather than by a cache lifetime (`live`, `push`).
 ///
 /// Those tiers describe how fast a revoked request-signer key stops being honoured, and
 /// the only thing that removes a key from the resolver on a running replica is the
 /// `--trust` re-read. The cadence is therefore the real window, whatever the tier
-/// string says. One minute is the coarsest cadence for which "near-zero" survives
-/// contact with an incident. It is this owner's policy ceiling: request signatures are
+/// string says. One minute bounds that window at the reload failure budget times 60s at
+/// worst (`delivered_window`). It is this owner's policy ceiling: request signatures are
 /// verified per request, so no connection lifetime bounds a request-signer revocation.
-pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
+pub const MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS: u64 = 60;
 
 #[cfg(test)]
 mod tests {
@@ -633,7 +633,7 @@ mod tests {
     #[test]
     fn a_refused_request_yields_no_state() {
         let ceiling = RequestSignerCurrencyRequest::Live {
-            reload_secs: MAX_NEAR_ZERO_TRUST_RELOAD_SECS + 1,
+            reload_secs: MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS + 1,
         };
         let not_a_url = RequestSignerCurrencyRequest::Push {
             t_secs: 30,
@@ -858,7 +858,7 @@ mod tests {
     #[test]
     fn each_state_holds_the_cadence_to_the_window_it_claims() {
         for (tier, cadence) in [
-            (RevocationTier::Live, MAX_NEAR_ZERO_TRUST_RELOAD_SECS + 1),
+            (RevocationTier::Live, MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS + 1),
             (RevocationTier::Push { t_secs: 10 }, 11),
             (RevocationTier::BoundedCache { t_secs: 30 }, 31),
         ] {
@@ -875,10 +875,10 @@ mod tests {
     }
 
     #[test]
-    fn a_push_window_narrower_than_near_zero_binds_instead_of_it() {
+    fn a_push_window_narrower_than_the_cadence_ceiling_binds_instead_of_it() {
         // `push:10` claims a 10s fallback, so 30s is refused even though it is inside the
-        // general near-zero ceiling. The tighter of the two claims is the one that binds.
-        const { assert!(MAX_NEAR_ZERO_TRUST_RELOAD_SECS > 30) };
+        // general cadence ceiling. The tighter of the two claims is the one that binds.
+        const { assert!(MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS > 30) };
         let violations = violations_of(|c| {
             c.request_signer_currency = RequestSignerCurrencyRequest::Push {
                 t_secs: 10,

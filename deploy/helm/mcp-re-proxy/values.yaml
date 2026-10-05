@@ -92,7 +92,8 @@ continuationControl:
   redisUrl: ""
 
 # Trust revocation (ADR-MCPS-021 / MCPS-84). The push tier + a trust-epoch Redis
-# source gives near-zero cross-replica revocation lag (bounded T on outage). Set
+# source flushes every replica's trust cache on an epoch advance (bounded T on
+# outage); the store itself is as fresh as its last --trust re-read. Set
 # trustEpochRedisUrl to "" to run the push tier inert (bounded-T only).
 #
 # Same scheme rule as replay.redisUrl, and the stakes are higher: the epoch value
@@ -103,7 +104,7 @@ continuationControl:
 # `live` and `push` tiers: both state their revocation window in terms of consulting
 # the trust store, and with the file read once at startup the store cannot change —
 # revoking a request-signer key would need a restart of every replica while the
-# startup line claimed a near-zero window. The proxy refuses those tiers without it.
+# startup line claimed a re-read-bounded window. The proxy refuses those tiers without it.
 #
 # Note the k8s side: a Secret/ConfigMap volume update propagates on the kubelet's own
 # sync period (~60s by default), so the end-to-end revocation latency is that plus

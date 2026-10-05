@@ -233,7 +233,7 @@ impl TrustPlane {
         // re-resolve against it — and none of those descriptions was a true statement
         // about the deployment while the store could not change: revoking a client
         // signing key meant editing the file and restarting every replica, so the
-        // exposure window was unbounded while the startup line advertised near-zero.
+        // exposure window was unbounded while the startup line advertised a re-read bound.
         // `response_kid` is the deployment's own issuer key id, passed in rather than
         // derived here: it is excluded from the request-signer set so the root can never be
         // presented as a client credential.
@@ -266,7 +266,7 @@ impl TrustPlane {
             // Honesty (Tier 3): with no networked source wired, the in-process
             // reference channel is inert — Tier 3 runs at its bounded-`T` fallback
             // (already reflected in the tier's `guarantee()` string above), NOT an
-            // active near-zero push channel. Configure --trust-epoch-redis-url to
+            // active push channel. Configure --trust-epoch-redis-url to
             // activate the networked source (MCPS-84).
             //
             // Read off the classification rather than off `push_channel.is_none()`: the

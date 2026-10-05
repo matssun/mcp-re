@@ -26,7 +26,7 @@
 ///   operates at its honest bounded-`T` fallback (exactly what
 ///   [`RevocationTier::Push`]'s `guarantee()` already states). The wrapping is
 ///   still correct: it is the same code path a real push backend will drive, and
-///   it never claims a near-zero window the channel cannot prove.
+///   it never claims a pushed window the channel cannot prove.
 ///
 /// Pure and unit-testable: the `clock` is injected (tests pass a controllable one),
 /// and the negative TTL is the named [`crate::trust_plane::trust_cache::DEFAULT_NEGATIVE_TTL_SECS`].

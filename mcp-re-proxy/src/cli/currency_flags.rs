@@ -107,7 +107,7 @@ impl CurrencyFlags {
         })
     }
 
-    /// The cadence the two near-zero tiers are inhabited by.
+    /// The cadence the two re-read-bounded tiers are inhabited by.
     ///
     /// Absence is argv-shaped: an assembled request always carries one under those tiers,
     /// so only a command line can omit it.
@@ -160,10 +160,10 @@ mod tests {
         assert!(posture.epoch().is_some_and(|epoch| epoch.source.is_some()));
     }
 
-    /// The two near-zero tiers are inhabited by a cadence, so a command line that omits one
+    /// The two re-read-bounded tiers are inhabited by a cadence, so a command line that omits one
     /// names no posture at all.
     #[test]
-    fn a_near_zero_tier_without_a_cadence_is_refused() {
+    fn a_live_or_push_tier_without_a_cadence_is_refused() {
         for tier in ["live", "push:30"] {
             let mut flags = CurrencyFlags::default();
             flags.take_tier(tier).expect("a known tier");

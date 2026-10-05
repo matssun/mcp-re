@@ -2553,7 +2553,7 @@ mod tests {
         }
     }
 
-    /// A tier that advertises a near-zero window must have a store that can change.
+    /// A tier whose window is bounded by the re-read cadence must have a store that can change.
     /// Read-once `--trust` makes both LIVE and PUSH claims the binary cannot keep.
     #[test]
     fn live_and_push_tiers_require_a_trust_reload_cadence() {
@@ -2572,7 +2572,7 @@ mod tests {
 
     /// PRESENCE is not the guarantee. A cadence longer than the window the tier
     /// advertises leaves the same over-claim the absent-cadence refusal exists to stop:
-    /// the startup line promises near-zero while the store changes once a week.
+    /// the startup line promises a one-minute bound while the store changes once a week.
     #[test]
     fn a_cadence_longer_than_the_declared_window_is_refused() {
         for (tier, secs) in [

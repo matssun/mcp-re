@@ -134,4 +134,34 @@ mod tests {
             "got {live}"
         );
     }
+
+    /// The tier guarantees quote the failure budget and, for `Live`, the worst case at the
+    /// cadence ceiling. Both are this file's arithmetic over the owners' constants, so a
+    /// change to either constant turns this red until the guarantee is re-worded.
+    #[test]
+    fn the_tier_guarantees_quote_the_bound_this_window_delivers() {
+        let budget = crate::trust_plane::reload::TRUST_RELOAD_FAILURE_BUDGET;
+        let ceiling = crate::config_state::trust_revocation::MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS;
+        let plan = TrustReloadPlan::Every {
+            secs: crate::config_state::TrustRevocationState::cadence(ceiling),
+        };
+        let live = delivered_revocation_window(&RevocationTier::Live, plan);
+        let worst = u64::from(budget) * ceiling;
+        assert!(
+            live.starts_with(&format!("worst case {worst}s ")),
+            "got {live}"
+        );
+        let quoted = RevocationTier::Live.guarantee();
+        assert!(
+            quoted.contains(&format!(
+                "{budget} x R at worst (up to {worst}s at the {ceiling}s"
+            )),
+            "{quoted}"
+        );
+        let push = RevocationTier::Push { t_secs: 60 }.guarantee();
+        assert!(
+            push.contains(&format!("{budget} x R + T at worst")),
+            "{push}"
+        );
+    }
 }

@@ -141,7 +141,7 @@ fn enabling_trust_reload_changes_the_tier_line_and_the_reload_line_together() {
 }
 
 /// A push tier with no networked event source says so, immediately after the tier it
-/// qualifies — the honesty control that stops a deployment reading a near-zero
+/// qualifies — the honesty control that stops a deployment reading a pushed
 /// revocation window it is not actually getting.
 ///
 /// `--trust-reload-secs` is not incidental here: `push` (and `live`) are REFUSED without

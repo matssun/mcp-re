@@ -6,7 +6,7 @@ Posture:
   inner plane        : HTTP backends: {{ join ", " .Values.inner.httpUrls }}
   service affinity   : {{ .Values.service.sessionAffinity }}{{ if eq .Values.service.sessionAffinity "None" }} (round-robin){{ else }} (sticky — session-stateful inner backend){{ end }}
   replay tier        : shared, {{ .Values.replay.durabilityTier }}
-  revocation tier    : {{ .Values.revocation.tier }}{{ if .Values.revocation.trustEpochRedisUrl }} + networked trust-epoch source (near-zero cross-replica revocation lag){{ else }} (inert push — bounded-T lag){{ end }}
+  revocation tier    : {{ .Values.revocation.tier }}{{ if .Values.revocation.trustEpochRedisUrl }} + networked trust-epoch source (cross-replica cache flush on epoch advance; store as fresh as its last --trust re-read){{ else }} (inert push — bounded-T lag){{ end }}
 
 Reach the fleet:
   kubectl get svc {{ include "mcp-re-proxy.fullname" . }}

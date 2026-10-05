@@ -1385,7 +1385,7 @@ deployment the shipped Helm chart's own guard refuses (NP-007).
 
 ## NP-032 — the trust-refresh posture holds its cadence to its window
 
-**Controls:** `mcp-re-proxy` `lib#cli::currency_flags::tests` (5) — `a_later_zero_cadence_restores_the_read_once_posture`, `a_near_zero_tier_without_a_cadence_is_refused`, `an_epoch_source_under_a_tier_that_reads_none_is_refused`, `the_bounded_cache_tier_keeps_both_cadence_postures`, `the_pushing_tier_carries_the_epoch_source_it_reads`; `mcp-re-proxy` `lib#cli::delegated_signing_flags::tests` (2) — `a_window_that_is_not_a_number_is_refused_by_name`, `the_window_defaults_and_the_coordinates_stay_unnamed`; `mcp-re-proxy` `lib#cli::tests` (16) — `a_cadence_longer_than_the_declared_window_is_refused`, `a_declared_replay_clock_divergence_reaches_the_resolved_window`, `an_out_of_bounds_replay_clock_divergence_is_refused_at_parse`, `degraded_mode_requires_a_positive_bound`, `delegated_overlap_not_less_than_ttl_is_rejected`, `delegated_signing_parses_with_defaults`, `live_and_push_tiers_require_a_trust_reload_cadence`, `max_clock_skew_is_accepted_across_the_whole_bound`, `missing_trust_epoch_is_rejected`, `out_of_bounds_max_clock_skew_is_refused_at_parse`, `parses_each_revocation_tier`, `rejects_unknown_or_malformed_revocation_tier`, `revocation_tier_defaults_to_bounded_cache_tier_1`, `the_degraded_window_refusal_names_the_clock_skew_term`, `trust_epoch_url_with_push_tier_parses`, `trust_epoch_url_without_push_tier_is_rejected`.
+**Controls:** `mcp-re-proxy` `lib#cli::currency_flags::tests` (5) — `a_later_zero_cadence_restores_the_read_once_posture`, `a_live_or_push_tier_without_a_cadence_is_refused`, `an_epoch_source_under_a_tier_that_reads_none_is_refused`, `the_bounded_cache_tier_keeps_both_cadence_postures`, `the_pushing_tier_carries_the_epoch_source_it_reads`; `mcp-re-proxy` `lib#cli::delegated_signing_flags::tests` (2) — `a_window_that_is_not_a_number_is_refused_by_name`, `the_window_defaults_and_the_coordinates_stay_unnamed`; `mcp-re-proxy` `lib#cli::tests` (16) — `a_cadence_longer_than_the_declared_window_is_refused`, `a_declared_replay_clock_divergence_reaches_the_resolved_window`, `an_out_of_bounds_replay_clock_divergence_is_refused_at_parse`, `degraded_mode_requires_a_positive_bound`, `delegated_overlap_not_less_than_ttl_is_rejected`, `delegated_signing_parses_with_defaults`, `live_and_push_tiers_require_a_trust_reload_cadence`, `max_clock_skew_is_accepted_across_the_whole_bound`, `missing_trust_epoch_is_rejected`, `out_of_bounds_max_clock_skew_is_refused_at_parse`, `parses_each_revocation_tier`, `rejects_unknown_or_malformed_revocation_tier`, `revocation_tier_defaults_to_bounded_cache_tier_1`, `the_degraded_window_refusal_names_the_clock_skew_term`, `trust_epoch_url_with_push_tier_parses`, `trust_epoch_url_without_push_tier_is_rejected`.
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1902,9 +1902,10 @@ falsified by an index that was never made.
 **Controls:** `mcp-re-proxy/src/revocation_tier.rs` (9).
 **Carrier:** the revocation tier vocabulary and its published guarantees.
 **Statement.** *Every tier has a non-empty guarantee, each tier's guarantee is DISTINCT from
-every other's, no tier claims a zero window unless proven — LIVE is near-zero with a hard
-availability dependency and PUSH is near-zero with a bounded fallback, neither a zero window
-— the wire names are the semantic ADR names, parsing round-trips each tier and refuses
+every other's, no tier claims a zero window unless proven — LIVE states its re-read bound
+and its worst case (the reload failure budget times the cadence, up to 300s at the 60s
+ceiling) with a hard availability dependency, and PUSH states the same bound plus a bounded
+fallback `T`, neither a zero window — the wire names are the semantic ADR names, parsing round-trips each tier and refuses
 unknown and malformed ones, and the startup audit line carries the backend, the tier and the
 guarantee and no key material.*
 **If false.** A deployment publishes a revocation guarantee it does not have. Two tiers

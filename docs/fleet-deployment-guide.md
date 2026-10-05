@@ -165,7 +165,7 @@ replica flushes its trust cache on the next request and re-resolves live. The
 
 | Tier | Bound |
 |---|---|
-| Trust key-status | near-zero when the trust-epoch source is healthy; bounded `T` on a source outage (fail-closed); bounded `T` with no source |
+| Trust key-status | the next request after an epoch advance when the trust-epoch source is healthy, against a store as fresh as its last `--trust` re-read (`R` while re-reads succeed, 5 × `R` at worst); bounded `T` on a source outage (fail-closed); bounded `T` with no source |
 | Client-cert CRL | the `--client-crl-reload-secs` cadence (or the CRL `nextUpdate` with no reload configured) — applied per request, so it bounds peers holding established connections too, not only reconnecting ones |
 
 Zero-window revocation is **not** claimed on either tier. The proxy prints the

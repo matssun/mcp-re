@@ -3049,8 +3049,8 @@ tested_symbols = [
   # or it is satisfied by a classifier that refuses every cadence.
   "//mcp-re-proxy:proxy_unit_test#config_state::trust_revocation::tests::the_smallest_positive_cadence_is_admitted",
   # "each state holds its cadence to the window it claims", at the narrow end: a push window
-  # narrower than near-zero binds instead of it.
-  "//mcp-re-proxy:proxy_unit_test#config_state::trust_revocation::tests::a_push_window_narrower_than_near_zero_binds_instead_of_it",
+  # narrower than the cadence ceiling binds instead of it.
+  "//mcp-re-proxy:proxy_unit_test#config_state::trust_revocation::tests::a_push_window_narrower_than_the_cadence_ceiling_binds_instead_of_it",
   # "every legal state form is classified" — the LIVE form declares no bounded window, which
   # is the form a bounded-window assumption would silently mis-classify.
   "//mcp-re-proxy:proxy_unit_test#config_state::trust_revocation::tests::live_declares_no_bounded_window",
@@ -9039,6 +9039,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::a_caching_tier_states_the_cache_lifetime_on_top_of_the_store_cadence",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::delivered_window::tests::a_store_that_is_never_re_read_delivers_an_unbounded_window",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::delivered_window::tests::the_worst_case_composes_the_reload_failure_budget",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::delivered_window::tests::the_tier_guarantees_quote_the_bound_this_window_delivers",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::store_cadence_tests::the_push_tier_bound_states_the_poll_interval_not_the_next_request",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::store_cadence_tests::a_push_tier_without_a_source_reports_the_fallback_only",
 ]
