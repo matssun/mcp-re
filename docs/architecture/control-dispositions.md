@@ -889,7 +889,7 @@ propositions the proxy side already holds.
 
 ## NP-012 — the artifact that ships implements the profile
 
-**Controls:** `sdk/typescript/test/smoke.test.ts` (2), `sdk/python/tests/test_smoke.py` (3).
+**Controls:** `sdk/typescript/test/smoke.test.ts` (2), `sdk/python/tests/test_smoke.py` (3), `sdk/python/bazel_tests/core_lane_test.py` `TestCoreLane` (3), run by `//sdk/python:core_lane_test` over the Bazel-built extension, the first failing if any other was loaded.
 **Carrier:** the BUILT package — the napi native addon and the PyO3 wheel — not the source
 tree every other unit's battery measures.
 **Statement.** *The package as built and packed loads, reports a non-empty core version and
@@ -4922,3 +4922,14 @@ falsify it: one probe per check (`validate`, `validate_shape`) and one per signi
 response signer, the delegated 202). It is not a clause of
 `http_profile.response_emission_binding`, whose statement is what a response signature binds;
 this one covers request signers too. No theorem depends on it.
+
+## NP-277 — an SDK binding judges its pinned root at the caller's now and never pins an empty identity
+
+**Controls:** `sdk/python/bazel_tests/core_lane_test.py` `TestPinnedRoot` (4), run by `//sdk/python:core_lane_test` (stdlib `unittest`, Bazel-built `_core`; the census names them `pytest#` by file shape); `sdk/typescript/test/pinned_root.test.ts` (4).
+**Carrier:** `sdk/python/src/trust.rs` (`root_anchor`) and `sdk/typescript/src/trust.rs` (`root_resolver`), called from each binding's `verify_response` and `verify_accepted_202`.
+**Statement.** *Each binding's root anchor is the core's `TrustedIssuerSet`, evaluated at the `now` the caller passes: a root declared retired through `issuer_retired_until` / `issuerRetiredUntil` verifies while `now` is at or before that deadline and resolves untrusted after it, and an absent deadline pins a current root. An `issuer_*` identity field that is empty or whitespace is refused, naming the field, before anything is verified.*
+**If false.** A caller cannot retire a root through the published surface, or a retirement it declares is never evaluated; and a pin with an empty principal matches a credential naming an empty one, since the core compares the two by equality.
+**Likely owner:** none. The bindings are in no unit's `paths` (THM-0094 decomposition packet, P2-A), and no unit is invented for them here.
+**Root relationship.** Under THM-0094/THM-0095. Findings `31419f23`, `83208e90`, `9cf9662b` (Python) and the TypeScript twin of the same defect; `582be933` (empty `issuer_key_id`).
+**Severity:** `medium`.
+**Recorded:** 2026-10-05, owner Ruling 18, Stream A.

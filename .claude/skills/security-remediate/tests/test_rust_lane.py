@@ -142,7 +142,11 @@ def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int
     _write(root, "alpha/BUILD.bazel", ALPHA_BUILD)
     _write(root, "alpha/src/lib.rs", "pub mod keys;\n")
     _write(root, "alpha/src/keys.rs", src)
-    _write(root, "scripts/module_size_gate.py", "import sys; sys.exit(0)\n")
+    # Run as the size gate AND imported by `size_debt.encountered` for its line count, so
+    # the exit belongs under `__main__`: at import it would end this suite with status 0.
+    _write(root, "scripts/module_size_gate.py",
+           "def production_lines(text):\n    return len(text.splitlines())\n\n\n"
+           "if __name__ == '__main__':\n    raise SystemExit(0)\n")
     if not os.path.isdir(os.path.join(root, ".git")):
         _git_repo(root)
     fake = os.path.join(td, "bazel")
@@ -243,6 +247,30 @@ def test_the_lint_covers_every_touched_files_targets() -> None:
     assert seen["lint"] == ["//alpha:lib", "//beta:lib"], seen
     assert seen["fmt"] == ["//alpha:lib", "//beta:lib"], seen
     print("  rust gate: lint and rustfmt cover the targets of every touched .rs file  OK")
+
+
+def test_the_pyo3_binding_is_gated_by_its_python_lane() -> None:
+    """`sdk/python/src` is a `rust_shared_library` no `rust_test` compiles. Its tests are the
+    `py_test` over the extension it builds, and unittest's count is a count of tests run."""
+    seen: dict[str, list[str]] = {}
+    saved = (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+             rust_gate._rustfmt, rust_gate._run, rust_gate._test)
+    rust_gate.compiling_targets = lambda files: ["//sdk/python:_core_shared"] if files else []  # type: ignore[assignment]
+    rust_gate.unit_test_targets = lambda targets: []  # type: ignore[assignment]
+    rust_gate._lint = lambda t, log: {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._rustfmt = lambda t, e, log: {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._run = lambda cmd, log: (0, "")  # type: ignore[assignment]
+    rust_gate._test = lambda t, f, log: seen.setdefault("it", t) and {"verdict": "ok"}  # type: ignore[assignment]
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            rust_gate.gate("sdk/python/src/trust.rs", [], [], td, RustResolver(td))
+    finally:
+        (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+         rust_gate._rustfmt, rust_gate._run, rust_gate._test) = saved
+    assert seen.get("it") == ["//sdk/python:core_lane_test"], seen
+    assert rust_gate._RUNNING.findall("Ran 4 tests in 0.010s\n") == ["4"]
+    assert rust_gate._RUNNING.findall("Ran 0 tests in 0.000s\n") == ["0"]
+    print("  rust gate: the PyO3 binding runs its py_test lane, and unittest's count is read  OK")
 
 
 def test_every_rust_gate_part_has_a_journal_line() -> None:

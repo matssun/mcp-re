@@ -54,9 +54,14 @@ REGISTRY_GATES = ("scripts/unit_closure_gate.py", "scripts/verification_trigger_
                   # The census itself, which also checks a new proposition's own fields (its
                   # consequence class): the census GATE checks dispositions only.
                   "tools/verification/control-census --gate")
+# A Rust source whose tests are not Rust: the PyO3 binding is a `rust_shared_library` no
+# `rust_test` compiles, and the lane that exercises the extension it builds is a `py_test`.
+# Its tests run as this file's integration targets.
+EXTENSION_LANES = {"sdk/python/": ("//sdk/python:core_lane_test",)}
 RUST_RULES = "rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro"
 _DIAGNOSTIC = re.compile(r"^error(?:\[E\d+\])?: ", re.M)
-_RUNNING = re.compile(r"^running (\d+) tests?$", re.M)
+# libtest's "running N tests", and stdlib unittest's "Ran N tests in" for a `py_test` lane.
+_RUNNING = re.compile(r"^(?:running|Ran) (\d+) tests?(?: in .*)?$", re.M)
 _FAILED_TEST = re.compile(r"^---- (\S+) stdout ----$", re.M)
 _INLINE_TEST = re.compile(r"#\[(?:tokio::)?test\b")
 _FMT_DIFF = re.compile(r"^Diff in (\S+?\.rs):\d+:$", re.M)
@@ -256,6 +261,8 @@ def gate(file: str, related: list[str], its: list[str], work_dir: str,
             "0 tests ran" in parts[-1].get("why", "") or not units):
         parts[-1]["verdict"] = "ok"
         parts[-1]["note"] = "the file has no unit tests of its own"
+    its = sorted(set(its) | {lane for prefix, lanes in EXTENSION_LANES.items()
+                             if file.startswith(prefix) for lane in lanes})
     if its:
         parts.append(dict(_test(its, "", os.path.join(work_dir, "test-it-%s.log" % tag)),
                           gate="test", target="integration", targets=its))

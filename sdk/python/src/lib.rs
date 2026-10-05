@@ -11,7 +11,8 @@
 //! callback, so the private key never enters the SDK (non-exporting custody).
 
 mod trust;
-use trust::pinned_root_resolver;
+use trust::root_anchor;
+use trust::PinnedIssuer;
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -26,6 +27,7 @@ use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::AudienceTuple;
 use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::ContinuationHandles;
+use mcp_re_client_core::DelegatedResponseTrust;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::DpopCredential;
 use mcp_re_client_core::HttpProfileError;
@@ -34,6 +36,7 @@ use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::ProvidedAuthorization;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
+use mcp_re_client_core::SignerSlot;
 use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_core::PROFILE_TAG;
 use mcp_re_core::SigningKey;
@@ -527,6 +530,7 @@ struct PyAcceptedResult {
 /// direct-root-signed, revoked, stale-epoch, or bound to a different transmission fails
 /// closed as a `ValueError` carrying the frozen wire code.
 #[pyfunction]
+#[pyo3(signature = (status, resp_headers, resp_body, req_method, req_target_uri, req_headers, req_body, issuer_key_id, issuer_pubkey_b64url, issuer_role, issuer_trust_domain, issuer_subject, verifier_audiences, expected_audience_hash, accepted_epochs, max_clock_skew, revoked_identifiers, now, issuer_retired_until = None))]
 #[allow(clippy::too_many_arguments)]
 fn verify_accepted_202(
     status: u16,
@@ -547,16 +551,19 @@ fn verify_accepted_202(
     max_clock_skew: i64,
     revoked_identifiers: Vec<String>,
     now: i64,
+    issuer_retired_until: Option<i64>,
 ) -> PyResult<PyAcceptedResult> {
     let issuer_pub = VerificationKey::from_b64url(issuer_pubkey_b64url)
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("invalid issuer public key"))?;
-    let resolve = pinned_root_resolver(
-        issuer_key_id,
-        issuer_role,
-        issuer_trust_domain,
-        issuer_subject,
-        issuer_pub,
-    );
+    let issuer = PinnedIssuer {
+        key_id: issuer_key_id,
+        role: issuer_role,
+        trust_domain: issuer_trust_domain,
+        subject: issuer_subject,
+    };
+    let anchor = root_anchor(&issuer, issuer_pub, issuer_retired_until)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let resolve = |kid: &str, slot: SignerSlot, at: i64| anchor.resolve_issuer(kid, slot, at);
     let response = HttpResponse {
         status,
         headers: resp_headers,
@@ -654,7 +661,13 @@ struct PyVerifyResult {
 ///
 /// `revoked_identifiers` is the client's static denylist (any mix of `delegated_kid`,
 /// `issuer_kid`, or credential `jti`); an empty list is the explicit TTL-only posture.
+///
+/// The root is judged at `now`. `issuer_retired_until` (keyword, optional) declares it
+/// RETIRED: its credentials verify while `now <= issuer_retired_until` and resolve to
+/// untrusted after. Absent, the root is CURRENT. An empty or whitespace `issuer_*`
+/// identity field is refused as a `ValueError` naming the field.
 #[pyfunction]
+#[pyo3(signature = (status, resp_headers, resp_body, req_method, req_target_uri, req_headers, req_body, issuer_key_id, issuer_pubkey_b64url, issuer_role, issuer_trust_domain, issuer_subject, verifier_audiences, expected_audience_hash, accepted_epochs, max_clock_skew, revoked_identifiers, now, issuer_retired_until = None))]
 #[allow(clippy::too_many_arguments)]
 fn verify_response(
     status: u16,
@@ -675,16 +688,19 @@ fn verify_response(
     max_clock_skew: i64,
     revoked_identifiers: Vec<String>,
     now: i64,
+    issuer_retired_until: Option<i64>,
 ) -> PyResult<PyVerifyResult> {
     let issuer_pub = VerificationKey::from_b64url(issuer_pubkey_b64url)
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("invalid issuer public key"))?;
-    let resolve = pinned_root_resolver(
-        issuer_key_id,
-        issuer_role,
-        issuer_trust_domain,
-        issuer_subject,
-        issuer_pub,
-    );
+    let issuer = PinnedIssuer {
+        key_id: issuer_key_id,
+        role: issuer_role,
+        trust_domain: issuer_trust_domain,
+        subject: issuer_subject,
+    };
+    let anchor = root_anchor(&issuer, issuer_pub, issuer_retired_until)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let resolve = |kid: &str, slot: SignerSlot, at: i64| anchor.resolve_issuer(kid, slot, at);
     let response = HttpResponse {
         status,
         headers: resp_headers,

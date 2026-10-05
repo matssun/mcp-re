@@ -15040,3 +15040,100 @@ control = "doc#evidence::response_role::ResponseRoleEvidence"
 decision = "not-evidence"
 reason_family = "ND-010"
 recorded = "2026-10-05"
+
+[[proposition]]
+id = "NP-277"
+title = "An SDK binding judges its pinned root at the caller's now and never pins an empty identity"
+carrier = "sdk/python/src/trust.rs (root_anchor) and sdk/typescript/src/trust.rs (root_resolver), called from each binding's verify_response and verify_accepted_202"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "under THM-0094/THM-0095; the PyO3 and napi bindings are in no unit's paths (THM-0094 decomposition packet, P2-A)"
+record = "docs/architecture/control-dispositions.md#np-277"
+
+[[disposition]]
+id = "CD-20381"
+project = "sdk/python"
+control = "pytest#bazel_tests/core_lane_test.py::TestCoreLane::test_a_signed_request_carries_its_signature_and_evidence"
+decision = "new-proposition"
+proposition = "NP-012"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20382"
+project = "sdk/python"
+control = "pytest#bazel_tests/core_lane_test.py::TestCoreLane::test_the_core_reports_its_profile_and_version"
+decision = "new-proposition"
+proposition = "NP-012"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20383"
+project = "sdk/python"
+control = "pytest#bazel_tests/core_lane_test.py::TestCoreLane::test_the_extension_is_the_bazel_built_one"
+decision = "new-proposition"
+proposition = "NP-012"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20384"
+project = "sdk/python"
+control = "pytest#bazel_tests/core_lane_test.py::TestPinnedRoot::test_a_current_root_verifies_the_recorded_reply"
+decision = "new-proposition"
+proposition = "NP-277"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20385"
+project = "sdk/python"
+control = "pytest#bazel_tests/core_lane_test.py::TestPinnedRoot::test_a_retired_root_acknowledges_a_notification_only_inside_its_window"
+decision = "new-proposition"
+proposition = "NP-277"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20386"
+project = "sdk/python"
+control = "pytest#bazel_tests/core_lane_test.py::TestPinnedRoot::test_a_retired_root_verifies_through_its_deadline_and_not_after"
+decision = "new-proposition"
+proposition = "NP-277"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20387"
+project = "sdk/python"
+control = "pytest#bazel_tests/core_lane_test.py::TestPinnedRoot::test_an_empty_identity_field_is_refused_by_name"
+decision = "new-proposition"
+proposition = "NP-277"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20388"
+project = "sdk/typescript"
+control = "vitest#test/pinned_root.test.ts > the pinned root anchor > a current root verifies the recorded reply"
+decision = "new-proposition"
+proposition = "NP-277"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20389"
+project = "sdk/typescript"
+control = "vitest#test/pinned_root.test.ts > the pinned root anchor > a retired root acknowledges a notification only inside its window"
+decision = "new-proposition"
+proposition = "NP-277"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20390"
+project = "sdk/typescript"
+control = "vitest#test/pinned_root.test.ts > the pinned root anchor > a retired root verifies through its deadline and not after"
+decision = "new-proposition"
+proposition = "NP-277"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20391"
+project = "sdk/typescript"
+control = "vitest#test/pinned_root.test.ts > the pinned root anchor > an empty identity field is refused by name"
+decision = "new-proposition"
+proposition = "NP-277"
+recorded = "2026-10-05"

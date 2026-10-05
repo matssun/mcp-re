@@ -31,14 +31,14 @@ use mcp_re_client_core::ProvidedAuthorization;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
 mod trust;
-use trust::pinned_root_resolver;
+use trust::root_resolver;
+use trust::PinnedIssuer;
 
 use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::ContinuationHandles;
 use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_core::PROFILE_TAG;
 use mcp_re_core::SigningKey;
-use mcp_re_core::VerificationKey;
 use serde_json::Map;
 use serde_json::Value;
 
@@ -527,18 +527,18 @@ pub fn verify_accepted_202(
     max_clock_skew: f64,
     revoked_identifiers: Vec<String>,
     now: f64,
+    issuer_retired_until: Option<f64>,
 ) -> napi::Result<AcceptedResultJs> {
     let max_clock_skew = whole_seconds(max_clock_skew, "maxClockSkew")?;
     let now = whole_seconds(now, "now")?;
-    let issuer_pub = VerificationKey::from_b64url(&issuer_pubkey_b64url)
-        .map_err(|_| napi::Error::from_reason("invalid issuer public key"))?;
-    let resolve = pinned_root_resolver(
-        issuer_key_id,
-        issuer_role,
-        issuer_trust_domain,
-        issuer_subject,
-        issuer_pub,
-    );
+    let resolve = root_resolver(PinnedIssuer {
+        key_id: issuer_key_id,
+        pubkey_b64url: issuer_pubkey_b64url,
+        role: issuer_role,
+        trust_domain: issuer_trust_domain,
+        subject: issuer_subject,
+        retired_until: issuer_retired_until,
+    })?;
     let to_pairs =
         |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
     let response = HttpResponse {
@@ -614,12 +614,12 @@ pub struct VerifyResultJs {
     pub request_state: Option<String>,
 }
 
-/// Verify a delegated-required RFC 9421 response bound to the request the client sent.
-/// Delegated-required is the ONLY response mode: the credential must chain to the root
-/// issuer and be scoped to `expectedAudienceHash` at one of `acceptedEpochs`. An
-/// unsigned, direct-root-signed, revoked, stale-epoch or wrongly-bound response fails
-/// closed by throwing. `revokedIdentifiers` is the client's static denylist; an empty
-/// list is the explicit TTL-only posture.
+/// Verify a delegated-required (the ONLY mode) RFC 9421 response bound to the request the
+/// client sent: the credential chains to the root issuer judged at `now` (a root retired
+/// with `issuerRetiredUntil` is trusted through that deadline) and is scoped to
+/// `expectedAudienceHash` at one of `acceptedEpochs`. Anything unsigned, direct-root,
+/// revoked, stale-epoch or wrongly bound throws. `revokedIdentifiers` is the client's
+/// static denylist; an empty list is the explicit TTL-only posture.
 #[napi]
 #[allow(clippy::too_many_arguments)]
 pub fn verify_response(
@@ -641,18 +641,18 @@ pub fn verify_response(
     max_clock_skew: f64,
     revoked_identifiers: Vec<String>,
     now: f64,
+    issuer_retired_until: Option<f64>,
 ) -> napi::Result<VerifyResultJs> {
     let max_clock_skew = whole_seconds(max_clock_skew, "maxClockSkew")?;
     let now = whole_seconds(now, "now")?;
-    let issuer_pub = VerificationKey::from_b64url(&issuer_pubkey_b64url)
-        .map_err(|_| napi::Error::from_reason("invalid issuer public key"))?;
-    let resolve = pinned_root_resolver(
-        issuer_key_id,
-        issuer_role,
-        issuer_trust_domain,
-        issuer_subject,
-        issuer_pub,
-    );
+    let resolve = root_resolver(PinnedIssuer {
+        key_id: issuer_key_id,
+        pubkey_b64url: issuer_pubkey_b64url,
+        role: issuer_role,
+        trust_domain: issuer_trust_domain,
+        subject: issuer_subject,
+        retired_until: issuer_retired_until,
+    })?;
     let to_pairs =
         |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
     let response = HttpResponse {

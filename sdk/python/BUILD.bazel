@@ -1,4 +1,7 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@rules_python//python:packaging.bzl", "py_wheel")
+load("@rules_python//python:py_library.bzl", "py_library")
+load("@rules_python//python:py_test.bzl", "py_test")
 load("//bazel/pyo3:defs.bzl", "nt_pyo3_extension")
 
 package(default_visibility = ["//visibility:public"])
@@ -70,4 +73,36 @@ py_wheel(
     ],
     summary = "MCP-RE Python SDK — runtime-evidence security (signed requests, verified responses) for the MCP Python SDK, via a transport adapter over the audited mcp-re-client-core.",
     version = "0.1.0",
+)
+
+# The package a Bazel test imports: the Python sources copied beside the Bazel-built `_core`,
+# which `nt_pyo3_extension` emits as `mcp_re_sdk/_core.so` in this package. The source tree's
+# own `python/mcp_re_sdk/` is never on the path, so a stale extension a local maturin build
+# left there cannot be the one a test loads.
+[
+    copy_file(
+        name = "sdk_py_" + src.split("/")[-1].removesuffix(".py"),
+        src = src,
+        out = "mcp_re_sdk/" + src.split("/")[-1],
+    )
+    for src in glob(["python/mcp_re_sdk/*.py"])
+]
+
+py_library(
+    name = "sdk",
+    srcs = ["mcp_re_sdk/" + src.split("/")[-1] for src in glob(["python/mcp_re_sdk/*.py"])],
+    imports = ["."],
+    visibility = ["//visibility:private"],
+    deps = [":_core"],
+)
+
+# Standard-library `unittest` over the Bazel-built extension; no pip dependency. The first
+# test refuses to measure any other extension.
+py_test(
+    name = "core_lane_test",
+    srcs = ["bazel_tests/core_lane_test.py"],
+    data = ["//sdk/fixtures:delegated_response_replay.json"],
+    env = {"MCP_RE_SDK_REPLAY_FIXTURE": "$(rootpath //sdk/fixtures:delegated_response_replay.json)"},
+    main = "bazel_tests/core_lane_test.py",
+    deps = [":sdk"],
 )

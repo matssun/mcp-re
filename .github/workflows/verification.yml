@@ -220,6 +220,11 @@ on:
       # because the fingerprint measures all three for a non-Rust unit too (#745).
       - "sdk/python/python/**"
       - "sdk/python/tests/**"
+      # The PyO3 binding the wheel's `_core` is built from, and the Bazel lane over it
+      # (`//sdk/python:core_lane_test`).
+      - "sdk/python/src/**"
+      - "sdk/python/BUILD.bazel"
+      - "sdk/python/bazel_tests/**"
       - "sdk/python/pyproject.toml"
       # TRACKED, and therefore in the fingerprint at last: the lock was `.gitignore`d as a
       # maturin by-product, so the Python dependency resolution contributed nothing to any
@@ -613,6 +618,11 @@ on:
       # because the fingerprint measures all three for a non-Rust unit too (#745).
       - "sdk/python/python/**"
       - "sdk/python/tests/**"
+      # The PyO3 binding the wheel's `_core` is built from, and the Bazel lane over it
+      # (`//sdk/python:core_lane_test`).
+      - "sdk/python/src/**"
+      - "sdk/python/BUILD.bazel"
+      - "sdk/python/bazel_tests/**"
       - "sdk/python/pyproject.toml"
       # TRACKED, and therefore in the fingerprint at last: the lock was `.gitignore`d as a
       # maturin by-product, so the Python dependency resolution contributed nothing to any
