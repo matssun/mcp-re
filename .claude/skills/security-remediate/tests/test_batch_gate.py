@@ -63,11 +63,66 @@ def test_a_suite_structural_already_runs_is_not_run_twice():
     assert batch_gate.verification_suites(work, root, already=set())["verdict"] == "new-failures"
 
 
+def _workflow(body: str) -> str:
+    root = tempfile.mkdtemp()
+    path = os.path.join(root, "ci.yml")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(body)
+    return path
+
+
+def test_ci_gates_reads_bare_flag_invocations_and_leaves_valued_ones_to_the_workflow():
+    wf = _workflow(
+        "steps:\n"
+        "  - run: python3 scripts/a_gate.py\n"
+        "  - run: python3 scripts/a_gate.py --selftest\n"
+        "  - run: python3 scripts/b_gate.py --base \"$BASE\"\n"
+        "  - run: python3 scripts/clippy_ratchet_gate.py --activation-probe\n"
+        "  - run: |\n"
+        "      python3 tools/verification/check-views\n"
+        "      python3 scripts/a_gate.py\n"
+    )
+    assert batch_gate.ci_gates(wf) == [
+        ("scripts/a_gate.py",),
+        ("scripts/a_gate.py", "--selftest"),
+        ("tools/verification/check-views",),
+    ], batch_gate.ci_gates(wf)
+
+
+def test_control_a_red_merge_path_gate_is_named():
+    root = tempfile.mkdtemp()
+    for name, rc in (("green.py", 0), ("red.py", 1)):
+        with open(os.path.join(root, name), "w", encoding="utf-8") as fh:
+            fh.write("print('verdict')\nraise SystemExit(%d)\n" % rc)
+    wf = _workflow("  - run: python3 scripts/green.py\n  - run: python3 scripts/red.py\n")
+    cwd = os.getcwd()
+    os.chdir(root)
+    try:
+        os.makedirs("scripts")
+        os.replace("green.py", "scripts/green.py")
+        os.replace("red.py", "scripts/red.py")
+        result = batch_gate.merge_path_gates(tempfile.mkdtemp(), wf, already=set())
+    finally:
+        os.chdir(cwd)
+    assert result["verdict"] == "new-failures" and result["gates"] == 2, result
+    assert [f["gate"] for f in result["failed"]] == ["scripts/red.py"], result
+
+
+def test_control_a_workflow_with_no_gate_is_infra_never_ok():
+    assert batch_gate.merge_path_gates(tempfile.mkdtemp(), _workflow("steps: []\n"),
+                                       already=set())["verdict"] == "infra"
+    assert batch_gate.merge_path_gates(tempfile.mkdtemp(), "/nonexistent/ci.yml",
+                                       already=set())["verdict"] == "infra"
+
+
 def main() -> int:
     tests = [test_every_suite_runs_and_green_suites_are_ok,
              test_control_a_red_suite_is_a_new_failure_named_by_suite,
              test_control_no_suite_is_infra_never_ok,
-             test_a_suite_structural_already_runs_is_not_run_twice]
+             test_a_suite_structural_already_runs_is_not_run_twice,
+             test_ci_gates_reads_bare_flag_invocations_and_leaves_valued_ones_to_the_workflow,
+             test_control_a_red_merge_path_gate_is_named,
+             test_control_a_workflow_with_no_gate_is_infra_never_ok]
     failed = 0
     for t in tests:
         print("%s ..." % t.__name__)
