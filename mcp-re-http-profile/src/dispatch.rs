@@ -147,7 +147,7 @@ pub fn dispatch_request(
 /// side-effecting admission: the sync [`dispatch_request`] admits against a
 /// `&dyn ReplayCache`; the async data plane (ADR-MCPRE-051 §4) AWAITS its
 /// authoritative async tier with
-/// [`HttpReplayKey::to_replay_key`](crate::HttpReplayKey::to_replay_key).
+/// [`PreparedDispatch::to_replay_key`].
 ///
 /// Private to this module, and reached only through
 /// [`ReplayTierAdmitted::prepare`]. The fleet-strict single-process refusal

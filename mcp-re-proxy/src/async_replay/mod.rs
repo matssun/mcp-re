@@ -139,9 +139,9 @@ pub trait AsyncAtomicReplayStore: Send + Sync {
 /// The async replay TIER the proxy's async serving path awaits (ADR-MCPRE-051
 /// §4): the async analogue of [`crate::shared_replay::SharedReplayCache`]. Given a
 /// `ReplayKey` (projected from the RFC 9421 five-tuple via
-/// `HttpReplayKey::to_replay_key`), it composes the collision-safe composite
-/// key and folds the clock skew IDENTICALLY to the sync path (via the shared
-/// [`composite_replay_key`] / [`skew_folded_retain_until`] helpers), then AWAITS the
+/// `PreparedDispatch::to_replay_key`), it composes the collision-safe composite
+/// key and folds the clock skew IDENTICALLY to the sync path (the shared
+/// [`composite_replay_key`] and [`FreshnessWindow::replay_retain_until`]), then AWAITS the
 /// authoritative [`AsyncAtomicReplayStore`] insert. The store round-trip is the ONLY
 /// awaited I/O on the request path.
 ///
@@ -307,14 +307,19 @@ mod tests {
         replay_key(subject, "n", 0).principal().to_owned()
     }
 
+    /// The key a prepared dispatch hands the tier — the only public way to one — for a
+    /// request by `subject` under `keyid`.
     fn keyed(subject: &str, keyid: &str, nonce: &str, expires_at_unix: i64) -> ReplayKey {
-        mcp_re_http_profile::HttpReplayKey {
-            profile_id: "mcp-re-http-v1".to_string(),
-            signature_label: "mcp-re".to_string(),
-            actor_id: format!("host:example.com:{subject}:{keyid}"),
-            audience_hash: "did:example:verifier".to_string(),
-            nonce: nonce.to_string(),
+        let mut verified =
+            crate::authorization::action_harness::verified_over_as(b"{}", subject, keyid);
+        verified.floor.nonce = nonce.to_string();
+        mcp_re_http_profile::DispatchConfig {
+            fleet_strict: false,
         }
+        .admit_replay_tier(ReplayDurabilityClass::Durable)
+        .expect("outside fleet-strict every store class is admitted")
+        .prepare(&verified, None)
+        .expect("a request carrying no continuation prepares")
         .to_replay_key(expires_at_unix)
     }
 

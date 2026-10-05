@@ -1546,3 +1546,85 @@ new = """
         self.supported_protocol_versions = versions.iter().map(|s| (*s).to_owned()).collect();
         self
     }"""
+
+[[probe]]
+id = "S44"
+unit = "http_profile.replay_key_projection_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot turn an `HttpReplayKey` it wrote into the `ReplayKey` the async replay tier admits"
+doc_path = "mcp-re-http-profile/src/replay.rs"
+doc_item = "doc#replay::HttpReplayKey"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s44.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S44. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::replay::ReplayKey;
+use mcp_re_http_profile::HttpReplayKey;
+
+pub fn hostile() -> ReplayKey {
+    let forged = HttpReplayKey {
+        profile_id: String::new(),
+        signature_label: String::new(),
+        actor_id: String::from("client:example.org:victim:key-1"),
+        audience_hash: String::new(),
+        nonce: String::new(),
+    };
+    forged.to_replay_key(0) // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+The struct literal compiles: the fields are public because Verus mirrors the type
+transparently. What this probe attacks is the projection, so it fails with `E0624` at the call
+and nowhere else.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`to_replay_key` is `pub(crate)` on a `pub` type re-exported by `lib.rs`; the probe is its own crate linking the library and sees the public surface"
+alternate-constructors = "`ReplayKey`'s fields are private and `HttpReplayKey::to_replay_key` is its only constructor; the public route is `PreparedDispatch::to_replay_key`, whose `PreparedDispatch` is sealed (S33) and produced only by `ReplayTierAdmitted::prepare`"
+generated-or-deserialization = "`ReplayKey` derives Debug, Clone, PartialEq and Eq only; no Deserialize or Default exists"
+test-only-construction = "the proxy's async-tier tests reach a `ReplayKey` through `prepare`; no test-gated constructor exists"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/replay.rs"
+old = """
+    pub(crate) fn to_replay_key(&self, expires_at_unix: i64) -> ReplayKey {"""
+new = """
+    pub fn to_replay_key(&self, expires_at_unix: i64) -> ReplayKey {"""
+
+[[probe]]
+id = "S45"
+unit = "http_profile.replay_key_projection_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot admit an `HttpReplayKey` into a synchronous replay cache except through `dispatch_request`, which decides the cache's durability class first"
+doc_path = "mcp-re-http-profile/src/replay.rs"
+doc_item = "doc#replay::HttpReplayKey"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s45.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S45. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::HttpReplayKey;
+
+// The cache is `todo!()` because the probe links only this library and cannot name
+// `mcp_re_core`; the call, not the argument, is what is attacked.
+pub fn hostile(key: &HttpReplayKey) {
+    let _ = key.check_and_insert(todo!(), 0); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+`E0624` and not `E0599`: the method exists and `dispatch_request` calls it after
+`admit_replay_tier`. What this probe attacks is the visibility.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`check_and_insert` is `pub(crate)` on a `pub` type re-exported by `lib.rs`; the probe is its own crate linking the library and sees the public surface"
+alternate-constructors = "the call is attacked, not a construction. The public synchronous admission is `dispatch_request`, which runs `DispatchConfig::admit_replay_tier` before it"
+generated-or-deserialization = "no derive or macro generates a public forwarding method"
+test-only-construction = "the owner's `#[cfg(test)]` module calls `check_and_insert` inside the crate and adds no wider re-export"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/replay.rs"
+old = """
+    pub(crate) fn check_and_insert("""
+new = """
+    pub fn check_and_insert("""
+

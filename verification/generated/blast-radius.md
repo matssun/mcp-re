@@ -95,6 +95,7 @@ attestations this view cannot see.
 | unit://http_profile.mcp_transport_policy_boundary | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.pdp_decision_authentication | source, contracts or evidence | THM-0039 | _no consumer_ |
 | unit://http_profile.replay_key | source, contracts or evidence | THM-0079 | _no consumer_ |
+| unit://http_profile.replay_key_projection_boundary | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.request_envelope | source, contracts or evidence | THM-0083 | _no consumer_ |
 | unit://http_profile.request_evidence_signing_boundary | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.request_floor_result | source, contracts or evidence | THM-0014 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
@@ -262,6 +263,7 @@ attestations this view cannot see.
 | unit://proxy.startup_plan_legality | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.startup_plan_pool_ceiling | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.startup_plan_provenance | source, contracts or evidence | THM-0077 | _no consumer_ |
+| unit://proxy.sync_replay_retention_window | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.transport_binding_and_crl_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.transport_binding_application | source, contracts or evidence | THM-0034 | _no consumer_ |
 | unit://proxy.trust_cache_entry_addressing | source, contracts or evidence | THM-0097 | _no consumer_ |

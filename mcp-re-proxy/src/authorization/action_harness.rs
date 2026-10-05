@@ -33,7 +33,7 @@ pub(super) fn verified_over(body: &[u8]) -> VerifiedMcpRequest {
 }
 
 /// The same, with the resolved actor's subject and keyid chosen by the caller.
-pub(super) fn verified_over_as(body: &[u8], subject: &str, keyid: &str) -> VerifiedMcpRequest {
+pub(crate) fn verified_over_as(body: &[u8], subject: &str, keyid: &str) -> VerifiedMcpRequest {
     VerifiedMcpRequest {
         floor: CryptographicFloorVerifiedRequest {
             profile_id: "p".into(),

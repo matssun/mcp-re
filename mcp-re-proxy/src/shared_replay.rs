@@ -15,8 +15,8 @@
 //!     (Redis, a SQL row with a unique key, a consensus KV, …) can implement it.
 //!   * [`SharedReplayCache`] holds a `Box<dyn AtomicReplayStore>` and impls
 //!     `mcp_re_core::ReplayCache`. It builds a collision-safe composite key from
-//!     `(signer, audience, nonce)`, applies the clock skew EXACTLY as
-//!     `InMemoryReplayCache` does, delegates atomicity to the store, and FAILS
+//!     `(signer, audience, nonce)`, retains each entry for the deployment's
+//!     [`FreshnessWindow`], delegates atomicity to the store, and FAILS
 //!     CLOSED on any store error (→ `mcp-re.replay_cache_unavailable`).
 //!   * [`InMemoryAtomicReplayStore`] is a REAL reference store (an
 //!     `Arc<Mutex<…>>`) — like `InMemoryReplayCache`, not a test mock. Because it
@@ -50,6 +50,8 @@ use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
+
+use crate::config_state::FreshnessWindow;
 
 /// An operational failure of an [`AtomicReplayStore`] (the shared backend could
 /// not be reached or did not answer).
@@ -116,15 +118,6 @@ pub(crate) fn composite_replay_key(signer: &str, audience: &str, nonce: &str) ->
     sha256_hash_id(preimage.as_bytes())
 }
 
-/// Fold the symmetric clock skew into `expires_at_unix` to yield the absolute
-/// retain-until instant handed to a store, EXACTLY as `InMemoryReplayCache` does
-/// (`retain_until = expires_at + max_clock_skew`). Both the sync and async replay
-/// paths fold identically, so the store TTL — and thus eviction timing — matches
-/// across paths. Saturating so a huge `expires_at` cannot wrap.
-pub(crate) fn skew_folded_retain_until(expires_at_unix: i64, max_clock_skew_secs: i64) -> i64 {
-    expires_at_unix.saturating_add(max_clock_skew_secs)
-}
-
 /// The minimal SHARED, server-side-ATOMIC primitive a [`SharedReplayCache`] needs
 /// from any backing store.
 ///
@@ -178,24 +171,28 @@ pub trait AtomicReplayStore {
 /// horizontally-scaled replay safety: a nonce accepted on one node is rejected on
 /// every node sharing the store.
 ///
-/// `check_and_insert` folds the clock skew into `expires_at_unix` EXACTLY as
-/// [`InMemoryReplayCache`](mcp_re_core::InMemoryReplayCache) does
-/// (`retain_until = expires_at + max_clock_skew`), builds a collision-safe
-/// composite key from `(signer, audience, nonce)`, and delegates the atomic
-/// check-and-insert to the store. Any store error fails closed.
+/// `check_and_insert` derives each entry's retain-until from the deployment's
+/// [`FreshnessWindow`] — the projection the async tier folds through, so the two paths
+/// retain a nonce for exactly as long as the verifier may still accept its request —
+/// builds a collision-safe composite key from `(signer, audience, nonce)`, and delegates
+/// the atomic check-and-insert to the store. Any store error fails closed.
 pub struct SharedReplayCache {
     store: Box<dyn AtomicReplayStore + Send + Sync>,
-    max_clock_skew_secs: i64,
+    freshness: FreshnessWindow,
 }
 
 impl SharedReplayCache {
-    /// Build a shared cache over `store`, applying the symmetric
-    /// `max_clock_skew_secs` to each entry's retain-until (folded into the TTL).
-    pub fn new(store: Box<dyn AtomicReplayStore + Send + Sync>, max_clock_skew_secs: i64) -> Self {
-        SharedReplayCache {
-            store,
-            max_clock_skew_secs,
-        }
+    /// Build a shared cache over `store`, retaining each entry for as long as `freshness`
+    /// says the verifier may accept its request.
+    ///
+    /// The window, not a skew: a [`FreshnessWindow`] is bounded at construction, so a
+    /// negative skew — which would retain an entry for less time than its request stays
+    /// acceptable — is not a value this constructor can be handed.
+    pub fn new(
+        store: Box<dyn AtomicReplayStore + Send + Sync>,
+        freshness: FreshnessWindow,
+    ) -> Self {
+        SharedReplayCache { store, freshness }
     }
 
     /// Build a COLLISION-SAFE composite key for the `(signer, audience, nonce)`
@@ -215,13 +212,11 @@ impl ReplayCache for SharedReplayCache {
         expires_at_unix: i64,
     ) -> Result<ReplayDecision, ReplayCacheError> {
         let key = SharedReplayCache::composite_key(signer, audience, nonce);
-        // Fold the skew into the retain-until instant exactly as
-        // InMemoryReplayCache does, then hand that instant to the store as the
-        // absolute retain-until. The pure ReplayCache trait carries NO clock: each
-        // store derives "now" and its TTL from its OWN clock (the proxy's impure
-        // edge). The decision (Fresh/Replay) does NOT depend on the TTL value; only
-        // eviction timing does.
-        let retain_until = skew_folded_retain_until(expires_at_unix, self.max_clock_skew_secs);
+        // The retain-until instant is the window's, handed to the store as an absolute
+        // instant. The pure ReplayCache trait carries NO clock: each store derives "now"
+        // and its TTL from its OWN clock (the proxy's impure edge). The decision
+        // (Fresh/Replay) does NOT depend on the TTL value; only eviction timing does.
+        let retain_until = self.freshness.replay_retain_until(expires_at_unix);
         Ok(self.store.insert_if_absent(&key, retain_until)?)
     }
 
@@ -531,6 +526,7 @@ mod tests {
         assert_eq!(store.len(), 1, "only the still-live entry survives");
     }
 
+    use crate::config_state::FreshnessWindow;
     use mcp_re_core::McpReError;
     use mcp_re_core::ReplayCache;
     use mcp_re_core::ReplayCacheError;
@@ -544,6 +540,11 @@ mod tests {
     const SKEW: i64 = 30;
     /// The fixture clock: ten minutes before `EXPIRES`, so every fixture request is live.
     const FIXTURE_NOW: i64 = EXPIRES - 600;
+
+    /// The deployment window every fixture cache retains under.
+    fn window() -> FreshnessWindow {
+        FreshnessWindow::new(SKEW).expect("SKEW is inside the verifier's bound")
+    }
 
     /// An in-memory store whose clock reads [`FIXTURE_NOW`].
     fn fixture_store() -> InMemoryAtomicReplayStore {
@@ -610,7 +611,7 @@ mod tests {
         // Over the SINGLE-PROCESS in-memory reference store (which does NOT override
         // the conservative default), the cache must declare SingleProcessReference,
         // so it canNOT masquerade as durable nor clear the strict object-level gate.
-        let in_memory = SharedReplayCache::new(Box::new(fixture_store()), SKEW);
+        let in_memory = SharedReplayCache::new(Box::new(fixture_store()), window());
         assert_eq!(
             in_memory.durability_class(),
             ReplayDurabilityClass::SingleProcessReference,
@@ -621,7 +622,7 @@ mod tests {
         // Over a genuinely durable / cross-process store (Redis/etcd in production,
         // modelled here by a store that overrides to Durable), the cache declares
         // Durable — proving the delegation, not a hardcode.
-        let durable = SharedReplayCache::new(Box::new(DurableModelStore::default()), SKEW);
+        let durable = SharedReplayCache::new(Box::new(DurableModelStore::default()), window());
         assert_eq!(
             durable.durability_class(),
             ReplayDurabilityClass::Durable,
@@ -633,7 +634,7 @@ mod tests {
     #[test]
     fn fresh_then_replay_single_instance() {
         let store = fixture_store();
-        let cache = SharedReplayCache::new(Box::new(store), SKEW);
+        let cache = SharedReplayCache::new(Box::new(store), window());
         assert_eq!(
             cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
@@ -652,8 +653,8 @@ mod tests {
     fn cross_instance_insert_via_a_is_replay_via_b() {
         let store = fixture_store();
         // Clone shares the SAME underlying map (Arc<Mutex<..>>).
-        let node_a = SharedReplayCache::new(Box::new(store.clone()), SKEW);
-        let node_b = SharedReplayCache::new(Box::new(store.clone()), SKEW);
+        let node_a = SharedReplayCache::new(Box::new(store.clone()), window());
+        let node_b = SharedReplayCache::new(Box::new(store.clone()), window());
 
         assert_eq!(
             node_a.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
@@ -677,7 +678,7 @@ mod tests {
     #[test]
     fn distinct_tuples_do_not_alias() {
         let store = fixture_store();
-        let cache = SharedReplayCache::new(Box::new(store), SKEW);
+        let cache = SharedReplayCache::new(Box::new(store), window());
 
         // Would collide under naive concat: signer|audience boundary moved.
         assert_eq!(
@@ -722,7 +723,7 @@ mod tests {
     #[test]
     fn skew_folded_into_retain_until_matches_in_memory_semantics() {
         let store = fixture_store();
-        let shared = SharedReplayCache::new(Box::new(store.clone()), SKEW);
+        let shared = SharedReplayCache::new(Box::new(store.clone()), window());
         let core = mcp_re_core::InMemoryReplayCache::new(SKEW);
         let retain_until = EXPIRES + SKEW;
         assert_eq!(
@@ -800,7 +801,7 @@ mod tests {
     /// `McpReError::ReplayCacheUnavailable` — never "allow".
     #[test]
     fn store_error_fails_closed_as_unavailable() {
-        let cache = SharedReplayCache::new(Box::new(AlwaysUnavailableStore), SKEW);
+        let cache = SharedReplayCache::new(Box::new(AlwaysUnavailableStore), window());
         let err = cache
             .check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
             .expect_err("an unavailable store must surface an error, never allow");
@@ -895,7 +896,7 @@ mod tests {
     #[test]
     fn stale_request_via_shared_cache_fails_closed() {
         let store = fixture_store();
-        let cache = SharedReplayCache::new(Box::new(store.clone()), SKEW);
+        let cache = SharedReplayCache::new(Box::new(store.clone()), window());
         // retain_until = expires_at + SKEW = FIXTURE_NOW → non-positive window → stale.
         let err = cache
             .check_and_insert(SIGNER, AUD, NONCE, FIXTURE_NOW - SKEW)

@@ -31,6 +31,26 @@ use mcp_re_core::ReplayDecision;
 const SEP: char = '\u{1f}';
 
 /// The five components of an HTTP-profile replay key.
+///
+/// The fields are `pub` because the PROVER requires it: Verus refuses
+/// `external_type_specification` on a datatype with non-public fields, and
+/// `prepare_http_dispatch`, a proved function, builds this value by struct literal. So
+/// another crate can write one. What it cannot do is use one: the projection onto the
+/// tier's [`ReplayKey`] and the synchronous admission are crate-private, and the only
+/// public way to a [`ReplayKey`] is [`PreparedDispatch::to_replay_key`](crate::PreparedDispatch::to_replay_key),
+/// whose key the preparation built from the verified product.
+///
+/// ```compile_fail
+/// fn forge(key: &mcp_re_http_profile::HttpReplayKey) -> mcp_re_http_profile::replay::ReplayKey {
+///     key.to_replay_key(0)
+/// }
+/// ```
+///
+/// ```compile_fail
+/// fn admit(key: &mcp_re_http_profile::HttpReplayKey, cache: &mcp_re_core::InMemoryReplayCache) {
+///     let _ = key.check_and_insert(cache, 0);
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpReplayKey {
     /// The signed profile id (`mcp-re-http-v1`).
@@ -79,12 +99,16 @@ impl HttpReplayKey {
         &self.audience_hash
     }
 
-    /// Check-and-insert this key against a shared cache tier. `expires_at_unix`
+    /// Check-and-insert this key against a synchronous cache tier. `expires_at_unix`
     /// is the RFC 9421 `expires` value; the tier adds its own clock skew to
     /// compute retention. Fail-closed: an operational cache failure surfaces as
     /// [`ReplayCacheError`] (mapped to `replay_cache_unavailable` upstream),
     /// never as an admit.
-    pub fn check_and_insert(
+    ///
+    /// Crate-private: its one caller is [`crate::dispatch_request`], which reaches it only
+    /// after [`DispatchConfig::admit_replay_tier`](crate::DispatchConfig::admit_replay_tier)
+    /// has decided the cache's durability class may be admitted against.
+    pub(crate) fn check_and_insert(
         &self,
         cache: &dyn ReplayCache,
         expires_at_unix: i64,
@@ -100,7 +124,9 @@ impl HttpReplayKey {
     /// Project this five-tuple onto the [`ReplayKey`] the AUTHORITATIVE async replay tier
     /// (ADR-MCPRE-051 §4) consumes. The one constructor of a [`ReplayKey`]: the burn
     /// identity and the budget identity are both derived here from the one five-tuple, so
-    /// no caller can supply either.
+    /// no caller can supply either. Crate-private, because this five-tuple's fields are
+    /// writable by any crate; [`PreparedDispatch::to_replay_key`](crate::PreparedDispatch::to_replay_key)
+    /// is the public way in, over the key the preparation built.
     ///
     /// The async tier derives its store key from `(signer, audience, nonce)` via the same
     /// `composite_replay_key` serialization the sync [`ReplayCache`] uses, so feeding it
@@ -109,7 +135,7 @@ impl HttpReplayKey {
     /// a different profile/role can never satisfy another's replay check.
     /// `expires_at_unix` is the RFC 9421 `expires` parameter (the tier folds its own clock
     /// skew onto it).
-    pub fn to_replay_key(&self, expires_at_unix: i64) -> ReplayKey {
+    pub(crate) fn to_replay_key(&self, expires_at_unix: i64) -> ReplayKey {
         ReplayKey {
             signer: self.signer_slot(),
             principal: self.principal_slot(),
@@ -123,7 +149,7 @@ impl HttpReplayKey {
 /// What the authoritative async replay tier needs to burn a nonce and charge its retention:
 /// the `(signer, audience, nonce)` logical identity of the active profile plus the parsed
 /// `expires_at`. Its representation is private and [`HttpReplayKey::to_replay_key`] is its
-/// only constructor, so the burn identity and the budget identity cannot be supplied
+/// only constructor, reached from outside this crate only through a prepared dispatch, so the burn identity and the budget identity cannot be supplied
 /// independently by a caller; the tier reads them through the projections.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayKey {

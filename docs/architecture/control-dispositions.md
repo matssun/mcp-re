@@ -363,7 +363,8 @@ remote peer can drive. These three are driven by the test, not by a reply.
 `doc#verified_response::facts::UnboundResponseSignatureFacts`,
 `doc#evidence::request_role::RequestRoleEvidence` (S40),
 `doc#evidence::response_role::ResponseRoleEvidence` (S41),
-`doc#mcp_transport::McpTransportPolicy` (S42, S43); `mcp-re-client-core`
+`doc#mcp_transport::McpTransportPolicy` (S42, S43),
+`doc#replay::HttpReplayKey` (S44, S45); `mcp-re-client-core`
 `doc#delegated_trust::DelegatedResponseTrust`.
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 8; the client-core item added by
 the S-05/CL-CLIENT slice, which built its probes first.
@@ -2924,6 +2925,7 @@ THM-0031, falsifier `M341`.
 **If false.** A replayed request is admitted — because the second instance never saw the first's insert, because two distinct tuples aliased to one key, or because a full store failed open. 'Rejected pre-store and NOT RECORDED AS FRESH' is the clause that keeps a stale request from consuming the slot that would have caught its replay.
 **Likely owner:** none.
 **Severity:** `critical`.
+**Registered in part, Owner Ruling 19 B4a.** The retention clause — the skew folded into `retain_until` — is `unit://proxy.sync_replay_retention_window`, `tested`, whose control `skew_folded_into_retain_until_matches_in_memory_semantics` probe M476 turns red when the cache stops retaining for the deployment's `FreshnessWindow`. The other clauses stay with this record.
 
 ## NP-121 — a replay tier's published guarantee is its own
 

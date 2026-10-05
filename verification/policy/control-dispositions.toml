@@ -8097,14 +8097,6 @@ proposition = "NP-120"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17097"
-project = "mcp-re-proxy"
-control = "src/lib.rs#shared_replay::tests::skew_folded_into_retain_until_matches_in_memory_semantics"
-decision = "new-proposition"
-proposition = "NP-120"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17098"
 project = "mcp-re-proxy"
 control = "src/lib.rs#shared_replay::tests::stale_request_via_shared_cache_fails_closed"
@@ -15142,6 +15134,14 @@ recorded = "2026-10-05"
 id = "CD-20392"
 project = "mcp-re-http-profile"
 control = "doc#mcp_transport::McpTransportPolicy"
+decision = "not-evidence"
+reason_family = "ND-010"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20393"
+project = "mcp-re-http-profile"
+control = "doc#replay::HttpReplayKey"
 decision = "not-evidence"
 reason_family = "ND-010"
 recorded = "2026-10-05"

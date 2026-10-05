@@ -11858,3 +11858,18 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
 ]
+
+[[probe]]
+id = "M476-proxy-the-sync-shared-cache-retains-for-the-window"
+unit = "proxy.sync_replay_retention_window"
+conjunct = "the synchronous shared cache retains an entry until the deployment window's retain-until of its request"
+path = "mcp-re-proxy/src/shared_replay.rs"
+anchor = """
+        let retain_until = self.freshness.replay_retain_until(expires_at_unix);
+"""
+weakening = """
+        let retain_until = expires_at_unix;
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#shared_replay::tests::skew_folded_into_retain_until_matches_in_memory_semantics",
+]

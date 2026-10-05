@@ -235,12 +235,17 @@ fn store_unavailable_admits_zero_fresh_fail_closed() {
 // SharedReplayCache wrapper coherence (single-threaded, deterministic)
 // ---------------------------------------------------------------------------
 
+/// The deployment window a wrapper cache retains under.
+fn window(skew_secs: i64) -> mcp_re_proxy::config_state::FreshnessWindow {
+    mcp_re_proxy::config_state::FreshnessWindow::new(skew_secs).expect("bounded")
+}
+
 /// The `SharedReplayCache` composite-key + skew-folding path admits the first
 /// submission of a `(signer, audience, nonce)` and rejects the second — the
 /// pure wrapper over the authoritative tier the race exercises concurrently.
 #[test]
 fn shared_cache_first_is_fresh_then_replay() {
-    let cache = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), 30);
+    let cache = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), window(30));
     assert_eq!(
         cache.check_and_insert(
             "did:example:agent",
@@ -279,8 +284,8 @@ fn shared_cache_first_is_fresh_then_replay() {
 #[test]
 fn shared_cache_cross_replica_admit_via_a_is_replay_via_b() {
     let backend = InMemoryAtomicReplayStore::new();
-    let replica_a = SharedReplayCache::new(Box::new(backend.clone()), 30);
-    let replica_b = SharedReplayCache::new(Box::new(backend.clone()), 30);
+    let replica_a = SharedReplayCache::new(Box::new(backend.clone()), window(30));
+    let replica_b = SharedReplayCache::new(Box::new(backend.clone()), window(30));
 
     assert_eq!(
         replica_a.check_and_insert(

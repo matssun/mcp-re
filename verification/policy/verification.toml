@@ -6910,6 +6910,18 @@ evidence_class = "structural"
 direct_consequence_severity = "medium"
 evidence = ["structural://http_profile/mcp_transport/policy_boundary"]
 
+# Owner Ruling 19 B4a: what another crate can do with an `HttpReplayKey` it wrote, which is
+# nothing. The representation stays public because the prover mirrors it transparently.
+[[unit]]
+id = "http_profile.replay_key_projection_boundary"
+class = "V0"
+description = "External code cannot project an `HttpReplayKey` onto the async tier's `ReplayKey` or admit one into a synchronous replay cache: `to_replay_key` and `check_and_insert` are crate-private, so the public way to a `ReplayKey` is `PreparedDispatch::to_replay_key`, over the five-tuple the dispatch preparation built. Says nothing about where the verified product the preparation read came from."
+paths = ["mcp-re-http-profile/src/replay.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://http_profile/replay/key_projection_boundary"]
+
 # Owner Ruling 18.2: the public construction boundary of the two role handles, and nothing
 # about where any particular value came from.
 [[unit]]
@@ -8444,6 +8456,24 @@ tested_symbols = [
 # and these say what happens when that tier cannot establish the state a request requires.
 # Two owners again, and for the same reason — the replay admission and the continuation leg
 # are different authorities, and a leaf may not carry the other's fact.
+# Owner Ruling 19 B4a: the synchronous shared cache retains each nonce for the deployment's
+# window, the projection the async tier folds through, rather than for a skew it was handed.
+[[unit]]
+id = "proxy.sync_replay_retention_window"
+class = "V0"
+description = "`SharedReplayCache` retains each entry until `FreshnessWindow::replay_retain_until` of its request's `expires`, so it keeps a nonce exactly as long as the async tier does and never for less time than the verifier may accept the request; its constructor takes the window, not a skew."
+paths = ["mcp-re-proxy/src/shared_replay.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/sync_replay/retention_window",
+  "mutation://proxy/sync_replay/retention_window",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#shared_replay::tests::skew_folded_into_retain_until_matches_in_memory_semantics",
+]
+
 [[unit]]
 id = "proxy.replay_admission_gate"
 class = "V0"

@@ -39,6 +39,7 @@
 use super::replay_posture::PostureDecision;
 use super::ReplayTierAdmitted;
 use crate::replay::HttpReplayKey;
+use crate::replay::ReplayKey;
 
 /// Dispatch steps 1–3, completed: the store's durability posture was decided, the
 /// five-tuple [`HttpReplayKey`] was built from the verified evidence, and any MRTR
@@ -99,6 +100,15 @@ impl PreparedDispatch {
     /// a caller cannot admit one key and report another.
     pub fn replay_key(&self) -> &HttpReplayKey {
         &self.replay_key
+    }
+
+    /// The key the authoritative async tier admits, for a request expiring at
+    /// `expires_at_unix`.
+    ///
+    /// The only public way to a [`ReplayKey`]: its burn and budget identities come from the
+    /// five-tuple this preparation built out of the verified product, never from a caller.
+    pub fn to_replay_key(&self, expires_at_unix: i64) -> ReplayKey {
+        self.replay_key.to_replay_key(expires_at_unix)
     }
 
     /// See [`DispatchOutcome::continuation_verified`].

@@ -182,10 +182,7 @@ pub async fn dispatch_request_with_async_tier(
     // 4. Awaited atomic admission LAST — the only side-effecting step. A store
     //    failure fails closed (`replay_cache_unavailable`), never an admit.
     let decision = tier
-        .check_and_insert(
-            &prepared.replay_key().to_replay_key(verified.expires()),
-            now_unix,
-        )
+        .check_and_insert(&prepared.to_replay_key(verified.expires()), now_unix)
         .await
         .map_err(|_| ProxyDispatchError::Dispatch(DispatchError::ReplayCacheUnavailable))?;
     match decision {
