@@ -6155,7 +6155,7 @@ record = "docs/architecture/control-dispositions.md#np-099"
 [[proposition]]
 id = "NP-100"
 title = "The evidence handle is domain-separated and derived, never a bare digest"
-carrier = "mcp-re-http-profile: src/evidence.rs"
+carrier = "mcp-re-http-profile: src/evidence/role.rs"
 likely_owner = ""
 consequence = "critical"
 root_relationship = "a premise of the http_profile units that measure these files"
@@ -6260,46 +6260,6 @@ control = "src/lib.rs#delegation::verify::tests::a_credential_delegating_to_its_
 decision = "new-proposition"
 proposition = "NP-095"
 recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-15035"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#evidence::tests::different_base_different_handle"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15036"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#evidence::tests::handle_is_not_a_bare_digest_of_the_base"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15037"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#evidence::tests::handle_is_split_form_and_deterministic"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15038"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#evidence::tests::label_and_input_cannot_be_confused"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15039"
-project = "mcp-re-http-profile"
-control = "src/lib.rs#evidence::tests::roles_are_domain_separated_over_identical_bytes"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-15040"
@@ -14919,6 +14879,15 @@ consequence = "high"
 root_relationship = "ADR-MCPRE-052 §6/§7 and owner Ruling 14.3 (ad1846dc6f40fe17): the rotation worker is the only minter and the only trust-epoch poller, so a signer it no longer maintains is unrevocable"
 record = "docs/architecture/control-dispositions.md#np-275"
 
+[[proposition]]
+id = "NP-276"
+title = "No profile signer signs over a request evidence block that fails validation"
+carrier = "mcp-re-http-profile/src/sign/request_block.rs (validate_carried, require_valid), called from sign/request.rs (sign_headers_as_given), sign.rs (sign_response_with_signer, sign_delegated_response_full_with_owned_key) and bodyless/mod.rs (sign_delegated_accepted_202_with_owned_key)"
+likely_owner = "http_profile.response_emission_binding measures sign.rs and sign/request_block.rs, but states what a response signature binds, not what a signer refuses to sign"
+consequence = "medium"
+root_relationship = "owner Ruling 17.2 (0f0dc26c60f6d5be): HttpRequestEvidenceBlock keeps public fields under CF-007's precedent, and its boundary is validation at every signing entry point"
+record = "docs/architecture/control-dispositions.md#np-276"
+
 [[disposition]]
 id = "CD-20349"
 project = "mcp-re-proxy"
@@ -14926,3 +14895,227 @@ control = "src/lib.rs#signing_plane::rotation::tests::a_rotor_that_stops_cleanly
 decision = "new-proposition"
 proposition = "NP-275"
 recorded = "2026-10-04"
+
+[[disposition]]
+id = "CD-20351"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::diagnostic::tests::a_diagnostic_is_never_a_well_formed_handle"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20352"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::diagnostic::tests::received_digests_the_body_as_received"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20353"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::digest::tests::a_claim_of_another_shape_is_not_well_formed"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20354"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::digest::tests::a_derived_handle_is_well_formed_and_matches_only_its_role"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20355"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::digest::tests::same_handle_compares_algorithm_and_value"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20356"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::request_role::tests::handle_is_split_form_and_deterministic"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20357"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::request_role::tests::it_is_the_request_role_digest_and_no_other"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20358"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::request_role::tests::matches_its_own_claim_only"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20359"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::request_role::tests::serializes_to_the_split_wire_form"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20360"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::response_role::tests::it_is_the_response_role_digest_and_no_other"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20361"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::response_role::tests::roles_are_domain_separated_over_identical_bytes"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20362"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::response_role::tests::serializes_to_the_split_wire_form"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20363"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::role::tests::every_label_is_nul_free_ascii_and_distinct"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20364"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::role::tests::handle_is_not_a_bare_digest"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20365"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::role::tests::no_label_is_a_prefix_of_another"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20366"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#evidence::role::tests::roles_differ_over_identical_bytes"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20367"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::request_block::tests::a_body_without_a_block_passes_validate_carried_and_fails_require_valid"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20368"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::request_block::tests::a_carried_block_that_does_not_parse_is_refused"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20369"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::request_block::tests::a_carried_block_under_another_profile_is_refused"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20370"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::request_block::tests::a_continuation_of_another_type_is_refused"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20371"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::request_block::tests::a_continuation_with_a_corrupted_handle_is_refused"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20372"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::request_block::tests::a_valid_block_and_a_valid_continuation_pass"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20373"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::request_block::tests::a_well_shaped_continuation_is_not_judged_on_its_binding"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20374"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::tests::a_full_request_with_a_corrupted_continuation_is_refused_before_signing"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20375"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::tests::a_full_response_is_not_signed_over_an_absent_or_invalid_request_block"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20376"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::tests::a_hand_inserted_invalid_block_is_refused_by_the_floor_signer"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20377"
+project = "mcp-re-http-profile"
+control = "src/lib.rs#sign::tests::the_bound_floor_signer_refuses_a_request_carrying_an_invalid_block"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20378"
+project = "mcp-re-http-profile"
+control = "tests/delegated_202_test.rs#no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block"
+decision = "new-proposition"
+proposition = "NP-276"
+recorded = "2026-10-05"

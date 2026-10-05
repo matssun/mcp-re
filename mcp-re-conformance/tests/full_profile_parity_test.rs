@@ -56,8 +56,8 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::RequestEvidenceDigest;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
@@ -163,7 +163,10 @@ fn rar_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
     }
 }
 
-fn signed_request(block: &HttpRequestEvidenceBlock, nonce: &str) -> (HttpRequest, RequestEvidence) {
+fn signed_request(
+    block: &HttpRequestEvidenceBlock,
+    nonce: &str,
+) -> (HttpRequest, RequestRoleEvidence) {
     let mut req = base_request();
     let ev = sign_request_full(
         &mut req,
@@ -185,16 +188,18 @@ fn retained_over(
     input_required_response_base: &[u8],
     request_state: &'static [u8],
 ) -> RetainedContinuation<'static> {
-    let handle = |label: &str, base: &[u8]| -> &'static RequestEvidenceDigest {
-        Box::leak(Box::new(RequestEvidenceDigest::over_labeled(label, base)))
+    let handle = |role: mcp_re_http_profile::evidence::EvidenceRole,
+                  base: &[u8]|
+     -> &'static RequestEvidenceDigest {
+        Box::leak(Box::new(RequestEvidenceDigest::over_labeled(role, base)))
     };
     RetainedContinuation::from_correlation(
         handle(
-            mcp_re_http_profile::ids::EVIDENCE_LABEL_REQUEST,
+            mcp_re_http_profile::evidence::EvidenceRole::Request,
             previous_request_base,
         ),
         handle(
-            mcp_re_http_profile::ids::EVIDENCE_LABEL_RESPONSE,
+            mcp_re_http_profile::evidence::EvidenceRole::Response,
             input_required_response_base,
         ),
         request_state,
@@ -281,9 +286,10 @@ fn full_exchange_activates_all_blocks() {
     let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_bound_response(&rsp, &req, NOW)
         .expect("full response verifies");
-    assert_eq!(
-        rv.request_evidence_agreement().bound_request_evidence,
-        rv.request_evidence_agreement().body_request_evidence,
+    assert!(
+        rv.request_evidence_agreement()
+            .bound_request_evidence
+            .matches(&rv.request_evidence_agreement().body_request_evidence),
         "response binds request evidence"
     );
     assert_eq!(
@@ -370,7 +376,7 @@ fn response_evidence_mismatch_emits_request_binding_mismatch() {
     // A different request's evidence handle, advertised by a response whose ;req
     // is still bound to req_a: the crypto floor passes, the body comparison trips.
     let (_req_b, ev_b) = signed_request(&block, "nonce-b");
-    assert_ne!(ev_b.digest_value, verified_a.evidence().digest_value);
+    assert_ne!(ev_b.digest_value(), verified_a.evidence().digest_value());
 
     let mut rsp = HttpResponse {
         status: 200,

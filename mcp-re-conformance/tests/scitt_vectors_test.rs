@@ -58,7 +58,8 @@ use mcp_re_http_profile::scitt::ResolvedTransparencyService;
 use mcp_re_http_profile::scitt::SignedStatement;
 use mcp_re_http_profile::scitt::StatementLeafProfile;
 use mcp_re_http_profile::HttpProfileError;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
+use mcp_re_http_profile::ResponseRoleEvidence;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
@@ -163,10 +164,10 @@ fn reconstruction(label: ChainLabel, hops: usize) -> ChainReconstruction {
         label,
         (0..hops)
             .map(|i| HopEvidence {
-                request_evidence: RequestEvidence::from_signature_base(
+                request_evidence: RequestRoleEvidence::from_signature_base(
                     format!("req-{i}").as_bytes(),
                 ),
-                response_evidence: RequestEvidence::from_response_signature_base(
+                response_evidence: ResponseRoleEvidence::from_signature_base(
                     format!("rsp-{i}").as_bytes(),
                 ),
             })

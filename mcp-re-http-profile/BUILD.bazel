@@ -141,6 +141,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_http_profile_pre052",  # keep
         "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:base64",
     ],
 )
 

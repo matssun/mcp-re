@@ -69,7 +69,7 @@ impl AuthorizationFacet {
                     name: "authz_target",
                     value: target_field(a.action.target()),
                 },
-                AuditField::text("authz_evidence", a.attributable_to.digest_value.as_str()),
+                AuditField::text("authz_evidence", a.attributable_to.digest_value()),
             ],
             AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy) => {
                 vec![AuditField::token("authz", "refused-before-policy")]

@@ -115,7 +115,7 @@ fn request_roundtrip_verifies_and_yields_split_form_evidence() {
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request_floor(&req, NOW)
         .expect("verifies");
-    assert_eq!(verified.evidence().digest_alg, "sha256");
+    assert_eq!(verified.evidence().digest_alg(), "sha256");
     assert_eq!(verified.nonce(), "nonce-1");
     assert_eq!(verified.key_id(), "client-key-1");
 }
@@ -528,7 +528,7 @@ fn verified_response_exposes_resolved_server_actor() {
     assert_eq!(v.resolved_server_actor().identity.role, "server");
     assert_eq!(v.resolved_server_actor().slot, SignerSlot::Response);
     assert!(v.resolved_server_actor().actor_id().starts_with("server:"));
-    assert_eq!(v.response_signature_base_digest().digest_alg, "sha256");
+    assert_eq!(v.response_signature_base_digest().digest_alg(), "sha256");
     // "the floor path carries no request binding" is no longer an assertion about a
     // field's absence — the floor product has no such field to inspect.
 }

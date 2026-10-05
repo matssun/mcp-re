@@ -15,7 +15,7 @@ use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::ResponseRoleEvidence;
 use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
@@ -87,7 +87,7 @@ pub(crate) fn floor_bound_response<R: Into<ResolverOutcome>>(
     )?;
     Ok(CryptographicFloorVerifiedBoundResponse::new(
         resolved_server_actor,
-        RequestEvidence::from_response_signature_base(&base),
+        ResponseRoleEvidence::from_signature_base(&base),
     ))
 }
 /// [`verify_response_unbound`] under an explicit verifier-local [`VerifierPolicy`].
@@ -136,6 +136,6 @@ pub(crate) fn floor_unbound_response<R: Into<ResolverOutcome>>(
     )?;
     Ok(CryptographicFloorVerifiedUnboundResponse::new(
         resolved_server_actor,
-        RequestEvidence::from_response_signature_base(&base),
+        ResponseRoleEvidence::from_signature_base(&base),
     ))
 }

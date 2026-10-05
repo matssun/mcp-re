@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::block::AudienceTuple;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestRoleEvidence;
 use crate::ids::VERIFIED_CONTEXT_BLOCK_KEY;
 use crate::verified_request::VerifiedMcpRequest;
 
@@ -43,7 +43,7 @@ pub struct VerifiedContext {
     actor_id: String,
     key_id: String,
     audience: AudienceTuple,
-    request_evidence: RequestEvidence,
+    request_evidence: RequestRoleEvidence,
     verified_at: i64,
     request_expires: i64,
 }
@@ -95,7 +95,7 @@ impl VerifiedContext {
 
     /// The request evidence handle — the audit correlation key linking whatever
     /// the inner server does to the exact signed request that authorized it.
-    pub fn request_evidence(&self) -> &RequestEvidence {
+    pub fn request_evidence(&self) -> &RequestRoleEvidence {
         &self.request_evidence
     }
 
@@ -185,7 +185,7 @@ mod tests {
                     verification_key: key.public_key(),
                     slot: SignerSlot::Request,
                 },
-                evidence: RequestEvidence::from_signature_base(b"base"),
+                evidence: RequestRoleEvidence::from_signature_base(b"base"),
                 request_signature_base: b"base".to_vec(),
                 content_digest: "sha-256=:x:".into(),
                 created: 1_700_000_000,

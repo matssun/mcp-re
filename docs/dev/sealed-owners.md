@@ -435,6 +435,37 @@ The facts types (`AcceptedResponseSigner`, `BoundResponseSignatureFacts`,
 unsealed value records that establish nothing alone; they are reached as projections of a
 product.
 
+### The evidence handles: one sealed type per role, opaque to the prover
+
+`RequestRoleEvidence` and `ResponseRoleEvidence` (`mcp-re-http-profile/src/evidence/`) hold
+a private digest value and have one producer each, `from_signature_base`, which derives
+under that role's label. Holding one means its value IS that role's labeled digest of some
+signature base; a slot typed for one role cannot hold the other, whether or not the slot
+compares anything. Labels come from the closed `EvidenceRole`, never a string argument.
+What travels on the wire is the claim type `RequestEvidenceDigest`, which keeps public
+fields because it is deserialized from unauthenticated bodies and proves nothing by being
+held; it is checked against a role type (`matches`) or a role (`matches_labeled`). An
+unbound rejection's request reference is `UnboundRequestDiagnostic`, a third type, so it
+cannot pass as a handle.
+
+The verified request products carry a `RequestRoleEvidence`, so the prover must name it.
+A transparent mirror refuses private fields (the error measured above), so the mirror is
+OPAQUE and sits in ASM-0046. That costs no proof: no theorem reads the handle, and the
+continuation contract is stated over `RequestEvidenceDigest` claims, whose mirror stays
+transparent.
+
+### The request evidence block: a proof read, enforced at the signer
+
+`HttpRequestEvidenceBlock` keeps public fields on purpose. The continuation-unbypassability
+postcondition reads `verified.request_block.continuation` as a field; sealing the block
+would need an opaque mirror plus a getter premise for that read, which replaces a proved
+read with an assumed one. Its boundary is the signer instead
+(`mcp-re-http-profile/src/sign/request_block.rs`): every request signer ends in one tail
+that refuses a body carrying a block that fails `validate` or whose continuation fails
+`HttpContinuation::validate_shape`, the `;req` response signer refuses a request carrying
+one, and the full-profile response signer additionally refuses a request carrying none.
+Values can still be assembled by hand; the profile never signs one that fails.
+
 ## Sealing the next owner
 
 1. Make the representation private: `pub struct X { kind: XKind }`, `enum XKind` private.

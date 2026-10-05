@@ -38,7 +38,8 @@ use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::chain::ChainLabel;
 use mcp_re_http_profile::chain::ChainReconstruction;
 use mcp_re_http_profile::chain::HopEvidence;
-use mcp_re_http_profile::evidence::RequestEvidence;
+use mcp_re_http_profile::evidence::RequestRoleEvidence;
+use mcp_re_http_profile::evidence::ResponseRoleEvidence;
 use mcp_re_http_profile::scitt::verify_receipt_offline;
 use mcp_re_http_profile::scitt::verify_retained_evidence;
 use mcp_re_http_profile::scitt::EvidenceCommitment;
@@ -100,10 +101,10 @@ fn retained_chain(bytes: &[u8]) -> ChainReconstruction {
             .expect("hops")
             .iter()
             .map(|hop| HopEvidence {
-                request_evidence: RequestEvidence::from_signature_base(
+                request_evidence: RequestRoleEvidence::from_signature_base(
                     hop["request"].as_str().expect("request base").as_bytes(),
                 ),
-                response_evidence: RequestEvidence::from_response_signature_base(
+                response_evidence: ResponseRoleEvidence::from_signature_base(
                     hop["response"].as_str().expect("response base").as_bytes(),
                 ),
             })

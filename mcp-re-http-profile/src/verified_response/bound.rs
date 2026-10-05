@@ -11,7 +11,8 @@
 
 use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolvedActor;
-use crate::RequestEvidence;
+use crate::RequestRoleEvidence;
+use crate::ResponseRoleEvidence;
 
 use super::facts::AcceptedResponseSigner;
 use super::facts::BoundRequestEvidenceAgreement;
@@ -32,14 +33,14 @@ use super::facts::BoundResponseSignatureFacts;
 #[derive(Debug, Clone)]
 pub struct CryptographicFloorVerifiedBoundResponse {
     resolved_server_actor: ResolvedActor,
-    response_signature_base_digest: RequestEvidence,
+    response_signature_base_digest: ResponseRoleEvidence,
 }
 
 impl CryptographicFloorVerifiedBoundResponse {
     /// Assemble from what the trust seam resolved; `crate::verify` is the only producer.
     pub(crate) fn new(
         resolved_server_actor: ResolvedActor,
-        response_signature_base_digest: RequestEvidence,
+        response_signature_base_digest: ResponseRoleEvidence,
     ) -> Self {
         Self {
             resolved_server_actor,
@@ -53,7 +54,7 @@ impl CryptographicFloorVerifiedBoundResponse {
     }
 
     /// The response signature-base handle, under the response role label.
-    pub fn response_signature_base_digest(&self) -> &RequestEvidence {
+    pub fn response_signature_base_digest(&self) -> &ResponseRoleEvidence {
         &self.response_signature_base_digest
     }
 
@@ -116,7 +117,7 @@ impl VerifiedMcpResponse {
     /// Assemble from the floor product and the block facts the full path established.
     pub(crate) fn from_block(
         floor: CryptographicFloorVerifiedBoundResponse,
-        bound_request_evidence: RequestEvidence,
+        bound_request_evidence: RequestRoleEvidence,
         block: &HttpResponseEvidenceBlock,
     ) -> Self {
         VerifiedMcpResponse {
@@ -129,15 +130,12 @@ impl VerifiedMcpResponse {
 /// The agreement record both full bound paths build, from the caller's handle and the
 /// block whose handle was just compared equal to it.
 pub(crate) fn block_agreement(
-    bound_request_evidence: RequestEvidence,
+    bound_request_evidence: RequestRoleEvidence,
     block: &HttpResponseEvidenceBlock,
 ) -> BoundRequestEvidenceAgreement {
     BoundRequestEvidenceAgreement {
         bound_request_evidence,
-        body_request_evidence: RequestEvidence {
-            digest_alg: block.request_evidence.digest_alg.clone(),
-            digest_value: block.request_evidence.digest_value.clone(),
-        },
+        body_request_evidence: block.request_evidence.clone(),
     }
 }
 
@@ -145,7 +143,6 @@ pub(crate) fn block_agreement(
 mod tests {
     use super::*;
     use crate::block::ActorIdentity;
-    use crate::block::RequestEvidenceDigest;
     use crate::block::SignerSlot;
     use crate::PROFILE_TAG;
     use mcp_re_core::SigningKey;
@@ -166,33 +163,30 @@ mod tests {
     fn bound_floor() -> CryptographicFloorVerifiedBoundResponse {
         CryptographicFloorVerifiedBoundResponse {
             resolved_server_actor: actor("resp-1"),
-            response_signature_base_digest: RequestEvidence::from_response_signature_base(b"r"),
+            response_signature_base_digest: ResponseRoleEvidence::from_signature_base(b"r"),
         }
     }
 
     #[test]
     fn a_bound_full_response_states_its_binding_without_an_option() {
-        let expected = RequestEvidence::from_signature_base(b"req");
-        let other = RequestEvidence::from_signature_base(b"other");
+        let expected = RequestRoleEvidence::from_signature_base(b"req");
+        let other = RequestRoleEvidence::from_signature_base(b"other");
         let block = HttpResponseEvidenceBlock {
             profile: PROFILE_TAG.into(),
             server_signer: actor("resp-1").identity,
             server_delegation: None,
-            request_evidence: RequestEvidenceDigest {
-                digest_alg: other.digest_alg.clone(),
-                digest_value: other.digest_value.clone(),
-            },
+            request_evidence: other.to_digest(),
         };
         let full = VerifiedMcpResponse::from_block(bound_floor(), expected.clone(), &block);
         assert_eq!(
             full.request_evidence_agreement.bound_request_evidence,
             expected
         );
-        assert_eq!(full.request_evidence_agreement.body_request_evidence, other);
-        assert_ne!(
+        assert_eq!(
             full.request_evidence_agreement.body_request_evidence,
-            expected
+            other.to_digest()
         );
+        assert!(!expected.matches(&full.request_evidence_agreement.body_request_evidence));
     }
 
     /// The seam-authorized floor ENTAILS the shared facts, and the projection is that

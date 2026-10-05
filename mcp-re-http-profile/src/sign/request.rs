@@ -8,7 +8,7 @@ use crate::block::HttpRequestEvidenceBlock;
 use crate::body::insert_meta_block;
 use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestRoleEvidence;
 use crate::ids::ALG_ED25519;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
@@ -57,7 +57,7 @@ pub(crate) fn conditional_request_components(
 
 /// Sign `request` in place with a local in-process [`SigningKey`]: emit
 /// `Content-Digest`, `Signature-Input`, and `Signature` (label `mcp-re`, tag
-/// `mcp-re-http-v1`). Returns the [`RequestEvidence`] handle derived from the
+/// `mcp-re-http-v1`). Returns the [`RequestRoleEvidence`] handle derived from the
 /// exact signature base. A thin local-key wrapper over
 /// [`sign_request_with_signer`].
 pub fn sign_request(
@@ -67,7 +67,7 @@ pub fn sign_request(
     created: i64,
     expires: i64,
     nonce: &str,
-) -> Result<RequestEvidence, HttpProfileError> {
+) -> Result<RequestRoleEvidence, HttpProfileError> {
     sign_request_with_signer(
         request,
         |base| local_sig(key, base),
@@ -92,7 +92,7 @@ pub fn sign_request_with_signer(
     created: i64,
     expires: i64,
     nonce: &str,
-) -> Result<RequestEvidence, HttpProfileError> {
+) -> Result<RequestRoleEvidence, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
     // The routing headers the contract requires, derived from the body this signature
     // protects, so the signer cannot be the source of a header/body disagreement.
@@ -110,7 +110,7 @@ pub fn sign_request_as_given(
     created: i64,
     expires: i64,
     nonce: &str,
-) -> Result<RequestEvidence, HttpProfileError> {
+) -> Result<RequestRoleEvidence, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
     sign_headers_as_given(
         request,
@@ -129,7 +129,9 @@ fn sign_headers_as_given(
     created: i64,
     expires: i64,
     nonce: &str,
-) -> Result<RequestEvidence, HttpProfileError> {
+) -> Result<RequestRoleEvidence, HttpProfileError> {
+    // Every request signer ends here, so this is the one place a carried block is checked.
+    super::request_block::validate_carried(&request.body)?;
     set_header(
         &mut request.headers,
         "Content-Digest",
@@ -154,13 +156,13 @@ fn sign_headers_as_given(
         &base,
         sign_base,
     )?;
-    Ok(RequestEvidence::from_signature_base(&base))
+    Ok(RequestRoleEvidence::from_signature_base(&base))
 }
 
 /// Full-profile request signing (MCPRE-101): compose the request evidence block
 /// (`se.syncom/mcp-re.http.request`) into the JSON-RPC body `_meta` FIRST, then
 /// sign — so `content-digest` (a covered component) protects the block. Returns
-/// the [`RequestEvidence`] handle over the resulting signature base; pass it to
+/// the [`RequestRoleEvidence`] handle over the resulting signature base; pass it to
 /// [`sign_delegated_response_full_with_owned_key`] so the response can carry `request_evidence`.
 pub fn sign_request_full(
     request: &mut HttpRequest,
@@ -170,7 +172,7 @@ pub fn sign_request_full(
     created: i64,
     expires: i64,
     nonce: &str,
-) -> Result<RequestEvidence, HttpProfileError> {
+) -> Result<RequestRoleEvidence, HttpProfileError> {
     request.body = insert_meta_block(&request.body, REQUEST_EVIDENCE_BLOCK_KEY, block)?;
     sign_request(request, key, key_id, created, expires, nonce)
 }
@@ -189,7 +191,7 @@ pub fn sign_request_full_with_signer(
     created: i64,
     expires: i64,
     nonce: &str,
-) -> Result<RequestEvidence, HttpProfileError> {
+) -> Result<RequestRoleEvidence, HttpProfileError> {
     request.body = insert_meta_block(&request.body, REQUEST_EVIDENCE_BLOCK_KEY, block)?;
     sign_request_with_signer(request, sign_base, key_id, created, expires, nonce)
 }

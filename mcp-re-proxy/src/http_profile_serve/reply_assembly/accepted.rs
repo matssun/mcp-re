@@ -17,7 +17,7 @@ use std::sync::Arc;
 use mcp_re_http_profile::ExecutionDisposition;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 
 use crate::async_serve::ServedHttpResponse;
 use crate::exchange_state::ExchangeProgress;
@@ -159,7 +159,7 @@ impl HttpProfileProxy {
         request: &HttpRequest,
         response: &HttpResponse,
         now: i64,
-        bound: Option<&RequestEvidence>,
+        bound: Option<&RequestRoleEvidence>,
         actor_id: String,
         retention_owed: &RetentionDisposition,
         execution: ExecutionDisposition,

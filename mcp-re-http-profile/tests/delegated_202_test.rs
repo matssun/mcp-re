@@ -518,3 +518,29 @@ fn a_stale_trust_epoch_is_rejected() {
         HttpProfileError::DelegationTrustEpochStale,
     );
 }
+
+/// The acknowledgement binds to its notification, so it is not signed over one carrying a
+/// request evidence block that does not validate. Refused before any signature exists.
+#[test]
+fn no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block() {
+    let note = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: format!(
+            r#"{{"jsonrpc":"2.0","method":"notifications/initialized","_meta":{{"{}":{{"profile":"another-profile","audience":{{"audience_id":"a","target_uri":"https://mcp.example.com/mcp"}},"artifact_bindings":[]}}}}}}"#,
+            mcp_re_http_profile::REQUEST_EVIDENCE_BLOCK_KEY
+        )
+        .into_bytes(),
+    };
+    let err = sign_delegated_accepted_202_with_owned_key(
+        &note,
+        &credential(),
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect_err("refused");
+    assert_eq!(err, HttpProfileError::UnknownProfileTag);
+}

@@ -64,9 +64,9 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
-use mcp_re_http_profile::RequestEvidenceDigest;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResponseRoleEvidence;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifierPolicy;
@@ -218,20 +218,13 @@ fn audit() -> ChainAudit<'static> {
     }
 }
 
-fn to_digest(e: &RequestEvidence) -> RequestEvidenceDigest {
-    RequestEvidenceDigest {
-        digest_alg: e.digest_alg.clone(),
-        digest_value: e.digest_value.clone(),
-    }
-}
-
 /// Sign one hop with the shipped signers and return it with the two role-labeled handles
 /// the next hop's continuation must name.
 fn hop(
     nonce: &str,
     continuation: Option<HttpContinuation>,
     body: &str,
-) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+) -> (RetainedHop, RequestRoleEvidence, ResponseRoleEvidence) {
     let mut request = HttpRequest {
         method: "POST".into(),
         target_uri: TARGET.into(),
@@ -299,8 +292,8 @@ fn three_hop_chain() -> Vec<RetainedHop> {
     let (h1, r1, s1) = hop(
         "retained-n1",
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-0",
         )),
         AWAITING,
@@ -308,8 +301,8 @@ fn three_hop_chain() -> Vec<RetainedHop> {
     let (h2, _, _) = hop(
         "retained-n2",
         Some(HttpContinuation::from_handles(
-            to_digest(&r1),
-            to_digest(&s1),
+            r1.to_digest(),
+            s1.to_digest(),
             b"state-1",
         )),
         DONE,

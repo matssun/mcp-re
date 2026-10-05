@@ -155,13 +155,11 @@ pub struct ExResolvedActor(crate::block::ResolvedActor);
 #[verifier::external_type_specification]
 pub struct ExAudienceTuple(crate::block::AudienceTuple);
 #[verifier::external_type_specification]
-pub struct ExRequestEvidenceDigest(crate::block::RequestEvidenceDigest);
+pub struct ExRequestEvidenceDigest(crate::evidence::RequestEvidenceDigest);
 #[verifier::external_type_specification]
 pub struct ExHttpContinuation(crate::block::HttpContinuation);
 #[verifier::external_type_specification]
 pub struct ExHttpRequestEvidenceBlock(crate::block::HttpRequestEvidenceBlock);
-#[verifier::external_type_specification]
-pub struct ExRequestEvidence(crate::evidence::RequestEvidence);
 #[verifier::external_type_specification]
 pub struct ExFloorVerifiedRequest(crate::verified_request::CryptographicFloorVerifiedRequest);
 #[verifier::external_type_specification]

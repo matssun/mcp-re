@@ -210,7 +210,7 @@ mod tests {
     use mcp_re_http_profile::AudienceTuple;
     use mcp_re_http_profile::CryptographicFloorVerifiedRequest;
     use mcp_re_http_profile::HttpRequestEvidenceBlock;
-    use mcp_re_http_profile::RequestEvidence;
+    use mcp_re_http_profile::RequestRoleEvidence;
     use mcp_re_http_profile::ResolvedActor;
     use mcp_re_http_profile::SignerSlot;
     use std::cell::Cell;
@@ -314,7 +314,7 @@ mod tests {
                         .public_key(),
                     slot: SignerSlot::Request,
                 },
-                evidence: RequestEvidence::from_signature_base(b"base"),
+                evidence: RequestRoleEvidence::from_signature_base(b"base"),
                 request_signature_base: b"base".to_vec(),
                 content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
                 created: 1,

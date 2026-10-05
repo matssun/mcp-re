@@ -14,7 +14,7 @@ use mcp_re_http_profile::ExecutionDisposition;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 
 use super::super::served;
 use super::super::signing_window;
@@ -50,7 +50,7 @@ impl ResponseSigning {
         wire_code: &'static str,
         status: u16,
         now: i64,
-        bound: Option<&RequestEvidence>,
+        bound: Option<&RequestRoleEvidence>,
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     ) -> ServedHttpResponse {

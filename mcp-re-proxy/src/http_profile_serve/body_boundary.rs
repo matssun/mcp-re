@@ -233,7 +233,7 @@ mod tests {
                     verification_key: key.public_key(),
                     slot: SignerSlot::Request,
                 },
-                evidence: mcp_re_http_profile::RequestEvidence::from_signature_base(b"base"),
+                evidence: mcp_re_http_profile::RequestRoleEvidence::from_signature_base(b"base"),
                 request_signature_base: b"base".to_vec(),
                 content_digest: content_digest_sha256(body),
                 created: 1_700_000_000,

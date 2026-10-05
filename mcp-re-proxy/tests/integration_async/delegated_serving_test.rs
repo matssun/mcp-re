@@ -39,7 +39,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -204,7 +204,7 @@ fn delegated_proxy(signer: Arc<DelegatedServerSigner>) -> HttpProfileProxy {
 /// there is no such serving mode in production.
 fn sign_legacy_direct_root_response_for_negative_test(
     req: &HttpRequest,
-    request_evidence: &RequestEvidence,
+    request_evidence: &RequestRoleEvidence,
 ) -> HttpResponse {
     let mut resp = HttpResponse {
         status: 200,
@@ -231,7 +231,7 @@ fn sign_legacy_direct_root_response_for_negative_test(
     resp
 }
 
-fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
+fn signed_request(nonce: &str) -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),

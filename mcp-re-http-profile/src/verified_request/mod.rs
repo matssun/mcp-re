@@ -24,7 +24,7 @@ pub use floor::CryptographicFloorVerifiedRequest;
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::ResolvedActor;
 use crate::AudienceTuple;
-use crate::RequestEvidence;
+use crate::RequestRoleEvidence;
 
 /// A request verified under the **full MCP-RE profile**.
 ///
@@ -97,7 +97,7 @@ impl VerifiedMcpRequest {
         self.floor.resolved_actor()
     }
     /// See [`CryptographicFloorVerifiedRequest::evidence`].
-    pub fn evidence(&self) -> &RequestEvidence {
+    pub fn evidence(&self) -> &RequestRoleEvidence {
         self.floor.evidence()
     }
     /// See [`CryptographicFloorVerifiedRequest::request_signature_base`].
@@ -148,7 +148,7 @@ mod tests {
                 verification_key: key.public_key(),
                 slot: SignerSlot::Request,
             },
-            evidence: RequestEvidence::from_signature_base(b"base"),
+            evidence: RequestRoleEvidence::from_signature_base(b"base"),
             request_signature_base: b"base".to_vec(),
             content_digest: "sha-256=:x:".into(),
             created: 1,

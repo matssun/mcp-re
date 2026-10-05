@@ -24,7 +24,7 @@ use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_LABEL;
 use crate::ids::REQUIRED_REQUEST_COMPONENTS;
@@ -140,7 +140,7 @@ pub(crate) fn floor_request<R: Into<ResolverOutcome>>(
         profile_id: PROFILE_TAG.to_owned(),
         signature_label: REQUEST_LABEL.to_owned(),
         resolved_actor,
-        evidence: RequestEvidence::from_signature_base(&base),
+        evidence: RequestRoleEvidence::from_signature_base(&base),
         request_signature_base: base,
         content_digest,
         created,

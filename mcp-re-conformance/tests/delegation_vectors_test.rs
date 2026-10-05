@@ -47,7 +47,7 @@ use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -268,7 +268,7 @@ fn response_body() -> Vec<u8> {
     br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
 }
 
-fn signed_request() -> (HttpRequest, RequestEvidence) {
+fn signed_request() -> (HttpRequest, RequestRoleEvidence) {
     let mut req = base_request();
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),

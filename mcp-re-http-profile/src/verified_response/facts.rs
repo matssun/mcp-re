@@ -24,7 +24,9 @@
 use mcp_re_core::VerificationKey;
 
 use crate::block::ActorIdentity;
-use crate::RequestEvidence;
+use crate::RequestEvidenceDigest;
+use crate::RequestRoleEvidence;
+use crate::ResponseRoleEvidence;
 
 /// The signer a response signature was accepted under: the identity the verifier
 /// attributed the response to, and the public key the signature actually verified under.
@@ -55,7 +57,7 @@ pub struct BoundResponseSignatureFacts {
     /// The signer the signature was accepted under — WHO, not WHY.
     pub accepted_signer: AcceptedResponseSigner,
     /// The response signature-base handle, under the response role label.
-    pub response_signature_base_digest: RequestEvidence,
+    pub response_signature_base_digest: ResponseRoleEvidence,
 }
 
 /// The cryptographic facts a successfully verified **unbound** response establishes,
@@ -81,7 +83,7 @@ pub struct UnboundResponseSignatureFacts {
     /// The signer the signature was accepted under — WHO, not WHY.
     pub accepted_signer: AcceptedResponseSigner,
     /// The response signature-base handle, under the response role label.
-    pub response_signature_base_digest: RequestEvidence,
+    pub response_signature_base_digest: ResponseRoleEvidence,
 }
 
 /// The block agreement a **full-profile bound** response establishes, on either
@@ -93,10 +95,10 @@ pub struct UnboundResponseSignatureFacts {
 #[derive(Debug, Clone)]
 pub struct BoundRequestEvidenceAgreement {
     /// The request evidence handle the caller required this response to bind to.
-    pub bound_request_evidence: RequestEvidence,
+    pub bound_request_evidence: RequestRoleEvidence,
     /// The handle the response block carried, compared equal to
-    /// [`Self::bound_request_evidence`].
-    pub body_request_evidence: RequestEvidence,
+    /// [`Self::bound_request_evidence`]. The wire claim as received.
+    pub body_request_evidence: RequestEvidenceDigest,
 }
 
 #[cfg(test)]
@@ -123,20 +125,20 @@ mod tests {
                 identity: identity("resp-1"),
                 verification_key: SigningKey::from_seed_bytes(&[9u8; 32]).public_key(),
             },
-            response_signature_base_digest: RequestEvidence::from_response_signature_base(b"r"),
+            response_signature_base_digest: ResponseRoleEvidence::from_signature_base(b"r"),
         };
         assert_eq!(facts.accepted_signer.identity.keyid, "resp-1");
-        assert_eq!(facts.response_signature_base_digest.digest_alg, "sha256");
+        assert_eq!(facts.response_signature_base_digest.digest_alg(), "sha256");
     }
 
     #[test]
     fn an_agreement_records_both_handles_not_only_the_verdict() {
-        let handle = RequestEvidence::from_signature_base(b"req");
+        let handle = RequestRoleEvidence::from_signature_base(b"req");
         let agreement = BoundRequestEvidenceAgreement {
             bound_request_evidence: handle.clone(),
-            body_request_evidence: handle.clone(),
+            body_request_evidence: handle.to_digest(),
         };
         assert_eq!(agreement.bound_request_evidence, handle);
-        assert_eq!(agreement.body_request_evidence, handle);
+        assert_eq!(agreement.body_request_evidence, handle.to_digest());
     }
 }

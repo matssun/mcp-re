@@ -20,7 +20,7 @@ use crate::block::SignerSlot;
 use crate::body::extract_meta_block;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::ResponseRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
@@ -136,9 +136,7 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     // The handle is OF the request this verification was given — see
     // `crate::verify::bound_request`.
     let bound = request_evidence_of(request)?;
-    if block.request_evidence.digest_alg != bound.digest_alg
-        || block.request_evidence.digest_value != bound.digest_value
-    {
+    if !bound.matches(&block.request_evidence) {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 
@@ -153,7 +151,7 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
                 identity: block.server_signer.clone(),
                 verification_key: verified.delegated_key,
             },
-            response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
+            response_signature_base_digest: ResponseRoleEvidence::from_signature_base(&base),
         },
         block_agreement(bound, &block),
         // C004b: the ROOT anchor the credential chained to — the stable coordinate,

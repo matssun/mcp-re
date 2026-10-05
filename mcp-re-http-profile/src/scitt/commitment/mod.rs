@@ -109,16 +109,16 @@ impl EvidenceCommitment {
         // way.
         let (request_evidence, response_evidence) = match reconstruction.hop_evidence().first() {
             Some(h) => (
-                h.request_evidence.digest_value.clone(),
-                h.response_evidence.digest_value.clone(),
+                h.request_evidence.digest_value().to_owned(),
+                h.response_evidence.digest_value().to_owned(),
             ),
             None => (String::new(), String::new()),
         };
         let mut shape = Sha256::new();
         for h in reconstruction.hop_evidence() {
-            shape.update(h.request_evidence.digest_value.as_bytes());
+            shape.update(h.request_evidence.digest_value().as_bytes());
             shape.update([0x00]);
-            shape.update(h.response_evidence.digest_value.as_bytes());
+            shape.update(h.response_evidence.digest_value().as_bytes());
             shape.update([0x00]);
         }
         EvidenceCommitment {
@@ -219,7 +219,8 @@ mod tests {
     use super::*;
     use crate::chain::HopEvidence;
     use crate::chain::IncompleteReason;
-    use crate::evidence::RequestEvidence;
+    use crate::evidence::RequestRoleEvidence;
+    use crate::evidence::ResponseRoleEvidence;
     use crate::scitt::fixtures::*;
     use crate::scitt::retained::verify_retained_evidence;
 
@@ -318,8 +319,8 @@ mod tests {
         let retained = ChainReconstruction::with_authored_submission_identity(
             ChainLabel::Complete,
             vec![HopEvidence {
-                request_evidence: RequestEvidence::from_signature_base(same),
-                response_evidence: RequestEvidence::from_response_signature_base(same),
+                request_evidence: RequestRoleEvidence::from_signature_base(same),
+                response_evidence: ResponseRoleEvidence::from_signature_base(same),
             }],
             "test-submitted".to_owned(),
         );

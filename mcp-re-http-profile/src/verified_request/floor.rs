@@ -19,7 +19,7 @@
 //! never over what holding a value means.
 
 use crate::block::ResolvedActor;
-use crate::RequestEvidence;
+use crate::RequestRoleEvidence;
 
 /// A request whose **cryptographic floor** has been established.
 ///
@@ -35,7 +35,7 @@ pub struct CryptographicFloorVerifiedRequest {
     pub profile_id: String,
     pub signature_label: String,
     pub resolved_actor: ResolvedActor,
-    pub evidence: RequestEvidence,
+    pub evidence: RequestRoleEvidence,
     pub request_signature_base: Vec<u8>,
     pub content_digest: String,
     pub created: i64,
@@ -83,7 +83,7 @@ impl CryptographicFloorVerifiedRequest {
         &self.resolved_actor
     }
     /// The request signature-base handle: `SHA-256` over the reconstructed base.
-    pub fn evidence(&self) -> &RequestEvidence {
+    pub fn evidence(&self) -> &RequestRoleEvidence {
         &self.evidence
     }
     /// The exact bytes the signature verified over. Credential-bearing: they carry every
@@ -149,7 +149,7 @@ mod tests {
                 verification_key: key.public_key(),
                 slot: SignerSlot::Request,
             },
-            evidence: RequestEvidence::from_signature_base(b"base"),
+            evidence: RequestRoleEvidence::from_signature_base(b"base"),
             request_signature_base: b"\"authorization\": Bearer tok-SECRET-1\n\"@method\": POST"
                 .to_vec(),
             content_digest: "sha-256=:x:".into(),

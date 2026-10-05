@@ -33,11 +33,8 @@ pub use artifact_binding::ArtifactType;
 pub use artifact_binding::BindingType;
 
 use crate::error::HttpProfileError;
-use crate::evidence::labeled_digest_value;
-use crate::ids::EVIDENCE_DIGEST_ALG;
-use crate::ids::EVIDENCE_LABEL_REQUEST;
-use crate::ids::EVIDENCE_LABEL_REQUEST_STATE;
-use crate::ids::EVIDENCE_LABEL_RESPONSE;
+use crate::evidence::EvidenceRole;
+use crate::evidence::RequestEvidenceDigest;
 use crate::ids::MAX_ADMISSION_ASSERTION_LEN;
 use crate::pdp_decision::MAX_AUTHORIZATION_DECISION_LEN;
 #[cfg(feature = "verify")]
@@ -262,57 +259,6 @@ pub struct HttpContinuation {
     pub request_state_digest: RequestEvidenceDigest,
 }
 
-/// A split-form digest handle (`digest_alg`/`digest_value`) as used across the
-/// HTTP profile's body evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RequestEvidenceDigest {
-    pub digest_alg: String,
-    pub digest_value: String,
-}
-
-impl RequestEvidenceDigest {
-    /// Derive the handle over the mandated input under its ROLE label
-    /// (#416 rev 2 §7.1/§7.3): `base64url-no-pad(SHA-256(label || 0x00 || bytes))`.
-    ///
-    /// There is no unlabeled derivation: every handle states which role it is,
-    /// so a caller cannot accidentally mint one that is valid in two fields.
-    pub fn over_labeled(label: &str, bytes: &[u8]) -> Self {
-        RequestEvidenceDigest {
-            digest_alg: EVIDENCE_DIGEST_ALG.to_owned(),
-            digest_value: labeled_digest_value(label, bytes),
-        }
-    }
-
-    /// Whether this handle IS `other`: the same algorithm and the same value.
-    // ADR-MCPRE-059 ASM-0023: the handle comparator, trusted at exactly the strength the
-    // binding contract needs — a true answer means the two values are equal. The digest
-    // itself stays uninterpreted, so no cryptographic property is assumed here.
-    #[cfg_attr(feature = "verify", verus_verify(external_body))]
-    #[cfg_attr(feature = "verify", verus_spec(result =>
-        ensures
-            result ==> self.digest_value@ == other.digest_value@,
-    ))]
-    pub fn same_handle(&self, other: &RequestEvidenceDigest) -> bool {
-        self.digest_alg == other.digest_alg && self.digest_value == other.digest_value
-    }
-
-    /// Constant-shape check that this handle commits to `bytes` IN ROLE `label`.
-    /// A handle that commits to the same bytes in a different role does not match.
-    // ADR-MCPRE-059 ASM-0023: trusted at exactly the strength the role-separation contract
-    // needs — a true answer means this handle's value IS the labeled digest of these bytes
-    // under this label. The digest itself stays uninterpreted.
-    #[cfg_attr(feature = "verify", verus_verify(external_body))]
-    #[cfg_attr(feature = "verify", verus_spec(result =>
-        ensures
-            result ==> self.digest_value@ == crate::verus_std_specs::labeled_digest(label@, bytes@),
-    ))]
-    pub fn matches_labeled(&self, label: &str, bytes: &[u8]) -> bool {
-        self.digest_alg == EVIDENCE_DIGEST_ALG
-            && self.digest_value == labeled_digest_value(label, bytes)
-    }
-}
-
 /// The `mcp-mrt` continuation type token (kept MCP-specific).
 #[allow(clippy::redundant_static_lifetimes)]
 #[cfg_attr(feature = "verify", verus_verify)]
@@ -332,22 +278,22 @@ impl HttpContinuation {
         HttpContinuation {
             continuation_type: CONTINUATION_TYPE_MCP_MRT.to_owned(),
             previous_request_evidence: RequestEvidenceDigest::over_labeled(
-                EVIDENCE_LABEL_REQUEST,
+                EvidenceRole::Request,
                 previous_request_base,
             ),
             input_required_response_evidence: RequestEvidenceDigest::over_labeled(
-                EVIDENCE_LABEL_RESPONSE,
+                EvidenceRole::Response,
                 input_required_response_base,
             ),
             request_state_digest: RequestEvidenceDigest::over_labeled(
-                EVIDENCE_LABEL_REQUEST_STATE,
+                EvidenceRole::RequestState,
                 request_state,
             ),
         }
     }
 
     /// Build the continuation from digest HANDLES the caller already holds — the
-    /// previous client request's evidence digest (`RequestEvidence` over its
+    /// previous client request's evidence digest (`RequestRoleEvidence` over its
     /// signature base) and the verified `InputRequiredResult` response's evidence
     /// digest — plus the opaque `requestState` bytes (hashed here). This is the
     /// answer-leg client's path (ADR-MCPS-047): after verifying an
@@ -365,10 +311,28 @@ impl HttpContinuation {
             previous_request_evidence,
             input_required_response_evidence,
             request_state_digest: RequestEvidenceDigest::over_labeled(
-                EVIDENCE_LABEL_REQUEST_STATE,
+                EvidenceRole::RequestState,
                 request_state,
             ),
         }
+    }
+
+    /// The continuation's own shape, before any binding: the `mcp-mrt` type, and three
+    /// handles shaped as derived handles are. One failing it binds to no retained handle,
+    /// so [`verify`](Self::verify) refuses it whatever the store holds.
+    pub fn validate_shape(&self) -> Result<(), HttpProfileError> {
+        if self.continuation_type != CONTINUATION_TYPE_MCP_MRT {
+            return Err(HttpProfileError::MalformedEvidence("continuation type"));
+        }
+        let handles = [
+            &self.previous_request_evidence,
+            &self.input_required_response_evidence,
+            &self.request_state_digest,
+        ];
+        if !handles.iter().all(|h| h.is_well_formed()) {
+            return Err(HttpProfileError::MalformedEvidence("continuation handle"));
+        }
+        Ok(())
     }
 
     /// Verify the continuation against the evidence handles the correlation store retained
@@ -409,7 +373,7 @@ impl HttpContinuation {
                 .same_handle(input_required_response)
             || !self
                 .request_state_digest
-                .matches_labeled(EVIDENCE_LABEL_REQUEST_STATE, request_state)
+                .matches_labeled(EvidenceRole::RequestState, request_state)
         {
             return Err(HttpProfileError::ContinuationBindingFailed);
         }
@@ -421,6 +385,12 @@ impl HttpContinuation {
 /// `profile`, `audience`, and a non-empty `artifact_bindings` are required;
 /// `continuation` is present only on a continuation request (like the native
 /// envelope), so it is optional in presence but part of the schema.
+///
+/// Public fields, deliberately: the continuation-unbypassability proof reads
+/// `continuation` as a field, and a seal would replace that proved read with a getter
+/// assumption. The boundary is enforced at signing instead — no profile signer signs a
+/// body carrying a block that fails [`validate`](Self::validate) or whose continuation
+/// fails [`HttpContinuation::validate_shape`], nor binds a response to such a request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpRequestEvidenceBlock {
@@ -664,7 +634,7 @@ mod tests {
             binding_type: BindingType::OpaqueDigest,
             admission_id: "w".into(),
             generation: 1,
-            digest_alg: EVIDENCE_DIGEST_ALG.into(),
+            digest_alg: crate::ids::EVIDENCE_DIGEST_ALG.into(),
             digest_value: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
         }
     }
@@ -764,7 +734,7 @@ mod tests {
                 keyid: "server-key-1".into(),
             },
             server_delegation: None,
-            request_evidence: RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_REQUEST, b"base"),
+            request_evidence: RequestEvidenceDigest::over_labeled(EvidenceRole::Request, b"base"),
         }
     }
 
@@ -1020,9 +990,9 @@ mod tests {
         request_state: &[u8],
     ) -> Result<(), HttpProfileError> {
         c.verify(
-            &RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_REQUEST, previous_request_base),
+            &RequestEvidenceDigest::over_labeled(EvidenceRole::Request, previous_request_base),
             &RequestEvidenceDigest::over_labeled(
-                EVIDENCE_LABEL_RESPONSE,
+                EvidenceRole::Response,
                 input_required_response_base,
             ),
             request_state,
@@ -1094,8 +1064,8 @@ mod tests {
     fn from_handles_over_role_labeled_digests_is_wire_identical_to_build() {
         assert_eq!(
             HttpContinuation::from_handles(
-                RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_REQUEST, PREV_BASE),
-                RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_RESPONSE, IRR_BASE),
+                RequestEvidenceDigest::over_labeled(EvidenceRole::Request, PREV_BASE),
+                RequestEvidenceDigest::over_labeled(EvidenceRole::Response, IRR_BASE),
                 REQ_STATE
             ),
             HttpContinuation::build(PREV_BASE, IRR_BASE, REQ_STATE)
@@ -1105,8 +1075,8 @@ mod tests {
     #[test]
     fn a_wrong_role_handle_from_handles_is_refused_by_verify() {
         let c = HttpContinuation::from_handles(
-            RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_RESPONSE, PREV_BASE),
-            RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_RESPONSE, IRR_BASE),
+            RequestEvidenceDigest::over_labeled(EvidenceRole::Response, PREV_BASE),
+            RequestEvidenceDigest::over_labeled(EvidenceRole::Response, IRR_BASE),
             REQ_STATE,
         );
         assert_eq!(

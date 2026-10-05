@@ -113,7 +113,7 @@ fn base_request() -> HttpRequest {
 /// Sign a full-profile request with the given block; returns (request, evidence).
 fn signed_full_request(
     block: &HttpRequestEvidenceBlock,
-) -> (HttpRequest, mcp_re_http_profile::RequestEvidence) {
+) -> (HttpRequest, mcp_re_http_profile::RequestRoleEvidence) {
     let mut req = base_request();
     let ev = sign_request_full(
         &mut req,
@@ -126,6 +126,65 @@ fn signed_full_request(
     )
     .expect("full sign");
     (req, ev)
+}
+
+/// A request carrying `block`, signed as a FOREIGN signer would sign it. The profile's own
+/// signers refuse a block that does not validate, so a verifier meets one only from a
+/// signer outside this crate. The covered components and parameters are the profile
+/// signer's own output over the same block with a valid profile, so the block is the only
+/// difference.
+fn foreign_signed_full_request(block: &HttpRequestEvidenceBlock) -> HttpRequest {
+    use base64::Engine;
+    use mcp_re_http_profile::sigbase::signature_base;
+    use mcp_re_http_profile::sigbase::CoveredComponent;
+    use mcp_re_http_profile::sigbase::SignatureParams;
+    use mcp_re_http_profile::sigbase::SourceMessage;
+
+    let mut valid = block.clone();
+    valid.profile = PROFILE_TAG.into();
+    let (mut req, _) = signed_full_request(&valid);
+    req.body = mcp_re_http_profile::body::insert_meta_block(
+        &base_request().body,
+        mcp_re_http_profile::REQUEST_EVIDENCE_BLOCK_KEY,
+        block,
+    )
+    .expect("insert");
+    let header = |req: &HttpRequest, name: &str| {
+        req.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.clone())
+            .expect("header")
+    };
+    let input = header(&req, "Signature-Input");
+    let inner = &input[input.find('(').expect("(") + 1..input.find(')').expect(")")];
+    let comps: Vec<CoveredComponent> = inner
+        .split_whitespace()
+        .map(|c| CoveredComponent::new(Box::leak(c.trim_matches('"').into())))
+        .collect();
+    let params = SignatureParams {
+        created: Some(CREATED),
+        expires: Some(EXPIRES),
+        nonce: Some("nonce-1".into()),
+        keyid: Some("client-key-1".into()),
+        alg: Some(mcp_re_http_profile::ALG_ED25519.into()),
+        tag: Some(PROFILE_TAG.into()),
+    };
+    req.headers.retain(|(k, _)| {
+        !["content-digest", "signature"]
+            .iter()
+            .any(|n| k.eq_ignore_ascii_case(n))
+    });
+    req.headers.push((
+        "Content-Digest".into(),
+        mcp_re_http_profile::content_digest_sha256(&req.body),
+    ));
+    let base = signature_base(&comps, &params, &SourceMessage::Request(&req)).expect("base");
+    let sig = mcp_re_core::b64url_decode(&client_key().sign(&base)).expect("sig");
+    let sig = base64::engine::general_purpose::STANDARD.encode(sig);
+    req.headers
+        .push(("Signature".into(), format!("mcp-re=:{sig}:")));
+    req
 }
 
 /// The default resolver never supplies caller material — DPoP is header-derived.
@@ -178,10 +237,10 @@ fn full_response_roundtrip_binds_request_evidence() {
     let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_bound_response(&rsp, &req, NOW)
         .expect("full response verifies");
-    assert_eq!(
-        rv.request_evidence_agreement().bound_request_evidence,
-        rv.request_evidence_agreement().body_request_evidence
-    );
+    assert!(rv
+        .request_evidence_agreement()
+        .bound_request_evidence
+        .matches(&rv.request_evidence_agreement().body_request_evidence));
     assert_eq!(
         rv.floor().resolved_server_actor().identity.keyid,
         "server-key-1"
@@ -218,7 +277,21 @@ fn missing_request_block_fails_in_full_profile() {
 fn wrong_profile_in_block_fails() {
     let mut block = request_block(vec![dpop_over(ACCESS_TOKEN.as_bytes())]);
     block.profile = "someone-elses-profile".into();
-    let (req, _ev) = signed_full_request(&block);
+    assert_eq!(
+        sign_request_full(
+            &mut base_request(),
+            &block,
+            &client_key(),
+            "client-key-1",
+            CREATED,
+            EXPIRES,
+            "nonce-1",
+        )
+        .unwrap_err(),
+        HttpProfileError::UnknownProfileTag,
+        "the profile's own signer refuses it"
+    );
+    let req = foreign_signed_full_request(&block);
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
         .unwrap_err();
@@ -442,7 +515,7 @@ fn response_request_evidence_mismatch_emits_request_binding_mismatch() {
         "nonce-DIFFERENT",
     )
     .expect("sign b");
-    assert_ne!(ev_b.digest_value, verified_a.evidence().digest_value);
+    assert_ne!(ev_b.digest_value(), verified_a.evidence().digest_value());
 
     let mut rsp = HttpResponse {
         status: 200,
@@ -559,7 +632,7 @@ fn two_requests_differing_only_in_a_signed_parameter_have_different_handles() {
         "nonce-2",
     )
     .expect("sign b");
-    assert_ne!(ev_a.digest_value, ev_b.digest_value);
+    assert_ne!(ev_a.digest_value(), ev_b.digest_value());
 }
 
 #[test]

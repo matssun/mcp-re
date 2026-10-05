@@ -10,7 +10,7 @@
 
 use crate::bodyless::sign_delegated_accepted_202_with_owned_key;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::UnboundRequestDiagnostic;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::rejection::build_delegated_rejection_preflight_with_owned_key;
@@ -50,7 +50,7 @@ pub fn sign_delegated_response_full(
 /// block for diagnostics only and is never a trusted request binding.
 pub fn sign_delegated_response_unbound(
     response: &mut HttpResponse,
-    request_evidence_diagnostic: &RequestEvidence,
+    request_evidence_diagnostic: &UnboundRequestDiagnostic,
     window: &SigningWindow,
 ) -> Result<(), HttpProfileError> {
     let a = window.key();
@@ -144,10 +144,7 @@ mod tests {
             headers: vec![("Content-Type".into(), "application/json".into())],
             body: br#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_vec(),
         };
-        let diagnostic = RequestEvidence {
-            digest_alg: "none".into(),
-            digest_value: String::new(),
-        };
+        let diagnostic = UnboundRequestDiagnostic::absent();
         sign_delegated_response_unbound(&mut response, &diagnostic, &window)
             .expect("signs under the window");
         let input = response

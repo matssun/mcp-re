@@ -56,7 +56,7 @@ fn verified_as(subject: &str, keyid: &str) -> mcp_re_http_profile::VerifiedMcpRe
                 verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
                 slot: mcp_re_http_profile::SignerSlot::Request,
             },
-            evidence: mcp_re_http_profile::RequestEvidence::from_signature_base(b"base"),
+            evidence: mcp_re_http_profile::RequestRoleEvidence::from_signature_base(b"base"),
             request_signature_base: b"base".to_vec(),
             content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
             created: 1,

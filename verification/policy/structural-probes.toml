@@ -1205,7 +1205,7 @@ pub struct UnboundResponseSignatureFacts {
     /// The signer the signature was accepted under — WHO, not WHY.
     pub accepted_signer: AcceptedResponseSigner,
     /// The response signature-base handle, under the response role label.
-    pub response_signature_base_digest: RequestEvidence,
+    pub response_signature_base_digest: ResponseRoleEvidence,
 }"""
 new = "pub type UnboundResponseSignatureFacts = BoundResponseSignatureFacts;"
 

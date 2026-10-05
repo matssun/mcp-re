@@ -4,7 +4,7 @@
 //!
 //! Given the received [`HttpResponse`] and the request context the client kept
 //! from signing (`SignedRequest`: the sent [`HttpRequest`] and its
-//! [`RequestEvidence`] handle), it confirms the response is genuine RFC 9421 +
+//! [`RequestRoleEvidence`] handle), it confirms the response is genuine RFC 9421 +
 //! RFC 9530 evidence bound to THIS request:
 //! [`mcp_re_http_profile::verify_response_bound_full`] performs the
 //! `Content-Digest` check, the RFC 9421 signature verification over the `;req`-bound

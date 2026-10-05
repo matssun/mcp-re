@@ -827,7 +827,9 @@ mod tests {
             method: "POST".into(),
             target_uri: "https://mcp.example.com/mcp".into(),
             headers: vec![("Content-Type".into(), "application/json".into())],
-            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+            body: crate::sign::with_valid_block(
+                br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#,
+            ),
         };
         crate::sign::sign_request(
             &mut request,

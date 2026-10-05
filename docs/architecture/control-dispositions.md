@@ -2558,7 +2558,7 @@ so registering it would attribute a control to code the unit does not cover.
 
 ## NP-100 — the evidence handle is domain-separated and derived, never a bare digest
 
-**Controls:** `mcp-re-http-profile/src/evidence.rs`, `mcp-re-http-profile/src/context/mod.rs`, `mcp-re-http-profile/src/digest.rs`, `mcp-re-http-profile/src/artifact.rs`, `mcp-re-http-profile/src/policy.rs`, `mcp-re-http-profile/src/replay.rs`, `mcp-re-http-profile/src/authoritative_admission/record/currentness.rs`.
+**Controls:** `mcp-re-http-profile/src/evidence/` (`role.rs`, `request_role.rs`, `response_role.rs`, `digest.rs`, `diagnostic.rs`), `mcp-re-http-profile/src/context/mod.rs`, `mcp-re-http-profile/src/digest.rs`, `mcp-re-http-profile/src/artifact.rs`, `mcp-re-http-profile/src/policy.rs`, `mcp-re-http-profile/src/replay.rs`, `mcp-re-http-profile/src/authoritative_admission/record/currentness.rs`.
 **Statement.** *A handle is split-form and deterministic, is NOT a bare digest of the base, differs when the base differs, cannot confuse a label with an input, and separates roles by domain over IDENTICAL BYTES; the proxy's own meta keys are stripped and application meta preserved, with a meta of only proxy keys removed entirely and a strip without meta a no-op; a digest round-trips, a tampered body fails closed, and an absent sha-256 member of a present header is malformed.*
 **If false.** Two different roles over the same bytes produce the same handle, so evidence for one is evidence for the other — which is NP-087's injectivity failure at the handle rather than at the actor. 'Not a bare digest of the base' is what makes the domain separation structural instead of conventional.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
@@ -4903,3 +4903,14 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Root relationship.** ADR-MCPRE-052 §6/§7; owner Ruling 14.3 for ad1846dc6f40fe17.
 **Severity:** `high`.
 **Recorded:** 2026-10-04, owner Ruling 14.3 for ad1846dc6f40fe17.
+
+## NP-276 — no profile signer signs over a request evidence block that fails validation
+
+**Controls:** `mcp-re-http-profile` `lib#sign::request_block::tests::*` (seven), `lib#sign::tests::{a_full_request_with_a_corrupted_continuation_is_refused_before_signing, a_hand_inserted_invalid_block_is_refused_by_the_floor_signer, a_full_response_is_not_signed_over_an_absent_or_invalid_request_block, the_bound_floor_signer_refuses_a_request_carrying_an_invalid_block}`, `delegated_202_test#no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block`.
+**Carrier:** `mcp-re-http-profile/src/sign/request_block.rs` (`validate_carried`, `require_valid`), called from the request signers' shared tail (`sign/request.rs`), the `;req` response signer and the full-profile delegated response signer (`sign.rs`), and the delegated 202 (`bodyless/mod.rs`).
+**Statement.** *Every request signer refuses, before any signature exists, a body carrying a request evidence block that fails `HttpRequestEvidenceBlock::validate` or whose continuation fails `HttpContinuation::validate_shape`; every `;req`-bound response signer refuses a request carrying such a block; the full-profile delegated response signer also refuses a request carrying none.*
+**If false.** The profile emits signed evidence its own verifier refuses, and a caller that assembles the block by hand — its fields are public by owner ruling, because the continuation proof reads them — gets a signature over it.
+**Likely owner:** `http_profile.response_emission_binding` measures `sign.rs` and `sign/request_block.rs`, but its statement is what a response signature binds, not what a signer refuses.
+**Root relationship.** Owner Ruling 17.2 for `0f0dc26c60f6d5be`, under CF-007's precedent.
+**Severity:** `medium`.
+**Recorded:** 2026-10-05, owner Ruling 17.2.

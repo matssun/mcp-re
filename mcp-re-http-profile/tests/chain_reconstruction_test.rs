@@ -28,8 +28,9 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::IncompleteReason;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResponseRoleEvidence;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -203,7 +204,7 @@ fn hop(
     nonce: &str,
     continuation: Option<HttpContinuation>,
     body: &str,
-) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+) -> (RetainedHop, RequestRoleEvidence, ResponseRoleEvidence) {
     hop_at(CREATED, EXPIRES, nonce, continuation, body)
 }
 
@@ -257,7 +258,7 @@ fn hop_at(
     nonce: &str,
     continuation: Option<HttpContinuation>,
     body: &str,
-) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+) -> (RetainedHop, RequestRoleEvidence, ResponseRoleEvidence) {
     let mut request = HttpRequest {
         method: "POST".into(),
         target_uri: TARGET.into(),
@@ -328,8 +329,8 @@ fn three_hop_chain() -> Vec<RetainedHop> {
     let (h1, r1, s1) = hop(
         "n-1",
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-0",
         )),
         AWAITING,
@@ -337,20 +338,13 @@ fn three_hop_chain() -> Vec<RetainedHop> {
     let (h2, _r2, _s2) = hop(
         "n-2",
         Some(HttpContinuation::from_handles(
-            to_digest(&r1),
-            to_digest(&s1),
+            r1.to_digest(),
+            s1.to_digest(),
             b"state-1",
         )),
         DONE,
     );
     vec![h0, h1, h2]
-}
-
-fn to_digest(e: &RequestEvidence) -> mcp_re_http_profile::RequestEvidenceDigest {
-    mcp_re_http_profile::RequestEvidenceDigest {
-        digest_alg: e.digest_alg.clone(),
-        digest_value: e.digest_value.clone(),
-    }
 }
 
 fn reconstruct(hops: &[RetainedHop]) -> ChainLabel {
@@ -406,8 +400,8 @@ fn complete_chain_reports_every_hops_evidence() {
     // hop's two handles collide even though both digest a signature base.
     for h in out.hop_evidence() {
         assert_ne!(
-            h.request_evidence.digest_value,
-            h.response_evidence.digest_value
+            h.request_evidence.digest_value(),
+            h.response_evidence.digest_value()
         );
     }
 }
@@ -576,8 +570,8 @@ fn continuation_from_another_chain_is_incomplete() {
     let (h1, _, _) = hop(
         "n-y",
         Some(HttpContinuation::from_handles(
-            to_digest(&other_r),
-            to_digest(&other_s),
+            other_r.to_digest(),
+            other_s.to_digest(),
             b"state-x",
         )),
         DONE,
@@ -598,8 +592,8 @@ fn terminal_before_the_end_is_incomplete() {
     let (h1, _, _) = hop(
         "n-t1",
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state",
         )),
         DONE,
@@ -622,8 +616,8 @@ fn handles_swapped_between_roles_do_not_relink() {
     let (h1, _, _) = hop(
         "n-s1",
         Some(HttpContinuation::from_handles(
-            to_digest(&s0), // response handle presented as the previous-request one
-            to_digest(&r0), // and vice versa
+            s0.to_digest(), // response handle presented as the previous-request one
+            r0.to_digest(), // and vice versa
             b"state",
         )),
         DONE,
@@ -702,8 +696,8 @@ fn terminality_is_derived_from_protected_content() {
     let (h1, _, _) = hop(
         "n-d1",
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-d",
         )),
         AWAITING, // the final turn still awaits input
@@ -735,8 +729,8 @@ fn an_unrecognized_result_type_makes_the_record_incomplete_at_that_hop() {
     let (h1, _, _) = hop(
         "n-u1",
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-u",
         )),
         UNRECOGNIZED,
@@ -763,8 +757,8 @@ fn an_unrecognized_result_type_mid_chain_is_named_for_what_it_is() {
     let (h1, _, _) = hop(
         "n-m1",
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-m",
         )),
         DONE,
@@ -802,8 +796,8 @@ fn aged_chain() -> Vec<RetainedHop> {
         CREATED + TURN + 300,
         "a-1",
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-0",
         )),
         AWAITING,
@@ -813,8 +807,8 @@ fn aged_chain() -> Vec<RetainedHop> {
         CREATED + 2 * TURN + 300,
         "a-2",
         Some(HttpContinuation::from_handles(
-            to_digest(&r1),
-            to_digest(&s1),
+            r1.to_digest(),
+            s1.to_digest(),
             b"state-1",
         )),
         DONE,
@@ -1037,6 +1031,61 @@ fn signed_answer(request: &HttpRequest, body: &str) -> HttpResponse {
     response
 }
 
+/// A delegated response to `request` assembled outside the full-profile signer, which
+/// refuses to answer a request carrying no valid evidence block. Same block and signature
+/// shape as [`signed_answer`]; a reconstruction meets this from a signer that is not this
+/// crate's.
+fn answer_outside_the_full_signer(
+    request: &HttpRequest,
+    request_evidence: &RequestRoleEvidence,
+    body: &str,
+) -> HttpResponse {
+    let mut response = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: body.as_bytes().to_vec(),
+    };
+    assert!(
+        sign_delegated_response_full_with_owned_key(
+            &mut response.clone(),
+            request,
+            &server_signer(),
+            &credential(CREATED, EXPIRES),
+            &delegated_key(),
+            DELEGATED_KID,
+            CREATED,
+            EXPIRES,
+        )
+        .is_err(),
+        "the full-profile signer refuses to answer this request"
+    );
+    let block = mcp_re_http_profile::HttpResponseEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        server_signer: server_signer(),
+        server_delegation: Some(credential(CREATED, EXPIRES)),
+        request_evidence: request_evidence.to_digest(),
+    };
+    response.body = mcp_re_http_profile::body::insert_meta_block(
+        &response.body,
+        mcp_re_http_profile::ids::RESPONSE_EVIDENCE_BLOCK_KEY,
+        &block,
+    )
+    .expect("insert");
+    mcp_re_http_profile::sign::sign_response_with_signer(
+        &mut response,
+        request,
+        |base| {
+            mcp_re_core::b64url_decode(&delegated_key().sign(base))
+                .map_err(|_| mcp_re_http_profile::HttpProfileError::InvalidSignature)
+        },
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("the ;req signer binds to a request without a block");
+    response
+}
+
 /// A hop whose block names a DIFFERENT service than the URI the request went to.
 ///
 /// The signature says nothing about this: the block rides in the body, which is
@@ -1085,7 +1134,7 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
         body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
             .to_vec(),
     };
-    mcp_re_http_profile::sign_request(
+    let request_evidence = mcp_re_http_profile::sign_request(
         &mut request,
         &client_key(),
         CLIENT_KEY_ID,
@@ -1094,7 +1143,7 @@ fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
         "n-blockless",
     )
     .expect("request signs");
-    let response = signed_answer(&request, DONE);
+    let response = answer_outside_the_full_signer(&request, &request_evidence, DONE);
 
     mcp_re_http_profile::Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request_floor(&request, NOW)

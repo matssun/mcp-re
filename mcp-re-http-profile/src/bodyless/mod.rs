@@ -83,7 +83,7 @@ use crate::block::SignerSlot;
 use crate::digest::content_digest_sha256;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestRoleEvidence;
 use crate::ids::BODYLESS_REQUEST_COMPONENTS;
 use crate::ids::MCP_RE_REQUEST_EVIDENCE_HEADER;
 use crate::ids::PROFILE_TAG;
@@ -161,7 +161,7 @@ fn emit(
 /// taken from the acknowledgement's own claims, and nothing couples to the TEXTUAL
 /// `Signature-Input` value — RFC 9421 §7.3.7 makes covering the request's `Signature`
 /// NOT RECOMMENDED, and this reaches the same instance identity without doing so.
-fn request_evidence_of(request: &HttpRequest) -> Result<RequestEvidence, HttpProfileError> {
+fn request_evidence_of(request: &HttpRequest) -> Result<RequestRoleEvidence, HttpProfileError> {
     let parsed =
         parse_signature_input_for(&request.headers, REQUEST_LABEL, "request signature-input")?;
     let base = signature_base(
@@ -169,14 +169,14 @@ fn request_evidence_of(request: &HttpRequest) -> Result<RequestEvidence, HttpPro
         &parsed.params,
         &SourceMessage::Request(request),
     )?;
-    Ok(RequestEvidence::from_signature_base(&base))
+    Ok(RequestRoleEvidence::from_signature_base(&base))
 }
 
 /// The covered request-evidence header value for `request`.
 fn request_evidence_header(request: &HttpRequest) -> Result<(String, String), HttpProfileError> {
     Ok((
         MCP_RE_REQUEST_EVIDENCE_HEADER.to_owned(),
-        request_evidence_of(request)?.digest_value,
+        request_evidence_of(request)?.digest_value().to_owned(),
     ))
 }
 
@@ -195,7 +195,7 @@ fn check_request_evidence(
         HttpProfileError::MissingEvidence("response request-evidence"),
     )?;
     let derived = request_evidence_of(request)?;
-    if claimed != derived.digest_value {
+    if claimed != derived.digest_value() {
         // The existing "this response does not bind to that request" verdict — no new
         // wire token for what is the same class of failure.
         return Err(HttpProfileError::ResponseBindingMismatch);
@@ -214,6 +214,9 @@ fn check_request_evidence(
 ///
 /// This preserves the three constraints the ruling required jointly: MCP's
 /// bodyless 202, delegated-only response signing, and self-contained verification.
+///
+/// Refuses before signing if the notification carries a request evidence block that does
+/// not validate, as every `;req`-bound signer does.
 pub fn sign_delegated_accepted_202_with_owned_key(
     request: &HttpRequest,
     server_delegation: &str,
@@ -222,6 +225,7 @@ pub fn sign_delegated_accepted_202_with_owned_key(
     created: i64,
     expires: i64,
 ) -> Result<HttpResponse, HttpProfileError> {
+    crate::sign::validate_carried_request_block(&request.body)?;
     if server_delegation.len() > crate::ids::MAX_DELEGATION_HEADER_LEN {
         return Err(HttpProfileError::MalformedEvidence(
             "delegation header too large",
@@ -280,7 +284,7 @@ pub fn sign_bodyless_request(
     created: i64,
     expires: i64,
     nonce: &str,
-) -> Result<RequestEvidence, HttpProfileError> {
+) -> Result<RequestRoleEvidence, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
     request.body.clear();
     request
@@ -312,7 +316,7 @@ pub fn sign_bodyless_request(
         &base,
         key,
     )?;
-    Ok(RequestEvidence::from_signature_base(&base))
+    Ok(RequestRoleEvidence::from_signature_base(&base))
 }
 
 /// Verify a bodyless REQUEST (§8.1) under the named bodyless request set.
@@ -337,7 +341,7 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
     verifier: &crate::verifier::Verifier<'_, R>,
     now: i64,
-) -> Result<(ResolvedActor, RequestEvidence), HttpProfileError> {
+) -> Result<(ResolvedActor, RequestRoleEvidence), HttpProfileError> {
     let policy = verifier.policy();
     reject_content_encoding(&request.headers)?;
     require_bodyless(&request.headers, &request.body)?;
@@ -383,5 +387,5 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     // a deployment believed its version contract covered every request while one
     // shape was exempt.
     policy.mcp_transport().enforce_bodyless(request)?;
-    Ok((actor, RequestEvidence::from_signature_base(&base)))
+    Ok((actor, RequestRoleEvidence::from_signature_base(&base)))
 }

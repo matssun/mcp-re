@@ -92,12 +92,13 @@ mod tests {
     use super::super::facts::AcceptedResponseSigner;
     use super::*;
     use crate::block::ActorIdentity;
-    use crate::RequestEvidence;
+    use crate::RequestRoleEvidence;
+    use crate::ResponseRoleEvidence;
     use mcp_re_core::SigningKey;
 
     #[test]
     fn a_delegated_response_states_its_issuer_without_an_option() {
-        let expected = RequestEvidence::from_signature_base(b"req");
+        let expected = RequestRoleEvidence::from_signature_base(b"req");
         let facts = BoundResponseSignatureFacts {
             accepted_signer: AcceptedResponseSigner {
                 identity: ActorIdentity {
@@ -108,13 +109,13 @@ mod tests {
                 },
                 verification_key: SigningKey::from_seed_bytes(&[9u8; 32]).public_key(),
             },
-            response_signature_base_digest: RequestEvidence::from_response_signature_base(b"r"),
+            response_signature_base_digest: ResponseRoleEvidence::from_signature_base(b"r"),
         };
         let delegated = VerifiedDelegatedMcpResponse::new(
             facts,
             BoundRequestEvidenceAgreement {
                 bound_request_evidence: expected.clone(),
-                body_request_evidence: expected,
+                body_request_evidence: expected.to_digest(),
             },
             "root-1".into(),
         );

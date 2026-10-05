@@ -70,7 +70,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
@@ -283,7 +283,7 @@ fn base_request() -> HttpRequest {
 /// A client-signed request whose freshness window brackets the serve instant `at`
 /// (so serving at `at` exercises the SIGNING step, not a freshness rejection),
 /// verified at `at` for the response binding. `nonce` distinguishes replays.
-fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
+fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),

@@ -122,7 +122,6 @@ pub(crate) fn speaks_for(root: &ActorIdentity, server_signer: &ActorIdentity) ->
 mod tests {
     use super::*;
     use crate::block::ActorIdentity;
-    use crate::block::RequestEvidenceDigest;
     use crate::block::ResolvedActor;
     use crate::delegation::issue_delegation_credential;
     use crate::delegation::Audience;
@@ -135,6 +134,7 @@ mod tests {
     use crate::delegation::JWK_CRV_ED25519;
     use crate::delegation::JWK_KTY_OKP;
     use crate::delegation::KEY_USE_RESPONSE_SIGNING;
+    use crate::evidence::RequestEvidenceDigest;
     use mcp_re_core::SigningKey;
 
     const NOW: i64 = 1_700_000_100;

@@ -134,7 +134,7 @@ pub trait RetainedEvidenceStore {
 /// `sha256(label ‖ 0x00 ‖ bytes)`. They are not interchangeable, and the labelling is
 /// not decoration: the identical signature base in a request role and a response role
 /// must be two different values, or a response handle could be presented as a request
-/// handle. So the handles here are derived through [`RequestEvidence`], the same code
+/// handle. So the handles here are derived through [`RequestRoleEvidence`], the same code
 /// the serving path uses, rather than recomputed from a formula copied to this module —
 /// a copy could drift, and a drifted copy would silently accept the wrong bytes.
 ///
@@ -202,7 +202,8 @@ mod tests {
     use super::*;
     use crate::chain::ChainLabel;
     use crate::chain::IncompleteReason;
-    use crate::evidence::RequestEvidence;
+    use crate::evidence::RequestRoleEvidence;
+    use crate::evidence::ResponseRoleEvidence;
     use crate::scitt::fixtures::*;
     use crate::scitt::offline::verify_receipt_offline;
     use crate::scitt::prototype::PrototypeTransparencyService;
@@ -218,7 +219,7 @@ mod tests {
 
         let mut tampered_request = retained.clone();
         tampered_request.hop_evidence_mut()[0].request_evidence =
-            RequestEvidence::from_signature_base(b"req-tampered");
+            RequestRoleEvidence::from_signature_base(b"req-tampered");
         assert_eq!(
             verify_retained_evidence(&commitment, &tampered_request, None, None).unwrap_err(),
             HttpProfileError::MalformedEvidence(
@@ -228,7 +229,7 @@ mod tests {
 
         let mut tampered_response = retained.clone();
         tampered_response.hop_evidence_mut()[0].response_evidence =
-            RequestEvidence::from_response_signature_base(b"rsp-tampered");
+            ResponseRoleEvidence::from_signature_base(b"rsp-tampered");
         assert_eq!(
             verify_retained_evidence(&commitment, &tampered_response, None, None).unwrap_err(),
             HttpProfileError::MalformedEvidence(
@@ -262,7 +263,7 @@ mod tests {
         // Substituting a later hop is the same defect in the other direction.
         let mut substituted = full.clone();
         substituted.hop_evidence_mut()[2].request_evidence =
-            RequestEvidence::from_signature_base(b"req-substituted");
+            RequestRoleEvidence::from_signature_base(b"req-substituted");
         assert!(verify_retained_evidence(&commitment, &substituted, None, None).is_err());
     }
 

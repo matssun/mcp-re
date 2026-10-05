@@ -10,7 +10,7 @@
 //! The signed evidence is `Signature`/`Signature-Input` (RFC 9421) + `Content-Digest`
 //! (RFC 9530) on the HTTP message, not a JSON-RPC `_meta` block. The returned
 //! [`SignedRequest`] exposes the
-//! resulting [`RequestEvidence`] handle so the caller can bind the signed response
+//! resulting [`RequestRoleEvidence`] handle so the caller can bind the signed response
 //! (`response.request_evidence == request.evidence`).
 //!
 //! Purity: this module builds and signs in-process only. Nonce generation, clock
@@ -24,7 +24,7 @@ use mcp_re_http_profile::sign_request_full_with_signer;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::PROFILE_TAG;
 use serde_json::json;
 use serde_json::Map;
@@ -32,12 +32,12 @@ use serde_json::Value;
 
 /// A fully signed RFC 9421 request: the reconstructed [`HttpRequest`] (method +
 /// `@target-uri` + headers carrying `Signature`/`Signature-Input`/`Content-Digest` +
-/// body with the composed evidence block) plus the [`RequestEvidence`] handle that
+/// body with the composed evidence block) plus the [`RequestRoleEvidence`] handle that
 /// binds a later signed response.
 #[derive(Debug, Clone)]
 pub struct SignedRequest {
     request: HttpRequest,
-    evidence: RequestEvidence,
+    evidence: RequestRoleEvidence,
 }
 
 impl SignedRequest {
@@ -57,9 +57,9 @@ impl SignedRequest {
         &self.request.headers
     }
 
-    /// The [`RequestEvidence`] handle (digest over the RFC 9421 signature base) that
+    /// The [`RequestRoleEvidence`] handle (digest over the RFC 9421 signature base) that
     /// binds a later signed response (`response.request_evidence == this`).
-    pub fn evidence(&self) -> &RequestEvidence {
+    pub fn evidence(&self) -> &RequestRoleEvidence {
         &self.evidence
     }
 
@@ -109,7 +109,7 @@ pub fn build_signed_request(
 /// The shared request-construction core, generic over HOW the RFC 9421 message is
 /// signed. `sign` receives the reconstructed [`HttpRequest`] (body already the
 /// clean JSON-RPC) and the evidence block, composes + signs, and returns the
-/// [`RequestEvidence`]. This is the single seam every signing mechanism (in-process
+/// [`RequestRoleEvidence`]. This is the single seam every signing mechanism (in-process
 /// key, KMS/HSM via [`sign_request_with_signer`], delegated service) flows through.
 /// The shortest nonce this core will SIGN: 128 bits of base64url is 22 characters.
 ///
@@ -126,7 +126,7 @@ pub(crate) fn build_signed_request_with(
     sign: impl FnOnce(
         &mut HttpRequest,
         &HttpRequestEvidenceBlock,
-    ) -> Result<RequestEvidence, HttpProfileError>,
+    ) -> Result<RequestRoleEvidence, HttpProfileError>,
 ) -> Result<SignedRequest, HttpProfileError> {
     // The @target-uri the client signs MUST match the audience tuple's target_uri
     // (the verifier cross-checks them); a mismatch is a client misconfiguration —

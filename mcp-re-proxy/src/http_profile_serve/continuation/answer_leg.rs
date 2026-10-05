@@ -300,7 +300,7 @@ pub(in crate::http_profile_serve) mod tests {
                         .public_key(),
                     slot: mcp_re_http_profile::SignerSlot::Request,
                 },
-                evidence: mcp_re_http_profile::RequestEvidence::from_signature_base(b"base"),
+                evidence: mcp_re_http_profile::RequestRoleEvidence::from_signature_base(b"base"),
                 request_signature_base: b"base".to_vec(),
                 content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
                 created: 1,

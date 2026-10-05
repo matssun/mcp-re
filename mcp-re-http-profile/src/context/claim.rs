@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use crate::block::AudienceTuple;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestEvidenceDigest;
 use crate::ids::VERIFIED_CONTEXT_BLOCK_KEY;
 
 use super::block_schema::BlockSchema;
@@ -56,7 +56,7 @@ pub struct UnauthenticatedContextClaim {
     actor_id: String,
     key_id: String,
     audience: AudienceTuple,
-    request_evidence: RequestEvidence,
+    request_evidence: RequestEvidenceDigest,
     verified_at: i64,
     request_expires: i64,
 }
@@ -85,7 +85,7 @@ impl UnauthenticatedContextClaim {
     }
 
     /// The request-evidence handle the block claims.
-    pub fn claimed_request_evidence(&self) -> &RequestEvidence {
+    pub fn claimed_request_evidence(&self) -> &RequestEvidenceDigest {
         &self.request_evidence
     }
 

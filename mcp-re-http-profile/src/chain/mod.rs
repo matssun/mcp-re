@@ -50,7 +50,8 @@ use crate::block::ArtifactBinding;
 use crate::block::AudienceTuple;
 use crate::block::ResolverOutcome;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestRoleEvidence;
+use crate::evidence::ResponseRoleEvidence;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
@@ -193,8 +194,8 @@ pub struct ChainAudit<'a> {
 /// The two role-labeled handles a verified hop contributes to the record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HopEvidence {
-    pub request_evidence: RequestEvidence,
-    pub response_evidence: RequestEvidence,
+    pub request_evidence: RequestRoleEvidence,
+    pub response_evidence: ResponseRoleEvidence,
 }
 
 /// Whether a hop's response was terminal, awaited client input, or could not be

@@ -31,10 +31,9 @@ use mcp_re_core::SigningKey;
 use serde_json::Value;
 
 use crate::block::HttpResponseEvidenceBlock;
-use crate::block::RequestEvidenceDigest;
 use crate::body::insert_meta_block;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::message::HttpRequest;
@@ -59,7 +58,7 @@ use super::RejectionReason;
 pub fn sign_pre_052_direct_root_response_for_negative_test(
     response: &mut HttpResponse,
     request: &HttpRequest,
-    request_evidence: &RequestEvidence,
+    request_evidence: &RequestRoleEvidence,
     server_signer: &ActorIdentity,
     key: &SigningKey,
     key_id: &str,
@@ -70,10 +69,7 @@ pub fn sign_pre_052_direct_root_response_for_negative_test(
         profile: PROFILE_TAG.to_owned(),
         server_signer: server_signer.clone(),
         server_delegation: None,
-        request_evidence: RequestEvidenceDigest {
-            digest_alg: request_evidence.digest_alg.clone(),
-            digest_value: request_evidence.digest_value.clone(),
-        },
+        request_evidence: request_evidence.to_digest(),
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
     sign_pre_052_direct_root_response_base_for_negative_test(

@@ -18,7 +18,7 @@ use crate::block::SignerSlot;
 use crate::body::extract_meta_block;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::ResponseRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
@@ -133,7 +133,7 @@ pub(crate) fn delegated_unbound_response<R: Into<ResolverOutcome>>(
                 identity: block.server_signer.clone(),
                 verification_key: verified.delegated_key,
             },
-            response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
+            response_signature_base_digest: ResponseRoleEvidence::from_signature_base(&base),
         },
         verified.issuer_kid.clone(),
     ))

@@ -43,9 +43,9 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::IncompleteReason;
 use mcp_re_http_profile::RejectionReason;
-use mcp_re_http_profile::RequestEvidence;
-use mcp_re_http_profile::RequestEvidenceDigest;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResponseRoleEvidence;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -463,7 +463,7 @@ fn build_fixtures() -> Vec<Fixture> {
             signature_base_b64url: mcp_re_core::b64url_encode(&base),
             content_digest,
             signature_header,
-            request_evidence_digest_value: evidence.digest_value.clone(),
+            request_evidence_digest_value: evidence.digest_value().to_owned(),
         }),
         artifact_check: None,
         continuation_check: None,
@@ -1463,20 +1463,13 @@ fn chain_block(continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlo
     }
 }
 
-fn to_digest(e: &RequestEvidence) -> RequestEvidenceDigest {
-    RequestEvidenceDigest {
-        digest_alg: e.digest_alg.clone(),
-        digest_value: e.digest_value.clone(),
-    }
-}
-
 /// Sign one hop and return it with the two role-labeled handles the next hop's
 /// continuation must name.
 fn chain_hop(
     nonce: &str,
     continuation: Option<HttpContinuation>,
     body: &str,
-) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+) -> (RetainedHop, RequestRoleEvidence, ResponseRoleEvidence) {
     let mut request = HttpRequest {
         method: "POST".into(),
         target_uri: CHAIN_TARGET.into(),
@@ -1626,8 +1619,8 @@ fn three_hop() -> Vec<RetainedHop> {
     let (h1, r1, s1) = chain_hop(
         "chain-n1",
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-0",
         )),
         AWAITING,
@@ -1635,8 +1628,8 @@ fn three_hop() -> Vec<RetainedHop> {
     let (h2, _, _) = chain_hop(
         "chain-n2",
         Some(HttpContinuation::from_handles(
-            to_digest(&r1),
-            to_digest(&s1),
+            r1.to_digest(),
+            s1.to_digest(),
             b"state-1",
         )),
         DONE,
@@ -1680,8 +1673,8 @@ fn chain_fixtures() -> Vec<Fixture> {
     let (o1, _, _) = chain_hop(
         "chain-other1",
         Some(HttpContinuation::from_handles(
-            to_digest(&other_r),
-            to_digest(&other_s),
+            other_r.to_digest(),
+            other_s.to_digest(),
             b"state-o",
         )),
         DONE,
@@ -1699,8 +1692,8 @@ fn chain_fixtures() -> Vec<Fixture> {
     let (s1h, _, _) = chain_hop(
         "chain-swap1",
         Some(HttpContinuation::from_handles(
-            to_digest(&ss0),
-            to_digest(&sr0),
+            ss0.to_digest(),
+            sr0.to_digest(),
             b"state-s",
         )),
         DONE,
@@ -1717,8 +1710,8 @@ fn chain_fixtures() -> Vec<Fixture> {
     let (t1, _, _) = chain_hop(
         "chain-term1",
         Some(HttpContinuation::from_handles(
-            to_digest(&tr0),
-            to_digest(&ts0),
+            tr0.to_digest(),
+            ts0.to_digest(),
             b"state-t",
         )),
         DONE,
@@ -1738,8 +1731,8 @@ fn chain_fixtures() -> Vec<Fixture> {
     let (u1, _, _) = chain_hop(
         "chain-unrec1",
         Some(HttpContinuation::from_handles(
-            to_digest(&ur0),
-            to_digest(&us0),
+            ur0.to_digest(),
+            us0.to_digest(),
             b"state-u",
         )),
         UNRECOGNIZED,
@@ -2156,7 +2149,7 @@ fn frozen_http_profile_corpus_verifies() {
                         if let Some(oracle) = &fixture.oracle {
                             // Oracle byte-equality (S8: assert bytes, not prints).
                             assert_eq!(
-                                verified.evidence().digest_value,
+                                verified.evidence().digest_value(),
                                 oracle.request_evidence_digest_value,
                                 "{name}: evidence handle drifted from frozen oracle"
                             );
@@ -2218,19 +2211,19 @@ fn frozen_http_profile_corpus_verifies() {
                         .expect("continuation parses");
                 // The vector states the bases; the verifier compares the handles a store
                 // retains for them, minted under their role labels.
-                let handle = |label: &str, b64: &str| {
+                let handle = |role: mcp_re_http_profile::evidence::EvidenceRole, b64: &str| {
                     mcp_re_http_profile::RequestEvidenceDigest::over_labeled(
-                        label,
+                        role,
                         &base64_std_decode(b64),
                     )
                 };
                 match continuation.verify(
                     &handle(
-                        mcp_re_http_profile::ids::EVIDENCE_LABEL_REQUEST,
+                        mcp_re_http_profile::evidence::EvidenceRole::Request,
                         &check.previous_request_base_b64,
                     ),
                     &handle(
-                        mcp_re_http_profile::ids::EVIDENCE_LABEL_RESPONSE,
+                        mcp_re_http_profile::evidence::EvidenceRole::Response,
                         &check.input_required_response_base_b64,
                     ),
                     &base64_std_decode(&check.request_state_b64),

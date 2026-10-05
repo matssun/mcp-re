@@ -5,7 +5,7 @@
 //!
 //! Full bound-response verification used to receive two request-shaped inputs that nothing
 //! related: a concrete [`HttpRequest`], against which the response's `;req` components are
-//! resolved, and separately a [`RequestEvidence`] handle, against which the response
+//! resolved, and separately a [`RequestRoleEvidence`] handle, against which the response
 //! block's `request_evidence` is compared. A caller could supply request A and handle B.
 //! Verification then established cryptographic binding to A and semantic equality with B,
 //! and NOT that A and B denote the same exchange — so a response could be verified as the
@@ -40,7 +40,7 @@
 //! emits, so the domain difference fails closed at the comparison.
 
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestRoleEvidence;
 use crate::ids::REQUEST_LABEL;
 use crate::message::single_header;
 use crate::message::HttpRequest;
@@ -57,7 +57,7 @@ use crate::verify::floor::signature_input::parse_signature_input;
 /// because a check failed.
 pub(crate) fn request_evidence_of(
     request: &HttpRequest,
-) -> Result<RequestEvidence, HttpProfileError> {
+) -> Result<RequestRoleEvidence, HttpProfileError> {
     let input_header = single_header(&request.headers, "signature-input")?
         .ok_or(HttpProfileError::MissingEvidence("request signature-input"))?;
     let parsed = parse_signature_input(member_value(input_header, REQUEST_LABEL)?)?;
@@ -66,14 +66,14 @@ pub(crate) fn request_evidence_of(
         &parsed.params,
         &SourceMessage::Request(request),
     )?;
-    Ok(RequestEvidence::from_signature_base(&base))
+    Ok(RequestRoleEvidence::from_signature_base(&base))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn signed_request() -> (HttpRequest, RequestEvidence) {
+    fn signed_request() -> (HttpRequest, RequestRoleEvidence) {
         let mut request = HttpRequest {
             method: "POST".to_owned(),
             target_uri: "https://mcp.example.com/mcp".to_owned(),

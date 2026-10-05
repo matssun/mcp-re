@@ -45,7 +45,7 @@ impl DelegatedResponseEvidence {
     }
 
     /// The response signature-base handle — the answer leg of an MRT exchange binds to it.
-    pub fn response_signature_base_digest(&self) -> &mcp_re_http_profile::RequestEvidence {
+    pub fn response_signature_base_digest(&self) -> &mcp_re_http_profile::ResponseRoleEvidence {
         match self {
             DelegatedResponseEvidence::Bound(v) => {
                 &v.signature_facts().response_signature_base_digest

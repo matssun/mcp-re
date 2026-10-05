@@ -45,9 +45,8 @@ use serde_json::Value;
 use mcp_re_core::SigningKey;
 
 use crate::block::ActorIdentity;
-use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::UnboundRequestDiagnostic;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::sign::sign_delegated_response_full_with_owned_key;
@@ -195,16 +194,9 @@ pub fn build_delegated_rejection_preflight_with_owned_key(
     let id = received.map(request_id).unwrap_or(Value::Null);
     // Diagnostic ONLY: a digest of the received bytes so an operator can correlate,
     // explicitly not a trusted request binding (the response is signed unbound).
-    let diagnostic = match received {
-        Some(req) => RequestEvidence {
-            digest_alg: "sha-256-received".into(),
-            digest_value: content_digest_sha256(&req.body),
-        },
-        None => RequestEvidence {
-            digest_alg: "none".into(),
-            digest_value: String::new(),
-        },
-    };
+    let diagnostic = received.map_or_else(UnboundRequestDiagnostic::absent, |req| {
+        UnboundRequestDiagnostic::received(&req.body)
+    });
     let mut response = HttpResponse {
         status,
         headers: vec![("Content-Type".into(), "application/json".into())],

@@ -56,7 +56,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -174,7 +174,7 @@ fn resolver(
     }
 }
 
-fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
+fn signed_request() -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
     let mut req = base_request();
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),

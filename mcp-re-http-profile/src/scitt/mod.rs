@@ -182,7 +182,8 @@ mod fixtures {
     use crate::chain::ChainReconstruction;
     use crate::chain::HopEvidence;
     use crate::error::HttpProfileError;
-    use crate::evidence::RequestEvidence;
+    use crate::evidence::RequestRoleEvidence;
+    use crate::evidence::ResponseRoleEvidence;
 
     use crate::scitt::commitment::EvidenceCommitment;
     use crate::scitt::cose_key::CoseVerificationKey;
@@ -214,10 +215,10 @@ mod fixtures {
     pub(super) fn recon(label: ChainLabel, hops: usize) -> ChainReconstruction {
         let hop_evidence = (0..hops)
             .map(|i| HopEvidence {
-                request_evidence: RequestEvidence::from_signature_base(
+                request_evidence: RequestRoleEvidence::from_signature_base(
                     format!("req-{i}").as_bytes(),
                 ),
-                response_evidence: RequestEvidence::from_response_signature_base(
+                response_evidence: ResponseRoleEvidence::from_signature_base(
                     format!("rsp-{i}").as_bytes(),
                 ),
             })

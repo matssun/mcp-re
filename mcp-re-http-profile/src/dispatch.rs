@@ -240,10 +240,11 @@ mod tests {
     use crate::block::ActorIdentity;
     use crate::block::HttpContinuation;
     use crate::block::HttpRequestEvidenceBlock;
-    use crate::block::RequestEvidenceDigest;
     use crate::block::ResolvedActor;
     use crate::block::SignerSlot;
-    use crate::evidence::RequestEvidence;
+    use crate::evidence::EvidenceRole;
+    use crate::evidence::RequestEvidenceDigest;
+    use crate::evidence::RequestRoleEvidence;
     use crate::AudienceTuple;
     use mcp_re_core::SigningKey;
 
@@ -277,7 +278,7 @@ mod tests {
                     verification_key: key.public_key(),
                     slot: SignerSlot::Request,
                 },
-                evidence: RequestEvidence::from_signature_base(PREV),
+                evidence: RequestRoleEvidence::from_signature_base(PREV),
                 request_signature_base: PREV.to_vec(),
                 content_digest: "sha-256=:AAAA:".into(),
                 created: 1_000,
@@ -302,8 +303,8 @@ mod tests {
     /// The two retained handles, minted under their own role labels as the open leg does.
     fn handles() -> (RequestEvidenceDigest, RequestEvidenceDigest) {
         (
-            RequestEvidenceDigest::over_labeled(crate::ids::EVIDENCE_LABEL_REQUEST, PREV),
-            RequestEvidenceDigest::over_labeled(crate::ids::EVIDENCE_LABEL_RESPONSE, IRR),
+            RequestEvidenceDigest::over_labeled(EvidenceRole::Request, PREV),
+            RequestEvidenceDigest::over_labeled(EvidenceRole::Response, IRR),
         )
     }
 

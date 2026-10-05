@@ -486,9 +486,7 @@ theorem = "THM-0018"
 conjunct = "the block's request_evidence handle equals the handle the caller supplied"
 path = "mcp-re-http-profile/src/verify/full/response.rs"
 anchor = """
-    if block.request_evidence.digest_alg != bound_request_evidence.digest_alg
-        || block.request_evidence.digest_value != bound_request_evidence.digest_value
-    {
+    if !bound_request_evidence.matches(&block.request_evidence) {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 
@@ -634,9 +632,7 @@ theorem = "THM-0019"
 conjunct = "the block's request_evidence handle equals the handle of the request under verification"
 path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
 anchor = """
-    if block.request_evidence.digest_alg != bound.digest_alg
-        || block.request_evidence.digest_value != bound.digest_value
-    {
+    if !bound.matches(&block.request_evidence) {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 """
@@ -2113,9 +2109,7 @@ conjunct = "the block's request_evidence handle is the handle of the request the
 # block naming another exchange's handle passes.
 path = "mcp-re-http-profile/src/verify/full/response.rs"
 anchor = """
-    if block.request_evidence.digest_alg != bound_request_evidence.digest_alg
-        || block.request_evidence.digest_value != bound_request_evidence.digest_value
-    {
+    if !bound_request_evidence.matches(&block.request_evidence) {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 """
@@ -2134,15 +2128,15 @@ conjunct = "the handle is derived from the request supplied, not from the respon
 # Reading the handle back out of the BLOCK is the shape the old two-operand API allowed a
 # caller to produce accidentally: every comparison then passes, whatever request is
 # supplied, and the response is verified as the answer to a request it never answered.
+# `RequestRoleEvidence` has no constructor from a claim, so building the bound handle out of
+# the block no longer compiles; the shape that remains expressible is the comparison
+# consulting the block's claim alone.
 path = "mcp-re-http-profile/src/verify/full/response.rs"
 anchor = """
-    let bound_request_evidence = request_evidence_of(request)?;
+    if !bound_request_evidence.matches(&block.request_evidence) {
 """
 weakening = """
-    let bound_request_evidence = crate::evidence::RequestEvidence {
-        digest_alg: block.request_evidence.digest_alg.clone(),
-        digest_value: block.request_evidence.digest_value.clone(),
-    };
+    if !block.request_evidence.same_handle(&block.request_evidence) {
 """
 expect_red = [
   "//mcp-re-http-profile:full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
@@ -2158,13 +2152,10 @@ conjunct = "the delegated path compares against the handle of the request it was
 # repair applied to one of them is not evidence about the other.
 path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
 anchor = """
-    let bound = request_evidence_of(request)?;
+    if !bound.matches(&block.request_evidence) {
 """
 weakening = """
-    let bound = crate::evidence::RequestEvidence {
-        digest_alg: block.request_evidence.digest_alg.clone(),
-        digest_value: block.request_evidence.digest_value.clone(),
-    };
+    if !block.request_evidence.same_handle(&block.request_evidence) {
 """
 expect_red = [
   "//mcp-re-http-profile:delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",
@@ -4934,11 +4925,11 @@ theorem = "THM-0052"
 conjunct = "the authorization authority names no MCP transport header and never asks whether a transport contract is enforced (Law A-1)"
 path = "mcp-re-proxy/src/authorization/request.rs"
 anchor = """
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 """
 weakening = """
 const _TRANSPORT_HINT: &str = "Mcp-Method";
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 """
 expect_red = [
   "gate#scripts/authorization_provenance_gate.py",
@@ -6699,10 +6690,7 @@ theorem = "THM-0065"
 conjunct = "the response evidence block's request-evidence handle is over the request being answered"
 path = "mcp-re-http-profile/src/rejection/pre_052_direct_root.rs"
 anchor = """
-        request_evidence: RequestEvidenceDigest {
-            digest_alg: request_evidence.digest_alg.clone(),
-            digest_value: request_evidence.digest_value.clone(),
-        },
+        request_evidence: request_evidence.to_digest(),
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
     sign_pre_052_direct_root_response_base_for_negative_test(
@@ -6710,9 +6698,9 @@ anchor = """
     )
 """
 weakening = """
-        request_evidence: RequestEvidenceDigest {
-            digest_alg: request_evidence.digest_alg.clone(),
-            digest_value: format!("{}x", request_evidence.digest_value),
+        request_evidence: crate::evidence::RequestEvidenceDigest {
+            digest_value: format!("{}x", request_evidence.digest_value()),
+            ..request_evidence.to_digest()
         },
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
@@ -7375,13 +7363,10 @@ unit = "http_profile.retained_chain_record"
 conjunct = "per-hop validity does not imply a complete chain — a set with a missing middle hop is Incomplete, not a complete terminal"
 path = "mcp-re-http-profile/src/chain/record.rs"
 anchor = """
-            let links = c.previous_request_evidence.digest_value
-                == prev.request_evidence.digest_value
-                && c.previous_request_evidence.digest_alg == prev.request_evidence.digest_alg
-                && c.input_required_response_evidence.digest_value
-                    == prev.response_evidence.digest_value
-                && c.input_required_response_evidence.digest_alg
-                    == prev.response_evidence.digest_alg;
+            let links = prev.request_evidence.matches(&c.previous_request_evidence)
+                && prev
+                    .response_evidence
+                    .matches(&c.input_required_response_evidence);
 """
 weakening = """
             let links = true;

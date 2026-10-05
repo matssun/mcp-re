@@ -262,16 +262,18 @@ fn retained_over(
     input_required_response_base: &[u8],
     request_state: &'static [u8],
 ) -> RetainedContinuation<'static> {
-    let handle = |label: &str, base: &[u8]| -> &'static RequestEvidenceDigest {
-        Box::leak(Box::new(RequestEvidenceDigest::over_labeled(label, base)))
+    let handle = |role: mcp_re_http_profile::evidence::EvidenceRole,
+                  base: &[u8]|
+     -> &'static RequestEvidenceDigest {
+        Box::leak(Box::new(RequestEvidenceDigest::over_labeled(role, base)))
     };
     RetainedContinuation::from_correlation(
         handle(
-            mcp_re_http_profile::ids::EVIDENCE_LABEL_REQUEST,
+            mcp_re_http_profile::evidence::EvidenceRole::Request,
             previous_request_base,
         ),
         handle(
-            mcp_re_http_profile::ids::EVIDENCE_LABEL_RESPONSE,
+            mcp_re_http_profile::evidence::EvidenceRole::Response,
             input_required_response_base,
         ),
         request_state,

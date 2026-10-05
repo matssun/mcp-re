@@ -7,8 +7,7 @@
 //! at rest for the continuation TTL; a handle is a one-way digest under a role label and
 //! is all the answer leg compares.
 
-use mcp_re_http_profile::ids::EVIDENCE_LABEL_REQUEST;
-use mcp_re_http_profile::ids::EVIDENCE_LABEL_RESPONSE;
+use mcp_re_http_profile::evidence::EvidenceRole;
 use mcp_re_http_profile::RequestEvidenceDigest;
 
 /// The retained open-leg evidence handles an answer leg binds to.
@@ -28,11 +27,11 @@ impl RetainedHandles {
     pub fn over(previous_request_base: &[u8], input_required_response_base: &[u8]) -> Self {
         RetainedHandles {
             previous_request_evidence: RequestEvidenceDigest::over_labeled(
-                EVIDENCE_LABEL_REQUEST,
+                EvidenceRole::Request,
                 previous_request_base,
             ),
             input_required_response_evidence: RequestEvidenceDigest::over_labeled(
-                EVIDENCE_LABEL_RESPONSE,
+                EvidenceRole::Response,
                 input_required_response_base,
             ),
         }
@@ -54,7 +53,7 @@ mod tests {
         );
         assert_eq!(
             h.previous_request_evidence,
-            RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_REQUEST, b"same")
+            RequestEvidenceDigest::over_labeled(EvidenceRole::Request, b"same")
         );
     }
 

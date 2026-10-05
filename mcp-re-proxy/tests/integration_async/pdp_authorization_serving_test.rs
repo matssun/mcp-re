@@ -226,6 +226,64 @@ fn signed_call_bound_by(
     req
 }
 
+/// Re-sign `req` with `block` in place of the block it carries, as a FOREIGN signer would.
+/// The profile's own signers refuse a block that does not validate, so the proxy meets one
+/// only from a signer outside this workspace. The covered components are the ones the
+/// profile signer emitted for `req`, so the block is the only difference.
+fn resign_as_foreign(req: &mut HttpRequest, body: &[u8], block: &HttpRequestEvidenceBlock) {
+    use base64::Engine;
+    use mcp_re_http_profile::sigbase::signature_base;
+    use mcp_re_http_profile::sigbase::CoveredComponent;
+    use mcp_re_http_profile::sigbase::SignatureParams;
+    use mcp_re_http_profile::sigbase::SourceMessage;
+
+    let input = req
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("signature-input"))
+        .map(|(_, v)| v.clone())
+        .expect("signature-input");
+    let inner = &input[input.find('(').expect("(") + 1..input.find(')').expect(")")];
+    let comps: Vec<CoveredComponent> = inner
+        .split_whitespace()
+        .map(|c| CoveredComponent::new(Box::leak(c.trim_matches('"').into())))
+        .collect();
+    let nonce = input
+        .split(";nonce=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("nonce")
+        .to_owned();
+    req.body = mcp_re_http_profile::body::insert_meta_block(
+        body,
+        mcp_re_http_profile::REQUEST_EVIDENCE_BLOCK_KEY,
+        block,
+    )
+    .expect("insert");
+    req.headers.retain(|(k, _)| {
+        !["content-digest", "signature"]
+            .iter()
+            .any(|n| k.eq_ignore_ascii_case(n))
+    });
+    req.headers.push((
+        "Content-Digest".into(),
+        mcp_re_http_profile::content_digest_sha256(&req.body),
+    ));
+    let params = SignatureParams {
+        created: Some(CREATED),
+        expires: Some(EXPIRES),
+        nonce: Some(nonce),
+        keyid: Some(CLIENT_KEY_ID.into()),
+        alg: Some(mcp_re_http_profile::ALG_ED25519.into()),
+        tag: Some(PROFILE_TAG.into()),
+    };
+    let base = signature_base(&comps, &params, &SourceMessage::Request(req)).expect("base");
+    let sig = b64url_decode(&client_key().sign(&base)).expect("sig");
+    let sig = base64::engine::general_purpose::STANDARD.encode(sig);
+    req.headers
+        .push(("Signature".into(), format!("mcp-re=:{sig}:")));
+}
+
 /// Sign an arbitrary JSON-RPC body carrying `decision` in evidence form.
 fn signed_body(body: &str, nonce: &str, decision: &str) -> HttpRequest {
     let mut req = HttpRequest {
@@ -589,17 +647,40 @@ async fn a_reference_binding_can_never_satisfy_the_enforcement_profile() {
     // it never presented.
     let calls = Arc::new(AtomicUsize::new(0));
     let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
-    let req = signed_call_bound_by("read", "n-reference", Some(&d), |doc| {
-        ArtifactBinding::reference(
-            ArtifactType::PdpDecision,
-            ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, doc.as_bytes())
-                .digest_value(),
-            "urn:example:pdp",
-            "urn:example:scheme",
-            "decision-1",
-        )
-        .expect("a legal reference binding")
-    });
+    let reference = ArtifactBinding::reference(
+        ArtifactType::PdpDecision,
+        ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, d.as_bytes()).digest_value(),
+        "urn:example:pdp",
+        "urn:example:scheme",
+        "decision-1",
+    )
+    .expect("a legal reference binding");
+    // The request that succeeds, with its opaque-digest binding swapped for the reference.
+    let mut req = signed_call("read", "n-reference", Some(&d));
+    let block = HttpRequestEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        audience: audience(),
+        artifact_bindings: vec![
+            ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok"),
+            reference,
+        ],
+        continuation: None,
+        admission: None,
+        admission_assertion: None,
+        authorization_decision: Some(d.clone()),
+    };
+    assert_eq!(
+        block.validate(PROFILE_TAG).unwrap_err(),
+        HttpProfileError::MalformedEvidence(
+            "authorization decision without a pdp-decision opaque-digest binding"
+        ),
+        "the profile's own signer refuses this block"
+    );
+    resign_as_foreign(
+        &mut req,
+        br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
+        &block,
+    );
     let (status, body) = serve(&proxy(Arc::clone(&calls)), req).await;
     assert_eq!(status, 403, "{body}");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -897,7 +978,7 @@ async fn an_authorized_request_records_which_policy_permitted_what() {
     assert_eq!(a.action.operation(), "tools/call");
     assert_eq!(a.action.target().named(), Some("read"));
     assert!(
-        !a.attributable_to.digest_value.is_empty(),
+        !a.attributable_to.digest_value().is_empty(),
         "the record names the exchange the decision was taken for"
     );
     // Decision provenance, through the real serving path: WHICH decision the authority

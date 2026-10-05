@@ -622,7 +622,7 @@ tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0023"
-description = "`RequestEvidenceDigest::matches_labeled` returning true means this handle's value IS the labeled digest of those bytes under that label."
+description = "`RequestEvidenceDigest::matches_labeled` returning true means this handle's value IS the labeled digest of those bytes under that role's label."
 justification = """
 The replacement for ASM-0022, and deliberately much narrower: it constrains one three-line
 comparator instead of leaving a twenty-line role-checking function meaningless.
@@ -646,7 +646,7 @@ premise_class = "review-obligation"
 discharging_event = { kind = "owner-event", statement = "A proof about the labeled-digest construction itself is admitted, which crosses boundary.crypto_primitives. Nothing short of that discharges it." }
 affected_contracts = ["contract://http_profile/block/continuation_verify"]
 sites = [
-  "mcp-re-http-profile/src/block.rs#RequestEvidenceDigest::matches_labeled",
+  "mcp-re-http-profile/src/evidence/digest.rs#RequestEvidenceDigest::matches_labeled",
 ]
 tool_specific_mechanism = "verus:external_body"
 
@@ -671,7 +671,7 @@ premise_class = "review-obligation"
 discharging_event = { kind = "owner-event", statement = "The handle comparator is given a verified body, or a proof about the labeled-digest construction is admitted across boundary.crypto_primitives." }
 affected_contracts = ["contract://http_profile/block/continuation_verify"]
 sites = [
-  "mcp-re-http-profile/src/block.rs#RequestEvidenceDigest::same_handle",
+  "mcp-re-http-profile/src/evidence/digest.rs#RequestEvidenceDigest::same_handle",
 ]
 tool_specific_mechanism = "verus:external_body"
 
@@ -1625,7 +1625,7 @@ notably that a transparent mirror does not silently omit a variant a proof then 
 unreachable.
 
 Nothing about BEHAVIOUR is assumed: no impl, no derive, no accessor is in scope here. The
-three types that must additionally be OPAQUE carry their own entry (ASM-0046), because
+types that must additionally be OPAQUE carry their own entry (ASM-0046), because
 hiding a representation and mirroring one are different decisions.
 
 It stops being acceptable if a mirror is edited without the type it mirrors, or if a proof
@@ -1666,7 +1666,8 @@ sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#ExRequestEvidenceDigest",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpContinuation",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpRequestEvidenceBlock",
-  "mcp-re-http-profile/src/verus_std_specs.rs#ExRequestEvidence",
+  "mcp-re-http-profile/src/evidence/prover_model.rs#ExRequestRoleEvidence",
+  "mcp-re-http-profile/src/evidence/prover_model.rs#ExEvidenceRole",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExFloorVerifiedRequest",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifiedMcpRequest",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpReplayKey",
@@ -1682,7 +1683,7 @@ tool_specific_mechanism = "verus:external_type_specification"
 
 [[assumption]]
 id = "ASM-0046"
-description = "`ExVerifierPolicy`, `ExProfileAlgorithm`, `ExVerificationKey` and `ExArtifactBinding` are OPAQUE: the prover models each as a datatype with no readable fields."
+description = "`ExVerifierPolicy`, `ExProfileAlgorithm`, `ExVerificationKey`, `ExArtifactBinding` and `ExRequestRoleEvidence` are OPAQUE: the prover models each as a datatype with no readable fields."
 justification = """
 The weakest premise in this registry, and it is here because the mechanism list is right to
 count it. `external_body` on a type specification REMOVES the ability to reason about the
@@ -1703,6 +1704,15 @@ owner so that holding a value means it is well-formed, and a transparent mirror 
 proof read the fields the owner hides. The prover reaches a binding only through its two tag
 getters (ASM-0062, ASM-0063).
 
+`RequestRoleEvidence` is the fifth, for the same reason as `ArtifactBinding`: its
+representation is private so that holding one means it was derived from a signature base
+under the request role. Unlike the binding it needs no getter premise, because no theorem
+reads it at all; the prover names it only because the verified request products carry one.
+What is trusted is exactly that the type is opaque to the prover. No behavioural property
+moves into this entry: the continuation proof compares `RequestEvidenceDigest` claims, whose
+mirror stays transparent, and its contract is unchanged. `ResponseRoleEvidence` is not here
+because no type the prover reads contains one.
+
 It stops being acceptable the moment a theorem needs to say something about one of these
 representations, at which point the entry is replaced by a proof about it rather than
 renewed.
@@ -1720,6 +1730,7 @@ sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#ExProfileAlgorithm",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExVerificationKey",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExArtifactBinding",
+  "mcp-re-http-profile/src/evidence/prover_model.rs#ExRequestRoleEvidence",
 ]
 owner = "mats@sundvall.name"
 introduced_by = "v0.17 per-site escape-hatch registration (verification/reviews/packets/escape-hatch-site-registration-2026-09-07.md)"

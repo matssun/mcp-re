@@ -152,8 +152,8 @@ fn to_signed_request(signed: mcp_re_client_core::SignedRequest) -> PySignedReque
         target_uri: req.target_uri.clone(),
         headers: req.headers.clone(),
         body_bytes: req.body.clone(),
-        evidence_digest_alg: signed.evidence().digest_alg.clone(),
-        evidence_digest_value: signed.evidence().digest_value.clone(),
+        evidence_digest_alg: signed.evidence().digest_alg().to_owned(),
+        evidence_digest_value: signed.evidence().digest_value().to_owned(),
     }
 }
 
@@ -748,8 +748,8 @@ fn verify_response(
         retry_safety: execution.retry_safety,
         continuation_status: execution.continuation_status,
         retention_status: execution.retention_status,
-        resp_evidence_digest_alg: resp_digest.digest_alg,
-        resp_evidence_digest_value: resp_digest.digest_value,
+        resp_evidence_digest_alg: resp_digest.digest_alg().to_owned(),
+        resp_evidence_digest_value: resp_digest.digest_value().to_owned(),
         request_state,
     })
 }

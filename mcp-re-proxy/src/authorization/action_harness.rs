@@ -13,7 +13,7 @@ use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::CryptographicFloorVerifiedRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -48,7 +48,7 @@ pub(super) fn verified_over_as(body: &[u8], subject: &str, keyid: &str) -> Verif
                 verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
                 slot: SignerSlot::Request,
             },
-            evidence: RequestEvidence::from_signature_base(b"base"),
+            evidence: RequestRoleEvidence::from_signature_base(b"base"),
             request_signature_base: b"base".to_vec(),
             content_digest: content_digest_sha256(body),
             created: 1,

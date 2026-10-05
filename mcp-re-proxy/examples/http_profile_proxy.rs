@@ -54,7 +54,7 @@ use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 
@@ -466,7 +466,7 @@ async fn handle(
 /// preflight form is used.
 fn rejection(
     request: Option<&HttpRequest>,
-    evidence: Option<&RequestEvidence>,
+    evidence: Option<&RequestRoleEvidence>,
     wire_code: &'static str,
     status: u16,
 ) -> HttpResponse {

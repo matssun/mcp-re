@@ -113,7 +113,7 @@ fn no_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
 const CALL: &[u8] = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#;
 
 /// Sign a request and return (request, evidence).
-fn signed(nonce: &str, body: &[u8]) -> (HttpRequest, mcp_re_http_profile::RequestEvidence) {
+fn signed(nonce: &str, body: &[u8]) -> (HttpRequest, mcp_re_http_profile::RequestRoleEvidence) {
     let mut req = base_request(body);
     let ev = sign_request_full(
         &mut req,

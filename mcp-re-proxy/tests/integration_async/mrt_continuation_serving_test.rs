@@ -38,8 +38,8 @@ use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::RequestEvidenceDigest;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -264,13 +264,6 @@ fn http_response(served: ServedHttpResponse) -> HttpResponse {
     }
 }
 
-fn as_digest(ev: &RequestEvidence) -> RequestEvidenceDigest {
-    RequestEvidenceDigest {
-        digest_alg: ev.digest_alg.clone(),
-        digest_value: ev.digest_value.clone(),
-    }
-}
-
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
         verifier_audiences: &[VERIFIER_AUD],
@@ -321,7 +314,7 @@ fn signed_request(
     nonce: &str,
     body: &[u8],
     continuation: Option<HttpContinuation>,
-) -> (HttpRequest, RequestEvidence) {
+) -> (HttpRequest, RequestRoleEvidence) {
     signed_request_as(CLIENT_KEY_ID, &client_key(), nonce, body, continuation)
 }
 
@@ -333,7 +326,7 @@ fn signed_request_as(
     nonce: &str,
     body: &[u8],
     continuation: Option<HttpContinuation>,
-) -> (HttpRequest, RequestEvidence) {
+) -> (HttpRequest, RequestRoleEvidence) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
@@ -398,8 +391,11 @@ async fn open_on(
     assert_eq!(seen_state, request_state);
 
     (
-        as_digest(&open_ev), // D_prev (client request handle)
-        as_digest(&verified.signature_facts().response_signature_base_digest), // D_irr (verified response handle)
+        open_ev.to_digest(), // D_prev (client request handle)
+        verified
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(), // D_irr (verified response handle)
         seen_state.to_owned(),
     )
 }
@@ -486,7 +482,7 @@ fn handles_of(request_state: &str) -> (RequestEvidenceDigest, RequestEvidenceDig
     // is unavailable here, so we take it from a throwaway open on a scratch replica.
     // Simpler: the second-answer test only needs a well-formed continuation whose
     // store entry is absent, so any consistent handles suffice — reuse D_prev shape.
-    let d = as_digest(&open_ev);
+    let d = open_ev.to_digest();
     (d.clone(), d, request_state.to_owned())
 }
 
@@ -1344,8 +1340,8 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
             "request_target_uri": request.target_uri,
             "request_headers": request.headers,
             "request_body_b64url": b64url_encode(&request.body),
-            "request_evidence_digest_alg": req_evidence.digest_alg,
-            "request_evidence_digest_value": req_evidence.digest_value,
+            "request_evidence_digest_alg": req_evidence.digest_alg(),
+            "request_evidence_digest_value": req_evidence.digest_value(),
             "status": response.status,
             "headers": response.headers,
             "body_b64url": b64url_encode(&response.body),
@@ -1610,8 +1606,11 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // Round 2 — answering leg 1 CONSUMES it, and the reply opens leg 2. Served on B, which
     // never saw round 1.
     let cont1 = HttpContinuation::from_handles(
-        as_digest(&ev1),
-        as_digest(&verified1.signature_facts().response_signature_base_digest),
+        ev1.to_digest(),
+        verified1
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(),
         FIRST.as_bytes(),
     );
     let (req2, ev2) = signed_request("nonce-r2", &answer_body(FIRST), Some(cont1));
@@ -1641,8 +1640,11 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // Round 3 — the load-bearing assertion. Leg 2 was recorded by an exchange that had
     // ALREADY consumed leg 1. If the latch had discarded the new leg, this fails closed.
     let cont2 = HttpContinuation::from_handles(
-        as_digest(&ev2),
-        as_digest(&verified2.signature_facts().response_signature_base_digest),
+        ev2.to_digest(),
+        verified2
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(),
         SECOND.as_bytes(),
     );
     let (req3, _ev3) = signed_request("nonce-r3", &answer_body(SECOND), Some(cont2));
@@ -1660,8 +1662,11 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // Negative control: leg 1 really was consumed, so re-answering it fails closed. Without
     // this, the test above could pass on a store that never consumes anything.
     let cont1_again = HttpContinuation::from_handles(
-        as_digest(&ev1),
-        as_digest(&verified1.signature_facts().response_signature_base_digest),
+        ev1.to_digest(),
+        verified1
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(),
         FIRST.as_bytes(),
     );
     let (replay_req, _e) = signed_request("nonce-r2-again", &answer_body(FIRST), Some(cont1_again));
@@ -1923,8 +1928,8 @@ async fn a_consumption_followed_by_a_refusal_reports_a_spent_approval_and_an_unr
         "nonce-H4",
         &answer_body(&state),
         Some(HttpContinuation::from_handles(
-            as_digest(&signed_request("nonce-open", OPEN_BODY, None).1),
-            as_digest(&signed_request("nonce-open", OPEN_BODY, None).1),
+            signed_request("nonce-open", OPEN_BODY, None).1.to_digest(),
+            signed_request("nonce-open", OPEN_BODY, None).1.to_digest(),
             state.as_bytes(),
         )),
     );

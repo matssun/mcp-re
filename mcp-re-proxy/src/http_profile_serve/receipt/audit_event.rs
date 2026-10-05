@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use mcp_re_http_profile::HttpRequest;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 
 use crate::admission_enforcer::AdmissionFacet;
 use crate::audit_sink::MaybeAuditSink;
@@ -104,7 +104,7 @@ impl ResponseSigning {
         cause: &RefusalCause,
         status: u16,
         now: i64,
-        bound: Option<&RequestEvidence>,
+        bound: Option<&RequestRoleEvidence>,
         actor_id: Option<String>,
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
@@ -157,7 +157,7 @@ impl ResponseSigning {
         cause: &RefusalCause,
         status: u16,
         now: i64,
-        bound: Option<&RequestEvidence>,
+        bound: Option<&RequestRoleEvidence>,
         actor_id: Option<String>,
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
@@ -211,7 +211,7 @@ mod tests {
                         .public_key(),
                     slot: mcp_re_http_profile::SignerSlot::Request,
                 },
-                evidence: mcp_re_http_profile::RequestEvidence::from_signature_base(b"base"),
+                evidence: mcp_re_http_profile::RequestRoleEvidence::from_signature_base(b"base"),
                 request_signature_base: b"base".to_vec(),
                 content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
                 created: 1,

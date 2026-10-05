@@ -61,9 +61,7 @@ pub(crate) fn full_bound_response<R: Into<ResolverOutcome>>(
     // 4. Explicit request-evidence comparison: body handle == the signature-base
     //    digest of THIS request. This is the precise `request_binding_mismatch` path
     //    (the ;req floor already rejects a cryptographic splice above).
-    if block.request_evidence.digest_alg != bound_request_evidence.digest_alg
-        || block.request_evidence.digest_value != bound_request_evidence.digest_value
-    {
+    if !bound_request_evidence.matches(&block.request_evidence) {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 

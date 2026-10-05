@@ -25,7 +25,7 @@
 //! attributable to the exchange it was taken for, and the evidence handle is the identifier
 //! every other authority on this path already attributes by.
 
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::VerifiedMcpRequest;
 
 use super::pdp::evidence::bound_decision_evidence;
@@ -51,7 +51,7 @@ pub struct AuthorizationRequest {
     /// installs no transport binding, so the channel is NOT CLAIMED to be bound — never
     /// that a binding was attempted and skipped.
     binding: Option<RequestPeerBindingFacts>,
-    evidence: RequestEvidence,
+    evidence: RequestRoleEvidence,
     /// The verified request itself, retained so a MECHANISM can read evidence this boundary
     /// deliberately does not interpret — the ADR-MCPRE-065 Slice 2 decision document is the
     /// first. Kept whole rather than projected into a widening set of fields: the semantic
@@ -84,7 +84,7 @@ impl AuthorizationRequest {
     }
 
     /// The request evidence handle this decision is attributable to.
-    pub fn evidence(&self) -> &RequestEvidence {
+    pub fn evidence(&self) -> &RequestRoleEvidence {
         &self.evidence
     }
 

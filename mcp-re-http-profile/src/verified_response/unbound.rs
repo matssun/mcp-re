@@ -11,7 +11,7 @@
 //! missing.
 
 use crate::block::ResolvedActor;
-use crate::RequestEvidence;
+use crate::ResponseRoleEvidence;
 
 use super::facts::AcceptedResponseSigner;
 use super::facts::UnboundResponseSignatureFacts;
@@ -28,14 +28,14 @@ use super::facts::UnboundResponseSignatureFacts;
 #[derive(Debug, Clone)]
 pub struct CryptographicFloorVerifiedUnboundResponse {
     resolved_server_actor: ResolvedActor,
-    response_signature_base_digest: RequestEvidence,
+    response_signature_base_digest: ResponseRoleEvidence,
 }
 
 impl CryptographicFloorVerifiedUnboundResponse {
     /// Assemble from what the trust seam resolved; `crate::verify` is the only producer.
     pub(crate) fn new(
         resolved_server_actor: ResolvedActor,
-        response_signature_base_digest: RequestEvidence,
+        response_signature_base_digest: ResponseRoleEvidence,
     ) -> Self {
         Self {
             resolved_server_actor,
@@ -49,7 +49,7 @@ impl CryptographicFloorVerifiedUnboundResponse {
     }
 
     /// The response signature-base handle, under the response role label.
-    pub fn response_signature_base_digest(&self) -> &RequestEvidence {
+    pub fn response_signature_base_digest(&self) -> &ResponseRoleEvidence {
         &self.response_signature_base_digest
     }
 
@@ -133,7 +133,7 @@ mod tests {
     fn the_unbound_products_carry_no_request_binding_to_misread() {
         let unbound = CryptographicFloorVerifiedUnboundResponse {
             resolved_server_actor: actor("resp-2"),
-            response_signature_base_digest: RequestEvidence::from_response_signature_base(b"r"),
+            response_signature_base_digest: ResponseRoleEvidence::from_signature_base(b"r"),
         };
         let CryptographicFloorVerifiedUnboundResponse {
             resolved_server_actor: _,
@@ -166,7 +166,7 @@ mod tests {
                     identity: actor("delegated-1").identity,
                     verification_key: SigningKey::from_seed_bytes(&[4u8; 32]).public_key(),
                 },
-                response_signature_base_digest: RequestEvidence::from_response_signature_base(b"r"),
+                response_signature_base_digest: ResponseRoleEvidence::from_signature_base(b"r"),
             },
             delegation_issuer_kid: "root-1".into(),
         };

@@ -293,7 +293,7 @@ fn non_fleet_strict_skips_the_tier_gate_but_keeps_core_admission() {
 
 #[test]
 fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
-    // 1. Sign + verify the request (capturing the RequestEvidence handle the
+    // 1. Sign + verify the request (capturing the RequestRoleEvidence handle the
     //    response must carry back).
     let block = request_block();
     let mut req = base_request();

@@ -56,7 +56,7 @@
 //! would have cost the proof to buy the seal. A Verus-proved postcondition outranks a seal
 //! (`CLAUDE.md`), so the seal gives way at exactly the point they conflict, and no further.
 
-use crate::block::RequestEvidenceDigest;
+use crate::evidence::RequestEvidenceDigest;
 
 /// The handles the caller retained for a pending correlation, needed to verify an MRTR
 /// continuation.
@@ -112,16 +112,15 @@ impl<'a> RetainedContinuation<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ids::EVIDENCE_LABEL_REQUEST;
-    use crate::ids::EVIDENCE_LABEL_RESPONSE;
+    use crate::evidence::EvidenceRole;
 
     #[test]
     fn the_constructor_keeps_the_three_slots_apart() {
         // The ordering is load-bearing — the two handles are compared in their own slots —
         // so a constructor that transposed them would turn every legitimate answer leg into
         // a binding failure.
-        let prev = RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_REQUEST, b"prev");
-        let irr = RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_RESPONSE, b"irr");
+        let prev = RequestEvidenceDigest::over_labeled(EvidenceRole::Request, b"prev");
+        let irr = RequestEvidenceDigest::over_labeled(EvidenceRole::Response, b"irr");
         let c = RetainedContinuation::from_correlation(&prev, &irr, b"state");
         assert_eq!(c.previous_request_evidence, &prev);
         assert_eq!(c.input_required_response_evidence, &irr);
