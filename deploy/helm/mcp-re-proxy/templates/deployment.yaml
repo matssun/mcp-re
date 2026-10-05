@@ -189,6 +189,17 @@ spec:
             - "--client-crl-reload-secs"
             - "{{ .Values.clientCrl.reloadSeconds }}"
             {{- end }}
+            # Delegated handshake-signing capacity. Keyed on null rather than truthiness,
+            # so a 0 reaches the proxy and is refused there instead of silently becoming
+            # the default; the proxy owns the bounds and the defaults.
+            {{- if not (kindIs "invalid" .Values.tlsHandshakeSigning.ratePerSec) }}
+            - "--tls-handshake-sign-rate"
+            - "{{ .Values.tlsHandshakeSigning.ratePerSec }}"
+            {{- end }}
+            {{- if not (kindIs "invalid" .Values.tlsHandshakeSigning.burst) }}
+            - "--tls-handshake-sign-burst"
+            - "{{ .Values.tlsHandshakeSigning.burst }}"
+            {{- end }}
             {{- if not .Values.mcpProtocolVersions }}
             {{- fail "mcpProtocolVersions must name at least one MCP protocol version: the transport contract is mandatory" }}
             {{- end }}

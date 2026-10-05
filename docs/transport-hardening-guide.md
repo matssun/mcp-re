@@ -157,6 +157,17 @@ there is no fallback signer. Separately, after a KMS provider throttles a signat
 handshake path refuses locally for one network-timeout window and leaves the quota to
 issuance; that window is derived, not configured.
 
+On the Helm chart the two flags are `tlsHandshakeSigning.ratePerSec` and
+`tlsHandshakeSigning.burst`. Left `null`, the flag is not rendered and the proxy's default
+applies; a set value is passed through verbatim, so the bounds above are enforced by the
+proxy at startup, not by the chart:
+
+```yaml
+tlsHandshakeSigning:
+  ratePerSec: 250
+  burst: 400
+```
+
 ## Replay protection
 
 Source: [`shared_replay.rs`](../mcp-re-proxy/src/shared_replay.rs),

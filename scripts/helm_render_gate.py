@@ -165,6 +165,36 @@ def check_documented_in_flight_default() -> list[str]:
     return problems
 
 
+def check_documented_handshake_signing_bounds() -> list[str]:
+    """The defaults and bounds `values.yaml` states for the handshake-signing capacity
+    are `HandshakeSignCapacity`'s.
+
+    The chart renders no default and validates no range — the proxy owns both — so the
+    numbers in its comment are prose an operator sizes against, and nothing else couples
+    them to the type that enforces them.
+    """
+    owner = REPO / "mcp-re-proxy" / "src" / "delegated_tls" / "sign_capacity.rs"
+    consts = {}
+    for line in owner.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("pub const ") and ": u32 = " in stripped:
+            name, value = stripped[len("pub const "):].split(": u32 = ", 1)
+            consts[name] = value.rstrip(";").replace("_", "")
+    wanted = ("DEFAULT_RATE_PER_SEC", "DEFAULT_BURST", "MAX_RATE_PER_SEC", "MAX_BURST")
+    missing = [n for n in wanted if n not in consts]
+    if missing:
+        return [f"{owner.relative_to(REPO)} declares no {', '.join(missing)}; the chart's "
+                "documented capacity can no longer be checked against the code"]
+    text = " ".join((CHART / "values.yaml").read_text(encoding="utf-8").replace("#", " ").split())
+    problems = []
+    for phrase in (f"({consts['DEFAULT_RATE_PER_SEC']}/s, burst {consts['DEFAULT_BURST']})",
+                   f"rate 1..={consts['MAX_RATE_PER_SEC']}",
+                   f"burst 1..={consts['MAX_BURST']}"):
+        if phrase not in text:
+            problems.append(f"values.yaml does not state the code's {phrase!r}")
+    return problems
+
+
 def check_audit_flush_budget() -> list[str]:
     """The seconds the chart budgets for the post-serve audit flush must be the code's.
 
@@ -690,6 +720,27 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
         [("--max-in-flight-total", "256")],
         ["--max-in-flight"],
     ),
+    # The handshake-signing capacity has no chart default: unset must leave the
+    # proxy's, and a set value must reach the proxy verbatim — 0 included, which the
+    # proxy refuses. A truthiness test would turn that 0 into the default silently.
+    (
+        "unset handshake-signing capacity omits both flags",
+        merged(),
+        [],
+        ["--tls-handshake-sign-rate", "--tls-handshake-sign-burst"],
+    ),
+    (
+        "handshake-signing capacity renders both flags verbatim",
+        merged({"tlsHandshakeSigning": {"ratePerSec": 250, "burst": 400}}),
+        [("--tls-handshake-sign-rate", "250"), ("--tls-handshake-sign-burst", "400")],
+        [],
+    ),
+    (
+        "a zero handshake-signing term reaches the proxy rather than the default",
+        merged({"tlsHandshakeSigning": {"ratePerSec": 0, "burst": None}}),
+        [("--tls-handshake-sign-rate", "0")],
+        ["--tls-handshake-sign-burst"],
+    ),
     # ADR-MCPS-035: a chart-rendered pod must carry the per-request security record,
     # and the revocation flags the posture claims must actually be emitted.
     (
@@ -929,6 +980,8 @@ def main() -> int:
         ("the default image serves every offered keySource", check_image_serves_every_key_source),
         ("the proxy image declares the chart's non-root uid", check_image_declares_non_root),
         ("the documented in-flight default is the code's", check_documented_in_flight_default),
+        ("the documented handshake-signing capacity is the code's",
+         check_documented_handshake_signing_bounds),
         ("the drain arithmetic budgets the code's audit flush", check_audit_flush_budget),
     ):
         problems = check()

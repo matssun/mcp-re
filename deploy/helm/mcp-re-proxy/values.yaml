@@ -154,6 +154,22 @@ clientCrl:
   # which the connection-age bound above forces within maxConnectionAgeSeconds.
   reloadSeconds: 300
 
+# Delegated handshake-signing capacity: one token bucket per listener bounding how fast
+# full TLS handshakes can drive the remote (KMS / PKCS#11) signer, which the
+# delegated-key issuer shares. It protects the backend's GLOBAL capacity and allocates
+# nothing fairly among clients: enough handshake demand empties it, and handshakes are
+# then refused until it refills (see docs/transport-hardening-guide.md).
+#
+#   ratePerSec  `--tls-handshake-sign-rate`, sustained signatures per second
+#   burst       `--tls-handshake-sign-burst`, signatures drawn back-to-back
+#
+# null omits the flag, so the proxy's own default applies (100/s, burst 200). A set
+# value is passed through verbatim; the proxy owns the bounds (rate 1..=1000,
+# burst 1..=2000) and refuses startup on a value outside them, 0 included.
+tlsHandshakeSigning:
+  ratePerSec: null
+  burst: null
+
 # §4.1 MCP transport contract (RQ-06), mandatory: each entry adds an accepted
 # `Mcp-Protocol-Version`, and at least one is required. Every request must carry the
 # transport headers and `Mcp-Name` must agree with `params.name`; there is no setting
