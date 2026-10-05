@@ -1,11 +1,11 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
   "verify_at_unix": 1700000100,
-  "corpus_digest": "899b752474c67735514643a18633192702aa4b31e4b943bdb9779da633d16488",
+  "corpus_digest": "f24eb9a9d76e55b15c0e6fd651150d8e7a35cfe85aa777b596b41ee312bfea4c",
   "fixtures": [
     {
       "file": "h01_request_valid.json",
-      "sha256": "f951cd01e11eeda541997cf3005c06307976c4b3504af3e8e9542611d321aa0f"
+      "sha256": "2261d5dab08a27c420fd23814a0ee6087b2dc353acb9f4dd4f4d19d2e4236503"
     },
     {
       "file": "h02_request_body_tamper.json",

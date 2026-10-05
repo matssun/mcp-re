@@ -416,11 +416,18 @@ fn build_fixtures() -> Vec<Fixture> {
         use mcp_re_http_profile::sigbase::SourceMessage;
         use mcp_re_http_profile::CoveredComponent;
         use mcp_re_http_profile::SignatureParams;
-        let components: Vec<CoveredComponent> =
-            ["@method", "@target-uri", "content-digest", "content-type"]
-                .iter()
-                .map(|n| CoveredComponent::new(n))
-                .collect();
+        let components: Vec<CoveredComponent> = [
+            "@method",
+            "@target-uri",
+            "content-digest",
+            "content-type",
+            "mcp-method",
+            "mcp-name",
+            "mcp-protocol-version",
+        ]
+        .iter()
+        .map(|n| CoveredComponent::new(n))
+        .collect();
         let params = SignatureParams {
             created: Some(CREATED),
             expires: Some(EXPIRES),

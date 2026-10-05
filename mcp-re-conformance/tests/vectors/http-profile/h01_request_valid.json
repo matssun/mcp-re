@@ -40,7 +40,7 @@
     "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"read\"}}"
   },
   "oracle": {
-    "signature_base_b64url": "IkBtZXRob2QiOiBQT1NUCiJAdGFyZ2V0LXVyaSI6IGh0dHBzOi8vbWNwLmV4YW1wbGUuY29tL21jcAoiY29udGVudC1kaWdlc3QiOiBzaGEtMjU2PTpxWERiYlNiQUlBcXRUcC9wYUZURDVHSzNGcERQVXlNZmR3M00rQmVXcFd3PToKImNvbnRlbnQtdHlwZSI6IGFwcGxpY2F0aW9uL2pzb24KIkBzaWduYXR1cmUtcGFyYW1zIjogKCJAbWV0aG9kIiAiQHRhcmdldC11cmkiICJjb250ZW50LWRpZ2VzdCIgImNvbnRlbnQtdHlwZSIpO2NyZWF0ZWQ9MTcwMDAwMDAwMDtleHBpcmVzPTE3MDAwMDAzMDA7bm9uY2U9InZlYy1ub25jZS0xIjtrZXlpZD0iY2xpZW50LWtleS0xIjthbGc9ImVkMjU1MTkiO3RhZz0ibWNwLXJlLWh0dHAtdjEi",
+    "signature_base_b64url": "IkBtZXRob2QiOiBQT1NUCiJAdGFyZ2V0LXVyaSI6IGh0dHBzOi8vbWNwLmV4YW1wbGUuY29tL21jcAoiY29udGVudC1kaWdlc3QiOiBzaGEtMjU2PTpxWERiYlNiQUlBcXRUcC9wYUZURDVHSzNGcERQVXlNZmR3M00rQmVXcFd3PToKImNvbnRlbnQtdHlwZSI6IGFwcGxpY2F0aW9uL2pzb24KIm1jcC1tZXRob2QiOiB0b29scy9jYWxsCiJtY3AtbmFtZSI6IHJlYWQKIm1jcC1wcm90b2NvbC12ZXJzaW9uIjogMjAyNi0wNy0yOAoiQHNpZ25hdHVyZS1wYXJhbXMiOiAoIkBtZXRob2QiICJAdGFyZ2V0LXVyaSIgImNvbnRlbnQtZGlnZXN0IiAiY29udGVudC10eXBlIiAibWNwLW1ldGhvZCIgIm1jcC1uYW1lIiAibWNwLXByb3RvY29sLXZlcnNpb24iKTtjcmVhdGVkPTE3MDAwMDAwMDA7ZXhwaXJlcz0xNzAwMDAwMzAwO25vbmNlPSJ2ZWMtbm9uY2UtMSI7a2V5aWQ9ImNsaWVudC1rZXktMSI7YWxnPSJlZDI1NTE5Ijt0YWc9Im1jcC1yZS1odHRwLXYxIg",
     "content_digest": "sha-256=:qXDbbSbAIAqtTp/paFTD5GK3FpDPUyMfdw3M+BeWpWw=:",
     "signature_header": "mcp-re=:aEbGuVgQ8HCfxdY/VHpVfoI3SAfyahe9Fxoj6WtnDTtd6/2L8PFW29nSGn9mOyqODlk72yd9FuvJEJqmO4OJCQ==:",
     "request_evidence_digest_value": "1oPgkkwmsTYI6cIvrnn1bxzJ5zhC_EhgFx2LKKBAutY"
