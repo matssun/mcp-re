@@ -164,9 +164,9 @@
     },
     "continuation_answer_leg": {
       "expected": {
-        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJjb250aW51YXRpb24iOnsiaW5wdXRfcmVxdWlyZWRfcmVzcG9uc2VfZXZpZGVuY2UiOnsiZGlnZXN0X2FsZyI6InNoYS0yNTYiLCJkaWdlc3RfdmFsdWUiOiJhWEp5TFdoaGJtUnNaUSJ9LCJwcmV2aW91c19yZXF1ZXN0X2V2aWRlbmNlIjp7ImRpZ2VzdF9hbGciOiJzaGEtMjU2IiwiZGlnZXN0X3ZhbHVlIjoiY0hKbGRpMW9ZVzVrYkdVIn0sInJlcXVlc3Rfc3RhdGVfZGlnZXN0Ijp7ImRpZ2VzdF9hbGciOiJzaGEyNTYiLCJkaWdlc3RfdmFsdWUiOiJUVm9oSVZJam9OZVN1VFZFczltUUsxRHo4TU01Q29aOUdQMHVyMlRUd04wIn0sInR5cGUiOiJtY3AtbXJ0In0sInByb2ZpbGUiOiJtY3AtcmUtaHR0cC12MSJ9fSwiaWQiOjEsImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJ0b29scy9saXN0IiwicGFyYW1zIjp7fX0=",
+        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJjb250aW51YXRpb24iOnsiaW5wdXRfcmVxdWlyZWRfcmVzcG9uc2VfZXZpZGVuY2UiOnsiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkNReWJ3SG93NVVlYzB3N1RiNmtjZDd2V09FaFJOQ0NHaGZ2a05VR3ZJSUEifSwicHJldmlvdXNfcmVxdWVzdF9ldmlkZW5jZSI6eyJkaWdlc3RfYWxnIjoic2hhMjU2IiwiZGlnZXN0X3ZhbHVlIjoiSW1wOEVJSUJUWW8xR2FmVjB0b1NQdU1KcFA0MGo1cEg1eDdWRFZVMWlsOCJ9LCJyZXF1ZXN0X3N0YXRlX2RpZ2VzdCI6eyJkaWdlc3RfYWxnIjoic2hhMjU2IiwiZGlnZXN0X3ZhbHVlIjoiVFZvaElWSWpvTmVTdVRWRXM5bVFLMUR6OE1NNUNvWjlHUDB1cjJUVHdOMCJ9LCJ0eXBlIjoibWNwLW1ydCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "k8H4yhrMJEvKRbRAkX7Qvw3OYFIl1kriK9n5OsZJRdQ",
+        "evidence_digest_value": "3EMZ8hxwGVMlTHCPcQvOhH6ROOb0XiTcSRc_Bs6MJ3w",
         "headers": [
           [
             "content-type",
@@ -186,7 +186,7 @@
           ],
           [
             "Content-Digest",
-            "sha-256=:dja07yp1oYDONtLHDkC2Bwh7SOZ2F1Csf/ZKItsRlsI=:"
+            "sha-256=:auH1lULQxcUFgNc+py++eZR+qFHFtffoqVxGni1mW30=:"
           ],
           [
             "Signature-Input",
@@ -194,7 +194,7 @@
           ],
           [
             "Signature",
-            "mcp-re=:YZEkTrYQ+WhdAiKL2PNBZcKY9uOqrOPH0al8Rv4dkRvZ+o1pcKYJyOzt9hU6LLA8ixKNvzElZYcHFXDFstDKDQ==:"
+            "mcp-re=:ObyVoO1lUXmPP0UUGPGvFrodM829aRdsbMKYkKx6Ef766ipBEWRBkTX8UKWUnNarQFwtcp84B0qgnp4ZLw17Ag==:"
           ]
         ],
         "method": "POST",
@@ -202,10 +202,10 @@
       },
       "inputs": {
         "audience_id": "did:example:server-1",
-        "cont_irr_alg": "sha-256",
-        "cont_irr_value": "aXJyLWhhbmRsZQ",
-        "cont_prev_alg": "sha-256",
-        "cont_prev_value": "cHJldi1oYW5kbGU",
+        "cont_irr_alg": "sha256",
+        "cont_irr_value": "CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA",
+        "cont_prev_alg": "sha256",
+        "cont_prev_value": "Imp8EIIBTYo1GafV0toSPuMJpP40j5pH5x7VDVU1il8",
         "cont_request_state": "opaque-state-xyz",
         "created": 1700000000,
         "dpop_token": "dpop-token",

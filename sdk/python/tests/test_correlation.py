@@ -224,8 +224,8 @@ class TestInputRequiredAssociatesWithoutConsuming:
         cid = _record(store, signed)
         handles = store.record_input_required(
             cid,
-            response_digest_alg="sha-256",
-            response_digest_value="aXJyLWhhbmRsZQ",
+            response_digest_alg="sha256",
+            response_digest_value="CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA",
             request_state="opaque-state-xyz",
             now=IN_WINDOW,
         )
@@ -234,7 +234,7 @@ class TestInputRequiredAssociatesWithoutConsuming:
         assert store.peek(cid) is not None
         assert handles.prev_alg == signed.evidence_digest_alg
         assert handles.prev_value == signed.evidence_digest_value
-        assert handles.irr_value == "aXJyLWhhbmRsZQ"
+        assert handles.irr_value == "CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA"
         assert handles.request_state == "opaque-state-xyz"
 
     def test_the_handles_feed_straight_into_the_answer_leg(self):
@@ -242,8 +242,8 @@ class TestInputRequiredAssociatesWithoutConsuming:
         cid = _record(store, signed)
         handles = store.record_input_required(
             cid,
-            response_digest_alg="sha-256",
-            response_digest_value="aXJyLWhhbmRsZQ",
+            response_digest_alg="sha256",
+            response_digest_value="CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA",
             request_state="opaque-state-xyz",
             now=IN_WINDOW,
         )
@@ -271,8 +271,8 @@ class TestInputRequiredAssociatesWithoutConsuming:
         cid = _record(store, signed)
         store.record_input_required(
             cid,
-            response_digest_alg="sha-256",
-            response_digest_value="aXJyLWhhbmRsZQ",
+            response_digest_alg="sha256",
+            response_digest_value="CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA",
             request_state="s",
             now=IN_WINDOW,
         )
@@ -292,10 +292,10 @@ class TestInputRequiredAssociatesWithoutConsuming:
         signer that refuses every answer leg.
         """
         full = dict(
-            cont_prev_alg="sha-256",
-            cont_prev_value="cHJldg",
-            cont_irr_alg="sha-256",
-            cont_irr_value="aXJy",
+            cont_prev_alg="sha256",
+            cont_prev_value="Imp8EIIBTYo1GafV0toSPuMJpP40j5pH5x7VDVU1il8",
+            cont_irr_alg="sha256",
+            cont_irr_value="CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA",
             cont_request_state="opaque-state",
         )
         names = list(full)
@@ -368,7 +368,7 @@ class TestInputRequiredAssociatesWithoutConsuming:
         with pytest.raises(McpReError) as ei:
             store.record_input_required(
                 "not-outstanding",
-                response_digest_alg="sha-256",
+                response_digest_alg="sha256",
                 response_digest_value="x",
                 request_state="s",
                 now=IN_WINDOW,
@@ -381,7 +381,7 @@ class TestInputRequiredAssociatesWithoutConsuming:
         with pytest.raises(McpReError) as ei:
             store.record_input_required(
                 cid,
-                response_digest_alg="sha-256",
+                response_digest_alg="sha256",
                 response_digest_value="x",
                 request_state="s",
                 now=LATE,
@@ -395,7 +395,7 @@ class TestInputRequiredAssociatesWithoutConsuming:
         with pytest.raises(McpReError) as ei:
             store.record_input_required(
                 cid,
-                response_digest_alg="sha-256",
+                response_digest_alg="sha256",
                 response_digest_value="x",
                 request_state="s",
                 now=IN_WINDOW,
