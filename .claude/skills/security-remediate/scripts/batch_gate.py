@@ -85,7 +85,11 @@ CI_EXCLUDED = {
     ("scripts/workspace_lints_gate.py", "--probe"),
 }
 
-_CI_INVOCATION = re.compile(r"python3\s+((?:scripts|tools)/[A-Za-z0-9_./-]+)((?:[ \t]+--[a-z-]+)*)[ \t]*$",
+#: A gate is either a Python file run as `python3 <path>`, or a `tools/verification`
+#: executable run directly (`tools/verification/rust-targets --check`); every executable
+#: there is a Python script, so both forms run under this interpreter.
+_CI_INVOCATION = re.compile(r"(?:python3\s+|^[ \t-]*(?:run:[ \t]+)?(?:\./)?(?=tools/verification/))"
+                            r"((?:scripts|tools)/[A-Za-z0-9_./-]+)((?:[ \t]+--[a-z-]+)*)[ \t]*$",
                             re.M)
 
 

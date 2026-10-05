@@ -81,12 +81,23 @@ def test_ci_gates_reads_bare_flag_invocations_and_leaves_valued_ones_to_the_work
         "  - run: |\n"
         "      python3 tools/verification/check-views\n"
         "      python3 scripts/a_gate.py\n"
+        "  - run: tools/verification/rust-targets --check\n"
+        "  - run: |\n"
+        "      ./tools/verification/check-views --selftest\n"
+        "  - run: scripts/run_gate.sh --selftest\n"
     )
     assert batch_gate.ci_gates(wf) == [
         ("scripts/a_gate.py",),
         ("scripts/a_gate.py", "--selftest"),
         ("tools/verification/check-views",),
+        ("tools/verification/rust-targets", "--check"),
+        ("tools/verification/check-views", "--selftest"),
     ], batch_gate.ci_gates(wf)
+
+
+def test_control_the_build_graph_table_check_is_on_the_merge_path_the_batch_runs():
+    assert ("tools/verification/rust-targets", "--check") in batch_gate.ci_gates(), \
+        batch_gate.ci_gates()
 
 
 def test_control_a_red_merge_path_gate_is_named():
@@ -122,7 +133,8 @@ def main() -> int:
              test_a_suite_structural_already_runs_is_not_run_twice,
              test_ci_gates_reads_bare_flag_invocations_and_leaves_valued_ones_to_the_workflow,
              test_control_a_red_merge_path_gate_is_named,
-             test_control_a_workflow_with_no_gate_is_infra_never_ok]
+             test_control_a_workflow_with_no_gate_is_infra_never_ok,
+             test_control_the_build_graph_table_check_is_on_the_merge_path_the_batch_runs]
     failed = 0
     for t in tests:
         print("%s ..." % t.__name__)
