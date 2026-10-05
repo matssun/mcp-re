@@ -242,6 +242,7 @@ not an omission to hide.
 | proxy.replay_materialization | V0 | THM-0086 | 0 |
 | proxy.replay_materialization_sole_producer | V0 | _none_ | 0 |
 | proxy.replay_tier_production_minimum | V0 | _none_ | 0 |
+| proxy.request_header_block_boundary | V0 | _none_ | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.response_signing | V0 | THM-0063, THM-0075 | 0 |
 | proxy.retained_record_at_the_store | V0 | _none_ | 0 |

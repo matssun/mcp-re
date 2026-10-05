@@ -12643,6 +12643,32 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#transport::tests::the_installable_binding_is_exact_match",
 ]
 
+# Owner ruling at the B9 checkpoint, B14: the header view ends where the header block ends.
+[[unit]]
+id = "proxy.request_header_block_boundary"
+class = "V0"
+description = "`RequestHeaders::parse` reads header lines only between the request line and the first empty line: bytes after the `\\r\\n\\r\\n` terminator are never read, so a body line shaped like a header is neither a header value nor a duplicate in `count`, whatever a caller passes along with the block. A block with no terminator yields only the lines it holds. Says nothing about how a caller frames the block or which header values are legal — the harness reader's framing guard and the routing-header hygiene decide those."
+# UC-1: `transport/mod.rs` declares `mod identity;` and `pub mod ingress;`, so both resolve
+# inside this unit's source closure and are measured with it; neither is claimed here.
+paths = [
+  "mcp-re-proxy/src/transport/mod.rs",
+  "mcp-re-proxy/src/transport/identity.rs",
+  "mcp-re-proxy/src/transport/ingress/**/*.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/transport/header_block_boundary",
+  "mutation://proxy/transport/header_block_boundary",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#transport::tests::request_headers_parse_skips_request_line_and_is_case_insensitive",
+  "//mcp-re-proxy:proxy_unit_test#transport::tests::request_headers_parse_reads_nothing_after_the_header_terminator",
+  "//mcp-re-proxy:proxy_unit_test#transport::tests::request_headers_parse_a_block_that_starts_with_its_terminator_holds_no_header",
+  "//mcp-re-proxy:proxy_unit_test#transport::tests::request_headers_parse_an_unterminated_block_yields_only_its_own_lines",
+]
+
 [[unit]]
 id = "proxy.channel_peer_resolution"
 class = "V0"

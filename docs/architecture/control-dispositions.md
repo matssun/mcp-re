@@ -2097,7 +2097,7 @@ verify perfectly and still be described as more than it is.
 
 ## NP-077 — a routing header is well-formed and singular, or the request fails closed
 
-**Controls:** `transport/mod.rs` (6), `mcp-re-proxy/src/tls.rs` (1).
+**Controls:** `transport/mod.rs` (5), `mcp-re-proxy/src/tls.rs` (1).
 **Statement.** *An absent routing header passes and a well-formed one passes; a duplicate, an
 empty and a malformed one each FAIL CLOSED; and request-header parsing skips the request
 line and is case-insensitive.*
@@ -2106,6 +2106,8 @@ shape — or a malformed header is ignored rather than refused. The absent/prese
 keeps "fails closed" from meaning "refuses everything".
 **Likely owner:** none.
 **Severity:** `critical`.
+
+**Registered in part, owner ruling at the B9 checkpoint (B14).** The parsing clause — the request line is skipped, names compare case-insensitively, and nothing after the header terminator is read — is `unit://proxy.request_header_block_boundary`, `tested`, whose control `request_headers_parse_skips_request_line_and_is_case_insensitive` it claims together with three boundary controls; probe M492 turns them red when the view reads past the first empty line. The routing-header clauses stay with this record.
 
 ## NP-078 — the historical identity facade refuses, and its product cannot be manufactured
 

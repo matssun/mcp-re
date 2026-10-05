@@ -12118,3 +12118,19 @@ expect_red = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::mint_successor::tests::the_rotation_warning_names_the_cause_the_custody_kept",
   "//mcp-re-proxy:proxy_unit_test#signing_plane::rotation_owner_tests::a_startup_refusal_tells_an_offline_root_from_one_signing_under_another_key",
 ]
+
+[[probe]]
+id = "M492-proxy-the-header-view-stops-at-the-terminator"
+unit = "proxy.request_header_block_boundary"
+conjunct = "the first empty line ends the header view; a body line shaped like a header is neither a value nor a duplicate"
+path = "mcp-re-proxy/src/transport/mod.rs"
+anchor = """
+            .take_while(|line| !line.is_empty())
+"""
+weakening = """
+            .filter(|line| !line.is_empty())
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#transport::tests::request_headers_parse_reads_nothing_after_the_header_terminator",
+  "//mcp-re-proxy:proxy_unit_test#transport::tests::request_headers_parse_a_block_that_starts_with_its_terminator_holds_no_header",
+]

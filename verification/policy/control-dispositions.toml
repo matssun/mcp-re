@@ -5187,14 +5187,6 @@ proposition = "NP-077"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-12042"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transport::tests::request_headers_parse_skips_request_line_and_is_case_insensitive"
-decision = "new-proposition"
-proposition = "NP-077"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-12043"
 project = "mcp-re-proxy"
 control = "src/lib.rs#transport::tests::routing_headers_absent_pass"

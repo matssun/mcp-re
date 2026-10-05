@@ -191,10 +191,12 @@ count = 31
 # verdict, with a match on its two arms. The nesting site went with the discarded value.
 # 65 -> 92: the same measurement correction as `arithmetic_side_effects` above.
 # 83 -> 79: measured at e4faa23c, after the r12 fixes and the retired sync replay stores.
+# 79 -> 78: `RequestHeaders::parse` ends its iterator at the header terminator, so the
+# skip branch inside its loop is gone.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 79
+count = 78
 
 # 0 -> 4: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]
