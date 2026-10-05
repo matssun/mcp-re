@@ -2831,7 +2831,7 @@ The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit.
 
 ### Disposition
 
-Action required: move authority (d) into a child module
-`mcp-re-proxy/src/aws_sts/sts_protocol.rs` declared from `aws_sts.rs` (no `lib.rs` line),
+Action required: move authority (d) into a child module `aws_sts::sts_protocol`, declared
+from `aws_sts.rs` (no `lib.rs` line),
 its tests with it, retargeting mutation probe M265's path and the moved `tested_symbols`.
 Authority (c)'s revocation gap waits on ruling `aws-credential-revocation-recovery`.
