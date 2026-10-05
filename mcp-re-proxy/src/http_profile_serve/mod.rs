@@ -109,7 +109,6 @@ use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ExecutionDisposition;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::OutstandingId;
 use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::VerifierPolicy;
@@ -506,7 +505,7 @@ impl HttpProfileProxy {
         // NOTIFICATION — a one-way message with no JSON-RPC `id` is its own terminal: it
         // says the boundary accepted the message, never that anything completed. Decided
         // from the REQUEST, which is where the fact lives.
-        if matches!(admitted.envelope.outstanding(), OutstandingId::Notification) {
+        if admitted.envelope.outstanding().is_notification() {
             return self
                 .answer_notification_terminal(&acc, &mut progress, &outcome, &window, &owed)
                 .await;

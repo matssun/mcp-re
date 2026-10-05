@@ -252,14 +252,14 @@ pub(in crate::http_profile_serve) mod tests {
         assert!(matches!(
             admission
                 .validate_envelope(&notification)
-                .map(|e| matches!(e.outstanding(), OutstandingId::Notification)),
+                .map(|e| e.outstanding().is_notification()),
             Ok(true)
         ));
         let call = request(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#);
         assert!(matches!(
             admission
                 .validate_envelope(&call)
-                .map(|e| matches!(e.outstanding(), OutstandingId::Id(_))),
+                .map(|e| !e.outstanding().is_notification()),
             Ok(true)
         ));
     }
@@ -272,7 +272,7 @@ pub(in crate::http_profile_serve) mod tests {
             panic!("a legal request body was refused");
         };
         assert!(std::ptr::eq(envelope.body(), http_req.body.as_slice()));
-        assert!(matches!(envelope.outstanding(), OutstandingId::Id(_)));
+        assert!(!envelope.outstanding().is_notification());
         assert!(admission
             .validate_envelope(&request(r#"{"not":"jsonrpc"}"#))
             .is_err());

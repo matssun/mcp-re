@@ -141,6 +141,12 @@ pub(super) enum ReplyClass {
 mod tests {
     use super::*;
 
+    /// The outstanding id of a request with `id: 1`, from its only producer.
+    fn request_id_1() -> OutstandingId {
+        mcp_re_http_profile::validate_request_envelope(br#"{"jsonrpc":"2.0","id":1,"method":"x"}"#)
+            .expect("a legal request")
+    }
+
     fn reply(body: &str) -> HttpResponse {
         HttpResponse {
             status: 200,
@@ -156,7 +162,7 @@ mod tests {
         // invalid would refuse a conformant message at 502.
         let validated = ValidatedReply::of(
             reply(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"bad params"}}"#),
-            &OutstandingId::Id(serde_json::json!(1)),
+            &request_id_1(),
         )
         .expect("an error reply is a legal envelope");
         assert!(matches!(
@@ -171,7 +177,7 @@ mod tests {
         // request never reaches the classifier — let alone the signer.
         assert!(ValidatedReply::of(
             reply(r#"{"jsonrpc":"2.0","id":99,"result":{}}"#),
-            &OutstandingId::Id(serde_json::json!(1)),
+            &request_id_1(),
         )
         .is_err());
     }
@@ -190,7 +196,7 @@ mod tests {
             },
         })
         .to_string();
-        let validated = ValidatedReply::of(reply(&body), &OutstandingId::Id(serde_json::json!(1)))
+        let validated = ValidatedReply::of(reply(&body), &request_id_1())
             .expect("a legal envelope");
         match validated.classify().expect("a legal classification") {
             ReplyClass::Open(state) => assert_eq!(state, "s-1"),
@@ -204,7 +210,7 @@ mod tests {
         // client a verifiable message whose continuation semantics nobody can read.
         let validated = ValidatedReply::of(
             reply(r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"something_new"}}"#),
-            &OutstandingId::Id(serde_json::json!(1)),
+            &request_id_1(),
         )
         .expect("a legal envelope");
         assert!(validated.classify().is_err());

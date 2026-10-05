@@ -23,7 +23,6 @@ mod request;
 /// The outbound half: whether a backend reply is a legal response to an outstanding request.
 mod response;
 
-pub use request::outstanding_id;
 pub use request::validate_request_envelope;
 pub use response::parse_response_body;
 pub use response::validate_response_envelope;
@@ -39,10 +38,24 @@ pub const JSON_RPC_VERSION: &str = "2.0";
 /// A notification has none, which is a different fact from "the id is null": JSON-RPC
 /// reserves `null` for a response whose request id could not be determined, and a
 /// notification has no response at all.
+///
+/// [`validate_request_envelope`] is the only producer: the representation is private to this
+/// module, so holding an `OutstandingId` means a body passed every clause of that validation,
+/// and a second answer to "what is this request" can only come from asking it again.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OutstandingId {
+pub struct OutstandingId(Outstanding);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Outstanding {
     /// An id-bearing request. The response MUST echo this value.
     Id(Value),
     /// A one-way notification. There is no response to correlate.
     Notification,
+}
+
+impl OutstandingId {
+    /// Whether the request is a one-way notification, which has no response to correlate.
+    pub fn is_notification(&self) -> bool {
+        matches!(self.0, Outstanding::Notification)
+    }
 }

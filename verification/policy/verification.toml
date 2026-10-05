@@ -6379,10 +6379,9 @@ evidence = [
   "test://proxy/serving/outstanding_id_provenance",
   "mutation://proxy/serving/outstanding_id_provenance",
 ]
-# `outstanding_id` is a published API with legitimate callers on the client side and in the
-# response validator, so it cannot be deleted to make a second read unavailable. What is
-# measured is that the SERVING PATH does not ask the same document twice — and the third
-# member is what stops the first two going vacuously true if a matcher stops matching.
+# `OutstandingId` has one producer, `validate_request_envelope`, so a second answer can only
+# come from asking it again. What is measured is that the SERVING PATH asks it once — and the
+# third member is what stops the first two going vacuously true if a matcher stops matching.
 tested_symbols = [
   "//mcp-re-proxy:integration_test#outstanding_id_provenance_test::the_serving_path_decides_the_outstanding_id_exactly_once",
   "//mcp-re-proxy:integration_test#outstanding_id_provenance_test::no_production_serving_code_reads_the_outstanding_id_a_second_time",

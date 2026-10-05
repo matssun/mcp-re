@@ -6894,9 +6894,8 @@ anchor = """
         let outstanding = admitted.envelope.outstanding();
 """
 weakening = """
-        let reread = mcp_re_http_profile::outstanding_id(&http_req.body)
-            .unwrap_or(mcp_re_http_profile::OutstandingId::Notification);
-        let outstanding = &reread;
+        let reread = mcp_re_http_profile::validate_request_envelope(&http_req.body);
+        let outstanding = reread.as_ref().unwrap_or(admitted.envelope.outstanding());
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#outstanding_id_provenance_test::no_production_serving_code_reads_the_outstanding_id_a_second_time",

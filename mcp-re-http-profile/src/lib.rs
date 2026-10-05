@@ -161,7 +161,6 @@ pub use dispatch::DispatchError;
 pub use dispatch::DispatchOutcome;
 pub use dispatch::ReplayTierAdmitted;
 pub use dispatch::RetainedContinuation;
-pub use envelope::outstanding_id;
 pub use envelope::parse_response_body;
 pub use envelope::validate_request_envelope;
 pub use envelope::validate_response_envelope;

@@ -149,7 +149,6 @@ mod tests {
     use super::*;
     use crate::authorization::audit::AuthorizationFacet;
     use crate::http_profile_serve::request_admission::tests::validated;
-    use mcp_re_http_profile::OutstandingId;
 
     fn ping() -> HttpRequest {
         HttpRequest {
@@ -185,9 +184,6 @@ mod tests {
             envelope: validated(&http_req),
             authorized: AuthorizationPosture::NoPolicyConfigured,
         };
-        assert!(matches!(
-            notification.envelope.outstanding(),
-            OutstandingId::Notification
-        ));
+        assert!(notification.envelope.outstanding().is_notification());
     }
 }
