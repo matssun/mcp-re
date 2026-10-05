@@ -430,8 +430,10 @@ where
             // again after every restart: revoking one revoked all of them, and a
             // just-issued credential could be born already on a denylist.
             //
-            // `delegated_kid` is the RFC 7638 thumbprint of a freshly generated key, so
-            // it carries the fleet-wide uniqueness. The counter stays as a within-process
+            // `delegated_kid` is the RFC 7638 thumbprint of a freshly generated key, so two
+            // replicas' ids differ exactly when their keys do; the production factory draws
+            // each key from the OS CSPRNG, which is what makes them differ across a fleet,
+            // and no test here measures that. The counter stays as a within-process
             // issuance ordinal, which distinguishes two credentials minted over the SAME
             // key material (a re-issuance under an advanced trust epoch) rather than
             // relying on `iat` to differ.
@@ -631,10 +633,16 @@ mod tests {
     /// credentials must never share one. Every replica in a fleet runs the SAME
     /// `issuer_kid` and starts its counter at 0, so a bare `issuer_kid#N` named a
     /// different credential on each replica and again after each restart.
+    ///
+    /// What this measures is that the id FOLLOWS THE KEY: two cold-started replicas with
+    /// the same config and issuer, given different keys, mint different ids. That their
+    /// keys differ is the production factory's (the OS CSPRNG); the two seeds here set it up
+    /// and say nothing about it.
     #[test]
-    fn two_replicas_never_mint_the_same_credential_id() {
+    fn a_credential_id_differs_whenever_the_key_does() {
         // Two independently-started custody instances — a fleet, or one replica before
-        // and after a restart. Same config, same issuer, both from a cold counter.
+        // and after a restart. Same config, same issuer, both from a cold counter, over
+        // different keys.
         let mut replica_a = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory_seeded(10));
         let mut replica_b = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory_seeded(200));
         replica_a.ensure_active(1_000).expect("A issues");
@@ -650,7 +658,7 @@ mod tests {
         // And the id names the KEY, so it is derivable from what a verifier already sees.
         assert!(
             jti_a.contains(replica_a.active_kid().expect("A has a key")),
-            "the credential id carries the delegated kid that makes it fleet-unique"
+            "the credential id carries the delegated kid of the key it was minted over"
         );
     }
 

@@ -8175,7 +8175,7 @@ evidence = [
 tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::signing_never_touches_the_root_within_a_key_life",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::rotation_mints_successor_in_the_overlap_window",
-  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::two_replicas_never_mint_the_same_credential_id",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_credential_id_differs_whenever_the_key_does",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::successive_issuances_in_one_process_have_distinct_credential_ids",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::reissue_under_advanced_trust_epoch_mints_a_fresh_key",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::continuous_availability_across_rotations",
@@ -10934,7 +10934,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.server_identity_facts"
 class = "V0"
-description = "WHO THIS DEPLOYMENT IS, RESOLVED ONCE: a legal request yields ONE canonical actor identity, a missing coordinate leaves no identity and NAMES ITSELF, a request missing both coordinates reports both in one pass, a whitespace coordinate is empty and names itself, a PADDED coordinate is refused by name rather than minted into every actor and `iss` (the shared canonical-coordinate rule in `config_state/coordinate.rs`), and the identity keyid follows the RESOLVED ISSUER rather than the server key id. Covers the classifier only; what the command line admits as a coordinate is the argv boundary's and has no unit."
+description = "WHO THIS DEPLOYMENT IS, RESOLVED ONCE: a legal request yields ONE canonical actor identity, a missing coordinate leaves no identity and NAMES ITSELF, a request missing both coordinates reports both in one pass, a whitespace coordinate is empty and names itself, a PADDED coordinate is refused by name rather than minted into every actor and `iss` (the shared canonical-coordinate rule in `config_state/coordinate.rs`), the identity keyid follows the RESOLVED ISSUER rather than the server key id, and a delegated owner that resolved no facts leaves no identity and no refusal of this owner's, the legality boundary reporting that owner's refusal rather than an internal error. Covers the classifier only; what the command line admits as a coordinate is the argv boundary's and has no unit."
 paths = [
   "mcp-re-proxy/src/config_state/server_identity.rs",
   "mcp-re-proxy/src/config_state/coordinate.rs",
@@ -10952,6 +10952,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_request_missing_both_coordinates_reports_both_in_one_pass",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_whitespace_coordinate_is_empty_and_names_itself",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_padded_coordinate_leaves_no_identity_and_names_itself",
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::an_absent_delegated_fact_leaves_no_identity_and_refuses_through_its_owner",
   "//mcp-re-proxy:proxy_unit_test#config_state::coordinate::tests::a_canonical_value_has_no_fault",
   "//mcp-re-proxy:proxy_unit_test#config_state::coordinate::tests::an_empty_or_whitespace_value_is_blank",
   "//mcp-re-proxy:proxy_unit_test#config_state::coordinate::tests::a_value_unequal_to_its_trim_is_padded",

@@ -17,6 +17,14 @@
 //!   fn f(g: impl Fn(&str) -> Opaque) -> u64  ICE     <-- this file
 //!
 //! Adding `#[verifier::external_type_specification]` for `Opaque` removes the ICE.
+//!
+//! The ceiling is registered as ceiling 1 of
+//! `verification/baseline/wp2-http-profile-triage.md`, and its workaround is ASM-0013 in
+//! `verification/policy/assumptions.toml`, which declares `VerificationKey` opaque.
+//!
+//! **Nothing in this crate is proved.** The `ensures` below is never discharged: the
+//! prover panics before it reaches the obligation. It is part of the trigger's shape (a
+//! verified function with a specification), not a result, and no unit or theorem cites it.
 
 use verus_builtin_macros::verus_spec;
 #[allow(unused_imports)]

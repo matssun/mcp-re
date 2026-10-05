@@ -28,24 +28,23 @@
 //!   converges on refusing that issuer's certificates rather than on admitting revoked
 //!   ones. The artifact bounds itself; the plane does not have to.
 //!
-//! That is why [`Drop`] here performs no security transition. It is a deliberate
-//! conclusion from the CRL's own semantics, not the absence of the question.
-//!
-//! Stated as the conditional it actually is:
+//! That is why [`Drop`] here performs no revocation transition. Two things are outside the
+//! conditional below: a deployment with no `--client-crl`, where it is vacuous, and the
+//! delegated TLS signing capability the snapshot holds on that path (`DelegatedCertResolver`
+//! over a `RawEd25519TlsSigner`). Both are bounded by `materialized_runtime`'s order instead:
+//! the fleet drains, every handshake with it, before any plane drops.
 //!
 //! > A TLS snapshot may outlive its `TlsPlane`
 //! >   ONLY BECAUSE its authorization-relevant validity is self-bounded,
 //! >   AND unknown revocation state cannot become admissible.
 //!
-//! Both clauses are load-bearing and both are enforced rather than assumed. The first is
-//! enforced by refusing a CRL with no `nextUpdate`, pinned by `tls`'s
-//! `crl_next_update_tests`; the second is pinned by `client_revocation`'s
+//! Both clauses are enforced, not assumed: the first by refusing a CRL with no `nextUpdate`
+//! (`tls`'s `crl_next_update_tests`), the second by `client_revocation`'s
 //! `an_expired_crl_refuses_its_issuer_rather_than_admitting_it` and its property control
-//! `unknown_status_is_refused_with_no_policy_input_that_could_admit_it`. The second clause
-//! is now structural rather than configured — no constructible index or verifier admits an
-//! unknown status. **Introducing an operator knob for unknown status means re-deriving
-//! this contract before the change lands** — with unknown admissible, a surviving snapshot
-//! becomes exactly the frozen authorization state `trust_plane` fails closed to avoid.
+//! `unknown_status_is_refused_with_no_policy_input_that_could_admit_it` — structurally, as
+//! no constructible index or verifier admits an unknown status. **An operator knob for
+//! unknown status means re-deriving this contract first**: with unknown admissible, a
+//! surviving snapshot is exactly the frozen state `trust_plane` fails closed to avoid.
 //!
 //! A failed reload keeps the last-good configuration, for the same reason
 //! `reloading_trust` does: a truncated file mid-write must not empty what is enforced.
@@ -184,9 +183,9 @@ impl TlsPlane {
 
 impl Drop for TlsPlane {
     fn drop(&mut self) {
-        // No security transition, unlike `trust_plane` and `signing_plane`: a CRL past its
-        // own `nextUpdate` yields `Unknown`, and unknown is refused unconditionally, so a
-        // snapshot nobody refreshes converges on refusing rather than on admitting.
+        // No revocation transition, unlike `trust_plane` and `signing_plane`: an unrefreshed
+        // CRL yields `Unknown`, which is refused; the signing capability the snapshot holds
+        // is bounded by the drain before this drop (see the module documentation).
         //
         // The posture is a different obligation from the transition, and it is not
         // discretionary. Once this plane retires, nothing re-reads the CRLs — so a replica

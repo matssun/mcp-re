@@ -290,6 +290,29 @@ mod tests {
         }
     }
 
+    /// The delegated-absent branch: legal coordinates, and a delegated owner that resolved
+    /// no facts. No identity and no refusal of this owner's own — the delegated owner's is
+    /// the one an operator reads — and the legality boundary reports that refusal rather than
+    /// falling through to its internal "recognised no state" error.
+    #[test]
+    fn an_absent_delegated_fact_leaves_no_identity_and_refuses_through_its_owner() {
+        let mut config = legal_config();
+        config.delegated_signing.trust_epoch = None;
+        let (delegated, delegated_refusals) =
+            crate::config_state::delegated_signing::classify_and_validate(&config);
+        assert!(delegated.is_none() && !delegated_refusals.is_empty());
+        let (identity, violations) = classify_and_validate(&config, None);
+        assert!(identity.is_none());
+        assert!(violations.is_empty(), "{violations:?}");
+
+        let Err(refusal) = crate::config_state::validation::ValidatedDeployment::try_from(config)
+        else {
+            panic!("a deployment with no delegated facts was validated");
+        };
+        assert!(refusal.contains("--delegated-trust-epoch"), "{refusal}");
+        assert!(!refusal.contains("internal error"), "{refusal}");
+    }
+
     /// One pass, not one offender: the coordinates are reported independently.
     ///
     /// A request missing both gets both messages. An implementation that stopped at the

@@ -13,4 +13,9 @@ narrowing sequence and the workaround are documented in that file.
 
 Kept outside the workspace so it is never built by an ordinary `cargo build`; it exists to
 be sent upstream, and to stop this being rediscovered from scratch. ADR-MCPRE-059 WP2,
-ceiling 1.
+ceiling 1, registered in
+[`verification/baseline/wp2-http-profile-triage.md`](../../baseline/wp2-http-profile-triage.md);
+the workaround is ASM-0013 (`VerificationKey` opaque).
+
+The `ensures` in `src/lib.rs` is never discharged — the prover panics first — so it is not
+evidence of anything, and no unit or theorem cites this crate.
