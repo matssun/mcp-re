@@ -1463,3 +1463,86 @@ new = """
 pub struct ResponseRoleEvidence {
     pub digest_value: String,
 }"""
+
+[[probe]]
+id = "S42"
+unit = "http_profile.mcp_transport_policy_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot apply the MCP transport contract to a request it has not verified: `McpTransportPolicy::enforce` is reachable only from the crate's verifiers"
+doc_path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
+doc_item = "doc#mcp_transport::McpTransportPolicy"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s42.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S42. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::HttpRequest;
+use mcp_re_http_profile::McpTransportPolicy;
+
+pub fn hostile(policy: &McpTransportPolicy, unverified: &HttpRequest) {
+    let _ = policy.enforce(unverified); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+`E0624` and not `E0599`: the method exists and the request floor calls it after the signature
+and digest checks. What this probe attacks is the visibility, so a renamed `enforce` does not
+read as a closed boundary. `enforce_bodyless` has the same visibility and the same one caller
+(`bodyless::verify_bodyless_request`).
+"""
+[probe.producer_paths]
+module-tree-visibility = "`enforce` is `pub(crate)` on a `pub` type re-exported by `lib.rs`; the probe is its own crate linking the library, so it sees the public surface a downstream consumer sees"
+alternate-constructors = "the call is attacked, not a construction. No public function forwards an unverified `HttpRequest` to the contract: `verify_request_with_policy` and `verify_bodyless_request` reach it only after the signature verified"
+generated-or-deserialization = "no derive or macro generates a public forwarding method"
+test-only-construction = "the probe is the downstream test-code route; the owner's `#[cfg(test)]` modules call `enforce` inside the crate and add no wider re-export"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/mcp_transport/agreement.rs"
+old = """
+    pub(crate) fn enforce(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {"""
+new = """
+    pub fn enforce(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {"""
+
+[[probe]]
+id = "S43"
+unit = "http_profile.mcp_transport_policy_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot derive a transport policy with a different accepted version set from one the configuration owner built"
+doc_path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
+doc_item = "doc#mcp_transport::McpTransportPolicy"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s43.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0599"
+construction = """
+// ADR-MCPRE-068 structural probe S43. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::McpTransportPolicy;
+
+pub fn hostile(decided: McpTransportPolicy) -> McpTransportPolicy {
+    decided.with_supported_versions(&["1999-01-01"]) // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+`E0599` and not `E0624`: the builder does not exist under any visibility. A reintroduction as
+`pub(crate)` would be refused with `E0624` and is still a finding, because no in-crate caller
+needs to replace a decided set either.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the probe is its own crate linking the library and sees exactly the public surface"
+alternate-constructors = "`mcp_2026_07_28(&[..])` builds a NEW policy from a set the caller states; it does not read or replace another policy's set. `profile_default` names this profile's own version. No method takes `self` and returns `Self`"
+generated-or-deserialization = "`McpTransportPolicy` derives Debug and Clone only; no Deserialize or Default exists to rebuild one with another set"
+test-only-construction = "the owner's tests build policies through `mcp_2026_07_28`; no test-gated builder exists"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
+old = """
+    pub fn profile_default() -> Self {
+        Self::mcp_2026_07_28(&[MCP_PROTOCOL_VERSION])
+    }"""
+new = """
+    pub fn profile_default() -> Self {
+        Self::mcp_2026_07_28(&[MCP_PROTOCOL_VERSION])
+    }
+
+    pub fn with_supported_versions(mut self, versions: &[&str]) -> Self {
+        self.supported_protocol_versions = versions.iter().map(|s| (*s).to_owned()).collect();
+        self
+    }"""

@@ -11687,3 +11687,108 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#trust_plane::freshness::tests::a_store_with_no_successful_read_within_its_bound_is_stale_until_one_succeeds",
 ]
+
+[[probe]]
+id = "M466-mcp-name-is-required-for-every-target-naming-method"
+unit = "http_profile.mcp_transport_contract"
+conjunct = "Mcp-Name is required, and must agree, for every method the protocol table says names a target"
+# The two-entry list the contract held before: prompts/get and resources/(un)subscribe
+# fall back to the no-target arm and their header goes unchecked.
+path = "mcp-re-http-profile/src/mcp_transport/agreement.rs"
+anchor = """
+        let target = body_method.map_or(McpMethodTarget::Unknown, McpMethodTarget::of);
+"""
+weakening = """
+        let target = body_method
+            .filter(|m| ["tools/call", "resources/read"].contains(m))
+            .map_or(McpMethodTarget::Unknown, McpMethodTarget::of);
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::every_target_naming_method_requires_an_agreeing_name",
+]
+
+[[probe]]
+id = "M467-a-covered-name-with-nothing-to-agree-with-is-refused"
+unit = "http_profile.mcp_transport_contract"
+conjunct = "a covered Mcp-Name on a message whose body names no target is refused"
+path = "mcp-re-http-profile/src/mcp_transport/agreement.rs"
+anchor = """
+            if headers.name.is_some() {
+                return Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER));
+            }
+            return Ok(());
+"""
+weakening = """
+            return Ok(());
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::a_covered_name_with_no_target_in_the_body_is_refused",
+]
+
+[[probe]]
+id = "M468-a-folded-variant-of-a-listed-method-is-refused"
+unit = "http_profile.mcp_transport_contract"
+conjunct = "a body method a case-folding or trimming reader would take for a listed one is refused"
+path = "mcp-re-http-profile/src/mcp_transport/agreement.rs"
+anchor = """
+                && McpMethodTarget::of(&folded) != McpMethodTarget::Unknown
+"""
+weakening = """
+                && folded.is_empty()
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::a_case_or_padding_variant_of_a_listed_method_is_refused",
+]
+
+[[probe]]
+id = "M469-a-bodyless-request-must-state-its-version"
+unit = "http_profile.mcp_transport_contract"
+conjunct = "a bodyless request must carry a covered MCP-Protocol-Version"
+path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
+anchor = """
+            if self.require_protocol_version_header {
+                return Err(HttpProfileError::McpTransportHeaderMissing(
+                    MCP_PROTOCOL_VERSION_HEADER,
+                ));
+            }
+            return Ok(());
+"""
+weakening = """
+            return Ok(());
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::tests::a_bodyless_request_states_a_supported_version_and_no_routing_header",
+]
+
+[[probe]]
+id = "M470-a-bodyless-request-carries-no-routing-header"
+unit = "http_profile.mcp_transport_contract"
+conjunct = "a bodyless request carrying a covered Mcp-Method or Mcp-Name is refused"
+path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
+anchor = """
+            if single_header(&request.headers, routing)?.is_some() {
+                return Err(HttpProfileError::McpTransportDivergence(routing));
+            }
+"""
+weakening = """
+            let _ = routing;
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::tests::a_bodyless_request_states_a_supported_version_and_no_routing_header",
+  "//mcp-re-http-profile:bodyless_202_test#the_bodyless_signer_covers_every_conditionally_mandatory_header",
+]
+
+[[probe]]
+id = "M471-the-bodyless-signer-states-the-version"
+unit = "http_profile.mcp_transport_contract"
+conjunct = "the bodyless signer states the protocol version the contract requires"
+path = "mcp-re-http-profile/src/bodyless/mod.rs"
+anchor = """
+    if single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)?.is_none() {
+"""
+weakening = """
+    if single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)?.is_none() && created < 0 {
+"""
+expect_red = [
+  "//mcp-re-http-profile:bodyless_202_test#the_bodyless_signer_covers_every_conditionally_mandatory_header",
+]

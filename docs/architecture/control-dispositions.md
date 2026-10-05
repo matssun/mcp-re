@@ -362,7 +362,8 @@ remote peer can drive. These three are driven by the test, not by a reply.
 `doc#dispatch::outcome::DispatchOutcome`,
 `doc#verified_response::facts::UnboundResponseSignatureFacts`,
 `doc#evidence::request_role::RequestRoleEvidence` (S40),
-`doc#evidence::response_role::ResponseRoleEvidence` (S41); `mcp-re-client-core`
+`doc#evidence::response_role::ResponseRoleEvidence` (S41),
+`doc#mcp_transport::McpTransportPolicy` (S42, S43); `mcp-re-client-core`
 `doc#delegated_trust::DelegatedResponseTrust`.
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 8; the client-core item added by
 the S-05/CL-CLIENT slice, which built its probes first.
@@ -2462,6 +2463,7 @@ measures the generic component allowlist rather than a transport header, so it i
 `verification/reviews/packets/adr069-np-089-np-090-ratification-2026-09-19.md` §2.2. This
 record's other thirty-one rows are unpacketed.
 **Registered, owner ruling 13 (`owner-signature:hp-1-wire-surface-closure-ratification`, sha256 `8cbd4d69…`):** that one row is `unit://http_profile.wire_surface_closure` under THM-0134.
+**Measured in part, owner ruling 19.2 (B5).** The header-body agreement half is `unit://http_profile.mcp_transport_contract` (`Mcp-Name` bound for every target-naming method and refused where nothing can agree with it, folded method variants refused, the bodyless contract), and who may apply the contract or change a decided set is `unit://http_profile.mcp_transport_policy_boundary` (S42, S43). Neither unit ratifies this record's statement, whose remaining rows stay unpacketed.
 
 ## NP-092 — a result is classified once, and never read as terminal by default
 

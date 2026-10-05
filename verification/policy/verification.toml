@@ -6823,6 +6823,48 @@ tested_symbols = [
   "//mcp-re-http-profile:delegated_202_test#no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block",
 ]
 
+# Owner Ruling 19.2: on the serving path, signed request metadata and the request body agree
+# on the security-relevant transport/MCP semantics; where no body can decide, refusal.
+[[unit]]
+id = "http_profile.mcp_transport_contract"
+class = "V0"
+description = "A verified request's covered MCP transport headers agree with its covered body, and where they cannot be compared the request is refused rather than either source preferred: `Mcp-Name` is required, and must equal the params member, for every method the protocol table (`McpMethodTarget`) says names a target, and a covered `Mcp-Name` on any other message is refused; a body method the table does not list but which a case-folding or trimming reader would take for one it does is refused; a bodyless request must carry a covered `MCP-Protocol-Version` in the deployment's accepted set and no `Mcp-Method` or `Mcp-Name`, and the bodyless signer states the version. States nothing about how the inner backend dispatches."
+paths = [
+  "mcp-re-http-profile/src/mcp_transport/mod.rs",
+  "mcp-re-http-profile/src/mcp_transport/agreement.rs",
+  "mcp-re-http-profile/src/mcp_name_source.rs",
+  "mcp-re-http-profile/src/bodyless/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://http_profile/mcp_transport/contract",
+  "mutation://http_profile/mcp_transport/contract",
+]
+tested_symbols = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::every_target_naming_method_requires_an_agreeing_name",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::a_covered_name_with_no_target_in_the_body_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::a_case_or_padding_variant_of_a_listed_method_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::tests::a_bodyless_request_states_a_supported_version_and_no_routing_header",
+  "//mcp-re-http-profile:bodyless_202_test#the_bodyless_signer_covers_every_conditionally_mandatory_header",
+]
+
+# Owner Ruling 19.2 (b4648cd2, cd5dd994): who can apply the transport contract and who can
+# change a decided accepted set.
+[[unit]]
+id = "http_profile.mcp_transport_policy_boundary"
+class = "V0"
+description = "External code cannot apply `McpTransportPolicy`'s contract to a request directly (`enforce` and `enforce_bodyless` are crate-private, called only by the verifiers after the signature), and cannot derive from an existing policy one that accepts a different protocol-version set. Says nothing about which policy a deployment installs through `VerifierPolicy::with_mcp_transport`."
+paths = [
+  "mcp-re-http-profile/src/mcp_transport/mod.rs",
+  "mcp-re-http-profile/src/mcp_transport/agreement.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://http_profile/mcp_transport/policy_boundary"]
+
 # Owner Ruling 18.2: the public construction boundary of the two role handles, and nothing
 # about where any particular value came from.
 [[unit]]

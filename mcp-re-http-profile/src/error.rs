@@ -125,9 +125,9 @@ pub enum HttpProfileError {
     /// accepted set (§4.1). Registration or a client's claim is not consent; the
     /// verifier's supported set is. Maps to `mcp-re.unsupported_version`.
     McpProtocolVersionUnsupported,
-    /// A covered transport header (`MCP-Protocol-Version` or `Mcp-Name`) disagrees
-    /// with the covered body it must match — the signer contradicting itself, as
-    /// with [`HttpProfileError::McpMethodDivergence`]. Names the header. Maps to
+    /// A covered transport header disagrees with the covered body it must match, or
+    /// has no body member to agree with — the signer contradicting itself, as with
+    /// [`HttpProfileError::McpMethodDivergence`]. Names the header. Maps to
     /// `mcp-re.malformed_envelope`.
     McpTransportDivergence(&'static str),
 

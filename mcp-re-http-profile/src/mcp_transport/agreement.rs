@@ -18,6 +18,7 @@ use crate::error::HttpProfileError;
 use crate::ids::MCP_METHOD_HEADER;
 use crate::ids::MCP_NAME_HEADER;
 use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
+use crate::mcp_name_source::McpMethodTarget;
 use crate::message::single_header;
 use crate::message::HttpRequest;
 
@@ -52,11 +53,24 @@ impl McpTransportPolicy {
     /// A body with no `method` member leaves nothing to disagree with, so agreement does
     /// nothing rather than failing — the header was not unconstrained in that case either,
     /// because a message with no method is not one this contract routes.
+    ///
+    /// A body method the protocol table does not list, but which a case-folding or trimming
+    /// reader would take for one it does, is refused: the `Mcp-Name` requirement is keyed on
+    /// the listed spelling, and a backend dispatching leniently would run the listed method
+    /// without it. Which spelling is authoritative is ambiguous, so neither is chosen.
     fn check_method(
         &self,
         headers: &TransportHeaders,
         body_method: Option<&str>,
     ) -> Result<(), HttpProfileError> {
+        if let Some(bm) = body_method {
+            let folded = bm.trim().to_ascii_lowercase();
+            if McpMethodTarget::of(bm) == McpMethodTarget::Unknown
+                && McpMethodTarget::of(&folded) != McpMethodTarget::Unknown
+            {
+                return Err(HttpProfileError::McpTransportDivergence(MCP_METHOD_HEADER));
+            }
+        }
         let Some(h) = headers.method.as_deref() else {
             if self.require_mcp_method {
                 return Err(HttpProfileError::McpTransportHeaderMissing(
@@ -110,21 +124,27 @@ impl McpTransportPolicy {
         Ok(())
     }
 
-    /// `Mcp-Name`: required for the methods that name a target, and agreeing with the params
-    /// member that carries it.
+    /// `Mcp-Name`: required for every method the protocol table says names a target, and
+    /// agreeing with the params member that carries it; refused on every other message.
     ///
-    /// Agreement is checked whenever the header is present. And when the method is one that REQUIRES this header, the
-    /// params value it mirrors must exist: without it there is nothing for the signed header
-    /// to agree with and its value would be unconstrained, so an absent `params.name` /
-    /// `params.uri` fails closed rather than licensing an arbitrary covered name.
+    /// The requirement is read from [`McpMethodTarget`], the table the producer derives the
+    /// header from, so the contract covers exactly the methods a signer names a target for.
+    /// For those the params value the header mirrors must exist: without it there is nothing
+    /// for the signed header to agree with, so an absent `params.name` / `params.uri` fails
+    /// closed rather than licensing an arbitrary covered name. On a method that names no
+    /// target, an unlisted one, or a body with no method, a covered `Mcp-Name` has nothing
+    /// to agree with either, and is refused rather than passed through unconstrained.
     fn check_name(
         &self,
         headers: &TransportHeaders,
         body_method: Option<&str>,
         params: Option<&Value>,
     ) -> Result<(), HttpProfileError> {
-        let Some(bm) = body_method else { return Ok(()) };
-        let Some((_, source)) = self.mcp_name_required.iter().find(|(m, _)| m == bm) else {
+        let target = body_method.map_or(McpMethodTarget::Unknown, McpMethodTarget::of);
+        let McpMethodTarget::Named(source) = target else {
+            if headers.name.is_some() {
+                return Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER));
+            }
             return Ok(());
         };
         let Some(h) = headers.name.as_deref() else {
@@ -144,8 +164,9 @@ impl McpTransportPolicy {
     /// Preconditions the caller guarantees: the signature verified, so any covered header
     /// this reads is signed, and the body matched its covered `content-digest`. Nothing here
     /// re-checks the signature — it reads protected values and applies the deployment's
-    /// contract to them.
-    pub fn enforce(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {
+    /// contract to them. Crate-private for that reason: the one caller is the request floor
+    /// (`verify::floor::request`), which runs it after the signature and digest checks.
+    pub(crate) fn enforce(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {
         let body: Value = serde_json::from_slice(&request.body)
             .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
         let body_method = body.get("method").and_then(Value::as_str);
@@ -208,6 +229,91 @@ mod tests {
             policy().enforce(&request(&headers, CALL)),
             Err(HttpProfileError::McpProtocolVersionUnsupported)
         ));
+    }
+
+    /// Every method the protocol table says names a target is held to an agreeing
+    /// `Mcp-Name` — not only the two the contract once listed.
+    #[test]
+    fn every_target_naming_method_requires_an_agreeing_name() {
+        for (method, key, value) in [
+            ("prompts/get", "name", "greet"),
+            ("resources/subscribe", "uri", "file:///a"),
+            ("resources/unsubscribe", "uri", "file:///a"),
+        ] {
+            let body = format!(r#"{{"method":"{method}","params":{{"{key}":"{value}"}}}}"#);
+            let with = |name: Option<&str>| {
+                let mut h = vec![
+                    (MCP_METHOD_HEADER, method),
+                    (MCP_PROTOCOL_VERSION_HEADER, "2026-07-28"),
+                ];
+                h.extend(name.map(|n| (MCP_NAME_HEADER, n)));
+                policy().enforce(&request(&h, &body))
+            };
+            assert_eq!(
+                with(None),
+                Err(HttpProfileError::McpTransportHeaderMissing(MCP_NAME_HEADER)),
+                "{method}"
+            );
+            assert_eq!(
+                with(Some("other")),
+                Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER)),
+                "{method}"
+            );
+            assert_eq!(with(Some(value)), Ok(()), "{method}");
+        }
+    }
+
+    /// A covered `Mcp-Name` on a message whose body names no target has nothing to agree
+    /// with, and is refused rather than passed through unconstrained.
+    #[test]
+    fn a_covered_name_with_no_target_in_the_body_is_refused() {
+        for body in [
+            r#"{"method":"tools/list"}"#,
+            r#"{"method":"x-vendor/deploy","params":{"name":"deploy"}}"#,
+        ] {
+            let method = if body.contains("tools/list") {
+                "tools/list"
+            } else {
+                "x-vendor/deploy"
+            };
+            let headers = [
+                (MCP_METHOD_HEADER, method),
+                (MCP_PROTOCOL_VERSION_HEADER, "2026-07-28"),
+            ];
+            assert_eq!(policy().enforce(&request(&headers, body)), Ok(()), "{body}");
+            let named = [headers[0], headers[1], (MCP_NAME_HEADER, "deploy")];
+            assert_eq!(
+                policy().enforce(&request(&named, body)),
+                Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER)),
+                "{body}"
+            );
+        }
+    }
+
+    /// A body method a lenient backend would read as a listed one, but which the table
+    /// does not list, is refused, so it cannot carry `tools/call` past the name binding.
+    #[test]
+    fn a_case_or_padding_variant_of_a_listed_method_is_refused() {
+        for variant in ["Tools/Call", "TOOLS/CALL", " tools/call", "Resources/Read"] {
+            let body = format!(r#"{{"method":"{variant}","params":{{"name":"deploy"}}}}"#);
+            let headers = [
+                (MCP_METHOD_HEADER, variant),
+                (MCP_PROTOCOL_VERSION_HEADER, "2026-07-28"),
+            ];
+            assert_eq!(
+                policy().enforce(&request(&headers, &body)),
+                Err(HttpProfileError::McpTransportDivergence(MCP_METHOD_HEADER)),
+                "{variant:?}"
+            );
+        }
+        let unlisted = [
+            (MCP_METHOD_HEADER, "completion/complete"),
+            (MCP_PROTOCOL_VERSION_HEADER, "2026-07-28"),
+        ];
+        assert_eq!(
+            policy().enforce(&request(&unlisted, r#"{"method":"completion/complete"}"#)),
+            Ok(())
+        );
     }
 
     /// The whole contract, satisfied.

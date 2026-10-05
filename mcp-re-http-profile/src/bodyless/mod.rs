@@ -85,12 +85,14 @@ use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestRoleEvidence;
 use crate::ids::BODYLESS_REQUEST_COMPONENTS;
+use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
 use crate::ids::MCP_RE_REQUEST_EVIDENCE_HEADER;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_LABEL;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
 use crate::ids::STATUS_ACCEPTED;
+use crate::mcp_transport::MCP_PROTOCOL_VERSION;
 use crate::message::reject_content_encoding;
 use crate::message::required_header;
 use crate::message::single_header;
@@ -276,7 +278,8 @@ pub fn sign_delegated_accepted_202_with_owned_key(
 }
 
 /// Sign a bodyless REQUEST (§8.1): `@method`, `@target-uri`, and a
-/// `content-digest` over empty content. No `content-type`.
+/// `content-digest` over empty content. No `content-type`. Adds the
+/// `MCP-Protocol-Version` the transport contract requires when the caller set none.
 pub fn sign_bodyless_request(
     request: &mut HttpRequest,
     key: &mcp_re_core::SigningKey,
@@ -295,6 +298,13 @@ pub fn sign_bodyless_request(
         "Content-Digest",
         content_digest_sha256(&[]),
     );
+    if single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)?.is_none() {
+        set_header(
+            &mut request.headers,
+            "MCP-Protocol-Version",
+            MCP_PROTOCOL_VERSION.into(),
+        );
+    }
     let mut components: Vec<CoveredComponent> = BODYLESS_REQUEST_COMPONENTS
         .iter()
         .map(|n| CoveredComponent::new(n))
@@ -321,22 +331,12 @@ pub fn sign_bodyless_request(
 
 /// Verify a bodyless REQUEST (§8.1) under the named bodyless request set.
 ///
-/// **A configured MCP transport contract is refused, not skipped.** The §4.1 contract
-/// [`crate::verify::verify_request_with_policy`] applies is defined against a JSON-RPC
-/// body: `Mcp-Method` and `Mcp-Name` are checked for AGREEMENT with the body members
-/// they mirror, and `McpTransportPolicy::enforce` reads that body first. A bodyless
-/// request has none, so the contract cannot be applied to this shape as written —
-/// and the parts that could be (the supported-protocol-version set, REQ-10) are not
-/// separable through the policy's public surface.
-///
-/// Silently ignoring the policy is the one thing that must not happen: a deployment
-/// that configured `McpTransportPolicy::mcp_2026_07_28` would have believed its
-/// version and header contract applied to every request shape while one shape was
-/// exempt, which is "a client's claim is not consent" enforced on a request and not
-/// on its sibling. So a policy that carries a transport contract is refused here
-/// rather than dropped. Verifying bodyless requests under one needs a bodyless
-/// analogue of `enforce` — a version-set and header contract stated for a message
-/// with no body — which does not exist yet.
+/// **The policy's MCP transport contract applies to this shape too**, in its bodyless
+/// form (`McpTransportPolicy::enforce_bodyless`), after the signature: the covered
+/// `MCP-Protocol-Version` is required and must be in the deployment's accepted set,
+/// and a covered `Mcp-Method` or `Mcp-Name`, which would have no body to agree with,
+/// is refused. A deployment's version contract therefore holds for every request
+/// shape, bodied or not.
 pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
     verifier: &crate::verifier::Verifier<'_, R>,

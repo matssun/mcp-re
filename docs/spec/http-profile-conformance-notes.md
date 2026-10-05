@@ -356,8 +356,12 @@ per-request contract:
 | Version ∈ the deployment's supported set | ✅ otherwise ⇒ `unsupported_version` — a client's claim is not consent |
 | `MCP-Protocol-Version` = body `io.modelcontextprotocol/protocolVersion` | ✅ disagreement ⇒ `malformed_envelope` |
 | `Mcp-Method` = body `method` | ✅ (always on, policy or not) ⇒ `malformed_envelope` |
-| `Mcp-Name` present for `tools/call` / `resources/read` | ✅ absent ⇒ `missing_envelope` |
-| `Mcp-Name` = `params.name` (`tools/call`) / `params.uri` (`resources/read`) | ✅ disagreement ⇒ `malformed_envelope` |
+| `Mcp-Name` present for `tools/call`, `prompts/get`, `resources/read`, `resources/subscribe`, `resources/unsubscribe` | ✅ absent ⇒ `missing_envelope` |
+| `Mcp-Name` = `params.name` (`tools/call`, `prompts/get`) / `params.uri` (`resources/*`) | ✅ disagreement ⇒ `malformed_envelope` |
+| `Mcp-Name` on a message whose body names no target | ✅ refused ⇒ `malformed_envelope` |
+| Body `method` a case or whitespace variant of a listed method | ✅ refused ⇒ `malformed_envelope` |
+| Bodyless GET/DELETE: `MCP-Protocol-Version` present and supported | ✅ absent ⇒ `missing_envelope`; otherwise ⇒ `unsupported_version` |
+| Bodyless GET/DELETE: no `Mcp-Method` / `Mcp-Name` | ✅ present ⇒ `malformed_envelope` |
 
 **Every check runs after the signature, against protected values.** Before it, both
 a header and the body are attacker-chosen, so their agreement — or a version

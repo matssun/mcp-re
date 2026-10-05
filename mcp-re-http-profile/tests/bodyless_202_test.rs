@@ -597,13 +597,21 @@ fn an_uncovered_authorization_header_on_a_bodyless_request_is_rejected() {
 
 /// Same rule for `dpop` and for the MCP transport headers, so the fix is not
 /// authorization-specific.
+///
+/// The signer always states and covers `Mcp-Protocol-Version`, so an injected one arrives
+/// as a second value and is refused as a duplicate rather than as an uncovered header.
 #[test]
 fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected() {
+    use HttpProfileError::DuplicateHeader;
+    use HttpProfileError::MissingCoveredComponent as Uncovered;
     for (header, expected) in [
-        ("DPoP", "dpop"),
-        ("Mcp-Method", "mcp-method"),
-        ("Mcp-Name", "mcp-name"),
-        ("Mcp-Protocol-Version", "mcp-protocol-version"),
+        ("DPoP", Uncovered("dpop")),
+        ("Mcp-Method", Uncovered("mcp-method")),
+        ("Mcp-Name", Uncovered("mcp-name")),
+        (
+            "Mcp-Protocol-Version",
+            DuplicateHeader("mcp-protocol-version"),
+        ),
     ] {
         let mut req = HttpRequest {
             method: "DELETE".into(),
@@ -623,15 +631,15 @@ fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected()
         req.headers.push((header.into(), "injected".into()));
         assert_eq!(
             verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
-            HttpProfileError::MissingCoveredComponent(expected),
-            "an uncovered {header} must fail closed on the bodyless path"
+            expected,
+            "an injected {header} must fail closed on the bodyless path"
         );
     }
 }
 
-/// And the signer covers each of them when present, so a legitimately-signed bodyless
-/// request carrying them still round-trips. Without this half the fix would simply make
-/// those requests unsignable.
+/// And the signer covers each of them when present. Covered is not admitted: the routing
+/// headers describe a body this message does not have, so the transport contract refuses
+/// them after the signature, while the same request without them verifies.
 #[test]
 fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
     let mut req = HttpRequest {
@@ -668,7 +676,32 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
             "{name} must be covered: {input}"
         );
     }
-    verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).expect("verifies");
+    assert_eq!(
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        HttpProfileError::McpTransportDivergence("mcp-method"),
+    );
+
+    let mut unrouted = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![
+            ("Authorization".into(), "Bearer t".into()),
+            ("DPoP".into(), "proof".into()),
+        ],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(
+        &mut unrouted,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-unrouted",
+    )
+    .expect("signs");
+    assert!(signature_input_of(&unrouted).contains("\"mcp-protocol-version\""));
+    verify_bodyless_request(&unrouted, &Verifier::new(&policy(), &resolver()), NOW)
+        .expect("the signer states the version, and nothing else needs a body");
 }
 
 /// A deployment's MCP transport contract must not be silently exempt on one request
@@ -681,8 +714,8 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
 /// deployment configured for `2026-07-28` got no supported-version gate on this shape
 /// while believing it had one.
 ///
-/// The arm that survives the loss of a body is the one that never needed it: a version
-/// header that is present must name a version the deployment accepts. That is what
+/// The arm that survives the loss of a body is the one that never needed it: the version
+/// header is required and must name a version the deployment accepts. That is what
 /// `enforce_bodyless` applies, and it runs after the signature, so the header it reads
 /// is covered.
 #[test]
