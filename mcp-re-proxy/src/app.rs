@@ -31,9 +31,12 @@ use mcp_re_http_profile::SignerSlot;
 /// Build the serving [`crate::ActorResolver`] — the trust seam the RFC 9421 PEP
 /// consults for every signature it verifies (slot discipline, MCPRE-100).
 ///
-/// The Response slot answers only for `response_kid`, from the root/issuer public key
-/// held at build time: that key is the deployment's trust anchor, revoked by root
-/// rotation rather than by a trust-store entry.
+/// The Response slot answers only for the server identity's own keyid — the resolved
+/// issuer kid — from the root/issuer public key held at build time: that key is the
+/// deployment's trust anchor, revoked by root rotation rather than by a trust-store entry.
+/// The identity is the `ServerIdentity` owner's fact, so the actor stamped on every
+/// Response slot, its keyid, and the trust domain of every client actor are read from the
+/// one value that owner derived, never supplied beside it.
 ///
 /// The Request slot resolves through `request_trust` — the ADR-MCPS-021
 /// revocation-tier resolver — on EVERY request. `trust_store` supplies only the
@@ -48,15 +51,13 @@ use mcp_re_http_profile::SignerSlot;
 pub fn build_actor_resolver(
     signers: crate::reloading_trust::SignerDirectory,
     request_trust: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
-    trust_domain: String,
-    response_kid: String,
-    server_identity: ActorIdentity,
+    server: crate::config_state::server_identity::ServerIdentityFacts,
     response_pub: mcp_re_core::VerificationKey,
 ) -> crate::ActorResolver {
     Box::new(move |kid: &str, slot: SignerSlot| match slot {
-        SignerSlot::Response if kid == response_kid => {
+        SignerSlot::Response if kid == server.actor().keyid => {
             ResolverOutcome::Resolved(Box::new(ResolvedActor {
-                identity: server_identity.clone(),
+                identity: server.actor().clone(),
                 verification_key: response_pub.clone(),
                 slot,
             }))
@@ -81,7 +82,7 @@ pub fn build_actor_resolver(
             ResolverOutcome::Resolved(Box::new(ResolvedActor {
                 identity: ActorIdentity {
                     role: "client".to_string(),
-                    trust_domain: trust_domain.clone(),
+                    trust_domain: server.trust_domain().to_owned(),
                     subject: signer,
                     keyid: kid.to_string(),
                 },
@@ -388,17 +389,12 @@ fn run_validated(
     let response_pub = key_source
         .response_public_key()
         .map_err(|e| e.to_string())?;
-    // Derived once by the `ServerIdentity` owner. Assembling one here from the primitives
-    // is what this consumer used to do, and what `SigningPlan` did independently.
-    let server_identity = config.state().server_identity().actor().clone();
+    // Derived once by the `ServerIdentity` owner, and handed over whole: the resolver reads
+    // the server actor, its keyid and the trust domain through the owner's projections.
     let resolve_actor = build_actor_resolver(
         building.trust()?.signers(),
         Arc::clone(&resolver),
-        // r12 R12-629: the coordinate through its OWNER, not the raw request. The server
-        // actor already took it from here; the client one took the primitive beside it.
-        config.state().server_identity().trust_domain().to_owned(),
-        response_kid.clone(),
-        server_identity.clone(),
+        config.state().server_identity().clone(),
         response_pub,
     );
     let expected_audience = AudienceTuple {

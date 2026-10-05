@@ -18,7 +18,6 @@ use std::sync::Mutex;
 use mcp_re_core::TrustResolver;
 use mcp_re_core::TrustResolverError;
 use mcp_re_core::VerificationKey;
-use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::SignerSlot;
 
 use mcp_re_proxy::app::build_actor_resolver;
@@ -80,18 +79,62 @@ fn trust_store(kid: &str, signer: &str) -> Arc<mcp_re_proxy::reloading_trust::Re
     ))
 }
 
+/// The server identity the actor seam answers the Response slot with, as its owner derives
+/// it from a parsed deployment: `subject` signing under the issuer kid `kid`.
+fn server_identity(
+    subject: &str,
+    kid: &str,
+) -> mcp_re_proxy::config_state::server_identity::ServerIdentityFacts {
+    let args: Vec<String> = [
+        "--bind",
+        "127.0.0.1:8443",
+        "--audience",
+        "verifier-1",
+        "--server-signer",
+        subject,
+        "--server-key-id",
+        kid,
+        "--signing-key-seed",
+        "/dev/null",
+        "--tls-cert",
+        "/dev/null",
+        "--tls-key",
+        "/dev/null",
+        "--client-ca",
+        "/dev/null",
+        "--trust",
+        "/dev/null",
+        "--inner-http-url",
+        "http://127.0.0.1:9",
+        "--target-uri",
+        "https://mcp.example.com/mcp",
+        "--mcp-protocol-version",
+        "2026-07-28",
+        "--replay-redis-url",
+        "redis://127.0.0.1:6379",
+        "--replay-durability-tier",
+        "redis-wait-quorum:1:100",
+        "--delegated-trust-epoch",
+        "epoch-1",
+        "--trust-domain",
+        "example.com",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let config = mcp_re_proxy::cli::parse_args(&args).expect("a legal deployment");
+    let (delegated, _) =
+        mcp_re_proxy::config_state::delegated_signing::classify_and_validate(&config);
+    mcp_re_proxy::config_state::server_identity::classify_and_validate(&config, delegated.as_ref())
+        .0
+        .expect("a legal server identity")
+}
+
 fn resolver_over(trust: Arc<dyn TrustResolver + Send + Sync>) -> mcp_re_proxy::ActorResolver {
     build_actor_resolver(
         trust_store(CLIENT_KID, CLIENT_SIGNER).signer_directory(),
         trust,
-        "example.com".to_string(),
-        ROOT_KID.to_string(),
-        ActorIdentity {
-            role: "server".to_string(),
-            trust_domain: "example.com".to_string(),
-            subject: "mcp.example.com".to_string(),
-            keyid: ROOT_KID.to_string(),
-        },
+        server_identity("mcp.example.com", ROOT_KID),
         a_key(99),
     )
 }
@@ -235,6 +278,30 @@ fn slot_discipline_holds() {
     assert_eq!(trust.calls(), 0);
 }
 
+/// Ruling 19 B4c. The actor stamped on the Response slot IS the `ServerIdentity` owner's,
+/// answered only for that actor's own keyid, and every client actor carries the owner's
+/// trust domain: the seam takes the owner's fact whole rather than an identity, a kid and a
+/// domain supplied beside one another.
+#[test]
+fn the_seam_answers_with_the_server_identity_owners_actor_and_domain() {
+    let owner = server_identity("mcp.example.com", ROOT_KID);
+    let resolve = resolver_over(ScriptedResolver::new(Ok(a_key(7))));
+
+    let served = resolve(&owner.actor().keyid, SignerSlot::Response)
+        .resolved()
+        .expect("the owner's keyid serves the Response slot");
+    assert_eq!(
+        &served.identity,
+        owner.actor(),
+        "the owner's actor, unaltered"
+    );
+
+    let client = resolve(CLIENT_KID, SignerSlot::Request)
+        .resolved()
+        .expect("an enrolled, active client resolves");
+    assert_eq!(client.identity.trust_domain, owner.trust_domain());
+}
+
 // ---- C079: an outage is not a binding failure -------------------------------
 
 /// `mcp-re.trust_resolver_unavailable` had NO emission site: the seam was
@@ -290,14 +357,7 @@ fn the_production_resolver_surfaces_a_store_outage() {
     let resolve = mcp_re_proxy::app::build_actor_resolver(
         trust_store(CLIENT_KID, "did:example:client").signer_directory(),
         std::sync::Arc::new(DownStore),
-        "example.com".to_string(),
-        "server-key-1".to_string(),
-        mcp_re_http_profile::ActorIdentity {
-            role: "server".into(),
-            trust_domain: "example.com".into(),
-            subject: "did:example:server".into(),
-            keyid: "server-key-1".into(),
-        },
+        server_identity("did:example:server", "server-key-1"),
         mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
     );
 

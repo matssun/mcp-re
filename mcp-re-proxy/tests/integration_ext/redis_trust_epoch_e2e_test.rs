@@ -142,10 +142,10 @@ mod serving_path {
     use mcp_re_core::TrustResolverError;
     use mcp_re_core::VerificationKey;
 
+    use super::server_identity;
     use mcp_re_http_profile::custody::DelegatedKeyWindow;
     use mcp_re_http_profile::issue_delegation_credential;
     use mcp_re_http_profile::sign_request_full;
-    use mcp_re_http_profile::ActorIdentity;
     use mcp_re_http_profile::ArtifactBinding;
     use mcp_re_http_profile::ArtifactType;
     use mcp_re_http_profile::AudienceTuple;
@@ -254,14 +254,7 @@ mod serving_path {
         let resolve_actor = build_actor_resolver(
             trust_store.signer_directory(),
             Arc::new(cache),
-            "example.com".to_string(),
-            ROOT_KID.to_string(),
-            ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: ROOT_KID.into(),
-            },
+            server_identity("did:example:server", ROOT_KID),
             root_key().public_key(),
         );
 
@@ -450,4 +443,55 @@ mod serving_path {
             .query(&mut admin)
             .expect("DEL epoch key");
     }
+}
+
+/// The server identity the actor seam answers the Response slot with, as its owner derives
+/// it from a parsed deployment: `subject` signing under the issuer kid `kid`.
+fn server_identity(
+    subject: &str,
+    kid: &str,
+) -> mcp_re_proxy::config_state::server_identity::ServerIdentityFacts {
+    let args: Vec<String> = [
+        "--bind",
+        "127.0.0.1:8443",
+        "--audience",
+        "verifier-1",
+        "--server-signer",
+        subject,
+        "--server-key-id",
+        kid,
+        "--signing-key-seed",
+        "/dev/null",
+        "--tls-cert",
+        "/dev/null",
+        "--tls-key",
+        "/dev/null",
+        "--client-ca",
+        "/dev/null",
+        "--trust",
+        "/dev/null",
+        "--inner-http-url",
+        "http://127.0.0.1:9",
+        "--target-uri",
+        "https://mcp.example.com/mcp",
+        "--mcp-protocol-version",
+        "2026-07-28",
+        "--replay-redis-url",
+        "redis://127.0.0.1:6379",
+        "--replay-durability-tier",
+        "redis-wait-quorum:1:100",
+        "--delegated-trust-epoch",
+        "epoch-1",
+        "--trust-domain",
+        "example.com",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let config = mcp_re_proxy::cli::parse_args(&args).expect("a legal deployment");
+    let (delegated, _) =
+        mcp_re_proxy::config_state::delegated_signing::classify_and_validate(&config);
+    mcp_re_proxy::config_state::server_identity::classify_and_validate(&config, delegated.as_ref())
+        .0
+        .expect("a legal server identity")
 }

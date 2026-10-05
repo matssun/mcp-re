@@ -1735,3 +1735,40 @@ old = """
     fn retire_permanently(&self) {"""
 new = """
     pub(crate) fn retire_permanently(&self) {"""
+
+[[probe]]
+id = "S49"
+unit = "proxy.server_identity_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `config_state::server_identity` can assemble a ServerIdentityFacts, so the identity the actor seam is handed is the one that owner derived"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S49. Injected into a scratch copy by verify-structural.
+use crate::config_state::server_identity::ServerIdentityFacts;
+
+pub fn hostile(actor: mcp_re_http_profile::ActorIdentity) -> ServerIdentityFacts {
+    ServerIdentityFacts { actor } // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+This seal is what makes `build_actor_resolver` taking a `ServerIdentityFacts` narrower than
+taking an `ActorIdentity`: an `ActorIdentity` is struct-literal constructible anywhere, so a
+parameter of that type accepted any server identity a caller wrote.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the one field is bare-private to `config_state::server_identity`; the parent re-exports nothing that exposes it, and a sibling module of the owner's own crate is where this probe is injected"
+alternate-constructors = "`classify_and_validate` is the only function returning one, and it builds the actor from the guarded coordinates, the SERVER_ROLE constant and the delegated owner's issuer kid. No `From`, no `Default`, no builder; `actor()` and `trust_domain()` return references"
+generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Deserialize"
+test-only-construction = "the owner's tests and every integration test obtain one through `classify_and_validate`; no test-gated constructor or field visibility exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/config_state/server_identity.rs"
+old = """
+pub struct ServerIdentityFacts {
+    actor: ActorIdentity,"""
+new = """
+pub struct ServerIdentityFacts {
+    pub(super) actor: ActorIdentity,"""
+

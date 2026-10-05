@@ -11885,3 +11885,21 @@ expect_red = [
   "//mcp-re-proxy:proxy_unit_test#delegated_server_signer::tests::a_credential_living_past_the_ceiling_is_not_published",
 ]
 
+[[probe]]
+id = "M479-proxy-the-response-slot-stamps-the-identity-owners-actor"
+unit = "proxy.serving_trust_seam"
+conjunct = "the actor the seam stamps on the Response slot is the ServerIdentity owner's, unaltered"
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+                identity: server.actor().clone(),
+"""
+weakening = """
+                identity: ActorIdentity {
+                    subject: kid.to_owned(),
+                    ..server.actor().clone()
+                },
+"""
+expect_red = [
+  "//mcp-re-proxy:integration_test#revocation_serving_wiring_test::the_seam_answers_with_the_server_identity_owners_actor_and_domain",
+]
+

@@ -250,6 +250,7 @@ not an omission to hide.
 | proxy.runtime_lifecycle_sole_mutator | V0 | _none_ | 0 |
 | proxy.scrapi_registration_leaf | V0 | _none_ | 0 |
 | proxy.server_identity_facts | V0 | _none_ | 0 |
+| proxy.server_identity_sole_producer | V0 | _none_ | 0 |
 | proxy.serving_capability_posture | V0 | _none_ | 0 |
 | proxy.serving_drain | V0 | THM-0104 | 0 |
 | proxy.serving_identity_provenance | V0 | THM-0080 | 0 |

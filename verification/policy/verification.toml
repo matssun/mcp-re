@@ -6977,6 +6977,7 @@ evidence = [
 # from the materialized authority, which is invisible to every behavioural control because
 # each still measures a true thing about a correctly-composed seam.
 tested_symbols = [
+  "//mcp-re-proxy:integration_test#revocation_serving_wiring_test::the_seam_answers_with_the_server_identity_owners_actor_and_domain",
   "//mcp-re-proxy:integration_test#revocation_serving_wiring_test::active_binding_resolves_the_key_the_tier_returns",
   "//mcp-re-proxy:integration_test#revocation_serving_wiring_test::revoked_binding_yields_no_actor",
   "//mcp-re-proxy:integration_test#revocation_serving_wiring_test::not_found_and_malformed_yield_no_actor",
@@ -8481,6 +8482,17 @@ evidence = [
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#shared_replay::tests::skew_folded_into_retain_until_matches_in_memory_semantics",
 ]
+
+# Owner Ruling 19 B4c: the identity the actor seam is handed has one producer.
+[[unit]]
+id = "proxy.server_identity_sole_producer"
+class = "V0"
+description = "No code outside `config_state::server_identity` can assemble a `ServerIdentityFacts`: its representation is private and `classify_and_validate` is its only producer, so the server identity `build_actor_resolver` stamps on the Response slot is the one that owner derived from the guarded coordinates. Says nothing about which deployment request it was derived from."
+paths = ["mcp-re-proxy/src/config_state/server_identity.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://proxy/server_identity/sole_producer"]
 
 # Owner Ruling 19 B4b: who may write the shared delegated signer. Structural, because the
 # claim is a property of the module tree: every write is private to the rotor's module.
