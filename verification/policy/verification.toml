@@ -1983,6 +1983,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::tampered_request_state_breaks_the_digest",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::splice_across_continuation_boundary_fails",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::wrong_continuation_type_is_malformed",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::a_malformed_handle_is_a_binding_failure_at_the_verifier",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::a_wrong_role_handle_from_handles_is_refused_by_verify",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::from_handles_over_role_labeled_digests_is_wire_identical_to_build",
 ]
@@ -6786,6 +6787,56 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_bound_response_advertises_the_handle_of_the_request_it_answers",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::an_unsigned_request_cannot_be_answered_with_a_bound_response",
 ]
+
+# NP-276, owner Ruling 18.1. Its own unit rather than a clause of the emission binding above:
+# that one states what a response signature binds, and this one states what every signer,
+# request and response alike, refuses to sign over. No theorem depends on it.
+[[unit]]
+id = "http_profile.request_evidence_signing_boundary"
+class = "V0"
+description = "No HTTP-profile signing entry point that signs or binds a request evidence block emits a signature over an invalid request evidence block: every request signer refuses, before any signature exists, a body carrying a block that fails `HttpRequestEvidenceBlock::validate` or whose continuation fails `HttpContinuation::validate_shape`; every `;req`-bound response signer refuses a request carrying such a block; the full-profile delegated response signer and the delegated 202 refuse it too, the first also when no block is carried. States nothing about whether a well-shaped continuation binds to the exchange it names, which the verifier decides."
+paths = [
+  "mcp-re-http-profile/src/sign/request_block.rs",
+  "mcp-re-http-profile/src/sign/request.rs",
+  "mcp-re-http-profile/src/sign.rs",
+  "mcp-re-http-profile/src/bodyless/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://http_profile/sign/request_evidence_signing_boundary",
+  "mutation://http_profile/sign/request_evidence_signing_boundary",
+]
+tested_symbols = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::request_block::tests::a_body_without_a_block_passes_validate_carried_and_fails_require_valid",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::request_block::tests::a_carried_block_that_does_not_parse_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::request_block::tests::a_carried_block_under_another_profile_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::request_block::tests::a_continuation_of_another_type_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::request_block::tests::a_continuation_with_a_corrupted_handle_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::request_block::tests::a_valid_block_and_a_valid_continuation_pass",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::request_block::tests::a_well_shaped_continuation_is_not_judged_on_its_binding",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_full_request_with_a_corrupted_continuation_is_refused_before_signing",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_full_response_is_not_signed_over_an_absent_or_invalid_request_block",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_hand_inserted_invalid_block_is_refused_by_the_floor_signer",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::the_bound_floor_signer_refuses_a_request_carrying_an_invalid_block",
+  "//mcp-re-http-profile:delegated_202_test#no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block",
+]
+
+# Owner Ruling 18.2: the public construction boundary of the two role handles, and nothing
+# about where any particular value came from.
+[[unit]]
+id = "http_profile.evidence_role_construction_boundary"
+class = "V0"
+description = "External code cannot construct a `RequestRoleEvidence` or a `ResponseRoleEvidence` except through that type's `from_signature_base`: each type's one field is private to its module, nothing decodes one, and no other public constructor or conversion exists. Not an unforgeability claim: it says nothing about which signature base any particular value was derived from."
+paths = [
+  "mcp-re-http-profile/src/evidence/request_role.rs",
+  "mcp-re-http-profile/src/evidence/response_role.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://http_profile/evidence/role_construction_boundary"]
 
 # ---------------------------------------------------------------------------------------
 # Stage 6 — the deployment-composition owners.

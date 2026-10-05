@@ -1382,3 +1382,84 @@ old = """
 new = """
     pub(super) fn associate(chain_der: Vec<Vec<u8>>) -> Result<Self, ChannelCredentialAssociationRefusal> {
 """
+
+# --- http_profile.evidence_role_construction_boundary ----------------------------------
+#
+# Owner Ruling 18.2: the claim is the public construction boundary of the two role handles,
+# no stronger. Each probe writes the handle's literal from a downstream crate; the
+# relaxation makes the private field public and the same construction must then build, so
+# the refusal is attributable to the field's privacy and nothing else.
+
+[[probe]]
+id = "S40"
+unit = "http_profile.evidence_role_construction_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot construct a RequestRoleEvidence except through `RequestRoleEvidence::from_signature_base`"
+doc_path = "mcp-re-http-profile/src/evidence/request_role.rs"
+doc_item = "doc#evidence::request_role::RequestRoleEvidence"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s40.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S40. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::RequestRoleEvidence;
+
+pub fn hostile() -> RequestRoleEvidence {
+    RequestRoleEvidence {
+        digest_value: String::new(), // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "integration test: a separate crate against the public surface. `digest_value` is bare-private to `evidence::request_role`, whose only child module is `#[cfg(test)] mod tests`"
+alternate-constructors = "`from_signature_base` is the only associated function returning Self. There is no From, FromStr, TryFrom, Default or builder, `to_digest` projects to the unauthenticated wire form and nothing converts back, and Clone copies an existing inhabitant"
+generated-or-deserialization = "the type implements Serialize by hand and derives Debug, Clone, PartialEq and Eq; there is no Deserialize, so no decoder can mint one from bytes"
+test-only-construction = "the owner's tests construct only through `from_signature_base`; no test-gated constructor or field visibility exists, and the probe itself is the downstream test-code route"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/evidence/request_role.rs"
+old = """
+pub struct RequestRoleEvidence {
+    digest_value: String,
+}"""
+new = """
+pub struct RequestRoleEvidence {
+    pub digest_value: String,
+}"""
+
+[[probe]]
+id = "S41"
+unit = "http_profile.evidence_role_construction_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot construct a ResponseRoleEvidence except through `ResponseRoleEvidence::from_signature_base`"
+doc_path = "mcp-re-http-profile/src/evidence/response_role.rs"
+doc_item = "doc#evidence::response_role::ResponseRoleEvidence"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s41.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S41. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::ResponseRoleEvidence;
+
+pub fn hostile() -> ResponseRoleEvidence {
+    ResponseRoleEvidence {
+        digest_value: String::new(), // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "integration test: a separate crate against the public surface. `digest_value` is bare-private to `evidence::response_role`, whose only child module is `#[cfg(test)] mod tests`"
+alternate-constructors = "`from_signature_base` is the only associated function returning Self. There is no From, FromStr, TryFrom, Default or builder, `to_digest` projects to the unauthenticated wire form and nothing converts back, and Clone copies an existing inhabitant"
+generated-or-deserialization = "the type implements Serialize by hand and derives Debug, Clone, PartialEq and Eq; there is no Deserialize, so no decoder can mint one from bytes"
+test-only-construction = "the owner's tests construct only through `from_signature_base`; no test-gated constructor or field visibility exists, and the probe itself is the downstream test-code route"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/evidence/response_role.rs"
+old = """
+pub struct ResponseRoleEvidence {
+    digest_value: String,
+}"""
+new = """
+pub struct ResponseRoleEvidence {
+    pub digest_value: String,
+}"""

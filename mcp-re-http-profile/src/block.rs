@@ -1036,6 +1036,31 @@ mod tests {
         );
     }
 
+    /// The signer refuses each of these as a malformed handle before signing; the verifier
+    /// keeps its own classification and refuses each as a binding failure.
+    #[test]
+    fn a_malformed_handle_is_a_binding_failure_at_the_verifier() {
+        let corruptions: [fn(&mut HttpContinuation); 4] = [
+            |c| c.previous_request_evidence.digest_value.truncate(10),
+            |c| c.input_required_response_evidence.digest_alg = "sha-256".into(),
+            |c| c.request_state_digest.digest_value.push('='),
+            |c| {
+                c.previous_request_evidence = RequestEvidenceDigest {
+                    digest_alg: "none".into(),
+                    digest_value: String::new(),
+                }
+            },
+        ];
+        for corrupt in corruptions {
+            let mut c = HttpContinuation::build(PREV_BASE, IRR_BASE, REQ_STATE);
+            corrupt(&mut c);
+            assert!(c.validate_shape().is_err(), "{c:?}");
+            let err = verify_over(&c, PREV_BASE, IRR_BASE, REQ_STATE).unwrap_err();
+            assert_eq!(err, HttpProfileError::ContinuationBindingFailed);
+            assert_eq!(err.wire_code(), "mcp-re.continuation_binding_failed");
+        }
+    }
+
     #[test]
     fn wrong_continuation_type_is_malformed() {
         let mut c = HttpContinuation::build(PREV_BASE, IRR_BASE, REQ_STATE);

@@ -21,6 +21,13 @@ use crate::ids::EVIDENCE_DIGEST_ALG;
 /// [`matches`](Self::matches).
 ///
 /// Serializes to the wire's split form, `{digest_alg, digest_value}`.
+///
+/// Code outside this crate cannot write the value in:
+///
+/// ```compile_fail
+/// use mcp_re_http_profile::RequestRoleEvidence;
+/// let _ = RequestRoleEvidence { digest_value: String::new() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestRoleEvidence {
     digest_value: String,

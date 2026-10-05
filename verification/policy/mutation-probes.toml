@@ -2119,47 +2119,13 @@ expect_red = [
   "//mcp-re-http-profile:full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
 ]
 
-[[probe]]
-id = "M69-the-derived-handle-is-of-the-request-under-verification"
-unit = "http_profile.bound_response_full_result"
-theorem = "THM-0018"
-conjunct = "the handle is derived from the request supplied, not from the response's own claim"
-# The derivation is what makes the relation structural rather than a caller convention.
-# Reading the handle back out of the BLOCK is the shape the old two-operand API allowed a
-# caller to produce accidentally: every comparison then passes, whatever request is
-# supplied, and the response is verified as the answer to a request it never answered.
-# `RequestRoleEvidence` has no constructor from a claim, so building the bound handle out of
-# the block no longer compiles; the shape that remains expressible is the comparison
-# consulting the block's claim alone.
-path = "mcp-re-http-profile/src/verify/full/response.rs"
-anchor = """
-    if !bound_request_evidence.matches(&block.request_evidence) {
-"""
-weakening = """
-    if !block.request_evidence.same_handle(&block.request_evidence) {
-"""
-expect_red = [
-  "//mcp-re-http-profile:full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
-  "//mcp-re-http-profile:full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
-]
-
-[[probe]]
-id = "M70-the-delegated-path-derives-its-handle-too"
-unit = "http_profile.delegated_bound_result"
-theorem = "THM-0019"
-conjunct = "the delegated path compares against the handle of the request it was given"
-# The same defect, on the other bound-response path. The two are separate functions and a
-# repair applied to one of them is not evidence about the other.
-path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
-anchor = """
-    if !bound.matches(&block.request_evidence) {
-"""
-weakening = """
-    if !block.request_evidence.same_handle(&block.request_evidence) {
-"""
-expect_red = [
-  "//mcp-re-http-profile:delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",
-]
+# M69 and M70 are retired (owner Ruling 18.6), and their ids are not reused. Each mutated
+# the bound-response path to build the request handle out of the response block's own claim.
+# `RequestRoleEvidence` has no producer but `from_signature_base` (S40), so that mutation no
+# longer compiles: the failure mode is not expressible, and the structural seal and its
+# probe supersede both. What remains runtime behaviour, the comparison against the handle
+# of the request under verification, is M68's on the full path and M17's on the delegated
+# one.
 
 [[probe]]
 id = "M71-a-kid-never-introduces-trust"
@@ -11519,4 +11485,104 @@ weakening = """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#body::carried_number::tests::a_decimal_the_round_trip_would_alter_is_refused_not_rewritten",
   "//mcp-re-http-profile:mcp_re_http_profile_test#body::carried_number::tests::the_boundary_still_refuses_what_the_carrier_alters",
+]
+
+# ---------------------------------------------------------------------------------------
+# http_profile.request_evidence_signing_boundary — NP-276, owner Ruling 18.1.
+#
+# Two checks and four call sites. Each probe removes one: the checks are what a carried
+# block is judged by, and each call site is a signing entry point that would otherwise sign
+# over whatever block the body carries.
+# ---------------------------------------------------------------------------------------
+
+[[probe]]
+id = "M455-a-carried-block-is-judged-by-its-own-validate"
+unit = "http_profile.request_evidence_signing_boundary"
+conjunct = "no profile signer signs over a body carrying a request evidence block that fails HttpRequestEvidenceBlock::validate"
+path = "mcp-re-http-profile/src/sign/request_block.rs"
+anchor = """
+    block.validate(PROFILE_TAG)?;
+"""
+weakening = """
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::request_block::tests::a_carried_block_under_another_profile_is_refused",
+  "//mcp-re-http-profile:delegated_202_test#no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block",
+]
+
+[[probe]]
+id = "M456-a-carried-continuation-is-judged-by-its-shape"
+unit = "http_profile.request_evidence_signing_boundary"
+conjunct = "no profile signer signs over a body carrying a request evidence block whose continuation fails HttpContinuation::validate_shape"
+path = "mcp-re-http-profile/src/sign/request_block.rs"
+anchor = """
+    block
+        .continuation
+        .as_ref()
+        .map_or(Ok(()), HttpContinuation::validate_shape)
+"""
+weakening = """
+    Ok(())
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::request_block::tests::a_continuation_of_another_type_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::request_block::tests::a_continuation_with_a_corrupted_handle_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_full_request_with_a_corrupted_continuation_is_refused_before_signing",
+]
+
+[[probe]]
+id = "M457-the-request-signers-tail-validates-the-carried-block"
+unit = "http_profile.request_evidence_signing_boundary"
+conjunct = "every request signer refuses, before any signature exists, a body carrying an invalid request evidence block"
+path = "mcp-re-http-profile/src/sign/request.rs"
+anchor = """
+    super::request_block::validate_carried(&request.body)?;
+"""
+weakening = """
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_full_request_with_a_corrupted_continuation_is_refused_before_signing",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_hand_inserted_invalid_block_is_refused_by_the_floor_signer",
+]
+
+[[probe]]
+id = "M458-the-req-bound-response-signer-validates-the-requests-block"
+unit = "http_profile.request_evidence_signing_boundary"
+conjunct = "every ;req-bound response signer refuses a request carrying an invalid request evidence block"
+path = "mcp-re-http-profile/src/sign.rs"
+anchor = """
+    request_block::validate_carried(&request.body)?;
+"""
+weakening = """
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::the_bound_floor_signer_refuses_a_request_carrying_an_invalid_block",
+]
+
+[[probe]]
+id = "M459-the-full-delegated-response-signer-requires-a-valid-block"
+unit = "http_profile.request_evidence_signing_boundary"
+conjunct = "the full-profile delegated response signer refuses a request carrying no request evidence block, or an invalid one"
+path = "mcp-re-http-profile/src/sign.rs"
+anchor = """
+    request_block::require_valid(request)?;
+"""
+weakening = """
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_full_response_is_not_signed_over_an_absent_or_invalid_request_block",
+]
+
+[[probe]]
+id = "M460-the-delegated-202-validates-the-notifications-block"
+unit = "http_profile.request_evidence_signing_boundary"
+conjunct = "the delegated 202 acknowledgement is not signed over a notification carrying an invalid request evidence block"
+path = "mcp-re-http-profile/src/bodyless/mod.rs"
+anchor = """
+    crate::sign::validate_carried_request_block(&request.body)?;
+"""
+weakening = """
+"""
+expect_red = [
+  "//mcp-re-http-profile:delegated_202_test#no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block",
 ]

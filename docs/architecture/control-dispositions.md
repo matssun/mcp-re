@@ -360,7 +360,9 @@ remote peer can drive. These three are driven by the test, not by a reply.
 `doc#verified_response::delegated_bound::VerifiedDelegatedMcpResponse`,
 `doc#verified_request::VerifiedMcpRequest`, `doc#dispatch::outcome::PreparedDispatch`,
 `doc#dispatch::outcome::DispatchOutcome`,
-`doc#verified_response::facts::UnboundResponseSignatureFacts`; `mcp-re-client-core`
+`doc#verified_response::facts::UnboundResponseSignatureFacts`,
+`doc#evidence::request_role::RequestRoleEvidence` (S40),
+`doc#evidence::response_role::ResponseRoleEvidence` (S41); `mcp-re-client-core`
 `doc#delegated_trust::DelegatedResponseTrust`.
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 8; the client-core item added by
 the S-05/CL-CLIENT slice, which built its probes first.
@@ -4910,7 +4912,13 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Carrier:** `mcp-re-http-profile/src/sign/request_block.rs` (`validate_carried`, `require_valid`), called from the request signers' shared tail (`sign/request.rs`), the `;req` response signer and the full-profile delegated response signer (`sign.rs`), and the delegated 202 (`bodyless/mod.rs`).
 **Statement.** *Every request signer refuses, before any signature exists, a body carrying a request evidence block that fails `HttpRequestEvidenceBlock::validate` or whose continuation fails `HttpContinuation::validate_shape`; every `;req`-bound response signer refuses a request carrying such a block; the full-profile delegated response signer also refuses a request carrying none.*
 **If false.** The profile emits signed evidence its own verifier refuses, and a caller that assembles the block by hand — its fields are public by owner ruling, because the continuation proof reads them — gets a signature over it.
-**Likely owner:** `http_profile.response_emission_binding` measures `sign.rs` and `sign/request_block.rs`, but its statement is what a response signature binds, not what a signer refuses.
 **Root relationship.** Owner Ruling 17.2 for `0f0dc26c60f6d5be`, under CF-007's precedent.
 **Severity:** `medium`.
 **Recorded:** 2026-10-05, owner Ruling 17.2.
+**Resolved: `ratified_as = "http_profile.request_evidence_signing_boundary"`, owner Ruling 18.1.**
+The unit's claim is this proposition and no more, it claims all twelve controls, and M455–M460
+falsify it: one probe per check (`validate`, `validate_shape`) and one per signing entry point
+(the request signers' shared tail, the `;req` response signer, the full-profile delegated
+response signer, the delegated 202). It is not a clause of
+`http_profile.response_emission_binding`, whose statement is what a response signature binds;
+this one covers request signers too. No theorem depends on it.

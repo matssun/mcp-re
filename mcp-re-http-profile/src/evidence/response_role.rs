@@ -17,6 +17,13 @@ use crate::ids::EVIDENCE_DIGEST_ALG;
 /// of some signature base, and no request-role value can sit where this type is expected.
 ///
 /// Serializes to the wire's split form, `{digest_alg, digest_value}`.
+///
+/// Code outside this crate cannot write the value in:
+///
+/// ```compile_fail
+/// use mcp_re_http_profile::ResponseRoleEvidence;
+/// let _ = ResponseRoleEvidence { digest_value: String::new() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResponseRoleEvidence {
     digest_value: String,
