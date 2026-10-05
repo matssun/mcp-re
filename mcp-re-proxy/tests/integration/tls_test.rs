@@ -778,11 +778,6 @@ fn delegated_ed25519_tls_handshake_round_trip() {
     // credential (ADR-MCPRE-063 Slice 3: the certificate and the delegated signer must
     // present the same public key) AND binds the resolver to this listener's own signing
     // budget — the fourth of the four things THM-0048 says are established together.
-    //
-    // This used to assemble the resolver itself and hand it to a `pub` escape hatch with a
-    // hand-made `TlsHandshakeSignBudget::default()`, which is precisely the shape the
-    // theorem says cannot happen: the terms supplied to the listener independently. The
-    // escape hatch is gone and the test is stronger for losing it.
     let config = std::sync::Arc::new(
         TlsListenerSecurityState::new(
             vec![client_ca.cert.der().clone()],

@@ -216,11 +216,6 @@ impl DelegatedEd25519SigningKey {
     /// claimed to: `rustls::sign::SigningKey` and [`RawEd25519TlsSigner`] are public
     /// traits, so an embedder can write its own. What it removes is this crate publishing
     /// the shortcut and then documenting elsewhere that the gate is the only way in.
-    ///
-    /// The budget-free sibling is gone with it. It minted
-    /// `TlsHandshakeSignBudget::default()` per key, so two keys built that way shared no
-    /// bucket — the opposite of what the listener's budget is for — and its only callers
-    /// were this module's own tests.
     pub(in crate::delegated_tls) fn with_budget(
         signer: Arc<dyn RawEd25519TlsSigner>,
         budget: Arc<TlsHandshakeSignBudget>,
