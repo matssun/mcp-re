@@ -229,7 +229,11 @@ mod tests {
             .build_exported_key_config(chain.clone(), key_der(), Vec::new())
             .expect("initial config");
         CrlReloadTask {
-            config: ServerConfigSnapshot::establish(Arc::new(initial)).1,
+            config: ServerConfigSnapshot::establish(
+                Arc::new(initial),
+                crate::config_state::PrivateKeyExposure::ProcessReadable,
+            )
+            .1,
             server_chain: if server_chain.is_empty() {
                 server_chain
             } else {

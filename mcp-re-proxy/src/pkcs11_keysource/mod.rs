@@ -212,7 +212,9 @@ impl Pkcs11KeySource {
     /// object (distinct from `key_label` — a separate security principal) custodies
     /// the TLS server key, and a [`Pkcs11TlsSigner`] is opened over it so the TLS
     /// handshake is signed ON the token (the TLS private key never leaves the
-    /// device, and `tls` then holds no exported key). `None` keeps the
+    /// device), and a `tls` that holds an exported TLS key is refused before the module
+    /// is loaded, so the source carries no file-backed TLS credential beside the token's.
+    /// `None` keeps the
     /// file-backed TLS path. The object-signing label and TLS label are independent:
     /// neither requires the other, and a label resolving to multiple or non-Ed25519
     /// objects fails closed at `open` (proven by the live lane).
@@ -227,6 +229,13 @@ impl Pkcs11KeySource {
         if tls_key_label == Some(key_label) {
             return Err(KeyError::Malformed(
                 "pkcs11: the TLS key and the response-signing key must be distinct token objects"
+                    .to_string(),
+            ));
+        }
+        if tls_key_label.is_some() && tls.holds_tls_key() {
+            return Err(KeyError::Malformed(
+                "pkcs11: the TLS key is delegated to the token; the file source must not also \
+                 hold an exported TLS server key"
                     .to_string(),
             ));
         }
@@ -438,6 +447,45 @@ mod tests {
     use super::ED25519_SIGNATURE_LEN;
     use super::TLS_SESSION_POOL_SIZE;
     use crate::communication_assurance::ED25519_PUBLIC_KEY_LEN;
+
+    /// A delegated TLS key and an exported one cannot both be held: with a TLS key label
+    /// configured, a file source holding a TLS key is refused before the module is even
+    /// loaded. Without a label the same file source is the legitimate exported-key path,
+    /// and `open` goes on to load the module (and here fails to find it).
+    #[cfg(unix)]
+    #[test]
+    fn a_delegated_tls_source_refuses_a_file_source_holding_a_tls_key() {
+        use crate::capability_materialization::key_file_custody::CheckedKeyFile;
+        use crate::config_state::KeyFileAccessPolicy;
+        use crate::key_source::FileKeySource;
+        use std::os::unix::fs::PermissionsExt;
+
+        let pem = rcgen::KeyPair::generate().expect("keypair").serialize_pem();
+        let keyed = |name: &str| {
+            let path =
+                std::env::temp_dir().join(format!("mcp_re_p11_tls_{}_{name}", std::process::id()));
+            std::fs::write(&path, pem.as_bytes()).expect("write");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+            let key = CheckedKeyFile::open(&path.to_string_lossy(), KeyFileAccessPolicy::OwnerOnly)
+                .expect("admitted");
+            let _ = std::fs::remove_file(&path);
+            FileKeySource::tls_only("/dev/null", Some(key), "/dev/null").expect("valid key")
+        };
+        let open = |tls, label| {
+            super::Pkcs11KeySource::open("/nonexistent/module.so", "pin", "t", "sign", tls, label)
+                .err()
+                .expect("no module at that path")
+        };
+        let delegated = open(keyed("a"), Some("tls"));
+        assert!(
+            matches!(&delegated, KeyError::Malformed(m) if m.contains("must not also hold")),
+            "{delegated:?}"
+        );
+        let exported = open(keyed("b"), None);
+        assert!(matches!(exported, KeyError::NotFound(_)), "{exported:?}");
+        let keyless = FileKeySource::tls_only("/dev/null", None, "/dev/null").expect("no key");
+        assert!(matches!(open(keyless, Some("tls")), KeyError::NotFound(_)));
+    }
 
     /// Issue #59 (test b, no token): the SPKI the TLS signer exports from a token's
     /// raw `CKA_EC_POINT` is a well-formed RFC 8410 Ed25519 `SubjectPublicKeyInfo`

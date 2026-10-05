@@ -39,7 +39,7 @@ pub(super) fn open(
             Box::new(signing),
             tls,
             std::sync::Arc::new(channel_signer),
-        ),
+        )?,
     ))
 }
 

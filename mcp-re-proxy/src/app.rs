@@ -15,7 +15,6 @@ use crate::async_serve::ServedHttpRequest;
 use crate::clock::now_unix;
 use crate::config_snapshot;
 use crate::config_state::ChannelBindingState;
-use crate::config_state::PrivateKeyExposure;
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
@@ -487,8 +486,6 @@ fn run_validated(
         startup_now_unix,
         Arc::clone(&shutdown),
     )?)?;
-    let handshake_key_may_block =
-        building.tls()?.key_exposure() == PrivateKeyExposure::NonExporting;
     let client_revocation = building.tls()?.revocation();
     let config_snapshot = building.tls()?.snapshot();
 
@@ -525,7 +522,7 @@ fn run_validated(
     // The delegated-TLS custody paths sign the handshake through a KMS or a PKCS#11
     // token, synchronously, inside rustls' `Signer::sign` — so the serving runtime
     // shape has to account for a blocking signer (see `async_fleet`).
-    if handshake_key_may_block {
+    if config_snapshot.key_exposure() == crate::config_state::PrivateKeyExposure::NonExporting {
         eprintln!(
             "mcp-re-proxy: TLS custody = DELEGATED: the handshake signature is a blocking \
              KMS/PKCS#11 call inside rustls' synchronous signer, so each core serves on a \
@@ -564,9 +561,6 @@ fn run_validated(
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
         target_uri: values.target_uri.clone(),
-        // The delegated-TLS custody paths sign the handshake through a KMS or a
-        // PKCS#11 token, synchronously, inside rustls' `Signer::sign`.
-        tls_signing_may_block: handshake_key_may_block,
     };
 
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to

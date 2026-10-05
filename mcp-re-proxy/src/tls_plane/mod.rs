@@ -76,7 +76,6 @@ pub struct TlsPlane {
     /// because a CRL posture without its own currency is a claim about a snapshot that may
     /// already have been superseded — which is what the write-once field it replaces was.
     currency: Arc<ClientRevocationCurrency>,
-    key_exposure: PrivateKeyExposure,
     /// Owns the CRL reload worker. Halted in [`Drop`]; see the module note on why no
     /// security transition accompanies it.
     workers: WorkerSet,
@@ -106,16 +105,6 @@ impl TlsPlane {
     /// startup posture did between the first successful reload and the process ending.
     pub(crate) fn revocation_currency(&self) -> Arc<ClientRevocationCurrency> {
         Arc::clone(&self.currency)
-    }
-
-    /// What may be believed about the handshake key this plane ESTABLISHED.
-    ///
-    /// Read by the serving runtime shape: a `NonExporting` signer blocks inside rustls'
-    /// synchronous `Signer::sign`, so each core needs a worker pool rather than the
-    /// single-threaded share-nothing default. Exposed as a fact because the material it
-    /// describes is moved into the reload worker.
-    pub fn key_exposure(&self) -> PrivateKeyExposure {
-        self.key_exposure
     }
 
     /// Number of workers this plane owns. For the lifecycle tests.
@@ -159,13 +148,15 @@ impl TlsPlane {
             .spawn("test crl reload", move || body(halt))
             .expect("spawn test worker");
         TlsPlane {
-            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(server))),
+            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(
+                Arc::new(server),
+                PrivateKeyExposure::ProcessReadable,
+            )),
             revocation: None,
             currency: Arc::new(ClientRevocationCurrency::new(
                 ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
                 Some(300),
             )),
-            key_exposure: PrivateKeyExposure::ProcessReadable,
             workers,
         }
     }
@@ -270,7 +261,7 @@ impl TlsPlane {
         // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
         // byte-identical to the static posture.
         let (snapshot, config_publisher) =
-            config_snapshot::ServerConfigSnapshot::establish(Arc::new(server_config));
+            config_snapshot::ServerConfigSnapshot::establish(Arc::new(server_config), established);
 
         let (workers, currency) = start_reload_worker(
             deployment,
@@ -287,7 +278,6 @@ impl TlsPlane {
             snapshot,
             revocation,
             currency,
-            key_exposure: established,
             workers,
         })
     }
@@ -439,13 +429,15 @@ mod handle_lifetime_tests {
             })
             .expect("spawn test worker");
         TlsPlane {
-            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(config)),
+            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(
+                config,
+                PrivateKeyExposure::ProcessReadable,
+            )),
             revocation: None,
             currency: Arc::new(ClientRevocationCurrency::new(
                 ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
                 Some(300),
             )),
-            key_exposure: PrivateKeyExposure::ProcessReadable,
             workers,
         }
     }
@@ -581,6 +573,27 @@ mod custody_agreement_tests {
         assert!(
             err.contains("delegated") && err.contains("exported-key"),
             "the refusal must name both sides: {err}"
+        );
+    }
+
+    /// The snapshot the plane serves carries the custody of the material it was built
+    /// from, so the serving runtime's shape is decided by the key the handshakes actually
+    /// sign with rather than by a flag supplied beside the snapshot.
+    #[test]
+    fn the_served_snapshot_carries_the_established_custody() {
+        let (chain, signer) = crate::delegated_tls::tests::corresponding_material();
+        let plane = TlsPlane::materialize(
+            &plan(crate::config_state::test_support::channel_custody_delegated_pkcs11("tls")),
+            TlsKeyMaterial::Delegated(signer),
+            chain.clone(),
+            chain,
+            0,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .expect("agreeing delegated custody over corresponding material materializes");
+        assert_eq!(
+            plane.snapshot().key_exposure(),
+            PrivateKeyExposure::NonExporting
         );
     }
 

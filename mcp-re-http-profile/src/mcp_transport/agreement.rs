@@ -48,7 +48,7 @@ impl TransportHeaders {
 }
 
 impl McpTransportPolicy {
-    /// `Mcp-Method`: present when required, and naming the method the protected body names.
+    /// `Mcp-Method`: present, and naming the method the protected body names.
     ///
     /// A body with no `method` member leaves nothing to disagree with, so agreement does
     /// nothing rather than failing — the header was not unconstrained in that case either,
@@ -63,21 +63,17 @@ impl McpTransportPolicy {
         headers: &TransportHeaders,
         body_method: Option<&str>,
     ) -> Result<(), HttpProfileError> {
-        if let Some(bm) = body_method {
-            let folded = bm.trim().to_ascii_lowercase();
-            if McpMethodTarget::of(bm) == McpMethodTarget::Unknown
-                && McpMethodTarget::of(&folded) != McpMethodTarget::Unknown
-            {
-                return Err(HttpProfileError::McpTransportDivergence(MCP_METHOD_HEADER));
-            }
+        let folds_onto_a_listed_method = body_method.is_some_and(|bm| {
+            McpMethodTarget::of(bm) == McpMethodTarget::Unknown
+                && McpMethodTarget::of(&bm.trim().to_ascii_lowercase()) != McpMethodTarget::Unknown
+        });
+        if folds_onto_a_listed_method {
+            return Err(HttpProfileError::McpTransportDivergence(MCP_METHOD_HEADER));
         }
         let Some(h) = headers.method.as_deref() else {
-            if self.require_mcp_method {
-                return Err(HttpProfileError::McpTransportHeaderMissing(
-                    MCP_METHOD_HEADER,
-                ));
-            }
-            return Ok(());
+            return Err(HttpProfileError::McpTransportHeaderMissing(
+                MCP_METHOD_HEADER,
+            ));
         };
         match body_method {
             Some(bm) if h.trim() != bm => Err(HttpProfileError::McpMethodDivergence),
@@ -85,7 +81,7 @@ impl McpTransportPolicy {
         }
     }
 
-    /// `MCP-Protocol-Version`: present when required, in the deployment's accepted set, and
+    /// `MCP-Protocol-Version`: present, in the deployment's accepted set, and
     /// agreeing with the body where the body says anything.
     ///
     /// Unlike `Mcp-Method`/`Mcp-Name`, an absent body value is the norm rather than a gap:
@@ -102,12 +98,9 @@ impl McpTransportPolicy {
         params: Option<&Value>,
     ) -> Result<(), HttpProfileError> {
         let Some(h) = headers.version.as_deref() else {
-            if self.require_protocol_version_header {
-                return Err(HttpProfileError::McpTransportHeaderMissing(
-                    MCP_PROTOCOL_VERSION_HEADER,
-                ));
-            }
-            return Ok(());
+            return Err(HttpProfileError::McpTransportHeaderMissing(
+                MCP_PROTOCOL_VERSION_HEADER,
+            ));
         };
         let v = h.trim();
         if !self.supported_protocol_versions.iter().any(|s| s == v) {
@@ -142,10 +135,9 @@ impl McpTransportPolicy {
     ) -> Result<(), HttpProfileError> {
         let target = body_method.map_or(McpMethodTarget::Unknown, McpMethodTarget::of);
         let McpMethodTarget::Named(source) = target else {
-            if headers.name.is_some() {
-                return Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER));
-            }
-            return Ok(());
+            return headers.name.as_ref().map_or(Ok(()), |_| {
+                Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER))
+            });
         };
         let Some(h) = headers.name.as_deref() else {
             return Err(HttpProfileError::McpTransportHeaderMissing(MCP_NAME_HEADER));

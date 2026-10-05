@@ -26,21 +26,39 @@ use std::sync::RwLock;
 
 use rustls::ServerConfig;
 
+use crate::config_state::PrivateKeyExposure;
+
 /// An atomically-swappable [`ServerConfig`] read per connection by the serve path.
 ///
 /// Cloning the held `Arc` on [`load`](Self::load) is the whole read cost; the read
 /// lock is released immediately, so a concurrent [`store`](ServerConfigPublisher::store) never blocks
 /// an in-flight handshake and vice versa.
+///
+/// It also carries the custody of the server key every config it holds signs with,
+/// stated once where the first config is built: a swap rebuilds the verifier over the
+/// SAME key material, so the custody cannot change while the snapshot lives. A serve
+/// path that needs to know whether a handshake signature may block reads it here, from
+/// the snapshot it serves, rather than from a flag supplied beside it.
 pub struct ServerConfigSnapshot {
     current: RwLock<Arc<ServerConfig>>,
+    key_exposure: PrivateKeyExposure,
 }
 
 impl ServerConfigSnapshot {
-    /// Seed a snapshot that is never swapped: no publisher exists for it.
-    pub fn new(initial: Arc<ServerConfig>) -> Self {
+    /// Seed a snapshot that is never swapped: no publisher exists for it. `key_exposure`
+    /// is the custody of the key `initial` signs handshakes with.
+    pub fn new(initial: Arc<ServerConfig>, key_exposure: PrivateKeyExposure) -> Self {
         ServerConfigSnapshot {
             current: RwLock::new(initial),
+            key_exposure,
         }
+    }
+
+    /// The custody of the server key this snapshot's configs sign with. `NonExporting`
+    /// means the handshake signature is produced by a KMS or a token, synchronously, so
+    /// producing it may block.
+    pub fn key_exposure(&self) -> PrivateKeyExposure {
+        self.key_exposure
     }
 
     /// The current config. Clones the `Arc` under a short read lock (a poisoned
@@ -55,8 +73,11 @@ impl ServerConfigSnapshot {
 
     /// Seed a snapshot with the startup config and return it with the one
     /// [`ServerConfigPublisher`] that can swap it.
-    pub fn establish(initial: Arc<ServerConfig>) -> (Arc<Self>, ServerConfigPublisher) {
-        let snapshot = Arc::new(Self::new(initial));
+    pub fn establish(
+        initial: Arc<ServerConfig>,
+        key_exposure: PrivateKeyExposure,
+    ) -> (Arc<Self>, ServerConfigPublisher) {
+        let snapshot = Arc::new(Self::new(initial, key_exposure));
         let publisher = ServerConfigPublisher {
             snapshot: Arc::clone(&snapshot),
         };
@@ -154,7 +175,8 @@ mod tests {
     fn load_returns_current_and_store_swaps() {
         let a = dummy_config();
         let b = dummy_config();
-        let (snapshot, publisher) = ServerConfigSnapshot::establish(Arc::clone(&a));
+        let (snapshot, publisher) =
+            ServerConfigSnapshot::establish(Arc::clone(&a), PrivateKeyExposure::ProcessReadable);
         assert!(
             Arc::ptr_eq(&snapshot.load(), &a),
             "load returns the seeded config"
@@ -170,7 +192,8 @@ mod tests {
     fn a_handle_taken_before_a_swap_keeps_serving_its_config() {
         let a = dummy_config();
         let b = dummy_config();
-        let (snapshot, publisher) = ServerConfigSnapshot::establish(Arc::clone(&a));
+        let (snapshot, publisher) =
+            ServerConfigSnapshot::establish(Arc::clone(&a), PrivateKeyExposure::ProcessReadable);
         // An in-flight handshake captured `a` before the swap.
         let in_flight = snapshot.load();
         publisher.store(Arc::clone(&b));
@@ -188,7 +211,8 @@ mod tests {
     fn reload_swaps_on_successful_rebuild() {
         let a = dummy_config();
         let b = dummy_config();
-        let (snapshot, publisher) = ServerConfigSnapshot::establish(Arc::clone(&a));
+        let (snapshot, publisher) =
+            ServerConfigSnapshot::establish(Arc::clone(&a), PrivateKeyExposure::ProcessReadable);
         let outcome = reload_once(&publisher, || Ok(Arc::clone(&b)));
         assert_eq!(outcome, ReloadOutcome::Swapped);
         assert!(
@@ -201,7 +225,8 @@ mod tests {
     fn a_poisoned_lock_still_loads_the_last_config_and_still_swaps() {
         let a = dummy_config();
         let b = dummy_config();
-        let (snapshot, publisher) = ServerConfigSnapshot::establish(Arc::clone(&a));
+        let (snapshot, publisher) =
+            ServerConfigSnapshot::establish(Arc::clone(&a), PrivateKeyExposure::ProcessReadable);
         std::thread::scope(|s| {
             let h = s.spawn(|| {
                 let _g = snapshot.current.write().unwrap();
@@ -227,7 +252,8 @@ mod tests {
     #[test]
     fn reload_keeps_last_good_on_failure() {
         let a = dummy_config();
-        let (snapshot, publisher) = ServerConfigSnapshot::establish(Arc::clone(&a));
+        let (snapshot, publisher) =
+            ServerConfigSnapshot::establish(Arc::clone(&a), PrivateKeyExposure::ProcessReadable);
         let outcome = reload_once(&publisher, || Err("client CRL unreadable".to_string()));
         assert_eq!(
             outcome,

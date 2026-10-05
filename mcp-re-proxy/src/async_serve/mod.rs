@@ -414,8 +414,6 @@ mod target_uri_tests {
 
 #[cfg(test)]
 mod admission_bound_tests {
-    use super::*;
-
     /// R7-C022 / R12-648: the handshake bound must stay strictly below the worker pool the
     /// core was ACTUALLY built with.
     ///
@@ -446,17 +444,12 @@ mod admission_bound_tests {
         });
         let cases = depths.flat_map(|depth| [(depth, false), (depth, true)]);
         for (depth, tls_signing_may_block) in cases {
-            let options = ServerOptions {
-                tls_signing_may_block,
-                ..ServerOptions::new(
-                    crate::config_state::ClientCredentialWindow::new(
-                        std::time::Duration::from_secs(3600),
-                        std::time::Duration::from_secs(300),
-                    )
-                    .expect("a legal credential window"),
-                )
+            let custody = if tls_signing_may_block {
+                crate::config_state::PrivateKeyExposure::NonExporting
+            } else {
+                crate::config_state::PrivateKeyExposure::ProcessReadable
             };
-            let Ok(pool) = crate::async_fleet::CorePool::for_core(depth, &options) else {
+            let Ok(pool) = crate::async_fleet::CorePool::for_core(depth, custody) else {
                 assert!(
                     tls_signing_may_block && depth == crate::async_fleet::ShardDepth::stated(1),
                     "{depth:?}: only the operator-stated single thread under delegated \

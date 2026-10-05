@@ -10819,7 +10819,7 @@ conjunct = "an operator-stated `--workers-per-shard 1` under delegated TLS custo
 # the whole serving battery stays green, and the operator is told nothing.
 path = "mcp-re-proxy/src/async_fleet/core_runtime.rs"
 anchor = """
-        if options.tls_signing_may_block && stated_single_thread {
+        if tls_signing_may_block && stated_single_thread {
             return Err(DelegatedTlsDepthRefusal);
         }
 """
@@ -11713,10 +11713,9 @@ unit = "http_profile.mcp_transport_contract"
 conjunct = "a covered Mcp-Name on a message whose body names no target is refused"
 path = "mcp-re-http-profile/src/mcp_transport/agreement.rs"
 anchor = """
-            if headers.name.is_some() {
-                return Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER));
-            }
-            return Ok(());
+            return headers.name.as_ref().map_or(Ok(()), |_| {
+                Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER))
+            });
 """
 weakening = """
             return Ok(());
@@ -11731,10 +11730,10 @@ unit = "http_profile.mcp_transport_contract"
 conjunct = "a body method a case-folding or trimming reader would take for a listed one is refused"
 path = "mcp-re-http-profile/src/mcp_transport/agreement.rs"
 anchor = """
-                && McpMethodTarget::of(&folded) != McpMethodTarget::Unknown
+                && McpMethodTarget::of(&bm.trim().to_ascii_lowercase()) != McpMethodTarget::Unknown
 """
 weakening = """
-                && folded.is_empty()
+                && bm.is_empty()
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::a_case_or_padding_variant_of_a_listed_method_is_refused",
@@ -11746,15 +11745,16 @@ unit = "http_profile.mcp_transport_contract"
 conjunct = "a bodyless request must carry a covered MCP-Protocol-Version"
 path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
 anchor = """
-            if self.require_protocol_version_header {
-                return Err(HttpProfileError::McpTransportHeaderMissing(
-                    MCP_PROTOCOL_VERSION_HEADER,
-                ));
-            }
-            return Ok(());
+        let Some(h) = single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)? else {
+            return Err(HttpProfileError::McpTransportHeaderMissing(
+                MCP_PROTOCOL_VERSION_HEADER,
+            ));
+        };
 """
 weakening = """
+        let Some(h) = single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)? else {
             return Ok(());
+        };
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::tests::a_bodyless_request_states_a_supported_version_and_no_routing_header",
@@ -11766,9 +11766,9 @@ unit = "http_profile.mcp_transport_contract"
 conjunct = "a bodyless request carrying a covered Mcp-Method or Mcp-Name is refused"
 path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
 anchor = """
-            if single_header(&request.headers, routing)?.is_some() {
-                return Err(HttpProfileError::McpTransportDivergence(routing));
-            }
+            single_header(&request.headers, routing)?.map_or(Ok(()), |_| {
+                Err(HttpProfileError::McpTransportDivergence(routing))
+            })?;
 """
 weakening = """
             let _ = routing;
@@ -11791,4 +11791,70 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-http-profile:bodyless_202_test#the_bodyless_signer_covers_every_conditionally_mandatory_header",
+]
+
+[[probe]]
+id = "M472-proxy-a-delegated-kms-source-holds-no-file-tls-key"
+unit = "proxy.delegated_tls_key_custody"
+conjunct = "a KMS source whose handshake is delegated cannot be built over a file source holding a TLS key"
+path = "mcp-re-proxy/src/kms_keysource/mod.rs"
+anchor = """
+        if tls.holds_tls_key() {
+"""
+weakening = """
+        if tls.holds_tls_key() && tls_signer.tls_public_key_spki_der().is_err() {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#kms_keysource::tests::a_delegated_tls_source_never_projects_an_exported_key",
+]
+
+[[probe]]
+id = "M473-proxy-a-delegated-pkcs11-source-holds-no-file-tls-key"
+unit = "proxy.delegated_tls_key_custody"
+conjunct = "a PKCS#11 source with a TLS key label cannot be opened over a file source holding a TLS key"
+path = "mcp-re-proxy/src/pkcs11_keysource/mod.rs"
+anchor = """
+        if tls_key_label.is_some() && tls.holds_tls_key() {
+"""
+weakening = """
+        if tls_key_label.is_some() && tls.holds_tls_key() && pin.is_empty() {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::a_delegated_tls_source_refuses_a_file_source_holding_a_tls_key",
+]
+
+[[probe]]
+id = "M474-proxy-the-snapshot-carries-the-established-custody"
+unit = "proxy.handshake_custody_snapshot"
+conjunct = "the served snapshot's key exposure is the custody of the material the TLS plane built it from"
+path = "mcp-re-proxy/src/tls_plane/mod.rs"
+anchor = """
+            config_snapshot::ServerConfigSnapshot::establish(Arc::new(server_config), established);
+"""
+weakening = """
+            config_snapshot::ServerConfigSnapshot::establish(
+                Arc::new(server_config),
+                PrivateKeyExposure::ProcessReadable,
+            );
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::custody_agreement_tests::the_served_snapshot_carries_the_established_custody",
+]
+
+[[probe]]
+id = "M475-proxy-the-fleet-shape-reads-the-served-snapshot"
+unit = "proxy.handshake_custody_snapshot"
+conjunct = "the serving fleet decides its runtime shape from the custody of the snapshot it serves"
+path = "mcp-re-proxy/src/async_fleet/mod.rs"
+anchor = """
+    let pool = CorePool::for_core(workers_per_shard, config.key_exposure())
+"""
+weakening = """
+    let pool = CorePool::for_core(
+        workers_per_shard,
+        crate::config_state::PrivateKeyExposure::ProcessReadable,
+    )
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
 ]

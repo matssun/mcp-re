@@ -343,21 +343,24 @@ where
                     async_serve::ServedHttpResponse { status: 200, headers: Vec::new(), body }
                 })
             };
+                // The accept loop reads the serving config per connection from a
+                // snapshot (MCPRE-116 CRL hot-reload); this harness never swaps it.
+                let snapshot = Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(
+                    config,
+                    mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+                ));
                 // The handshake bound belongs to the pool that built the runtime this loop
-                // runs on, so the harness derives it from the same depth it just built (6).
+                // runs on, so the harness derives it from the same depth it just built (6)
+                // and the custody of the snapshot it serves.
                 let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
                     mcp_re_proxy::async_fleet::ShardDepth::stated(6),
-                    &options,
+                    snapshot.key_exposure(),
                 )
                 .expect("a stated depth above one is a shape every custody has")
                 .handshake_bound();
                 async_serve::serve(
                     listener,
-                    // The accept loop reads the serving config per connection from a
-                    // snapshot (MCPRE-116 CRL hot-reload); this harness never swaps it.
-                    Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(
-                        config,
-                    )),
+                    snapshot,
                     Arc::new(options),
                     Arc::new(async_handler),
                     shutdown_srv,

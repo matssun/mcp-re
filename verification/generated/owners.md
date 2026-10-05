@@ -184,6 +184,7 @@ not an omission to hide.
 | proxy.delegated_signing_configuration_state | V0 | _none_ | 0 |
 | proxy.delegated_signing_credential | V0 | THM-0062 | 1 |
 | proxy.delegated_tls_depth_refusal | V0 | _none_ | 0 |
+| proxy.delegated_tls_key_custody | V0 | _none_ | 0 |
 | proxy.deployment_topology_state | V0 | _none_ | 0 |
 | proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052, THM-0074 | 0 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
@@ -201,6 +202,7 @@ not an omission to hide.
 | proxy.freshness_window_state | V0 | _none_ | 0 |
 | proxy.gcp_kms_adapter | V0 | _none_ | 0 |
 | proxy.gcp_metadata_token_lifetime | V0 | _none_ | 0 |
+| proxy.handshake_custody_snapshot | V0 | _none_ | 0 |
 | proxy.in_flight_limit_basis | V0 | _none_ | 0 |
 | proxy.key_file_custody_admission | V0 | _none_ | 0 |
 | proxy.key_file_floor_scope | V0 | _none_ | 0 |

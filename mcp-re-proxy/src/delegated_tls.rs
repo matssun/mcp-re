@@ -305,8 +305,9 @@ impl Signer for DelegatedEd25519Signer {
 /// certificate chain with a [`DelegatedEd25519SigningKey`]. Used via
 /// `ServerConfig::builder(...).with_cert_resolver(...)` so rustls drives the
 /// handshake signature through the device/KMS.
+/// Test scaffolding the TLS plane's own tests build delegated material from.
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use mcp_re_core::b64url_decode;
     use mcp_re_core::SigningKey as McpReSigningKey;
     use rustls_pki_types::CertificateDer;
@@ -345,7 +346,7 @@ mod tests {
     }
 
     /// A leaf and a delegated signer for the same key.
-    pub(super) fn corresponding_material(
+    pub(crate) fn corresponding_material(
     ) -> (Vec<CertificateDer<'static>>, Arc<dyn RawEd25519TlsSigner>) {
         let seed = [11u8; 32];
         (

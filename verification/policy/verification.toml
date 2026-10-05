@@ -6823,6 +6823,51 @@ tested_symbols = [
   "//mcp-re-http-profile:delegated_202_test#no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block",
 ]
 
+# Owner Ruling 19.3 (B16, 343ce9e4): delegated TLS custody admits no second, file-backed
+# TLS key, with the same semantics for the KMS and the PKCS#11 source.
+[[unit]]
+id = "proxy.delegated_tls_key_custody"
+class = "V0"
+description = "When a key source's TLS handshake is delegated to a KMS key or a PKCS#11 token object, the source holds no file-backed TLS server key that could bypass that custody: `KmsKeySource::new_with_delegated_tls` and `Pkcs11KeySource::open` with a TLS key label both refuse a `FileKeySource` that holds one (PKCS#11 before loading the module), so a delegated source's `tls_server_key` has nothing to export. Without delegation the same file source is the exported-key path and is admitted. Says nothing about which custody a deployment selects, which layer A decides."
+paths = [
+  "mcp-re-proxy/src/kms_keysource/mod.rs",
+  "mcp-re-proxy/src/pkcs11_keysource/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/key_source/delegated_tls_key_custody",
+  "mutation://proxy/key_source/delegated_tls_key_custody",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#kms_keysource::tests::a_delegated_tls_source_never_projects_an_exported_key",
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::a_delegated_tls_source_refuses_a_file_source_holding_a_tls_key",
+]
+
+# Owner Ruling 19.3 (B16, 3757220b): whether a handshake signature may block is the custody
+# of the key the served config signs with, and travels with that config.
+[[unit]]
+id = "proxy.handshake_custody_snapshot"
+class = "V0"
+description = "Whether a serving core must assume a blocking handshake signer is read from the `ServerConfigSnapshot` it serves, whose key exposure the TLS plane sets from the key material it built that config from; no value supplied beside the snapshot decides it, so a delegated snapshot cannot be served on a runtime shaped for an in-memory key. Says nothing about which runtime shape a given custody and depth then receive, which `proxy.delegated_tls_depth_refusal` and `proxy.core_pool_handshake_bound` own."
+paths = [
+  "mcp-re-proxy/src/config_snapshot.rs",
+  "mcp-re-proxy/src/tls_plane/mod.rs",
+  "mcp-re-proxy/src/async_fleet/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/tls/handshake_custody_snapshot",
+  "mutation://proxy/tls/handshake_custody_snapshot",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::custody_agreement_tests::the_served_snapshot_carries_the_established_custody",
+  "//mcp-re-proxy:proxy_unit_test#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
+]
+
 # Owner Ruling 19.2: on the serving path, signed request metadata and the request body agree
 # on the security-relevant transport/MCP semantics; where no body can decide, refusal.
 [[unit]]

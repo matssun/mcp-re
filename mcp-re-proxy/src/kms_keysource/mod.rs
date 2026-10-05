@@ -149,19 +149,23 @@ impl KmsKeySource {
         }
     }
 
-    /// Build a KMS key source whose TLS handshake is ALSO delegated to a second,
-    /// non-exporting KMS key. The file source still provides the (public) TLS cert
-    /// chain and client-CA roots; its TLS key is never consulted.
+    /// Build a KMS key source whose TLS handshake is ALSO delegated to a second KMS key.
+    /// The file source serves only the public TLS chain and client-CA roots; one holding an
+    /// exported TLS key is refused, so no file-backed TLS credential bypasses KMS custody.
     pub fn new_with_delegated_tls(
         backend: Box<dyn KmsEd25519Backend + Send + Sync>,
         tls: FileKeySource,
         tls_signer: Arc<dyn RawEd25519TlsSigner>,
-    ) -> Self {
-        KmsKeySource {
+    ) -> Result<Self, KeyError> {
+        if tls.holds_tls_key() {
+            let why = "kms: a TLS key delegated to KMS admits no exported file TLS key";
+            return Err(KeyError::Malformed(why.to_string()));
+        }
+        Ok(KmsKeySource {
             signer: KmsResponseSigner::new(backend),
             tls,
             tls_signer: Some(tls_signer),
-        }
+        })
     }
 }
 
@@ -179,11 +183,6 @@ impl KeySource for KmsKeySource {
         self.tls.tls_server_cert_chain()
     }
     fn tls_server_key(&self) -> Result<PrivateKeyDer<'static>, KeyError> {
-        if self.tls_signer.is_some() {
-            return Err(KeyError::NotFound(
-                "kms: the TLS key is delegated to KMS; no exported TLS server key".to_string(),
-            ));
-        }
         self.tls.tls_server_key()
     }
     fn client_ca_roots(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
@@ -437,7 +436,8 @@ mod tests {
             Box::new(FakeKms { key: test_key() }),
             inert_file_source(),
             Arc::new(LocalTlsSigner(tls_key)),
-        );
+        )
+        .expect("a key-less file source");
         let signer = with_tls
             .tls_delegated_signer()
             .expect("a distinct TLS KMS key id → delegated TLS signer");
@@ -491,7 +491,8 @@ mod tests {
     }
 
     /// With a delegated TLS signer installed the source never projects an exported TLS
-    /// key, even when its file source holds one; without one it does.
+    /// key: one cannot be built over a file source that holds one, and one built over a
+    /// key-less file source has none to project. Without a delegated signer it does.
     #[cfg(unix)]
     #[test]
     fn a_delegated_tls_source_never_projects_an_exported_key() {
@@ -513,11 +514,24 @@ mod tests {
         let plain = KmsKeySource::new(Box::new(FakeKms { key: test_key() }), file_source("a"));
         assert!(plain.tls_server_key().is_ok(), "positive control");
 
+        let signer = || -> Arc<dyn RawEd25519TlsSigner> {
+            Arc::new(LocalTlsSigner(SigningKey::from_seed_bytes(&[31u8; 32])))
+        };
+        assert!(matches!(
+            KmsKeySource::new_with_delegated_tls(
+                Box::new(FakeKms { key: test_key() }),
+                file_source("b"),
+                signer(),
+            ),
+            Err(KeyError::Malformed(_))
+        ));
         let delegated = KmsKeySource::new_with_delegated_tls(
             Box::new(FakeKms { key: test_key() }),
-            file_source("b"),
-            Arc::new(LocalTlsSigner(SigningKey::from_seed_bytes(&[31u8; 32]))),
-        );
+            inert_file_source(),
+            signer(),
+        )
+        .expect("a key-less file source");
+        assert!(delegated.tls_delegated_signer().is_some());
         assert!(matches!(
             delegated.tls_server_key(),
             Err(KeyError::NotFound(_))

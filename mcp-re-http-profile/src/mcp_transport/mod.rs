@@ -68,8 +68,6 @@ pub use request_headers::MCP_PROTOCOL_VERSION;
 #[derive(Debug, Clone)]
 pub struct McpTransportPolicy {
     supported_protocol_versions: Vec<String>,
-    require_protocol_version_header: bool,
-    require_mcp_method: bool,
     /// The `_meta` key carrying the protocol version in the body, checked under
     /// top-level `_meta` and under `params._meta`.
     protocol_version_body_key: String,
@@ -88,8 +86,6 @@ impl McpTransportPolicy {
                 .iter()
                 .map(|s| (*s).to_owned())
                 .collect(),
-            require_protocol_version_header: true,
-            require_mcp_method: true,
             protocol_version_body_key: "io.modelcontextprotocol/protocolVersion".to_owned(),
         }
     }
@@ -117,17 +113,14 @@ impl McpTransportPolicy {
     /// the signature verified, so every header it reads is covered.
     pub(crate) fn enforce_bodyless(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {
         for routing in [MCP_METHOD_HEADER, MCP_NAME_HEADER] {
-            if single_header(&request.headers, routing)?.is_some() {
-                return Err(HttpProfileError::McpTransportDivergence(routing));
-            }
+            single_header(&request.headers, routing)?.map_or(Ok(()), |_| {
+                Err(HttpProfileError::McpTransportDivergence(routing))
+            })?;
         }
         let Some(h) = single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)? else {
-            if self.require_protocol_version_header {
-                return Err(HttpProfileError::McpTransportHeaderMissing(
-                    MCP_PROTOCOL_VERSION_HEADER,
-                ));
-            }
-            return Ok(());
+            return Err(HttpProfileError::McpTransportHeaderMissing(
+                MCP_PROTOCOL_VERSION_HEADER,
+            ));
         };
         if !self
             .supported_protocol_versions

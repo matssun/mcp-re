@@ -214,7 +214,7 @@ where
     // `serve_fleet` fails only before a listener exists is what `materialized_runtime` reads
     // to decide which lifecycle events happened, so a refusal after this line would not just
     // be worse advice — it would be a false event.
-    let pool = CorePool::for_core(workers_per_shard, &options)
+    let pool = CorePool::for_core(workers_per_shard, config.key_exposure())
         .map_err(|refusal| std::io::Error::new(std::io::ErrorKind::InvalidInput, refusal))?;
     let handshake_bound = pool.handshake_bound();
 
@@ -515,7 +515,9 @@ mod refusal_order_tests {
 
     /// A self-signed server-only config built in-process. The fleet never reaches a
     /// handshake in these tests — it exists because `serve_fleet` takes a snapshot.
-    fn dummy_snapshot() -> Arc<crate::config_snapshot::ServerConfigSnapshot> {
+    fn dummy_snapshot(
+        key_exposure: crate::config_state::PrivateKeyExposure,
+    ) -> Arc<crate::config_snapshot::ServerConfigSnapshot> {
         let key = rcgen::KeyPair::generate().expect("key");
         let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("params");
         let cert = params.self_signed(&key).expect("self-signed");
@@ -527,9 +529,10 @@ mod refusal_order_tests {
                 .with_no_client_auth()
                 .with_single_cert(vec![cert.der().clone()], key_der)
                 .expect("server config");
-        Arc::new(crate::config_snapshot::ServerConfigSnapshot::new(Arc::new(
-            config,
-        )))
+        Arc::new(crate::config_snapshot::ServerConfigSnapshot::new(
+            Arc::new(config),
+            key_exposure,
+        ))
     }
 
     /// An address no host can bind, so a run that reaches the listener loop FAILS THERE
@@ -538,16 +541,18 @@ mod refusal_order_tests {
     const UNBINDABLE: &str = "240.0.0.1:1";
 
     fn start(workers_per_shard: usize, tls_signing_may_block: bool) -> std::io::Error {
-        let options = Arc::new(ServerOptions {
-            tls_signing_may_block,
-            ..ServerOptions::new(
-                crate::config_state::ClientCredentialWindow::new(
-                    std::time::Duration::from_secs(3600),
-                    std::time::Duration::from_secs(300),
-                )
-                .expect("a legal credential window"),
+        let options = Arc::new(ServerOptions::new(
+            crate::config_state::ClientCredentialWindow::new(
+                std::time::Duration::from_secs(3600),
+                std::time::Duration::from_secs(300),
             )
-        });
+            .expect("a legal credential window"),
+        ));
+        let custody = if tls_signing_may_block {
+            crate::config_state::PrivateKeyExposure::NonExporting
+        } else {
+            crate::config_state::PrivateKeyExposure::ProcessReadable
+        };
         serve_fleet(
             FleetConfig {
                 addr: UNBINDABLE.parse().expect("a literal address"),
@@ -556,7 +561,7 @@ mod refusal_order_tests {
                 listen_backlog: DEFAULT_LISTEN_BACKLOG,
                 max_in_flight_total: None,
             },
-            dummy_snapshot(),
+            dummy_snapshot(custody),
             options,
             |_core| {
                 Arc::new(|_req: crate::async_serve::ServedHttpRequest| -> crate::async_serve::HandlerResponseFuture {

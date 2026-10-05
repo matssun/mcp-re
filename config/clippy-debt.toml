@@ -152,10 +152,12 @@ count = 0
 # 17 -> 15: R11-356 split `issue_if` into the three authorities it had grown — one approach
 # to the root, adopting what it issued, and holding off when it issued nothing publishable.
 # Two nesting sites went with the arms that moved out.
+# 11 -> 10: the MCP transport contract's `require_*` inputs, fixed true by the only
+# constructor, were deleted (dea1073e), and the unreachable arms they guarded with them.
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "excessive_nesting"
-count = 11
+count = 10
 
 [[debt]]
 crate = "mcp-re-http-profile"

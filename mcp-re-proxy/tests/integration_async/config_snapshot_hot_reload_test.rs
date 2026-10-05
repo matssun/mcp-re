@@ -274,7 +274,7 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>) -> Server {
             // never from a constant that never saw the depth.
             let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
                 mcp_re_proxy::async_fleet::ShardDepth::stated(4),
-                &options,
+                snapshot.key_exposure(),
             )
             .expect("a stated depth above one is a shape every custody has")
             .handshake_bound();
@@ -307,7 +307,10 @@ fn swapped_server_config_is_in_force_on_the_next_connection() {
     let ca_a = make_ca("client-ca-A");
     let ca_b = make_ca("client-ca-B");
 
-    let (snapshot, publisher) = ServerConfigSnapshot::establish(server_config_trusting(&ca_a));
+    let (snapshot, publisher) = ServerConfigSnapshot::establish(
+        server_config_trusting(&ca_a),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    );
     let server = spawn(Arc::clone(&snapshot));
 
     let client_a = client_config(&ca_a);

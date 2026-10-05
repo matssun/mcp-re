@@ -209,22 +209,6 @@ pub struct ServerOptions {
     /// verifier checks it against the request evidence block's audience tuple. Empty
     /// when unset (the audience/target check then fails closed).
     pub target_uri: String,
-    /// Whether producing the handshake signature may BLOCK — set when the TLS server
-    /// key is delegated to a KMS or a PKCS#11 token (ADR-MCPS-028 §G).
-    ///
-    /// rustls' `Signer::sign` is synchronous, so on those custody paths the
-    /// CertificateVerify signature is a blocking HTTPS round trip or an FFI `C_Sign`
-    /// executed inside a single `poll`. On the per-core `current_thread` runtime that
-    /// freezes the WHOLE core — its accept loop, its keep-alive connections and every
-    /// in-flight request — for the duration, and `tokio::time::timeout` cannot preempt
-    /// it because the timer never gets to run. Any peer opening connections triggers
-    /// it; a stalled KMS costs seconds per connection and a wedged token is unbounded.
-    ///
-    /// When set, the handshake is run on the blocking pool instead of the runtime
-    /// thread (see `async_serve::serve_connection`). Left `false` for the exported-key
-    /// path, where signing is in-memory and the async handshake is both correct and
-    /// cheaper.
-    pub tls_signing_may_block: bool,
 }
 
 impl ServerOptions {
@@ -244,7 +228,6 @@ impl ServerOptions {
             #[cfg(feature = "online_ocsp")]
             ocsp_checker: None,
             target_uri: String::new(),
-            tls_signing_may_block: false,
         }
     }
 }

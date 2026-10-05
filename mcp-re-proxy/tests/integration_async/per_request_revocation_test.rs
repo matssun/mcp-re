@@ -348,7 +348,7 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>, revocation: Arc<SharedClientRevoca
             // never from a constant that never saw the depth.
             let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
                 mcp_re_proxy::async_fleet::ShardDepth::stated(4),
-                &options,
+                snapshot.key_exposure(),
             )
             .expect("a stated depth above one is a shape every custody has")
             .handshake_bound();
@@ -382,7 +382,10 @@ fn a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection() {
     let ca = make_ca("client-ca-revocation");
     let (revocation, publisher) = SharedClientRevocation::establish(index_revoking(&ca, &[]));
     let revocation = Arc::new(revocation);
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca)));
+    let snapshot = Arc::new(ServerConfigSnapshot::new(
+        server_config_trusting(&ca),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    ));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
     let mut warm = WarmConnection::open(server.addr, &client_config(&ca, REVOKED_SERIAL))
@@ -412,7 +415,10 @@ fn a_peer_absent_from_the_crl_keeps_being_served_across_the_reload() {
     let ca = make_ca("client-ca-revocation");
     let (revocation, publisher) = SharedClientRevocation::establish(index_revoking(&ca, &[]));
     let revocation = Arc::new(revocation);
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca)));
+    let snapshot = Arc::new(ServerConfigSnapshot::new(
+        server_config_trusting(&ca),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    ));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
     let mut innocent = WarmConnection::open(server.addr, &client_config(&ca, INNOCENT_SERIAL))
@@ -436,7 +442,10 @@ fn every_request_on_a_warm_connection_is_checked_not_just_the_first() {
     let ca = make_ca("client-ca-revocation");
     let (revocation, publisher) = SharedClientRevocation::establish(index_revoking(&ca, &[]));
     let revocation = Arc::new(revocation);
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca)));
+    let snapshot = Arc::new(ServerConfigSnapshot::new(
+        server_config_trusting(&ca),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    ));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
     let mut warm = WarmConnection::open(server.addr, &client_config(&ca, REVOKED_SERIAL))
@@ -531,7 +540,10 @@ fn revoking_an_intermediate_refuses_the_next_request_on_an_open_connection() {
     let (revocation, publisher) =
         SharedClientRevocation::establish(index_for_chain(&root, &intermediate, &[], &[]));
     let revocation = Arc::new(revocation);
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&root)));
+    let snapshot = Arc::new(ServerConfigSnapshot::new(
+        server_config_trusting(&root),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    ));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
     let mut warm = WarmConnection::open(
@@ -572,7 +584,10 @@ fn an_unrevoked_intermediate_keeps_its_peers_served() {
     let (revocation, publisher) =
         SharedClientRevocation::establish(index_for_chain(&root, &intermediate, &[], &[]));
     let revocation = Arc::new(revocation);
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&root)));
+    let snapshot = Arc::new(ServerConfigSnapshot::new(
+        server_config_trusting(&root),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    ));
     let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
 
     let mut warm = WarmConnection::open(

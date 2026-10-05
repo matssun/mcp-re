@@ -147,16 +147,13 @@ mod tests {
         // Depth 2 under delegated TLS is the case a constant gets wrong: two workers may
         // admit ONE blocking signature, never two, or the core has nothing left to poll
         // its accept loop, its established connections and its in-flight requests.
-        let delegated = ServerOptions {
-            tls_signing_may_block: true,
-            ..ServerOptions::new(window())
-        };
+        let options = ServerOptions::new(window());
         let pool = crate::async_fleet::CorePool::for_core(
             crate::async_fleet::ShardDepth::stated(2),
-            &delegated,
+            crate::config_state::PrivateKeyExposure::NonExporting,
         )
         .expect("a stated depth of two is a shape delegated custody has");
-        let admission = CoreAdmission::for_core(&delegated, pool.handshake_bound());
+        let admission = CoreAdmission::for_core(&options, pool.handshake_bound());
         let handshakes = admission
             .handshakes
             .expect("a delegated-TLS core is bounded");
@@ -170,13 +167,12 @@ mod tests {
         // carries NO handshake bound. A control satisfied by bounding everything would be
         // no control, and the bound is not free — it costs a handshake round of
         // concurrency wherever it applies.
-        let exported = ServerOptions::new(window());
         let pool = crate::async_fleet::CorePool::for_core(
             crate::async_fleet::ShardDepth::stated(2),
-            &exported,
+            crate::config_state::PrivateKeyExposure::ProcessReadable,
         )
         .expect("an exported key admits every depth");
-        let admission = CoreAdmission::for_core(&exported, pool.handshake_bound());
+        let admission = CoreAdmission::for_core(&options, pool.handshake_bound());
         assert!(
             admission.handshakes.is_none(),
             "an in-memory signature is not bounded"

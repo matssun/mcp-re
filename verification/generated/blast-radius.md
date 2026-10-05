@@ -188,6 +188,7 @@ attestations this view cannot see.
 | unit://proxy.delegated_signing_configuration_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.delegated_signing_credential | source, contracts or evidence | THM-0062, THM-0063 | _no consumer_ |
 | unit://proxy.delegated_tls_depth_refusal | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.delegated_tls_key_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.deployment_topology_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.dispatch_commitment | source, contracts or evidence | THM-0045, THM-0051, THM-0052, THM-0074 | _no consumer_ |
 | unit://proxy.ed25519_public_key | source, contracts or evidence | THM-0025 | proxy.credential_key_correspondence (COMPILE_DEPENDENCY) |
@@ -205,6 +206,7 @@ attestations this view cannot see.
 | unit://proxy.freshness_window_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.gcp_kms_adapter | source, contracts or evidence | THM-0116, THM-0117 | _no consumer_ |
 | unit://proxy.gcp_metadata_token_lifetime | source, contracts or evidence | THM-0117 | _no consumer_ |
+| unit://proxy.handshake_custody_snapshot | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.in_flight_limit_basis | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.key_file_custody_admission | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.key_file_floor_scope | source, contracts or evidence | _no theorem_ | _no consumer_ |
