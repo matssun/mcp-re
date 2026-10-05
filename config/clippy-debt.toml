@@ -179,18 +179,20 @@ count = 0
 # flavor alone still measures exactly the old baseline; every added site is in those modules,
 # and the deploy image ships the AWS/GCP KMS and Redis ones. MCPRE-176's zero held for the
 # default feature set only. The count is the measured one, pinned: it may only fall.
+# 32 -> 31: measured at e4faa23c, after the r12 fixes and the retired sync replay stores.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "arithmetic_side_effects"
-count = 32
+count = 31
 
 # 72 -> 71: R11-014 replaced the enforcer's `.map(|_| ())` tail, which discarded the
 # verdict, with a match on its two arms. The nesting site went with the discarded value.
 # 65 -> 92: the same measurement correction as `arithmetic_side_effects` above.
+# 83 -> 79: measured at e4faa23c, after the r12 fixes and the retired sync replay stores.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 83
+count = 79
 
 # 0 -> 4: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]
