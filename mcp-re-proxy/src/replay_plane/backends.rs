@@ -48,7 +48,7 @@ pub(super) fn establish_etcd(
                 endpoint,
                 freshness
                     .replica_clock_divergence()
-                    .retention_clock(crate::etcd_store::system_clock()),
+                    .retention_clock(crate::async_etcd_store::system_clock()),
             )
             .map_err(|e| e.to_string())?,
         );
@@ -105,7 +105,7 @@ pub(super) fn establish_redis(
                     url,
                     freshness
                         .replica_clock_divergence()
-                        .retention_clock(crate::redis_store::system_clock()),
+                        .retention_clock(crate::async_redis_store::system_clock()),
                     tier.wait_quorum_params(),
                 ),
             )

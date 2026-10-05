@@ -11359,14 +11359,6 @@ proposition = "NP-163"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19219"
-project = "mcp-re-proxy"
-control = "tests/integration_async/main.rs#replay_race_harness_test::cross_core_same_key_admits_exactly_one_fresh_etcd"
-decision = "new-proposition"
-proposition = "NP-157"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19220"
 project = "mcp-re-proxy"
 control = "tests/integration_async/main.rs#replay_race_harness_test::cross_core_same_key_admits_exactly_one_fresh_etcd_async"
@@ -11378,14 +11370,6 @@ recorded = "2026-09-19"
 id = "CD-19221"
 project = "mcp-re-proxy"
 control = "tests/integration_async/main.rs#replay_race_harness_test::cross_core_same_key_admits_exactly_one_fresh_in_memory"
-decision = "new-proposition"
-proposition = "NP-157"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19222"
-project = "mcp-re-proxy"
-control = "tests/integration_async/main.rs#replay_race_harness_test::cross_core_same_key_admits_exactly_one_fresh_redis"
 decision = "new-proposition"
 proposition = "NP-157"
 recorded = "2026-09-19"
@@ -11746,14 +11730,6 @@ recorded = "2026-09-19"
 id = "CD-19274"
 project = "mcp-re-proxy"
 control = "tests/integration_ext/main.rs#redis_continuation_e2e_test::two_replicas_opening_one_key_yield_exactly_one_stored"
-decision = "new-proposition"
-proposition = "NP-150"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19275"
-project = "mcp-re-proxy"
-control = "tests/integration_ext/main.rs#redis_replay_e2e_test::async_wait_quorum_shortfall_fails_closed_against_a_replica"
 decision = "new-proposition"
 proposition = "NP-150"
 recorded = "2026-09-19"
@@ -12627,14 +12603,6 @@ proposition = "NP-120"
 recorded = "2026-09-29"
 
 [[disposition]]
-id = "CD-20062"
-project = "mcp-re-proxy"
-control = "src/lib.rs#redis_store::tests::a_declared_wait_window_widens_the_read_bound"
-decision = "new-proposition"
-proposition = "NP-208"
-recorded = "2026-09-29"
-
-[[disposition]]
 id = "CD-20063"
 project = "mcp-re-proxy"
 control = "src/lib.rs#replay_plane::materialized::tests::a_build_linking_cpstore_etcd_reaches_the_linearizable_state"
@@ -13379,15 +13347,6 @@ likely_owner = "none. mcp-re-operator-display.locator_projection states what the
 consequence = "high"
 root_relationship = "The consumer-side premise beside mcp-re-operator-display.locator_projection: that unit makes the projection safe, and this one makes every refusal site use a safe rendering. It is the property Owner Ruling 6 (r12 CF-005) mandated with 'a negative control per site', and no theorem states it."
 record = "docs/architecture/control-dispositions.md#np-215"
-
-[[proposition]]
-id = "NP-208"
-title = "A declared WAIT window is answerable within the store's own round-trip bound"
-carrier = "mcp-re-proxy/src/redis_store.rs"
-likely_owner = "proxy.redis_replay_adapter owns the file, but THM-0106 says 'NOT A LIVENESS CLAIM', and this is a liveness fact about the declared tier."
-consequence = "medium"
-root_relationship = "Beside THM-0106: the theorem guarantees a WAIT shortfall fails closed, and this guarantees WAIT is given the time to report one."
-record = "docs/architecture/control-dispositions.md#np-208"
 
 [[proposition]]
 id = "NP-214"

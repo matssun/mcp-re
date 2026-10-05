@@ -235,9 +235,8 @@ const TRUST_EPOCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 );
 
 /// A [`EpochReader`] that reads the trust epoch from a Redis key via `GET`, with a
-/// bounded connection and ONE reconnect-and-retry on a broken connection (mirrors
-/// `redis_store`'s M19 single-reconnect resilience). Operators advance the epoch
-/// with `INCR <key>`.
+/// bounded connection and ONE reconnect-and-retry on a broken connection. Operators
+/// advance the epoch with `INCR <key>`.
 #[cfg(feature = "redis_replay")]
 pub struct RedisEpochReader {
     client: redis::Client,
@@ -318,7 +317,7 @@ impl RedisEpochReader {
 }
 
 /// A Redis error meaning the connection is broken and must be replaced (one
-/// reconnect-and-retry). Mirrors `redis_store::is_transient_connection_error`.
+/// reconnect-and-retry).
 #[cfg(feature = "redis_replay")]
 fn is_transient(error: &redis::RedisError) -> bool {
     error.is_io_error()

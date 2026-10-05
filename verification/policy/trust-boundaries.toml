@@ -91,16 +91,16 @@ kind = "environment"
 paths = [
   "mcp-re-client/src/startup.rs",
   "mcp-re-host/src/clock.rs",
+  "mcp-re-proxy/src/async_etcd_store/protocol.rs",
+  "mcp-re-proxy/src/async_redis_store/protocol.rs",
   # MCPRE-175: the store's own eviction clock is the only `SystemTime` read left in the
   # replay tier, and it moved to the module that owns what is retained. Named precisely,
   # per the note above: the authority, not the module tree that contains it.
   "mcp-re-proxy/src/async_replay/retained_set.rs",
   "mcp-re-proxy/src/aws_sts.rs",
   "mcp-re-proxy/src/clock.rs",
-  "mcp-re-proxy/src/etcd_store.rs",
   "mcp-re-proxy/src/gcp_kms_keysource.rs",
   "mcp-re-proxy/src/ocsp.rs",
-  "mcp-re-proxy/src/redis_store.rs",
   # MCPRE-179: the retained-evidence clock read is `unique_suffix`, which exists so a temp
   # name is never chosen twice — and it moved to the owner of what it takes to create a
   # file in the archive. Named precisely, per the note above: the authority, not the
@@ -282,8 +282,6 @@ id = "boundary.shared_state_store"
 description = "The external stores a fleet's cross-replica state is kept in — Redis and etcd — and what an acknowledged write to one durably established."
 kind = "external-service"
 paths = [
-  "mcp-re-proxy/src/redis_store.rs",
-  "mcp-re-proxy/src/etcd_store.rs",
   "mcp-re-proxy/src/async_redis_store.rs",
   "mcp-re-proxy/src/async_etcd_store.rs",
   "mcp-re-proxy/src/shared_replay.rs",

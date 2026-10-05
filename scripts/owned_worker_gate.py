@@ -78,10 +78,6 @@ ALLOWED = {
         "the SIGTERM/SIGINT bridge thread belongs to the PROCESS, not to any runtime: it "
         "outlives `app::run` by design and exits when the signal flag flips"
     )),
-    "mcp-re-proxy/src/redis_store.rs": (1, (
-        "the bounded-abandonment connect worker is a PER-OPERATION timeout thread, not a "
-        "runtime worker; its permit releases the in-flight slot even when it finishes late"
-    )),
     "mcp-re-client/src/startup.rs": (1, (
         "the client binary's SIGTERM bridge, the same process-lifetime signal thread as "
         "the proxy's — it belongs to the process, not to a runtime"

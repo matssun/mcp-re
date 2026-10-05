@@ -4185,17 +4185,6 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 **Lanes.** Seven of these controls exist only under non-default features — `aws_kms_keysource`, `gcp_kms_keysource`, `cpstore_etcd`, `redis_replay` — so a default-lane run measures none of them. **Strength.** The admission, continuation-control and trust-revocation locator controls assert only that the password is absent; the 'nor the complete configured string' clause is established by the others. `async_redis_store`'s control also measures a third-party property: that the redis crate's error does not echo the URL. The etcd control `a_well_formed_credential_bearing_endpoint_still_reaches_the_transport` is the positive half: redaction changes what a refusal says, never which endpoints are usable.
 
-## NP-208 — a declared WAIT window is answerable within the store's own round-trip bound
-
-**Controls:** `mcp-re-proxy` `lib#redis_store::tests::a_declared_wait_window_widens_the_read_bound`.
-**Carrier:** `mcp-re-proxy/src/redis_store.rs`.
-**Statement.** *When the sync Redis replay store is built with a WAIT quorum and window, its socket read bound is at least that window, so the server's WAIT verdict decides the insert rather than a read timeout firing first.*
-**If false.** Every insert under the REDIS_WAIT_QUORUM tier times out before WAIT can answer. The deployment that chose the stronger tier refuses every request, a self-inflicted fleet-wide outage. It fails closed, so it is not a bypass. The timed-out reply may also stay unread on the connection.
-**Likely owner:** proxy.redis_replay_adapter owns the file, but THM-0106 says 'NOT A LIVENESS CLAIM', and this is a liveness fact about the declared tier.
-**Severity:** `medium`.
-**Root relationship.** Beside THM-0106: the theorem guarantees a WAIT shortfall fails closed, and this guarantees WAIT is given the time to report one.
-**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
-
 ## NP-214 — an AWS KMS request is never signed at a date the clock owner calls faulted
 
 **Controls:** `mcp-re-proxy` `lib#aws_kms_keysource::tests::a_faulted_host_clock_is_refused_rather_than_signed_as_1970`.

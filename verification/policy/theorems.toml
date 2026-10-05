@@ -6034,12 +6034,8 @@ THE DECLARED TIER IS ENFORCED, NOT AUDITED. Where `REDIS_WAIT_QUORUM` is selecte
 insert is followed by `WAIT`, and an acknowledgement shortfall FAILS CLOSED — it does not
 report the nonce fresh and note the shortfall.
 
-EVERY NON-ANSWER IS AN OUTAGE. A stall is bounded by a timeout rather than hanging; a refused
-endpoint fails closed at construction rather than after the deadline; a transient error is
-retried only where retry is safe and a fatal one is not retried at all; a reconnect that
-itself fails, fails closed. Connect attempts that were abandoned are bounded by a ceiling
-which also fails closed, and one stalled connect strands at most one permit. No path returns
-`Fresh`.
+EVERY NON-ANSWER IS AN OUTAGE. A stall is bounded by a timeout rather than hanging. No path
+returns `Fresh`.
 """
 security_consequence = """
 The excluded outcome is a replay bypass **produced by capacity pressure rather than by an
@@ -6107,17 +6103,12 @@ rather than going negative, so a replica whose clock runs ahead of a correct one
 record to the verifier's horizon in true time (the bound being true is ASM-0061). A recorded nonce
 self-expires at that padded horizon even if the proxy dies. An already-stale `retain_until`
 is refused with NO etcd call at all. Nonces retained to the same instant share one lease, so
-the outstanding-lease count grows with the freshness window rather than with request volume,
-and an expired lease is never reused.
-
-THE LEASE A REPLAY DID NOT USE IS GIVEN BACK. A `Replay` revokes the lease it minted and did
-not consume; a `Fresh` keeps it. A revoke that FAILS still answers `Replay` and never an
-error — the nonce's status is already known, and turning lease hygiene into a refusal would
-convert a bookkeeping failure into a denial of service.
+the outstanding-lease count grows with the freshness window rather than with request volume;
+a lease is never revoked, and an expired lease is never reused.
 
 FAIL CLOSED, AND BOUNDED. A lease id that is missing, zero or unparseable is refused. Every
 transport, status, parse or TIMEOUT outcome is `Unavailable`. The per-operation deadline is
-clamped at BOTH ends and applies to every one of the three POSTs, because an awaited future
+clamped at BOTH ends and applies to every POST, because an awaited future
 that never completes holds its request and its admission slot forever — a black-holed
 endpoint would otherwise consume the whole `--max-in-flight` budget without a single invalid
 request being sent.

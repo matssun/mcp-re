@@ -345,12 +345,6 @@ baseline_prod_loc = 262
 baseline_sha = "255465e"
 status = "unreviewed"
 
-[[debt]]
-path = "mcp-re-proxy/src/redis_store.rs"
-baseline_prod_loc = 719
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
 # MCPRE-172 item 2 gave the bodyless verifier an owner subtree: `bodyless.rs` became
 # `bodyless/mod.rs` so the acknowledgement's verified product is declared by its producer
 # rather than added to a file the ratchet holds at 712. The debt moves WITH the file —
@@ -573,12 +567,6 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-core/src/replay.rs"
-baseline_prod_loc = 395
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/etcd_store.rs"
 baseline_prod_loc = 395
 baseline_sha = "d1fc5fa"
 status = "unreviewed"

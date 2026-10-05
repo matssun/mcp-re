@@ -2,10 +2,10 @@
 //! etcd (the CP / LINEARIZABLE backend).
 //!
 //! This whole file is compiled ONLY under the `cpstore_etcd` feature (the same
-//! feature that compiles the [`EtcdAtomicReplayStore`]). It is a BLACK-BOX
-//! exercise of the public `mcp_re_core::ReplayCache` API over two
-//! [`SharedReplayCache`] instances backed by two independent connections to the
-//! SAME etcd cluster — modelling two proxy nodes sharing one CP store.
+//! feature that compiles the [`EtcdAsyncAtomicReplayStore`]). It is a BLACK-BOX
+//! exercise of the store's public `AsyncAtomicReplayStore` API over two stores with
+//! independent connections to the SAME etcd cluster — modelling two proxy nodes
+//! sharing one CP store.
 //!
 //! etcd is not installed in every environment, so the test is gated on the
 //! `MCP_RE_TEST_ETCD_URL` env var (the etcd v3 JSON gateway, e.g.
@@ -24,13 +24,16 @@ use base64::Engine;
 use serde_json::json;
 use serde_json::Value;
 
-use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayDecision;
-use mcp_re_proxy::EtcdAtomicReplayStore;
-use mcp_re_proxy::SharedReplayCache;
+use mcp_re_proxy::async_etcd_store::EtcdAsyncAtomicReplayStore;
+use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
+use mcp_re_proxy::async_replay::ReplayInsert;
+use mcp_re_proxy::shared_replay::ReplayStoreError;
 
 const AUD: &str = "did:example:verifier";
-const SKEW: i64 = 30;
+
+/// Every entry in this file is charged to one signer.
+const TEST_ACTOR: &str = "did:example:test-signer";
 
 /// Read the etcd v3 gateway URL the test should run against, or `None` to skip.
 /// A real CP store is not present in every environment. Hard-fails under
@@ -57,19 +60,40 @@ fn require_live_infra() -> bool {
     std::env::var("MCP_RE_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.is_empty())
 }
 
-/// Build a `SharedReplayCache` over a fresh etcd connection to `url`. Each call is
-/// an independent "node" (its own agent) sharing the one etcd cluster.
-fn node(url: &str) -> SharedReplayCache {
-    SharedReplayCache::new(
-        Box::new(EtcdAtomicReplayStore::connect(url).expect("an http etcd endpoint is admitted")),
-        SKEW,
-    )
+/// A current-thread runtime the blocking test bodies drive the async store on.
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
 }
 
-/// The composite key `SharedReplayCache` derives, recomputed here so the TTL probe
-/// can read the SAME etcd key the cache inserts. Mirrors
-/// `SharedReplayCache::composite_key`: length-prefixed `(signer, audience, nonce)`
-/// then `sha256_hash_id` (lowercase hex).
+/// A store over the etcd gateway at `url`. Each call is an independent "node" (its own
+/// client) sharing the one etcd cluster.
+fn node(url: &str) -> EtcdAsyncAtomicReplayStore {
+    EtcdAsyncAtomicReplayStore::connect(url).expect("an http etcd endpoint is admitted")
+}
+
+/// Insert `(signer, AUD, nonce)` retained until `retain_until` through `store`.
+fn insert(
+    rt: &tokio::runtime::Runtime,
+    store: &EtcdAsyncAtomicReplayStore,
+    signer: &str,
+    nonce: &str,
+    retain_until: i64,
+) -> Result<ReplayDecision, ReplayStoreError> {
+    let key = composite_key(signer, AUD, nonce);
+    rt.block_on(store.atomic_insert_if_absent(ReplayInsert::new(
+        &key,
+        TEST_ACTOR,
+        retain_until,
+        0,
+    )))
+}
+
+/// A per-exchange replay key: length-prefixed `(signer, audience, nonce)` then
+/// `sha256_hash_id` (lowercase hex). The TTL probe reads the SAME etcd key the store
+/// inserts.
 fn composite_key(signer: &str, audience: &str, nonce: &str) -> String {
     let preimage = format!(
         "{}:{}|{}:{}|{}:{}",
@@ -84,8 +108,8 @@ fn composite_key(signer: &str, audience: &str, nonce: &str) -> String {
 }
 
 /// The load-bearing cross-node proof: a nonce accepted on node A is rejected as a
-/// replay on node B, where A and B are two separate `SharedReplayCache` instances
-/// over two separate connections to the SAME etcd. This is the LINEARIZABLE
+/// replay on node B, where A and B are two separate stores over two separate
+/// connections to the SAME etcd. This is the LINEARIZABLE
 /// horizontal replay-safety property the single-node file cache cannot provide.
 #[test]
 fn cross_node_insert_via_a_is_replay_via_b() {
@@ -109,16 +133,17 @@ fn cross_node_insert_via_a_is_replay_via_b() {
     let signer = "did:example:host#cpstore_cross_node_insert_via_a_is_replay_via_b";
     let nonce = "nonce-69-cpstore-cross-node-insert-via-a-is-replay-via-b";
 
+    let rt = runtime();
     let node_a = node(&url);
     let node_b = node(&url);
 
     assert_eq!(
-        node_a.check_and_insert(signer, AUD, nonce, expires_at),
+        insert(&rt, &node_a, signer, nonce, expires_at),
         Ok(ReplayDecision::Fresh),
         "first sight on node A must be Fresh"
     );
     assert_eq!(
-        node_b.check_and_insert(signer, AUD, nonce, expires_at),
+        insert(&rt, &node_b, signer, nonce, expires_at),
         Ok(ReplayDecision::Replay),
         "node B must reject a nonce first seen on node A — shared etcd CP replay state"
     );
@@ -144,14 +169,15 @@ fn single_node_fresh_then_replay() {
     let signer = "did:example:host#cpstore_single_node_fresh_then_replay";
     let nonce = "nonce-69-cpstore-single-node-fresh-then-replay";
 
-    let cache = node(&url);
+    let rt = runtime();
+    let store = node(&url);
     assert_eq!(
-        cache.check_and_insert(signer, AUD, nonce, expires_at),
+        insert(&rt, &store, signer, nonce, expires_at),
         Ok(ReplayDecision::Fresh),
         "first sight is Fresh"
     );
     assert_eq!(
-        cache.check_and_insert(signer, AUD, nonce, expires_at),
+        insert(&rt, &store, signer, nonce, expires_at),
         Ok(ReplayDecision::Replay),
         "second sight on the same node is a Replay"
     );
@@ -163,7 +189,7 @@ fn single_node_fresh_then_replay() {
 ///
 /// We insert with `expires_at = now + window`, then read the key's lease via the
 /// etcd `kv/range` + `lease/timetolive` gateway calls and assert the granted TTL
-/// is within a small band of `(window + skew)` and FAR below the absolute-epoch
+/// is within a small band of the window and FAR below the absolute-epoch
 /// range. Gated on `MCP_RE_TEST_ETCD_URL` exactly like the other live tests — SKIP
 /// is printed and the test returns (never silently a pass of a real assertion)
 /// when no etcd is present.
@@ -186,9 +212,10 @@ fn live_lease_ttl_is_bounded_window_not_absolute_epoch() {
     let signer = "did:example:host#cpstore_live_lease_ttl_bounded_window";
     let nonce = "nonce-69-cpstore-live-lease-ttl-bounded-window";
 
-    let cache = node(&url);
+    let rt = runtime();
+    let store = node(&url);
     assert_eq!(
-        cache.check_and_insert(signer, AUD, nonce, expires_at),
+        insert(&rt, &store, signer, nonce, expires_at),
         Ok(ReplayDecision::Fresh),
         "first sight is Fresh"
     );
@@ -215,10 +242,10 @@ fn live_lease_ttl_is_bounded_window_not_absolute_epoch() {
         .or_else(|| ttl_resp["grantedTTL"].as_i64())
         .expect("lease grantedTTL present");
 
-    let expected = window_secs + SKEW;
+    let expected = window_secs;
     assert!(
         (granted_ttl - expected).abs() < 60,
-        "lease grantedTTL ({granted_ttl}s) must be ≈ the (window + skew) = {expected}s window"
+        "lease grantedTTL ({granted_ttl}s) must be ≈ the {expected}s window"
     );
     // The decisive anti-regression bound: the now=0 bug would grant a TTL on the
     // order of expires_at (~1.78e9 s ≈ 56 years). The window is a tiny fraction.
@@ -243,7 +270,7 @@ fn post_json(base_url: &str, path: &str, body: &Value) -> Value {
         .send_bytes(&bytes)
         .unwrap_or_else(|e| panic!("etcd POST {path}: {e}"));
     // Bounded read, mirroring the production bounded-read idiom in
-    // `aws_kms_keysource.rs` / `etcd_store.rs`: a misconfigured/hostile
+    // `aws_kms_keysource.rs` / `async_etcd_store.rs`: a misconfigured/hostile
     // `MCP_RE_TEST_ETCD_URL` could otherwise stream an arbitrarily large body and OOM
     // the test runner. lease/grant and txn replies are tiny — cap at 256 KiB (cap+1
     // so a body whose length is EXACTLY the cap is accepted; only a strictly larger

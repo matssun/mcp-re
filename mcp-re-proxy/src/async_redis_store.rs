@@ -1,10 +1,9 @@
 //! MCPRE-117 (ADR-MCPRE-051 §4, Phase 2) — the ASYNC Redis authoritative replay
 //! backend.
 //!
-//! The async analogue of [`crate::redis_store::RedisAtomicReplayStore`]: the same
-//! server-side-atomic `SET key 1 NX PX <ttl_ms>`, but issued through the tokio
-//! ASYNC redis client so the insert is AWAITED on the per-core request path and
-//! never blocks a runtime worker (ADR-MCPRE-051 §4 — "the per-core Redis/etcd
+//! A server-side-atomic `SET key 1 NX PX <ttl_ms>`, issued through the tokio ASYNC
+//! redis client so the insert is AWAITED on the per-core request path and never blocks
+//! a runtime worker (ADR-MCPRE-051 §4 — "the per-core Redis/etcd
 //! clients are async and pipelined"). It implements
 //! [`AsyncAtomicReplayStore`](crate::async_replay::AsyncAtomicReplayStore), so an
 //! [`AsyncReplayTier`](crate::async_replay::AsyncReplayTier) over it gives the
@@ -12,21 +11,20 @@
 //!
 //! Connection handling uses redis's auto-reconnecting, cloneable
 //! [`ConnectionManager`]: each op clones the manager (cheap, shares one
-//! multiplexed connection) and awaits the command. Unlike the sync store this does
-//! NOT reconnect-and-retry a failed `SET NX`: a transient error surfaces as
-//! [`ReplayStoreError::Unavailable`] (fail closed), which is always safe and
-//! sidesteps the `SET NX` non-idempotency-under-retry subtlety (sync store audit
-//! #97) — an outage is NEVER a fresh nonce.
+//! multiplexed connection) and awaits the command. It does NOT reconnect-and-retry a
+//! failed `SET NX`: a transient error surfaces as [`ReplayStoreError::Unavailable`]
+//! (fail closed), which is always safe and sidesteps the `SET NX`
+//! non-idempotency-under-retry subtlety (audit #97) — an outage is NEVER a fresh nonce.
 //!
 //! The `REDIS_WAIT_QUORUM` tier (ADR-MCPS-020) is carried here too: a store built by
 //! [`connect_with_wait_quorum`](RedisAsyncAtomicReplayStore::connect_with_wait_quorum)
 //! with `Some((quorum, timeout_ms))` pipelines `WAIT <quorum> <timeout_ms>` behind the
-//! `SET NX PX` and an ack shortfall fails closed, through the same pure decision helper
-//! as the sync backend. The tier is a construction parameter, so no store exists in a
-//! weaker tier than the one it was connected with.
+//! `SET NX PX` and an ack shortfall fails closed, through the pure decision helper in
+//! [`protocol`]. The tier is a construction parameter, so no store exists in a weaker
+//! tier than the one it was connected with.
 //!
-//! TTL derivation and the MCPS-08 pre-store staleness guard reuse the SAME pure
-//! helpers as the sync backend ([`compute_ttl_ms`] / [`is_stale_pre_store`](crate::shared_replay::is_stale_pre_store)),
+//! TTL derivation and the MCPS-08 pre-store staleness guard are pure helpers
+//! ([`compute_ttl_ms`] / [`is_stale_pre_store`](crate::shared_replay::is_stale_pre_store)),
 //! reading the store's own clock, so the `PX` window is the intended
 //! `retain_until - now` and an already-stale request is rejected before Redis is
 //! touched.
@@ -52,11 +50,6 @@ use std::time::Duration;
 use crate::async_replay::AsyncAtomicReplayStore;
 use crate::async_replay::ReplayDecisionFuture;
 use crate::async_replay::ReplayInsert;
-use crate::redis_store::classify_wait_acks;
-use crate::redis_store::compute_ttl_ms;
-use crate::redis_store::system_clock;
-use crate::redis_store::UnixClock;
-use crate::redis_store::WaitQuorum;
 use crate::shared_replay::is_stale_pre_store;
 use crate::shared_replay::ReplayStoreError;
 
@@ -105,7 +98,14 @@ const CONNECT_TIMEOUT_MS: u64 = 1_000;
 /// The shared retention authority: whether an instance promises to keep a key. The
 /// decision serves both redis-backed stores, so it lives beside neither store's error
 /// type — this module supplies the replay tier's consequence and wraps the detail.
+mod protocol;
 pub(crate) mod retention_promise;
+
+use protocol::classify_wait_acks;
+use protocol::compute_ttl_ms;
+use protocol::WaitQuorum;
+pub use protocol::system_clock;
+pub use protocol::UnixClock;
 
 use self::retention_promise::retention_verdict;
 
@@ -127,8 +127,7 @@ impl RedisAsyncAtomicReplayStore {
         Self::connect_with(url, system_clock()).await
     }
 
-    /// Connect with an injected clock (deterministic tests reuse the sync store's
-    /// clock-injection pattern).
+    /// Connect with an injected clock (deterministic tests inject a fixed one).
     pub async fn connect_with(url: &str, clock: UnixClock) -> Result<Self, ReplayStoreError> {
         Self::connect_with_wait_quorum(url, clock, None).await
     }

@@ -9233,7 +9233,7 @@ id = "proxy.redis_replay_adapter"
 class = "V0"
 description = "The deployable Redis replay backend, sync and async: it refuses at connect any server whose maxmemory-policy could drop a nonce before its TTL — and refuses one whose policy it could not read, because an unverifiable policy is not evidence of a safe one — derives the PX window from its own clock as retain_until minus now rather than as an absolute epoch, refuses an already-stale window before Redis is touched, enforces a declared WAIT quorum rather than merely auditing it, and turns every operational outcome that is not an answer into Unavailable. Says nothing about what an acknowledged insert durably established; that is ASM-0040."
 paths = [
-  "mcp-re-proxy/src/redis_store.rs",
+  "mcp-re-proxy/src/async_redis_store/protocol.rs",
   "mcp-re-proxy/src/async_redis_store.rs",
   # The eviction decision itself. It moved out of `async_redis_store.rs` when the admission
   # source turned out to need the same question answered, so the file that can falsify this
@@ -9254,7 +9254,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_noeviction_redis_is_accepted",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_record_is_kept_the_declared_divergence_longer_than_the_horizon",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_replica_whose_clock_runs_ahead_still_retains_to_the_true_horizon",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::a_record_is_kept_the_declared_divergence_longer_than_the_horizon",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::every_pooled_connection_is_asked_for_its_eviction_policy",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_store_refuses_to_connect_to_an_evicting_redis",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::every_evicting_policy_is_refused_and_so_is_an_unreadable_one",
@@ -9264,22 +9263,12 @@ tested_symbols = [
   # every evicting policy by name, an unreadable one, and both RESP reply shapes.
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::retention_promise::tests::only_noeviction_is_a_retention_promise",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::retention_promise::tests::the_policy_is_read_out_of_either_resp_protocols_reply",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::abandoned_connect_threads_are_bounded_by_a_ceiling_failing_closed",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::fatal_error_does_not_reconnect",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::injected_clock_drives_the_pre_store_staleness_gate",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::injected_clock_makes_ttl_the_window_not_the_now_zero_epoch",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::nonpositive_window_is_flagged_stale_pre_store",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::one_stalled_connect_strands_at_most_one_permit",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::reconnect_failure_after_transient_fails_closed",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::refused_redis_fails_closed_at_construction_not_after_the_deadline",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::stalled_redis_fails_closed_within_timeout_not_hang",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::the_build_can_open_a_tls_redis_endpoint",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::transient_error_reconnects_and_retries",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::transient_without_reconnect_stays_failed",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::ttl_ms_clamps_to_minimal_when_already_expired",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::ttl_ms_is_window_not_absolute_epoch",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::wait_quorum_is_met_only_with_enough_acks",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::wait_quorum_shortfall_fails_closed_with_fresh_nonce_contract",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::protocol::tests::nonpositive_window_is_flagged_stale_pre_store",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::protocol::tests::the_build_can_open_a_tls_redis_endpoint",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::protocol::tests::ttl_ms_clamps_to_minimal_when_already_expired",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::protocol::tests::ttl_ms_is_window_not_absolute_epoch",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::protocol::tests::wait_quorum_is_met_only_with_enough_acks",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::protocol::tests::wait_quorum_shortfall_fails_closed_with_fresh_nonce_contract",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_black_holed_set_fails_closed_within_the_owned_bound",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_declared_quorum_is_enforced_by_the_store_it_was_connected_with",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_fresh_insert_sends_the_clock_derived_window",
@@ -9287,12 +9276,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_stale_window_never_reaches_redis",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::a_stalled_connect_is_refused_not_hung",
   "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::tests::every_tier_has_an_owned_round_trip_bound",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::a_poisoned_connection_is_replaced_not_reused",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::a_wait_shortfall_is_issued_and_fails_closed",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::an_unreadable_clock_refuses_every_insert_pre_store",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::the_sync_store_accepts_a_noeviction_redis",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::the_sync_store_refuses_a_redis_whose_policy_it_cannot_read",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::the_sync_store_refuses_to_connect_to_an_evicting_redis",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::protocol::tests::an_unreadable_clock_refuses_every_insert_pre_store",
 ]
 
 [[unit]]
@@ -9300,7 +9284,7 @@ id = "proxy.etcd_replay_adapter"
 class = "V0"
 description = "The deployable etcd replay backend, sync and async: it records a nonce only through a linearized put-if-absent comparing CREATE_REVISION to zero, under a lease whose TTL is a bounded window derived from its own clock, revokes the lease a Replay did not use while keeping the one a Fresh did, parses a lease id fail-closed, refuses an already-stale window before etcd is touched, bounds every round trip by a clamped per-operation deadline, and turns every transport, status, parse or timeout outcome into Unavailable. Says nothing about what a successful transaction durably established; that is ASM-0041."
 paths = [
-  "mcp-re-proxy/src/etcd_store.rs",
+  "mcp-re-proxy/src/async_etcd_store/protocol.rs",
   "mcp-re-proxy/src/async_etcd_store.rs",
   "mcp-re-proxy/src/async_etcd_store/gateway.rs",
 ]
@@ -9316,30 +9300,21 @@ evidence = [
 tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::a_fresh_window_is_bounded_by_the_per_operation_deadline",
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::a_lease_outlives_the_horizon_by_the_declared_divergence",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::a_lease_outlives_the_horizon_by_the_declared_divergence",
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::an_already_stale_request_is_rejected_without_touching_etcd",
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::an_expired_lease_is_never_reused",
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::nonces_retained_to_the_same_instant_share_one_lease",
   "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::the_operation_timeout_is_clamped_at_both_ends",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::cross_instance_insert_via_a_is_replay_via_b",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::fresh_does_not_revoke_the_lease",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::fresh_then_replay_single_instance",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::the_lease_grant_on_the_wire_carries_the_retention_window",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::lease_grant_body_carries_bounded_ttl",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::lease_revoke_body_carries_string_lease_id",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::nonpositive_ttl_rejected_pre_store_no_etcd_calls",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::parse_lease_id_accepts_string_and_number",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::parse_lease_id_fails_closed_on_missing_zero_or_garbage",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::replay_revoke_failure_still_returns_replay_never_errors",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::replay_revokes_the_unused_lease",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::store_unavailable_fails_closed_never_fresh",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::ttl_secs_clamps_to_minimal_when_already_expired",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::ttl_secs_is_window_not_absolute_epoch",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::txn_body_is_put_if_absent_under_lease",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::txn_not_succeeded_is_replay",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::txn_succeeded_is_fresh",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::a_non_http_endpoint_is_refused_without_echoing_it",
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::a_redirecting_gateway_is_refused_and_its_target_never_reached",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::protocol::tests::lease_grant_body_carries_bounded_ttl",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::protocol::tests::parse_lease_id_accepts_string_and_number",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::protocol::tests::parse_lease_id_fails_closed_on_missing_zero_or_garbage",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::protocol::tests::ttl_secs_clamps_to_minimal_when_already_expired",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::protocol::tests::ttl_secs_is_window_not_absolute_epoch",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::protocol::tests::txn_body_is_put_if_absent_under_lease",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::protocol::tests::txn_not_succeeded_is_replay",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::protocol::tests::txn_succeeded_is_fresh",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::a_nonce_admitted_through_one_store_is_a_replay_through_another",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::a_gateway_that_answers_an_error_status_is_unavailable_never_fresh",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_etcd_store::tests::a_redirecting_gateway_is_refused_and_its_target_never_reached",
 ]
 
 

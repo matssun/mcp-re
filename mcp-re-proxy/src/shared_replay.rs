@@ -30,21 +30,16 @@
 //!     horizontally-scaled replay safety across SEPARATE proxy processes/hosts;
 //!     it proves the cross-instance property only within one process (two
 //!     `SharedReplayCache` over one cloned `Arc`).
-//!   * `RedisAtomicReplayStore`
-//!     (in the `redis_store` module, compiled ONLY under the non-default
-//!     `redis_replay` crate feature — written as inline code, NOT an intra-doc
-//!     link, since that module is absent from the default-feature doc build and
-//!     a link would be an unresolved `broken_intra_doc_links`) — a REAL
-//!     server-side-atomic
-//!     shared backend (Redis `SET NX PX`) wired by `cli.rs` for
-//!     `--replay-cache shared`, giving genuine cross-process/cross-node replay
-//!     safety.
 //!
-//! The DEFAULT build (without `redis_replay`) ships ONLY the in-memory reference
-//! store and gains ZERO new dependencies, so the default build does NOT provide
-//! cross-process replay safety — that "MUST NOT be claimed" caveat is scoped to
-//! the default build. Under `--features redis_replay` the Redis-backed shared
-//! store IS available.
+//! The cross-process replay backends are asynchronous: `async_redis_store` and
+//! `async_etcd_store` (inline code, NOT intra-doc links — each module is compiled only
+//! under its own non-default feature and is absent from the default-feature doc build)
+//! serve the [`AsyncReplayTier`](crate::async_replay::AsyncReplayTier) the serving path
+//! awaits, and do not implement this module's synchronous [`AtomicReplayStore`].
+//!
+//! The DEFAULT build ships ONLY the in-memory reference store and gains ZERO new
+//! dependencies, so the default build does NOT provide cross-process replay safety —
+//! that "MUST NOT be claimed" caveat is scoped to the default build.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

@@ -50,7 +50,7 @@ pub(super) struct RetainedEntry {
 }
 
 /// A unix-seconds clock. Local to this module so the async in-memory store keeps its
-/// eviction anchor in the default build — `redis_store`'s twin is feature-gated.
+/// eviction anchor in the default build — `async_redis_store`'s twin is feature-gated.
 pub(super) type UnixClock = Box<dyn Fn() -> i64 + Send + Sync>;
 
 /// Wall-clock unix seconds; the production anchor for the inline prune.

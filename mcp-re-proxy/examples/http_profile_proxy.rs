@@ -128,7 +128,7 @@ async fn main() {
                     // tier is a construction parameter of the store that serves.
                     let store = RedisAsyncAtomicReplayStore::connect_with_wait_quorum(
                         &url,
-                        mcp_re_proxy::redis_store::system_clock(),
+                        mcp_re_proxy::async_redis_store::system_clock(),
                         tier.wait_quorum_params(),
                     )
                     .await

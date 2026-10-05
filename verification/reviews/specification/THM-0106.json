@@ -2,13 +2,13 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:dc9f9bcea670f9414fa0581dac65112e8283dda6658dad15af9b71a3e9a3cdb2",
+    "theorem_claim": "sha256:62acaaf04942020a5ad253a539e089da7c7324a638f8056cb38427cfaa3bde33",
     "theorem_dependencies": {},
     "theorem_id": "THM-0106",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Recorded under the owner's ruling of 2026-09-29 on the Bazel-only migration: the pure \u201cdefault Cargo lane\u201d \u2192 Bazel wording changes are ONE bounded review event, valid only where the proposition and its scope are unchanged. The claim moved only in how it names the lane that measures it \u2014 the lane is now a Bazel test target, and nothing Cargo runs exists: scope: -Measured in the `redis_replay` feature lane named by the owning unit \u2014 a plain | scope: -`cargo test --workspace` compiles these files to zero tests. Executable, class V0. | scope: +Measured in the `redis_replay` feature lane named by the owning unit \u2014 the crate's | scope: +default-feature test targets compile these files to zero tests. Executable, class V0. The statement, the security consequence and every scope exclusion are otherwise byte-identical to the reviewed text. Previously reviewed at sha256:91564b35edb78aaa6f7587c2ee1cfb1e5a4bb09486df19a50487de9ff9466b08.",
-  "reviewed_fingerprint": "sha256:13f3c50baf67ef40559fc62cd54f7528de5b622f3adee17014a96ec80e2ccd41",
+  "notes": "Owner ratification of 2026-10-04, OWNER-RULINGS.md Ruling 13 (bounded ratification of the sign-offs), recorded in docs/security/owner-approvals-2026-10-04.jsonl as owner-signature:replay-sync-stores-retired, sha256 8bd63c8aef3860e280ccb7df93ad461b3c3673e2b5ea02737b39f71567f754fb: delete the sync Redis/Etcd atomic stores, retarget their e2e/race tests onto the async stores, port shared-property unit tests; THM-0106/THM-0107 statements shrink to the async battery (revoke conjunct removed; lease shared per retain-until instant, never revoked, expired never reused). Re-sign THM-0106/0107. The statement's EVERY NON-ANSWER paragraph keeps only what the async battery measures: the sync store's refused-endpoint-at-construction, transient-retry, reconnect, abandoned-connect-ceiling and stranded-permit clauses are removed. The async store fails closed on a refused endpoint but only after its connection manager's retries, so that clause is not restated. Measured against the text at the approval's baseline (0d699f37), that removal is the only change. Since the previous review (259e3cfd) the text had also gained the declared replica-clock-divergence padding in THE WINDOW IS A WINDOW (6e86fb53, ASM-0061) and the scope's per-connection policy assertion and ASM-0059 premise (a03a0e5d, Ruling 12 item 20); both were present at that baseline, which is the text this ratification re-signs. Previously reviewed at sha256:13f3c50baf67ef40559fc62cd54f7528de5b622f3adee17014a96ec80e2ccd41.",
+  "reviewed_fingerprint": "sha256:c6a71c8afef24719ddda202131f14752ef597bf6346194fdd43e110f2a06f01e",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0106"
 }

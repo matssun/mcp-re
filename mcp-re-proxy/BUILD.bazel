@@ -390,18 +390,12 @@ _PROXY_LIB_SRCS = [
     "src/outbound_fetch/credential_egress.rs",
     "src/outbound_fetch/resolver.rs",
     "src/outbound_fetch/url.rs",
-    # Issue #4028: Redis-backed shared atomic ReplayCache (behind #[cfg(feature =
-    # "redis_replay")]; cfg'd out of the default build).
-    "src/redis_store.rs",
-    # Issue #69 (epic #68 v0.4 Axis 1): etcd-backed CP / LINEARIZABLE shared atomic
-    # ReplayCache (behind #[cfg(feature = "cpstore_etcd")]; cfg'd out of the default
-    # build).
-    "src/etcd_store.rs",
     # ADR-MCPRE-051 §4: the ASYNC etcd authoritative replay backend (hyper over the
     # v3 JSON gateway; same `cpstore_etcd` gate). The linearizable durable tier the
     # async serving fleet awaits.
     "src/async_etcd_store.rs",
     "src/async_etcd_store/gateway.rs",
+    "src/async_etcd_store/protocol.rs",
     # ADR-MCPS-020: declared replay-store durability tier (deployment assertion).
     "src/replay_tier.rs",
     # MCPRE-104 (#308): proxy replay-tier adapter around the HTTP-profile dispatcher
@@ -612,6 +606,7 @@ _PROXY_LIB_SRCS = [
     # cfg'd out of the default build; the ext and deploy flavors link it,
     # and main.rs selects it for `--replay-cache shared` (non-linearizable tier).
     "src/async_redis_store.rs",
+    "src/async_redis_store/protocol.rs",
     "src/async_redis_store/retention_promise.rs",
     # ADR-MCPS-047: the MRTR continuation correlation store — trait + in-memory impl
     # always compiled; the Redis backend is redis_replay-gated inside the module.

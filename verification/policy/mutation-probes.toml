@@ -3770,7 +3770,7 @@ id = "M125-a-wait-quorum-shortfall-fails-closed"
 unit = "proxy.redis_replay_adapter"
 theorem = "THM-0106"
 conjunct = "a declared WAIT quorum is ENFORCED: an acknowledgement shortfall fails closed rather than reporting the nonce fresh"
-path = "mcp-re-proxy/src/redis_store.rs"
+path = "mcp-re-proxy/src/async_redis_store/protocol.rs"
 anchor = """
     acked_replicas >= i64::from(quorum)
 """
@@ -3778,27 +3778,8 @@ weakening = """
     acked_replicas >= 0 || quorum == quorum
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::wait_quorum_is_met_only_with_enough_acks",
-  "//mcp-re-proxy:proxy_ext_unit_test#redis_store::tests::wait_quorum_shortfall_fails_closed_with_fresh_nonce_contract",
-]
-
-[[probe]]
-id = "M126-a-failed-revoke-still-answers-replay"
-unit = "proxy.etcd_replay_adapter"
-theorem = "THM-0107"
-conjunct = "lease cleanup is fail-SAFE, never fail-closed: a revoke that fails still answers Replay and never an error"
-path = "mcp-re-proxy/src/etcd_store.rs"
-anchor = """
-            let _ = self
-                .transport
-                .post("v3/lease/revoke", &build_lease_revoke_body(lease_id));
-"""
-weakening = """
-            self.transport
-                .post("v3/lease/revoke", &build_lease_revoke_body(lease_id))?;
-"""
-expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#etcd_store::tests::replay_revoke_failure_still_returns_replay_never_errors",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::protocol::tests::wait_quorum_is_met_only_with_enough_acks",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_redis_store::protocol::tests::wait_quorum_shortfall_fails_closed_with_fresh_nonce_contract",
 ]
 
 [[probe]]
@@ -11091,8 +11072,8 @@ note = """
 THE HELD-BACK READING IS THE ONLY TERM THAT MAKES THE EXPIRY SAFE FOR A FAST CLOCK. Without it
 the record lapses at `retain_until` on the WRITING replica's clock, earlier than the verifier's
 horizon in true time by however far that clock runs ahead, and every window and staleness control
-passes because each is stated against the one clock the store reads. The four stores consume the
-clock through the value they already take, so a weakening here reaches all of them: the four
+passes because each is stated against the one clock the store reads. The two stores consume the
+clock through the value they already take, so a weakening here reaches both of them: the two
 store batteries (`proxy.redis_replay_adapter`, `proxy.etcd_replay_adapter`) each hold a control
 that reads the TTL a held-back clock produces, and those go red too, but they are other units'
 controls and this unit's own is the one declared here.
@@ -11106,10 +11087,10 @@ path = "mcp-re-proxy/src/replay_plane/backends.rs"
 anchor = """
                     freshness
                         .replica_clock_divergence()
-                        .retention_clock(crate::redis_store::system_clock()),
+                        .retention_clock(crate::async_redis_store::system_clock()),
 """
 weakening = """
-                    crate::redis_store::system_clock(),
+                    crate::async_redis_store::system_clock(),
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#replay_plane::backends::tests::both_shared_backends_are_connected_on_the_held_back_clock",
