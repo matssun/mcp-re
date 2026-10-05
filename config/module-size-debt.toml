@@ -62,10 +62,12 @@
 # response-signing authority that already owned the refusal half: 1146 -> 1108.
 [[debt]]
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
-baseline_prod_loc = 519
-baseline_sha = "255465e"
+baseline_prod_loc = 533
+baseline_sha = "99ff012"
 status = "reviewed-exception"
 review_ref = "EX-010 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 523
+growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
@@ -247,9 +249,12 @@ review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-transport/src/lib.rs"
-baseline_prod_loc = 234
-baseline_sha = "255465e"
-status = "unreviewed"
+baseline_prod_loc = 240
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 234
+growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 # MCPRE-175 gave the async replay tier an owner subtree. The file held the seam, the
 # reference L2, the per-replica retention account and the dormant L1 at once, so it became
@@ -323,14 +328,17 @@ review_ref = "EX-016 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/pkcs11_native.rs"
-baseline_prod_loc = 783
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
+baseline_prod_loc = 827
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 783
+growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "sdk/typescript/src/lib.rs"
-baseline_prod_loc = 721
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 727
+baseline_sha = "99ff012"
 status = "unreviewed"
 
 # MCPRE-175 gave the local listener an owner subtree. `serve.rs` mixed the accept loop with
@@ -442,9 +450,12 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-client-proxy/src/proxy.rs"
-baseline_prod_loc = 531
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
+baseline_prod_loc = 541
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 531
+growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 # R11-014 gave the admission authority an owner subtree. `AdmissionVerdict` — what one
 # check could SEE, as against what is true of the call — is its own authority and took its
@@ -561,9 +572,12 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-client-core/src/trust_manifest/mod.rs"
-baseline_prod_loc = 411
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
+baseline_prod_loc = 413
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 411
+growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-core/src/replay.rs"
@@ -601,9 +615,12 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/config_state/validation/residue.rs"
-baseline_prod_loc = 377
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
+baseline_prod_loc = 405
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 378
+growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-http-profile/src/rejection/mod.rs"
@@ -664,9 +681,12 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/materialized_runtime.rs"
-baseline_prod_loc = 298
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
+baseline_prod_loc = 313
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 298
+growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-http-profile/src/error.rs"
@@ -767,3 +787,47 @@ baseline_prod_loc = 212
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# Ruling 14.4 campaign waivers (EX-017): files that newly crossed 200 during the r11/r12
+# campaign. Temporary — NOT §14 censuses; they leave `reviewed-exception` at the
+# decomposition run.
+[[debt]]
+path = "mcp-re-http-profile/src/scitt/receipt/parse.rs"
+baseline_prod_loc = 209
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "mcp-re-proxy/src/materializing_runtime/mod.rs"
+baseline_prod_loc = 204
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "mcp-re-proxy/src/transparency/auditor/invocation/mod.rs"
+baseline_prod_loc = 239
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "mcp-re-proxy/src/transparency/auditor/registration/capability.rs"
+baseline_prod_loc = 218
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "mcp-re-proxy/src/transparency/auditor/registration/endpoint/mod.rs"
+baseline_prod_loc = 220
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "mcp-re-transport/src/limits.rs"
+baseline_prod_loc = 201
+baseline_sha = "99ff012"
+status = "reviewed-exception"
+review_ref = "EX-017 in docs/architecture/review-dispositions.md"

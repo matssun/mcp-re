@@ -257,6 +257,14 @@ pub struct DemoFixtures {
 impl DemoFixtures {
     /// Mint the full material set from `spec`. Pure in-memory generation (no I/O);
     /// use [`Self::write_files`] to materialize the proxy CLI's file inputs.
+    //
+    // Ruling 14.4 campaign waiver (EX-017 in docs/architecture/review-dispositions.md):
+    // 64/60 lines, approved at exactly that size and expiring at the post-campaign
+    // decomposition run. Its length is the fixture set it mints — one `make_*` call per
+    // material, in the order the later certificates chain to the earlier CAs — not a
+    // decision. Scoped to this function so anything else here past the threshold still
+    // reports.
+    #[allow(clippy::too_many_lines)]
     pub fn generate(spec: DemoFixtureSpec) -> Self {
         assert!(
             spec.mismatched_identity != spec.subject() && spec.signer_seed != spec.server_seed,

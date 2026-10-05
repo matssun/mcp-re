@@ -2835,3 +2835,70 @@ Action required: move authority (d) into a child module `aws_sts::sts_protocol`,
 from `aws_sts.rs` (no `lib.rs` line),
 its tests with it, retargeting mutation probe M265's path and the moved `tested_symbols`.
 Authority (c)'s revocation gap waits on ruling `aws-credential-revocation-recovery`.
+
+
+## EX-017 — Ruling 14.4 campaign waivers — **temporary CI representation, NOT a §14 census**
+
+**Authority:** owner Ruling 14.4 (2026-10-04) and Ruling 15, with the CI representation
+authorized by Ruling 16.2 (2026-10-05). **Expires:** at the post-campaign decomposition run,
+whose input is `docs/security/remediation-size-debt.jsonl`. **Measured:** at `99ff012` by
+`scripts/module_size_gate.py::production_lines`.
+
+This record is the reason fourteen registry entries carry `status = "reviewed-exception"`.
+That status is how `scripts/module_size_gate.py` lets an owner-approved size stand while it
+keeps measuring the rest of the tree; it is **not** a finding that any of these units is
+one authority, and none of the twelve §8 questions has been answered for them here. The
+approvals are not permanent baseline increases and not a judgment that the sizes are
+desirable. They cover exactly the values below and nothing more: any further growth in any
+of these files is a new owner decision, and the ratchet enforces that because each baseline
+equals its measurement.
+
+At the decomposition run every entry citing this record leaves `reviewed-exception`: either
+the file is decomposed to or below its pre-campaign baseline (or out of the registry), or it
+moves to `reviewed-action-required` with its census recorded. A file still citing EX-017
+after that run is an expired waiver, not an exception.
+
+| file | kind | pre-campaign baseline | approved | registered baseline | findings / commits |
+|---|---|---|---|---|---|
+| `mcp-re-client-core/src/trust_manifest/mod.rs` | growth of a registered entry | 411 | 413 | **413** | c9ad7999 |
+| `mcp-re-client-proxy/src/proxy.rs` | growth of a registered entry | 531 | 541 | **541** | 92990656 |
+| `mcp-re-http-profile/src/scitt/receipt/parse.rs` | newly over 200 | 191 | 209 | **209** | 0f4e13b7, b812ad67 |
+| `mcp-re-proxy/src/config_state/validation/residue.rs` | growth of a registered entry | 377 | 405 | **405** | 074e8d4c |
+| `mcp-re-proxy/src/http_profile_serve/mod.rs` | growth of a registered entry | 519 | 534 | **533** | 048bff62, 53abbc34 |
+| `mcp-re-proxy/src/materialized_runtime.rs` | growth of a registered entry | 298 | 313 | **313** | 39fff5a7 |
+| `mcp-re-proxy/src/materializing_runtime/mod.rs` | newly over 200 | 200 | 204 | **204** | 4ecf6668 |
+| `mcp-re-proxy/src/pkcs11_native.rs` | growth of a registered entry | 783 | 827 | **827** | 3d3a3be1 |
+| `mcp-re-proxy/src/transparency/auditor/invocation/mod.rs` | newly over 200 | 187 | 239 | **239** | b710e6b0, 63dde664 |
+| `mcp-re-proxy/src/transparency/auditor/registration/capability.rs` | newly over 200 | 194 | 218 | **218** | 89aa1a1a (D3) |
+| `mcp-re-proxy/src/transparency/auditor/registration/endpoint/mod.rs` | newly over 200 | 190 | 220 | **220** | 8cc3cf16, 9639c9bf, 89aa1a1a |
+| `mcp-re-transport/src/lib.rs` | growth of a registered entry | 234 | 240 | **240** | 3ac4cdf8 |
+| `mcp-re-transport/src/limits.rs` | newly over 200 | 200 | 201 | **201** | 673f0872 |
+| `sdk/typescript/src/lib.rs` | growth of a registered entry | 721 | 727 | **727** | 0ff471b7 |
+
+`mcp-re-proxy/src/http_profile_serve/mod.rs` was approved at 534 and measures 533; the
+baseline is the measurement, so the unused line is not headroom. Its file-level disposition
+remains EX-010; this record supplies only the growth authorization.
+
+The six files that newly crossed 200 are new registry entries and need no transition line.
+`sdk/typescript/src/lib.rs` stands at 731 on `origin/main` (the branch had lowered it to 721
+before the approved growth), so 727 is not an upward transition there: it keeps
+`status = "unreviewed"` and needs no authorization line, and its approved value is still
+727. The seven registered entries that grew each need one exact one-shot authorization:
+
+```text
+growth-authorization: mcp-re-client-core/src/trust_manifest/mod.rs 411 -> 413
+growth-authorization: mcp-re-client-proxy/src/proxy.rs 531 -> 541
+growth-authorization: mcp-re-proxy/src/config_state/validation/residue.rs 378 -> 405
+growth-authorization: mcp-re-proxy/src/http_profile_serve/mod.rs 523 -> 533
+growth-authorization: mcp-re-proxy/src/materialized_runtime.rs 298 -> 313
+growth-authorization: mcp-re-proxy/src/pkcs11_native.rs 783 -> 827
+growth-authorization: mcp-re-transport/src/lib.rs 234 -> 240
+```
+
+### The function-level waiver under the same ruling
+
+`mcp-re-demo/src/demo_fixtures.rs:260` (64/60 lines, 178808e2) carries an item-level
+`#[allow(clippy::too_many_lines)]` naming this record. It is scoped to that one function,
+grants nothing to the file or crate, and expires with the same decomposition obligation.
+`HttpProfileProxy::handle` (61/60) is the other Ruling 14.4 function waiver and is already
+inside `mcp-re-proxy`'s clippy-debt count, so it needs no attribute.
