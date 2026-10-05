@@ -9,6 +9,7 @@
 //! leg, un-honourable cross-replica on the open leg.
 
 use super::AsyncContinuationStore;
+use super::Consumption;
 use super::ContinuationFuture;
 use super::ContinuationKey;
 use super::ContinuationStoreError;
@@ -128,7 +129,7 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
         })
     }
 
-    fn consume<'a>(&'a self, key: &'a ContinuationKey) -> ContinuationFuture<'a, bool> {
+    fn consume<'a>(&'a self, key: &'a ContinuationKey) -> ContinuationFuture<'a, Consumption> {
         let key = key.as_str().to_string();
         Box::pin(async move {
             // `remove` returning Some is the single-process form of "this call is the
@@ -137,12 +138,11 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
             // its TTL would honour an answer leg the Redis twin would already have
             // dropped.
             let now = std::time::Instant::now();
-            Ok(self
-                .entries
-                .lock()
-                .map_err(poisoned)?
-                .remove(&key)
-                .is_some_and(|(_, expires_at)| expires_at > now))
+            let removed = self.entries.lock().map_err(poisoned)?.remove(&key);
+            Ok(match removed {
+                Some((_, expires_at)) if expires_at > now => Consumption::Consumed,
+                _ => Consumption::NoLiveEntry,
+            })
         })
     }
 }
@@ -150,6 +150,7 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
 #[cfg(test)]
 mod tests {
     use super::AsyncContinuationStore;
+    use super::Consumption;
     use super::ContinuationKey;
     use super::ContinuationStoreError;
     use super::InMemoryContinuationStore;
@@ -266,7 +267,7 @@ mod tests {
         .expect("stored");
         assert!(matches!(
             block_on(store.consume(&ContinuationKey::of_parts("aud", "actor", b"expired"))),
-            Ok(false)
+            Ok(Consumption::NoLiveEntry)
         ));
         assert!(!store
             .entries
@@ -281,7 +282,7 @@ mod tests {
         .expect("stored");
         assert!(matches!(
             block_on(store.consume(&ContinuationKey::of_parts("aud", "actor", b"live"))),
-            Ok(true)
+            Ok(Consumption::Consumed)
         ));
     }
 }

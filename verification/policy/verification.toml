@@ -8483,6 +8483,33 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#shared_replay::tests::skew_folded_into_retain_until_matches_in_memory_semantics",
 ]
 
+# Owner Ruling 19 B4d: what `consume` answers, and that every tier answers alike.
+[[unit]]
+id = "proxy.continuation_consume_contract"
+class = "V0"
+description = "`AsyncContinuationStore::consume` gives three different answers for three different facts: `Ok(Consumed)` when this call removed a live entry, `Ok(NoLiveEntry)` when the store answered and held none (already consumed, never opened, expired or another actor's key, which no tier can tell apart), and `Err(Unavailable)` when the store did not answer and the entry's fate is unknown. The in-memory and Redis tiers give the same answer in the same situation."
+paths = [
+  "mcp-re-proxy/src/continuation_store/mod.rs",
+  "mcp-re-proxy/src/continuation_store/consumption.rs",
+  "mcp-re-proxy/src/continuation_store/in_memory.rs",
+  "mcp-re-proxy/src/redis_continuation_store.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/continuation_store/consume_contract",
+  "mutation://proxy/continuation_store/consume_contract",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#continuation_store::tests::peek_does_not_consume_and_consume_is_one_shot",
+  "//mcp-re-proxy:proxy_unit_test#continuation_store::in_memory::tests::consuming_an_expired_entry_removes_it_but_reports_not_live",
+  "//mcp-re-proxy:proxy_unit_test#continuation_store::in_memory::tests::a_poisoned_correlation_map_is_unavailable_on_every_operation",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::the_delete_count_is_the_one_shot_verdict",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::every_error_reply_fails_closed_as_unavailable",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::consume_answers_as_the_single_process_tier_answers",
+]
+
 # Owner Ruling 19 B4c: the identity the actor seam is handed has one producer.
 [[unit]]
 id = "proxy.server_identity_sole_producer"

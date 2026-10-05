@@ -11,14 +11,14 @@
 //! returned count is the one-shot verdict (a continuation can be answered at most
 //! once). Redis executes the `DEL` atomically, so across replicas exactly one of two
 //! concurrent answer legs is told it removed the entry. Any transient error fails
-//! closed
-//! ([`ContinuationStoreError::Unavailable`]): on the answer leg that reads as "no
-//! retained continuation" (the pure dispatcher then rejects the binding), and on the
-//! open leg it means the reply cannot be honoured cross-replica.
+//! closed as [`ContinuationStoreError::Unavailable`], whose meaning is the trait's per
+//! operation: on `GET` nothing was read, on `SET` nothing may have been recorded, and on
+//! `DEL` the removal may or may not have executed.
 
 use redis::aio::ConnectionManager;
 
 use crate::continuation_store::AsyncContinuationStore;
+use crate::continuation_store::Consumption;
 use crate::continuation_store::ContinuationFuture;
 use crate::continuation_store::ContinuationKey;
 use crate::continuation_store::ContinuationStoreError;
@@ -166,7 +166,7 @@ impl AsyncContinuationStore for RedisContinuationStore {
         })
     }
 
-    fn consume<'a>(&'a self, key: &'a ContinuationKey) -> ContinuationFuture<'a, bool> {
+    fn consume<'a>(&'a self, key: &'a ContinuationKey) -> ContinuationFuture<'a, Consumption> {
         let key = key.as_str().to_string();
         let mut conn = self.conn.clone();
         Box::pin(async move {
@@ -176,7 +176,10 @@ impl AsyncContinuationStore for RedisContinuationStore {
             let removed: Result<i64, redis::RedisError> =
                 redis::cmd("DEL").arg(&key).query_async(&mut conn).await;
             removed
-                .map(|n| n > 0)
+                .map(|n| match n {
+                    0 => Consumption::NoLiveEntry,
+                    _ => Consumption::Consumed,
+                })
                 .map_err(|e| ContinuationStoreError::Unavailable {
                     details: format!("redis DEL continuation failed: {e}"),
                 })
@@ -375,18 +378,39 @@ mod tests {
     #[tokio::test]
     async fn the_delete_count_is_the_one_shot_verdict() {
         let (store, seen) = store_against(":1\r\n").await;
-        assert!(
+        assert_eq!(
             store.consume(&key()).await.expect("DEL"),
+            Consumption::Consumed,
             "removing a live entry is what admits this answer leg"
         );
         assert_eq!(recorded(&seen)[0][0], "DEL");
 
         // Nothing removed: the entry was already answered, so this leg must be refused.
         let (store, _) = store_against(":0\r\n").await;
-        assert!(
-            !store.consume(&key()).await.expect("DEL"),
+        assert_eq!(
+            store.consume(&key()).await.expect("DEL"),
+            Consumption::NoLiveEntry,
             "a second answer leg spends a human approval twice"
         );
+    }
+
+    /// Parity with the single-process tier: a live entry removed by this call, and no live
+    /// entry left to remove, are the same two answers from both implementations, so the
+    /// serving path's response does not depend on which tier a deployment selected.
+    #[tokio::test]
+    async fn consume_answers_as_the_single_process_tier_answers() {
+        let memory = crate::continuation_store::InMemoryContinuationStore::new();
+        memory.create(&key(), &bases(), 300).await.expect("stored");
+
+        let (redis, _) = store_against(":1\r\n").await;
+        let first = memory.consume(&key()).await.expect("answered");
+        assert_eq!(first, Consumption::Consumed);
+        assert_eq!(redis.consume(&key()).await.expect("DEL"), first);
+
+        let (redis, _) = store_against(":0\r\n").await;
+        let second = memory.consume(&key()).await.expect("answered");
+        assert_eq!(second, Consumption::NoLiveEntry);
+        assert_eq!(redis.consume(&key()).await.expect("DEL"), second);
     }
 
     #[tokio::test]

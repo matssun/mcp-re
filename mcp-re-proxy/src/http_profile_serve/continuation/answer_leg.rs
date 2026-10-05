@@ -464,9 +464,10 @@ pub(in crate::http_profile_serve) mod tests {
         fn consume<'a>(
             &'a self,
             key: &'a ContinuationKey,
-        ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
+        ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Consumption>
+        {
             self.record(StoreCall::Consume(key.to_owned()));
-            Box::pin(async { Ok(false) })
+            Box::pin(async { Ok(crate::continuation_store::Consumption::NoLiveEntry) })
         }
     }
 

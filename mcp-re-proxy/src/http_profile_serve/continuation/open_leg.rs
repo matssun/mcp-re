@@ -142,8 +142,11 @@ mod tests {
             fn consume<'a>(
                 &'a self,
                 _key: &'a ContinuationKey,
-            ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
-                Box::pin(async { Ok(false) })
+            ) -> crate::continuation_store::ContinuationFuture<
+                'a,
+                crate::continuation_store::Consumption,
+            > {
+                Box::pin(async { Ok(crate::continuation_store::Consumption::NoLiveEntry) })
             }
         }
 
@@ -213,8 +216,11 @@ mod tests {
             fn consume<'a>(
                 &'a self,
                 _key: &'a ContinuationKey,
-            ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
-                Box::pin(async { Ok(false) })
+            ) -> crate::continuation_store::ContinuationFuture<
+                'a,
+                crate::continuation_store::Consumption,
+            > {
+                Box::pin(async { Ok(crate::continuation_store::Consumption::NoLiveEntry) })
             }
         }
 
@@ -325,8 +331,11 @@ mod tests {
             fn consume<'a>(
                 &'a self,
                 _key: &'a ContinuationKey,
-            ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
-                Box::pin(async { Ok(false) })
+            ) -> crate::continuation_store::ContinuationFuture<
+                'a,
+                crate::continuation_store::Consumption,
+            > {
+                Box::pin(async { Ok(crate::continuation_store::Consumption::NoLiveEntry) })
             }
         }
 

@@ -25,6 +25,7 @@
 #![cfg(feature = "redis_replay")]
 
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
+use mcp_re_proxy::continuation_store::Consumption;
 use mcp_re_proxy::continuation_store::ContinuationKey;
 use mcp_re_proxy::continuation_store::Creation;
 use mcp_re_proxy::continuation_store::RetainedHandles;
@@ -166,9 +167,14 @@ async fn peek_is_non_destructive_and_consume_is_one_shot_across_replicas() {
     // decision: the loser must fail its answer leg closed.
     let b_won = b.consume(&key).await.expect("B consumes");
     let a_won = a.consume(&key).await.expect("A consumes");
-    assert!(b_won, "the first consume removed the live entry");
-    assert!(
-        !a_won,
+    assert_eq!(
+        b_won,
+        Consumption::Consumed,
+        "the first consume removed the live entry"
+    );
+    assert_eq!(
+        a_won,
+        Consumption::NoLiveEntry,
         "the second consume removed nothing — the continuation is one-shot"
     );
 
@@ -203,8 +209,9 @@ async fn one_actors_continuation_is_not_reachable_by_another() {
 
     // The intruder can neither read nor destroy it.
     assert_eq!(b.peek(&b_key).await.expect("peek"), None);
-    assert!(
-        !b.consume(&b_key).await.expect("consume"),
+    assert_eq!(
+        b.consume(&b_key).await.expect("consume"),
+        Consumption::NoLiveEntry,
         "nothing to remove"
     );
     assert_eq!(
@@ -282,5 +289,8 @@ async fn two_replicas_opening_one_key_yield_exactly_one_stored() {
     assert_eq!(b.peek(&key).await.expect("B peeks"), Some(winner));
 
     // And the approval in flight is still answerable exactly once.
-    assert!(b.consume(&key).await.expect("B consumes"));
+    assert_eq!(
+        b.consume(&key).await.expect("B consumes"),
+        Consumption::Consumed
+    );
 }

@@ -11903,3 +11903,34 @@ expect_red = [
   "//mcp-re-proxy:integration_test#revocation_serving_wiring_test::the_seam_answers_with_the_server_identity_owners_actor_and_domain",
 ]
 
+[[probe]]
+id = "M480-proxy-a-redis-delete-of-nothing-is-no-live-entry"
+unit = "proxy.continuation_consume_contract"
+conjunct = "a Redis DEL that removed nothing is NoLiveEntry, the answer the single-process tier gives"
+path = "mcp-re-proxy/src/redis_continuation_store.rs"
+anchor = """
+                    0 => Consumption::NoLiveEntry,
+"""
+weakening = """
+                    0 => Consumption::Consumed,
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::the_delete_count_is_the_one_shot_verdict",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::consume_answers_as_the_single_process_tier_answers",
+]
+
+[[probe]]
+id = "M481-proxy-an-expired-in-memory-entry-is-no-live-entry"
+unit = "proxy.continuation_consume_contract"
+conjunct = "removing an expired entry is NoLiveEntry, as the Redis tier, whose TTL already dropped it, answers"
+path = "mcp-re-proxy/src/continuation_store/in_memory.rs"
+anchor = """
+                Some((_, expires_at)) if expires_at > now => Consumption::Consumed,
+"""
+weakening = """
+                Some(_) => Consumption::Consumed,
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#continuation_store::in_memory::tests::consuming_an_expired_entry_removes_it_but_reports_not_live",
+]
+

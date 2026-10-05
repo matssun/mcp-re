@@ -323,9 +323,14 @@ async fn handle(
     // backend runs. This is where one-shot is enforced: `consume` reports whether this
     // call removed the live entry, so of two concurrent answer legs that both bound
     // successfully, exactly one proceeds. Refusing before the backend runs means the
-    // loser's call never takes effect.
+    // loser's call never takes effect. A store that did not answer is refused too: it
+    // is not a spend this leg may proceed on.
     if let Some(key) = &answer_key {
-        if !matches!(state.continuations.consume(key).await, Ok(true)) {
+        let consumed = state.continuations.consume(key).await;
+        if !matches!(
+            consumed,
+            Ok(mcp_re_proxy::continuation_store::Consumption::Consumed)
+        ) {
             return Ok(to_hyper(rejection(
                 Some(&http_req),
                 Some(verified.evidence()),

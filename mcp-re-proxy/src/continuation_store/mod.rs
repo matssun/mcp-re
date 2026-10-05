@@ -82,9 +82,12 @@
 use std::future::Future;
 use std::pin::Pin;
 
+mod consumption;
 mod in_memory;
 mod key;
 mod retained_handles;
+
+pub use consumption::Consumption;
 
 pub use in_memory::InMemoryContinuationStore;
 // Re-exported rather than relocated: the key and the contract are one public surface to
@@ -93,10 +96,9 @@ pub use key::ContinuationKey;
 pub use key::CONTINUATION_KEY_PREFIX;
 pub use retained_handles::RetainedHandles;
 
-/// A fail-closed continuation-store failure. An operational outage is always safe
-/// to treat as "no retained continuation" (fail closed) on the answer leg; on the
-/// open leg it means the continuation could not be recorded, so the reply cannot be
-/// honoured cross-replica and is failed closed rather than returned as answerable.
+/// The store did not answer. What that means is per operation, and stated at each: on
+/// `create` nothing may have been recorded, on `peek` nothing was read, and on `consume`
+/// the removal may or may not have executed — the one case that is not an absence.
 #[derive(Debug, Clone)]
 pub enum ContinuationStoreError {
     /// The shared store could not be reached or answered.
@@ -137,7 +139,7 @@ pub type ContinuationFuture<'a, T> =
 /// `create` establishes the open-leg bases under `key` (a [`ContinuationKey`], minted only
 /// from the verification product) with a bounded TTL, refusing to disturb a live entry; `peek` reads them
 /// without side effects; `consume` atomically removes them and reports whether it was
-/// the caller that did so.
+/// the caller that did so, as a [`Consumption`].
 /// Implementations MUST be non-blocking — all three are awaited on the per-core
 /// request path.
 ///
@@ -180,14 +182,20 @@ pub trait AsyncContinuationStore: Send + Sync {
         key: &'a ContinuationKey,
     ) -> ContinuationFuture<'a, Option<RetainedHandles>>;
 
-    /// Atomically remove the entry for `key`, returning whether THIS call removed a
-    /// live one.
+    /// Atomically remove the entry for `key`, reporting what THIS call found:
     ///
-    /// This is where the one-shot rule is enforced: of two concurrent answer legs
-    /// that both peeked the same entry and both bound successfully, exactly one gets
-    /// `true`. The other MUST be failed closed — it is answering a continuation that
-    /// has already been answered.
-    fn consume<'a>(&'a self, key: &'a ContinuationKey) -> ContinuationFuture<'a, bool>;
+    /// ```text
+    /// live entry, removed by this call  ->  Ok(Consumption::Consumed)
+    /// no live entry under the key       ->  Ok(Consumption::NoLiveEntry)
+    /// no answer from the backing store  ->  Err(Unavailable)
+    /// ```
+    ///
+    /// One-shot lives here: of two concurrent answer legs that both peeked and bound,
+    /// exactly one is told `Consumed`, and the other MUST be failed closed. `Err` is
+    /// neither outcome: a removal whose reply was never read may have executed, so the
+    /// entry may or may not be gone. A caller MUST NOT proceed on it as a spend nor report
+    /// it as an absence.
+    fn consume<'a>(&'a self, key: &'a ContinuationKey) -> ContinuationFuture<'a, Consumption>;
 }
 
 #[cfg(test)]
@@ -218,8 +226,8 @@ mod tests {
         assert_eq!(store.peek(&key).await.unwrap(), Some(bases()));
 
         // Removal is where one-shot lives: exactly one caller is told it removed it.
-        assert!(store.consume(&key).await.unwrap());
-        assert!(!store.consume(&key).await.unwrap());
+        assert_eq!(store.consume(&key).await.unwrap(), Consumption::Consumed);
+        assert_eq!(store.consume(&key).await.unwrap(), Consumption::NoLiveEntry);
         assert_eq!(store.peek(&key).await.unwrap(), None);
     }
 
@@ -233,7 +241,10 @@ mod tests {
         let b_key = ContinuationKey::of_parts(AUD, ACTOR_B, b"state-1");
         assert_ne!(a_key, b_key);
         assert_eq!(store.peek(&b_key).await.unwrap(), None);
-        assert!(!store.consume(&b_key).await.unwrap());
+        assert_eq!(
+            store.consume(&b_key).await.unwrap(),
+            Consumption::NoLiveEntry
+        );
         // A's open leg is untouched and still answerable.
         assert_eq!(store.peek(&a_key).await.unwrap(), Some(bases()));
     }
@@ -284,7 +295,7 @@ mod tests {
         assert_ne!(store.peek(&key).await.unwrap(), Some(intruder));
         // CONTROL 4. And it is still answerable: one-shot consumption still succeeds, so
         // the human approval in flight completes rather than failing at the binding.
-        assert!(store.consume(&key).await.unwrap());
+        assert_eq!(store.consume(&key).await.unwrap(), Consumption::Consumed);
     }
 
     /// CONTROL 5 — concurrent creators across the shared-store seam: exactly one Stored.
@@ -374,8 +385,11 @@ mod tests {
             ) -> ContinuationFuture<'a, Option<RetainedHandles>> {
                 Box::pin(async { Ok(None) })
             }
-            fn consume<'a>(&'a self, _key: &'a ContinuationKey) -> ContinuationFuture<'a, bool> {
-                Box::pin(async { Ok(false) })
+            fn consume<'a>(
+                &'a self,
+                _key: &'a ContinuationKey,
+            ) -> ContinuationFuture<'a, Consumption> {
+                Box::pin(async { Ok(Consumption::NoLiveEntry) })
             }
         }
 

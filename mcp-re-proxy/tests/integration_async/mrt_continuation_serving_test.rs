@@ -884,7 +884,10 @@ impl AsyncContinuationStore for WriteFailingStore {
     fn consume<'a>(
         &'a self,
         key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Consumption,
+    > {
         self.0.consume(key)
     }
 }
@@ -2209,7 +2212,10 @@ impl AsyncContinuationStore for PeekFailingStore {
     fn consume<'a>(
         &'a self,
         key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Consumption,
+    > {
         self.0.consume(key)
     }
 }
@@ -2242,7 +2248,10 @@ impl AsyncContinuationStore for ConsumeFailingStore {
     fn consume<'a>(
         &'a self,
         _key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Consumption,
+    > {
         Box::pin(async {
             Err(
                 mcp_re_proxy::continuation_store::ContinuationStoreError::Unavailable {

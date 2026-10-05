@@ -18,6 +18,7 @@
 //! which holds the continuation machine — decides both the refusal and what the exchange
 //! may claim. A stage that refused here would be stating a retry contract it cannot know.
 
+use crate::continuation_store::Consumption;
 use crate::http_profile_serve::retention::fault_report::{report, Fault};
 
 use super::answer_leg::ContinuationPrep;
@@ -50,8 +51,8 @@ impl ContinuationPlane {
             return Retirement::NotInvolved;
         };
         match store.consume(key).await {
-            Ok(true) => Retirement::Retired,
-            Ok(false) => Retirement::AlreadyAnswered,
+            Ok(Consumption::Consumed) => Retirement::Retired,
+            Ok(Consumption::NoLiveEntry) => Retirement::AlreadyAnswered,
             Err(e) => {
                 report(
                     Fault::ContinuationRetire,
@@ -67,7 +68,7 @@ impl ContinuationPlane {
 /// What the shared tier reported when this exchange tried to retire the approval it
 /// answers.
 ///
-/// Four values, because the store's `Err` is not the store's `Ok(false)`. A `DEL` whose
+/// Four values, because the store's `Err` is not its `Ok(Consumption::NoLiveEntry)`. A `DEL` whose
 /// reply was never read may well have executed, so "there was definitely nothing to
 /// retire" and "the entry may or may not be gone" are different facts about a human's
 /// approval: they warrant different wire codes, and — the load-bearing part — different
@@ -224,7 +225,8 @@ mod tests {
         fn consume<'a>(
             &'a self,
             _key: &'a ContinuationKey,
-        ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
+        ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Consumption>
+        {
             Box::pin(async {
                 Err(ContinuationStoreError::Unavailable {
                     details: "the shared tier did not answer the spend".into(),
