@@ -15145,3 +15145,27 @@ control = "doc#replay::HttpReplayKey"
 decision = "not-evidence"
 reason_family = "ND-010"
 recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20394"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::runtime_flags::handshake_signing::tests::each_flag_replaces_its_own_term_and_leaves_the_other"
+decision = "new-proposition"
+proposition = "NP-034"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20395"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::runtime_flags::handshake_signing::tests::an_out_of_bounds_or_unparsable_term_is_refused_naming_the_flag"
+decision = "new-proposition"
+proposition = "NP-034"
+recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20396"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::runtime_flags::handshake_signing::tests::only_the_two_terms_are_owned"
+decision = "new-proposition"
+proposition = "NP-034"
+recorded = "2026-10-05"

@@ -912,14 +912,14 @@ theorem = "THM-0048"
 conjunct = "the epoch a config is bound under digests the anchors this state owns"
 path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
 anchor = """
-    pub fn new(client_ca: Vec<CertificateDer<'static>>) -> Self {
+    pub fn new(client_ca: Vec<CertificateDer<'static>>, signing: HandshakeSignCapacity) -> Self {
         let resumption = Arc::new(EpochBoundSessionStore::memory_backed(
             TlsAuthEpoch::compute(&client_ca),
             TLS_SESSION_CACHE_ENTRIES,
         ));
 """
 weakening = """
-    pub fn new(client_ca: Vec<CertificateDer<'static>>) -> Self {
+    pub fn new(client_ca: Vec<CertificateDer<'static>>, signing: HandshakeSignCapacity) -> Self {
         let resumption = Arc::new(EpochBoundSessionStore::memory_backed(
             TlsAuthEpoch::compute(&[]),
             TLS_SESSION_CACHE_ENTRIES,
@@ -963,7 +963,7 @@ weakening = """
         crate::tls::validated_delegated_resolver(
             server_chain,
             signer,
-            Arc::new(TlsHandshakeSignBudget::default()),
+            Arc::new(TlsHandshakeSignBudget::new(HandshakeSignCapacity::default())),
         )
 """
 expect_red = [
@@ -1365,7 +1365,9 @@ anchor = """
         ));
 """
 weakening = """
-        let budget = Arc::new(TlsHandshakeSignBudget::default());
+        let budget = Arc::new(TlsHandshakeSignBudget::new(
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        ));
         let key = Arc::new(DelegatedEd25519SigningKey::with_budget(
             signer,
             Arc::clone(&budget),
@@ -11974,4 +11976,111 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-core:mcp_re_core_test#time::clock_skew::tests::a_negative_or_unbounded_tolerance_is_not_constructible",
+]
+
+[[probe]]
+id = "M484-proxy-a-handshake-signing-rate-past-its-ceiling-is-not-constructible"
+unit = "proxy.handshake_sign_capacity"
+conjunct = "no `HandshakeSignCapacity` holds a rate above `MAX_RATE_PER_SEC`"
+path = "mcp-re-proxy/src/delegated_tls/sign_capacity.rs"
+anchor = """
+        if !(1..=Self::MAX_RATE_PER_SEC).contains(&rate_per_sec) {
+"""
+weakening = """
+        if !(1..=u32::MAX).contains(&rate_per_sec) {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::sign_capacity::tests::a_term_above_its_ceiling_is_refused_and_the_ceiling_itself_is_accepted",
+]
+note = """
+An unbounded rate leaves the bucket refilling faster than any signer is driven, so it bounds
+nothing while the startup line still reports a budget.
+"""
+
+[[probe]]
+id = "M485-proxy-a-zero-handshake-signing-burst-is-not-constructible"
+unit = "proxy.handshake_sign_capacity"
+conjunct = "no `HandshakeSignCapacity` holds a zero burst"
+path = "mcp-re-proxy/src/delegated_tls/sign_capacity.rs"
+anchor = """
+        if !(1..=Self::MAX_BURST).contains(&burst) {
+"""
+weakening = """
+        if !(0..=Self::MAX_BURST).contains(&burst) {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::sign_capacity::tests::a_zero_rate_or_burst_is_refused_rather_than_clamped",
+]
+note = """
+A zero burst is a bucket that can never hold a token: every delegated handshake on the
+listener is refused — an outage spelled as a setting, which startup must refuse instead.
+"""
+
+[[probe]]
+id = "M486-proxy-the-channel-plan-carries-the-operators-signing-capacity"
+unit = "proxy.handshake_sign_capacity"
+conjunct = "the channel plan carries the capacity the operator stated, not a default"
+path = "mcp-re-proxy/src/startup_plan.rs"
+anchor = """
+            handshake_signing: config.config().limits.tls_handshake_signing,
+"""
+weakening = """
+            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_channel_plan_carries_the_operators_handshake_signing_capacity",
+]
+
+[[probe]]
+id = "M487-proxy-the-listener-budget-is-sized-by-its-established-capacity"
+unit = "proxy.handshake_sign_capacity"
+conjunct = "the listener's budget is built from the capacity the listener was established with"
+path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
+anchor = """
+            sign_budget: Arc::new(TlsHandshakeSignBudget::new(signing)),
+"""
+weakening = """
+            sign_budget: Arc::new(TlsHandshakeSignBudget::new(HandshakeSignCapacity::default())),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::tests::a_delegated_build_enforces_the_capacity_the_listener_was_established_with",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::custody_agreement_tests::the_served_listener_enforces_the_plans_handshake_signing_capacity",
+]
+
+[[probe]]
+id = "M488-proxy-the-served-listener-takes-the-plans-signing-capacity"
+unit = "proxy.handshake_sign_capacity"
+conjunct = "the TLS plane establishes its listener from the plan's capacity"
+path = "mcp-re-proxy/src/tls_plane/mod.rs"
+anchor = """
+            client_ca,
+            plan.handshake_signing,
+"""
+weakening = """
+            client_ca,
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::custody_agreement_tests::the_served_listener_enforces_the_plans_handshake_signing_capacity",
+]
+note = """
+The plane is the one production site that establishes a listener; a default here would leave
+every operator setting parsed, planned and ignored.
+"""
+
+[[probe]]
+id = "M489-proxy-an-exhausted-budget-refuses-before-the-delegated-signer"
+unit = "proxy.handshake_sign_capacity"
+conjunct = "every delegated handshake signature draws the budget before the signer is reached"
+path = "mcp-re-proxy/src/delegated_tls.rs"
+anchor = """
+        if !self.budget.try_acquire() {
+"""
+weakening = """
+        if false && !self.budget.try_acquire() {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::tests::handshake_signature_budget_bounds_remote_signer_invocations",
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::tests::concurrent_callers_cannot_overspend_the_global_budget",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::custody_agreement_tests::the_served_listener_enforces_the_plans_handshake_signing_capacity",
 ]

@@ -94,9 +94,12 @@ pub(crate) fn complete_handshake(
     let client_key = KeyPair::generate().expect("client key");
     let client_cert = client_ca.leaf(&client_key, ExtendedKeyUsagePurpose::ClientAuth);
 
-    let server_config = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_delegated_config(vec![server_cert], signer, Vec::new())
-        .map_err(|e| format!("delegated config: {e:?}"))?;
+    let server_config = TlsListenerSecurityState::new(
+        vec![client_ca.cert.der().clone()],
+        crate::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_delegated_config(vec![server_cert], signer, Vec::new())
+    .map_err(|e| format!("delegated config: {e:?}"))?;
     let mut roots = RootCertStore::empty();
     roots.add(server_ca.cert.der().clone()).expect("server ca");
     let client_config = ClientConfig::builder_with_provider(Arc::new(ring::default_provider()))

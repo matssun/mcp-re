@@ -34,7 +34,10 @@ mod tests {
             .self_signed(&key)
             .expect("cert");
         let anchors = vec![cert.der().clone()];
-        let state = TlsListenerSecurityState::new(anchors.clone());
+        let state = TlsListenerSecurityState::new(
+            anchors.clone(),
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        );
         assert_eq!(state.trust_anchors(), anchors.as_slice());
     }
 }

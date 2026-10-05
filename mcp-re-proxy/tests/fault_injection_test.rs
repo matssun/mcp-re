@@ -253,9 +253,12 @@ fn server_config_for(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
     let server_ca = make_ca();
     let (server_cert, server_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
-    let config = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_exported_key_config(vec![server_cert], server_key, Vec::new())
-        .expect("server config");
+    let config = TlsListenerSecurityState::new(
+        vec![client_ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_exported_key_config(vec![server_cert], server_key, Vec::new())
+    .expect("server config");
     Arc::new(config)
 }
 

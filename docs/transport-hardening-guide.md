@@ -138,6 +138,25 @@ construction. GCP-KMS custody has been exercised on live GKE via Workload
 Identity (v0.12.1). A non-exporting device never surrenders the private key; the
 proxy drives it through the `ResponseSigner` seam.
 
+### Delegated handshake-signing capacity
+
+When the TLS key is non-exporting, every full handshake costs one remote signature, and
+TLS 1.3 signs before any client certificate is seen. One token bucket per listener bounds
+how fast that signer can be driven:
+
+- `--tls-handshake-sign-rate` — sustained signatures per second, `1..=1000`, default 100.
+- `--tls-handshake-sign-burst` — signatures drawn back-to-back before the rate binds,
+  `1..=2000`, default 200.
+
+A value outside its range refuses startup. The bucket protects the signing backend's
+**global** capacity, which the delegated-key issuer shares. It does not allocate that
+capacity fairly among connections or clients: enough concurrent or adversarial handshake
+demand empties it, and legitimate handshakes are then refused until it refills. That is an
+accepted availability risk. It fails closed — an exhausted bucket refuses the signature;
+there is no fallback signer. Separately, after a KMS provider throttles a signature, the
+handshake path refuses locally for one network-timeout window and leaves the quota to
+issuance; that window is derived, not configured.
+
 ## Replay protection
 
 Source: [`shared_replay.rs`](../mcp-re-proxy/src/shared_replay.rs),

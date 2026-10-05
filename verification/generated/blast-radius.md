@@ -211,6 +211,7 @@ attestations this view cannot see.
 | unit://proxy.gcp_kms_adapter | source, contracts or evidence | THM-0116, THM-0117 | _no consumer_ |
 | unit://proxy.gcp_metadata_token_lifetime | source, contracts or evidence | THM-0117 | _no consumer_ |
 | unit://proxy.handshake_custody_snapshot | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.handshake_sign_capacity | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.in_flight_limit_basis | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.key_file_custody_admission | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.key_file_floor_scope | source, contracts or evidence | _no theorem_ | _no consumer_ |

@@ -251,7 +251,10 @@ impl TlsPlane {
         // Created once, before the first build, and handed to every later one: the trust
         // anchors, the session cache and the trust epoch survive a reload, and so does the
         // delegated handshake-signature bucket.
-        let rebuild_state = Arc::new(TlsListenerSecurityState::new(client_ca));
+        let rebuild_state = Arc::new(TlsListenerSecurityState::new(
+            client_ca,
+            plan.handshake_signing,
+        ));
 
         // The same construction a CRL reload performs, so the serving config a reload
         // installs cannot diverge from the one startup installed.
@@ -546,6 +549,7 @@ mod custody_agreement_tests {
             custody,
             client_revocation: crate::config_state::test_support::crl_plan(&[], None),
             credential_window: crate::config_state::test_support::credential_window(3600, 300),
+            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
         }
     }
 
@@ -594,6 +598,83 @@ mod custody_agreement_tests {
         assert_eq!(
             plane.snapshot().key_exposure(),
             PrivateKeyExposure::NonExporting
+        );
+    }
+
+    /// Counts the signatures that actually reach a delegated signer.
+    struct CountingSigner {
+        inner: Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::delegated_tls::RawEd25519TlsSigner for CountingSigner {
+        fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, crate::KeyError> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.inner.sign_tls_ed25519(message)
+        }
+        fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, crate::KeyError> {
+            self.inner.tls_public_key_spki_der()
+        }
+    }
+
+    /// Whether the served config signs a fresh handshake: one ClientHello, processed.
+    fn server_signs_a_fresh_handshake(
+        served: &Arc<rustls::ServerConfig>,
+        server_cert: &rustls_pki_types::CertificateDer<'static>,
+    ) -> bool {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(server_cert.clone()).expect("trust the leaf");
+        let client = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        let name = rustls_pki_types::ServerName::try_from("delegated.example.org").expect("name");
+        let mut c = rustls::ClientConnection::new(Arc::new(client), name).expect("client");
+        let mut s = rustls::ServerConnection::new(Arc::clone(served)).expect("server");
+        let mut hello = Vec::new();
+        c.write_tls(&mut hello).expect("client hello");
+        s.read_tls(&mut hello.as_slice()).expect("server read");
+        s.process_new_packets().is_ok()
+    }
+
+    /// The operator's capacity is the bound the SERVED listener enforces, through the one
+    /// production path from plan to handshake: a plane materialized from a plan with a burst
+    /// of 2 lets two fresh handshakes reach the delegated signer and refuses every later one
+    /// without calling it. A plane that built its listener from a default capacity instead
+    /// would let all of them through.
+    #[test]
+    fn the_served_listener_enforces_the_plans_handshake_signing_capacity() {
+        let (chain, signer) = crate::delegated_tls::tests::corresponding_material();
+        let counting = Arc::new(CountingSigner {
+            inner: signer,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut plan =
+            plan(crate::config_state::test_support::channel_custody_delegated_pkcs11("tls"));
+        plan.handshake_signing =
+            crate::delegated_tls::HandshakeSignCapacity::new(1, 2).expect("in bounds");
+        let plane = TlsPlane::materialize(
+            &plan,
+            TlsKeyMaterial::Delegated(counting.clone()),
+            chain.clone(),
+            chain.clone(),
+            0,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .expect("agreeing delegated custody over corresponding material materializes");
+        let served = plane.snapshot().load();
+        let signed = (0..5)
+            .filter(|_| server_signs_a_fresh_handshake(&served, &chain[0]))
+            .count();
+        assert_eq!(signed, 2, "a burst of 2 admits two fresh handshakes");
+        assert_eq!(
+            counting.calls.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "a refused handshake must never reach the delegated signer"
         );
     }
 
@@ -672,7 +753,10 @@ mod trust_epoch_binding_tests {
     #[test]
     fn the_store_starts_under_the_epoch_of_the_planes_own_client_auth_inputs() {
         let anchors = vec![ca_der(), ca_der()];
-        let state = TlsListenerSecurityState::new(anchors.clone());
+        let state = TlsListenerSecurityState::new(
+            anchors.clone(),
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        );
         assert_eq!(
             *state.epoch(),
             TlsAuthEpoch::compute(&anchors),
@@ -692,7 +776,10 @@ mod trust_epoch_binding_tests {
     fn a_rebuild_republishes_the_epoch_of_the_anchor_set_the_plane_owns() {
         let anchors = vec![ca_der()];
         let (chain, material) = exported_credential();
-        let state = TlsListenerSecurityState::new(anchors.clone());
+        let state = TlsListenerSecurityState::new(
+            anchors.clone(),
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        );
 
         let first = material
             .rebuild(
@@ -757,6 +844,7 @@ mod fleet_crl_bound_tests {
                 cert_lifetime_secs,
                 cert_lifetime_secs.min(300),
             ),
+            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
         }
     }
 

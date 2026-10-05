@@ -1104,6 +1104,43 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::trust_epoch_binding_tests::the_store_starts_under_the_epoch_of_the_planes_own_client_auth_inputs",
 ]
 
+# The owner's B9 ruling (195be657): the handshake-signature budget is a GLOBAL capacity limit
+# the operator sizes, and nothing more. Its paths overlap `proxy.listener_state_assembly`'s on
+# purpose: that unit owns "the budget travels with the listener"; this one owns "the budget is
+# the operator's, bounded, enforced and unbypassed".
+[[unit]]
+id = "proxy.handshake_sign_capacity"
+class = "V0"
+description = "The listener's delegated TLS handshake-signature budget enforces the operator's `HandshakeSignCapacity` — a sustained rate within `1..=1000`/s and a burst within `1..=2000`, refused outside those bounds rather than clamped — carried from `--tls-handshake-sign-rate` / `--tls-handshake-sign-burst` through the channel plan to the listener a `TlsPlane` serves. Concurrent handshakes cannot overspend it, and an exhausted budget refuses the signature before the delegated signer is reached. It is a GLOBAL capacity limit on the signing backend: it establishes no fairness or isolation among connections or clients."
+paths = [
+  "mcp-re-proxy/src/delegated_tls/sign_capacity.rs",
+  "mcp-re-proxy/src/delegated_tls.rs",
+  "mcp-re-proxy/src/tls_listener_state/mod.rs",
+  "mcp-re-proxy/src/tls_plane/mod.rs",
+  "mcp-re-proxy/src/startup_plan.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/handshake_sign_capacity/enforced",
+  "mutation://proxy/handshake_sign_capacity/enforced",
+  "structural://proxy/handshake_sign_capacity/bounded",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::sign_capacity::tests::a_zero_rate_or_burst_is_refused_rather_than_clamped",
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::sign_capacity::tests::a_term_above_its_ceiling_is_refused_and_the_ceiling_itself_is_accepted",
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::sign_capacity::tests::replacing_one_term_keeps_the_other_and_checks_the_new_one",
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::sign_capacity::tests::the_defaults_are_themselves_within_bounds",
+  "//mcp-re-proxy:proxy_unit_test#startup_plan::tests::the_channel_plan_carries_the_operators_handshake_signing_capacity",
+  "//mcp-re-proxy:proxy_unit_test#tls_listener_state::tests::a_delegated_build_enforces_the_capacity_the_listener_was_established_with",
+  "//mcp-re-proxy:proxy_unit_test#tls_plane::custody_agreement_tests::the_served_listener_enforces_the_plans_handshake_signing_capacity",
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::tests::concurrent_callers_cannot_overspend_the_global_budget",
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::tests::the_configured_capacity_is_the_bound_the_budget_enforces",
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::tests::handshake_signature_budget_bounds_remote_signer_invocations",
+  "//mcp-re-proxy:proxy_unit_test#delegated_tls::tests::handshake_signature_budget_refills_over_time",
+]
+
 # THM-0054 IS `critical` AND HAD NO FALSIFIER. It shared a unit with THM-0048 and THM-0103,
 # whose eight probes attack the listener state and the epoch store; not one named it. That is
 # one of the 22 in `theorem-falsifier-coverage-2026-09-18.md`, and the split is what made it

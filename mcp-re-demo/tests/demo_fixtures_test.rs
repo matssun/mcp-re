@@ -56,9 +56,12 @@ fn server_config(fx: &DemoFixtures) -> Arc<rustls::ServerConfig> {
         rustls_pki_types::PrivateKeyDer::from_pem_slice(fx.server_key_pem().as_bytes())
             .expect("server key");
     let client_ca = cert_der(fx.client_ca_pem());
-    let config = TlsListenerSecurityState::new(vec![client_ca])
-        .build_exported_key_config(vec![server_cert], server_key, Vec::new())
-        .expect("server config from fixture material");
+    let config = TlsListenerSecurityState::new(
+        vec![client_ca],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_exported_key_config(vec![server_cert], server_key, Vec::new())
+    .expect("server config from fixture material");
     Arc::new(config)
 }
 

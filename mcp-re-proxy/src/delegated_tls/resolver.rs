@@ -154,7 +154,7 @@ mod budget_continuity {
         let counting = Arc::new(CountingSigner::default());
         let chain = vec![leaf_for_seed(&COUNTING_SIGNER_SEED)];
         let signer: Arc<dyn RawEd25519TlsSigner> = counting.clone();
-        let budget = Arc::new(TlsHandshakeSignBudget::new(1, 2));
+        let budget = Arc::new(crate::delegated_tls::tests::sized_budget(1, 2));
         let first = DelegatedCertResolver::materialize(
             chain.clone(),
             Arc::clone(&signer),
@@ -232,7 +232,7 @@ mod correspondence_gate {
         let refusal = DelegatedCertResolver::materialize(
             chain,
             other,
-            Arc::new(TlsHandshakeSignBudget::new(8, 8)),
+            Arc::new(crate::delegated_tls::tests::sized_budget(8, 8)),
         )
         .expect_err("a signer for another key must not yield a resolver");
 
@@ -253,7 +253,7 @@ mod correspondence_gate {
         let refusal = DelegatedCertResolver::materialize(
             vec![CertificateDer::from(vec![1u8; 8])],
             signer,
-            Arc::new(TlsHandshakeSignBudget::new(8, 8)),
+            Arc::new(crate::delegated_tls::tests::sized_budget(8, 8)),
         )
         .expect_err("a credential that cannot be interpreted must not materialize");
         assert_eq!(
@@ -271,7 +271,7 @@ mod correspondence_gate {
         let refusal = DelegatedCertResolver::materialize(
             Vec::new(),
             signer,
-            Arc::new(TlsHandshakeSignBudget::new(8, 8)),
+            Arc::new(crate::delegated_tls::tests::sized_budget(8, 8)),
         )
         .expect_err("a credential that cannot be interpreted must not materialize");
         assert_eq!(
@@ -290,7 +290,7 @@ mod correspondence_gate {
         // another. The resolver must carry the budget it was GIVEN — not a fresh one, and
         // not one derived from the credential.
         let (chain, signer) = corresponding_material();
-        let budget = Arc::new(TlsHandshakeSignBudget::new(3, 5));
+        let budget = Arc::new(crate::delegated_tls::tests::sized_budget(3, 5));
         let resolver = DelegatedCertResolver::materialize(chain, signer, Arc::clone(&budget))
             .expect("corresponding material materializes");
 
@@ -317,7 +317,7 @@ mod correspondence_gate {
         // accepted. A facade that had quietly kept its own constructor would pass every
         // other control in this module.
         let (chain, signer) = corresponding_material();
-        let budget = Arc::new(TlsHandshakeSignBudget::new(1, 1));
+        let budget = Arc::new(crate::delegated_tls::tests::sized_budget(1, 1));
         let through_the_facade = crate::tls::validated_delegated_resolver(
             chain.clone(),
             Arc::clone(&signer),

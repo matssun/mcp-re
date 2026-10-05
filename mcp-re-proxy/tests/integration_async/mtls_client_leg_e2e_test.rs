@@ -323,9 +323,12 @@ impl Drop for RunningServer {
 fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
     let (server_cert, server_key) =
         make_leaf(server_ca, vec![dns(SERVER_NAME)], Some(SERVER_NAME), false);
-    let tls = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_exported_key_config(vec![server_cert], server_key, Vec::new())
-        .expect("server tls config");
+    let tls = TlsListenerSecurityState::new(
+        vec![client_ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_exported_key_config(vec![server_cert], server_key, Vec::new())
+    .expect("server tls config");
 
     let options = ServerOptions {
         target_uri: TARGET.to_string(),

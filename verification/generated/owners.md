@@ -207,6 +207,7 @@ not an omission to hide.
 | proxy.gcp_kms_adapter | V0 | _none_ | 0 |
 | proxy.gcp_metadata_token_lifetime | V0 | _none_ | 0 |
 | proxy.handshake_custody_snapshot | V0 | _none_ | 0 |
+| proxy.handshake_sign_capacity | V0 | _none_ | 0 |
 | proxy.in_flight_limit_basis | V0 | _none_ | 0 |
 | proxy.key_file_custody_admission | V0 | _none_ | 0 |
 | proxy.key_file_floor_scope | V0 | _none_ | 0 |

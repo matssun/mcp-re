@@ -224,7 +224,10 @@ mod tests {
                 key.serialize_der(),
             ))
         };
-        let rebuild_state = Arc::new(TlsListenerSecurityState::new(anchors));
+        let rebuild_state = Arc::new(TlsListenerSecurityState::new(
+            anchors,
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        ));
         let initial = rebuild_state
             .build_exported_key_config(chain.clone(), key_der(), Vec::new())
             .expect("initial config");

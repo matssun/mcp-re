@@ -198,6 +198,7 @@ mod revocation_posture_tests {
                 cert_lifetime_secs,
                 300,
             ),
+            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
         }
     }
 

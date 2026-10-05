@@ -110,6 +110,7 @@ mod tests {
                 Some(cadence_secs),
             ),
             credential_window: crate::config_state::test_support::credential_window(3600, 300),
+            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
         }
     }
 

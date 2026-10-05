@@ -363,6 +363,9 @@ pub struct ChannelEstablishmentPlan {
     /// How long a client credential authorizes traffic, and how long one connection may
     /// serve on a single handshake — the pair that makes the exposure window honest.
     pub credential_window: crate::config_state::ClientCredentialWindow,
+    /// The capacity of the listener's handshake-signature budget: a global ceiling on the
+    /// signing backend, not a per-peer allowance.
+    pub handshake_signing: crate::delegated_tls::HandshakeSignCapacity,
 }
 
 impl ChannelEstablishmentPlan {
@@ -377,6 +380,7 @@ impl ChannelEstablishmentPlan {
             custody: config.state().channel_credential_custody().clone(),
             client_revocation: config.state().crl_revocation().client_revocation_plan(),
             credential_window: config.state().client_credential_window(),
+            handshake_signing: config.config().limits.tls_handshake_signing,
         }
     }
 }
@@ -1113,6 +1117,28 @@ mod tests {
             "the plan cannot hold a connection age that outlives the credential"
         );
         assert!(!plan.client_revocation.is_enforced());
+    }
+
+    /// The operator's handshake-signing capacity reaches the plan the TLS plane builds the
+    /// listener from, and stating none leaves the defaults.
+    #[test]
+    fn the_channel_plan_carries_the_operators_handshake_signing_capacity() {
+        use crate::delegated_tls::HandshakeSignCapacity;
+        let stated = validated(&[
+            "--tls-handshake-sign-rate",
+            "250",
+            "--tls-handshake-sign-burst",
+            "40",
+        ]);
+        assert_eq!(
+            ChannelEstablishmentPlan::from_validated(&stated).handshake_signing,
+            HandshakeSignCapacity::new(250, 40).expect("in bounds")
+        );
+        let unstated = validated(&[]);
+        assert_eq!(
+            ChannelEstablishmentPlan::from_validated(&unstated).handshake_signing,
+            HandshakeSignCapacity::default()
+        );
     }
 
     /// A COMPLETE admission configuration. Setting only `admission` used to be enough

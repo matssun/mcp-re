@@ -1806,3 +1806,41 @@ old = """
 pub struct MaxClockSkew(i64);"""
 new = """
 pub struct MaxClockSkew(pub(crate) i64);"""
+
+[[probe]]
+id = "S51"
+unit = "proxy.handshake_sign_capacity"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `delegated_tls::sign_capacity` can build a HandshakeSignCapacity around an unchecked rate or burst"
+insertion_parent = "mcp-re-proxy/src/delegated_tls.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S51. Injected into a scratch copy by verify-structural.
+use crate::delegated_tls::HandshakeSignCapacity;
+
+pub fn hostile() -> HandshakeSignCapacity {
+    HandshakeSignCapacity { rate_per_sec: 0, burst: u32::MAX } // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Injected into `delegated_tls`, the module that declares `sign_capacity` and builds the budget
+from it: the nearest neighbour, and still refused. A zero term would refuse every delegated
+handshake; an unbounded one would leave the bucket limiting nothing.
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to `delegated_tls::sign_capacity`, which has no submodules besides its tests; the parent re-exports the type and not its representation"
+alternate-constructors = "`HandshakeSignCapacity::new` checks both terms; `with_rate_per_sec` and `with_burst` go through it; `Default` yields the documented defaults, which a test holds inside the bounds"
+generated-or-deserialization = "derives Debug, Clone, Copy, PartialEq and Eq only; no From or Deserialize"
+test-only-construction = "tests build one through `new` or `Default`; no `#[cfg(test)]` constructor exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/delegated_tls/sign_capacity.rs"
+old = """
+pub struct HandshakeSignCapacity {
+    rate_per_sec: u32,
+    burst: u32,"""
+new = """
+pub struct HandshakeSignCapacity {
+    pub(crate) rate_per_sec: u32,
+    pub(crate) burst: u32,"""

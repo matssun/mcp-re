@@ -1418,7 +1418,7 @@ a hop it never verified.
 
 ## NP-034 — no command line disables a liveness bound
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (4), `mcp-re-proxy/src/cli/runtime_flags` (2).
+**Controls:** `mcp-re-proxy/src/cli.rs` (4), `mcp-re-proxy/src/cli/runtime_flags` (5).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1426,8 +1426,8 @@ a hop it never verified.
 
 *No command line disables a liveness bound: a zero timeout is refused because it
 disables the slow-loris defense, the connection-age bound is defaulted and zero is refused,
-a request deadline over the cap is refused, and the defaults are bounded so the refusal
-never fires by default.* If false, a single operator flag turns off the defence against a
+a request deadline over the cap is refused, a handshake-signing rate or burst outside its
+bounds is refused, and the defaults are bounded so the refusal never fires by default.* If false, a single operator flag turns off the defence against a
 class of denial of service, and the default configuration is the one that exercises it.
 
 ## NP-035 — the serving target an argv names binds something

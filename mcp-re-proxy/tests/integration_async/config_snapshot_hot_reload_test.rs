@@ -129,9 +129,12 @@ fn server_config_trusting(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
     let (server_cert, server_key) = make_leaf(&server_ca, vec![dns("localhost")], false);
     let server_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(server_key.serialize_der()));
     Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
-            .expect("server config"),
+        TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
+        .expect("server config"),
     )
 }
 

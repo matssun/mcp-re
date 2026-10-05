@@ -117,6 +117,9 @@ pub struct ServerLimits {
     /// [`ClientCredentialWindow`](crate::config_state::ClientCredentialWindow), and the
     /// serving path reads [`ServerOptions::client_credential_window`], never this field.
     pub max_connection_age: Option<Duration>,
+    /// The rate and burst of the listener's delegated handshake-signature budget. Read
+    /// once, by [`ChannelEstablishmentPlan`](crate::startup_plan::ChannelEstablishmentPlan).
+    pub tls_handshake_signing: crate::delegated_tls::HandshakeSignCapacity,
 }
 
 impl Default for ServerLimits {
@@ -153,6 +156,7 @@ impl Default for ServerLimits {
             // ceiling and short enough that a CRL reload takes effect within one
             // cadence, while being long enough that re-handshake cost is negligible.
             max_connection_age: Some(Duration::from_secs(300)),
+            tls_handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
         }
     }
 }
@@ -824,7 +828,7 @@ mod delegated_credential_key_correspondence_tests {
     }
 
     fn budget() -> Arc<crate::delegated_tls::TlsHandshakeSignBudget> {
-        Arc::new(crate::delegated_tls::TlsHandshakeSignBudget::new(64, 64))
+        Arc::new(crate::delegated_tls::tests::sized_budget(64, 64))
     }
 
     /// A self-signed leaf and the SPKI DER of the key it presents.

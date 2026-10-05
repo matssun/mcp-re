@@ -165,9 +165,12 @@ fn server_config_trusting(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
         // NO CRLs on the handshake verifier: the peer is admitted at the handshake, so
         // what the second request observes is the per-request check alone and not a
         // handshake that would have refused it anyway.
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
-            .expect("server config"),
+        TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
+        .expect("server config"),
     )
 }
 

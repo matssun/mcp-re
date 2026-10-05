@@ -33,7 +33,9 @@ use rustls::SignatureScheme;
 use crate::key_source::KeyError;
 
 mod resolver;
+mod sign_capacity;
 pub use resolver::DelegatedCertResolver;
+pub use sign_capacity::HandshakeSignCapacity;
 
 /// The single operation a delegated TLS signer needs: a PureEdDSA (Ed25519, no
 /// pre-hash) signature over the raw `message`, returning the raw 64-byte signature.
@@ -55,24 +57,6 @@ pub trait RawEd25519TlsSigner: Send + Sync {
 
 const ED25519_SIGNATURE_LEN: usize = 64;
 
-/// The sustained ceiling, in handshake signatures per second, on how fast unauthenticated
-/// peers can drive the delegated TLS signer.
-///
-/// Sized against what legitimate traffic needs: a connection costs a signature only on a
-/// full handshake (a session-store miss: first contact, eviction, an auth-epoch advance,
-/// a restart), and the all-miss case under `max_connection_age` (300s) with
-/// `max_concurrent_connections` (256 per core) is a re-handshake rate near one signature
-/// per core per second. A restart or epoch advance is the miss spike the burst absorbs. 100/s leaves a large
-/// multiple of that for connection churn and rolling deploys while staying well inside a
-/// KMS account's cryptographic-operation quota.
-pub const DEFAULT_TLS_SIGN_RATE_PER_SEC: u32 = 100;
-
-/// The burst allowance — how many signatures may be drawn back-to-back before the
-/// sustained rate binds. One rolling deploy reconnects a whole fleet at once, so a burst
-/// well above the sustained rate is legitimate; twice the per-second rate absorbs that
-/// without letting a flood accumulate credit.
-pub const DEFAULT_TLS_SIGN_BURST: u32 = 200;
-
 /// A token bucket bounding how many TLS handshake signatures unauthenticated peers can
 /// force out of a remote, billed, account-throttled signer.
 ///
@@ -87,9 +71,25 @@ pub const DEFAULT_TLS_SIGN_BURST: u32 = 200;
 /// keys' `exp`.
 ///
 /// Refusing the handshake is the fail-closed direction: a refused connection costs the
-/// peer a retry, whereas an exhausted KMS quota is a fleet-wide outage.
+/// peer a retry, whereas an exhausted KMS quota is a fleet-wide outage. An exhausted budget
+/// refuses the signature; there is no fallback signer and no path around the bucket.
+///
+/// # What it does not do
+///
+/// It protects the signing backend's GLOBAL capacity. It does not allocate that capacity
+/// fairly among connections or clients: no authenticated peer identity exists when the
+/// handshake is signed, so enough concurrent or adversarial handshake demand empties the
+/// bucket and legitimate handshakes are refused until it refills. That is an accepted
+/// availability risk, not an integrity or confidentiality exception.
+///
+/// [`crate::handshake_quota::HandshakeQuotaWindow`] guards the same quota from the other
+/// side: this bucket is the proactive ceiling the operator sizes, and the window is the
+/// reaction to the provider actually throttling, whose length is derived from the network
+/// timeout rather than configured.
 #[derive(Debug)]
 pub struct TlsHandshakeSignBudget {
+    /// The operator-chosen rate and burst the two fields below are derived from.
+    limits: HandshakeSignCapacity,
     /// Bucket capacity (the burst allowance), in tokens.
     capacity: f64,
     /// Sustained refill rate, in tokens per second.
@@ -111,13 +111,15 @@ pub struct TlsHandshakeSignBudget {
 }
 
 impl TlsHandshakeSignBudget {
-    /// A budget of `rate_per_sec` sustained signatures with a `burst` allowance. Both
-    /// are clamped to at least 1 so a mis-set value cannot disable the signer outright.
-    pub fn new(rate_per_sec: u32, burst: u32) -> Self {
+    /// A full budget enforcing `limits`. Both terms are already bounded away from zero, so
+    /// no value reaching here can disable the signer outright.
+    pub fn new(limits: HandshakeSignCapacity) -> Self {
+        let capacity = f64::from(limits.burst());
         TlsHandshakeSignBudget {
-            capacity: f64::from(burst.max(1)),
-            refill_per_sec: f64::from(rate_per_sec.max(1)),
-            state: Mutex::new((f64::from(burst.max(1)), Instant::now())),
+            limits,
+            capacity,
+            refill_per_sec: f64::from(limits.rate_per_sec()),
+            state: Mutex::new((capacity, Instant::now())),
             refused: AtomicU64::new(0),
             poison_observed: AtomicU64::new(0),
         }
@@ -125,12 +127,12 @@ impl TlsHandshakeSignBudget {
 
     /// The sustained rate this budget enforces, for the startup posture line.
     pub fn rate_per_sec(&self) -> u32 {
-        self.refill_per_sec as u32
+        self.limits.rate_per_sec()
     }
 
     /// The burst allowance, for the startup posture line.
     pub fn burst(&self) -> u32 {
-        self.capacity as u32
+        self.limits.burst()
     }
 
     /// Signatures refused so far because the budget was exhausted.
@@ -183,12 +185,6 @@ impl TlsHandshakeSignBudget {
             eprintln!("mcp-re-proxy: delegated TLS handshake-signature budget exhausted ({}/s, burst {}); {total} handshake(s) refused so far", self.rate_per_sec(), self.burst());
         }
         false
-    }
-}
-
-impl Default for TlsHandshakeSignBudget {
-    fn default() -> Self {
-        TlsHandshakeSignBudget::new(DEFAULT_TLS_SIGN_RATE_PER_SEC, DEFAULT_TLS_SIGN_BURST)
     }
 }
 
@@ -375,7 +371,7 @@ pub(crate) mod tests {
     fn offers_ed25519_only() {
         let key = DelegatedEd25519SigningKey::with_budget(
             Arc::new(LocalEd25519(McpReSigningKey::from_seed_bytes(&[1u8; 32]))),
-            Arc::new(TlsHandshakeSignBudget::default()),
+            Arc::new(TlsHandshakeSignBudget::new(HandshakeSignCapacity::default())),
         );
         assert_eq!(key.algorithm(), SignatureAlgorithm::ED25519);
         assert!(key.choose_scheme(&[SignatureScheme::ED25519]).is_some());
@@ -389,7 +385,7 @@ pub(crate) mod tests {
     fn signer_scheme_is_ed25519_and_signature_is_64_bytes() {
         let key = DelegatedEd25519SigningKey::with_budget(
             Arc::new(LocalEd25519(McpReSigningKey::from_seed_bytes(&[2u8; 32]))),
-            Arc::new(TlsHandshakeSignBudget::default()),
+            Arc::new(TlsHandshakeSignBudget::new(HandshakeSignCapacity::default())),
         );
         let signer = key
             .choose_scheme(&[SignatureScheme::ED25519])
@@ -418,7 +414,7 @@ pub(crate) mod tests {
         }
         let key = DelegatedEd25519SigningKey::with_budget(
             Arc::new(ShortSig),
-            Arc::new(TlsHandshakeSignBudget::default()),
+            Arc::new(TlsHandshakeSignBudget::new(HandshakeSignCapacity::default())),
         );
         let signer = key.choose_scheme(&[SignatureScheme::ED25519]).unwrap();
         assert!(signer.sign(b"x").is_err());
@@ -450,6 +446,12 @@ pub(crate) mod tests {
         }
     }
 
+    /// A budget of `rate_per_sec` sustained signatures and a `burst` allowance.
+    pub(crate) fn sized_budget(rate_per_sec: u32, burst: u32) -> TlsHandshakeSignBudget {
+        let limits = HandshakeSignCapacity::new(rate_per_sec, burst).expect("a test capacity");
+        TlsHandshakeSignBudget::new(limits)
+    }
+
     /// The seed `CountingSigner` signs with, and the seed its certificate presents.
     pub(super) const COUNTING_SIGNER_SEED: [u8; 32] = [7u8; 32];
 
@@ -459,7 +461,7 @@ pub(crate) mod tests {
     fn handshake_signature_budget_bounds_remote_signer_invocations() {
         let counting = Arc::new(CountingSigner::default());
         // A tiny budget with a slow refill, so the burst is the whole allowance here.
-        let budget = Arc::new(TlsHandshakeSignBudget::new(1, 3));
+        let budget = Arc::new(sized_budget(1, 3));
         let key = DelegatedEd25519SigningKey::with_budget(counting.clone(), Arc::clone(&budget));
         let mut ok = 0usize;
         let mut refused = 0usize;
@@ -493,11 +495,83 @@ pub(crate) mod tests {
     fn handshake_signature_budget_refills_over_time() {
         // 4/s refills one token per 250ms, so the immediate second acquire cannot race a
         // refill on a loaded machine; at 1000/s a 1ms scheduling gap made it pass.
-        let budget = TlsHandshakeSignBudget::new(4, 1);
+        let budget = sized_budget(4, 1);
         assert!(budget.try_acquire());
         assert!(!budget.try_acquire());
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert!(budget.try_acquire(), "the bucket must refill with time");
+    }
+
+    /// Concurrent handshakes cannot overspend the bucket: however many threads race for it,
+    /// the signer is reached at most the burst plus what the clock refilled, and every
+    /// signature that went through was paid for by exactly one token.
+    #[test]
+    fn concurrent_callers_cannot_overspend_the_global_budget() {
+        const THREADS: usize = 16;
+        const ATTEMPTS: usize = 50;
+        let counting = Arc::new(CountingSigner::default());
+        let budget = Arc::new(sized_budget(1, 64));
+        let key = Arc::new(DelegatedEd25519SigningKey::with_budget(
+            counting.clone(),
+            Arc::clone(&budget),
+        ));
+        let start = Arc::new(std::sync::Barrier::new(THREADS));
+        let began = Instant::now();
+        let granted: usize = (0..THREADS)
+            .map(|_| {
+                let (key, start) = (Arc::clone(&key), Arc::clone(&start));
+                std::thread::spawn(move || {
+                    start.wait();
+                    (0..ATTEMPTS)
+                        .filter(|_| {
+                            let signer = key.choose_scheme(&[SignatureScheme::ED25519]);
+                            signer.expect("signer").sign(b"transcript").is_ok()
+                        })
+                        .count()
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().expect("no panic"))
+            .sum();
+        // At 1/s the refill over the run is the elapsed whole seconds plus one.
+        let refill = began.elapsed().as_secs() as usize + 1;
+        assert!(
+            granted >= 64,
+            "the burst must be usable under contention, got {granted}"
+        );
+        assert!(
+            granted <= 64 + refill,
+            "{granted} signatures from a burst of 64 and a refill of at most {refill}"
+        );
+        assert_eq!(counting.calls.load(Ordering::Relaxed), granted);
+        assert_eq!(budget.refused(), (THREADS * ATTEMPTS - granted) as u64);
+    }
+
+    /// The operator's capacity is the enforced bound, not a label: two budgets that differ
+    /// only in their configured burst admit different floods, and two that differ only in
+    /// their configured rate refill at different speeds.
+    #[test]
+    fn the_configured_capacity_is_the_bound_the_budget_enforces() {
+        let drain =
+            |budget: &TlsHandshakeSignBudget| (0..500).filter(|_| budget.try_acquire()).count();
+        let (narrow, wide) = (sized_budget(1, 5), sized_budget(1, 40));
+        assert!((5..=6).contains(&drain(&narrow)), "a burst of 5 admits 5");
+        assert!((40..=41).contains(&drain(&wide)), "a burst of 40 admits 40");
+
+        let (slow, fast) = (sized_budget(2, 50), sized_budget(40, 50));
+        drain(&slow);
+        drain(&fast);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let (slow_refill, fast_refill) = (drain(&slow), drain(&fast));
+        assert!(
+            slow_refill <= 3,
+            "2/s over half a second refills about 1, got {slow_refill}"
+        );
+        assert!(
+            fast_refill >= 10,
+            "40/s over half a second refills about 20, got {fast_refill}"
+        );
     }
 
     /// A poisoned bucket keeps signing, counts the panic, and does not call it a throttle.
@@ -514,7 +588,7 @@ pub(crate) mod tests {
     /// died holding the bucket".
     #[test]
     fn a_poisoned_budget_lock_still_signs_and_counts_the_panic_once() {
-        let budget = Arc::new(TlsHandshakeSignBudget::new(1000, 100));
+        let budget = Arc::new(sized_budget(1000, 100));
         let poisoner = Arc::clone(&budget);
         let unwound = std::thread::spawn(move || {
             let _guard = poisoner.state.lock().expect("uncontended");

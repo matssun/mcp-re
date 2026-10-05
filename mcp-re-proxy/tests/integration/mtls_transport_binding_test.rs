@@ -129,13 +129,16 @@ impl Pki {
     /// A server that REQUIRES + verifies a client cert chaining to `client_ca`.
     fn new(server_ca: &Ca, client_ca: &Ca) -> Self {
         let (server_leaf, server_key) = make_leaf(server_ca, vec![dns_san(SERVER_NAME)], false);
-        let server_config = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_exported_key_config(
-                vec![server_leaf.der().clone()],
-                key_der(&server_key),
-                Vec::new(),
-            )
-            .expect("server config");
+        let server_config = TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_exported_key_config(
+            vec![server_leaf.der().clone()],
+            key_der(&server_key),
+            Vec::new(),
+        )
+        .expect("server config");
         Pki { server_config }
     }
 }

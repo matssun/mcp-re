@@ -126,9 +126,12 @@ fn server_config(
     server_key: PrivateKeyDer<'static>,
     client_ca: &Ca,
 ) -> Arc<rustls::ServerConfig> {
-    let config = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_exported_key_config(server_chain, server_key, Vec::new())
-        .expect("server config");
+    let config = TlsListenerSecurityState::new(
+        vec![client_ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_exported_key_config(server_chain, server_key, Vec::new())
+    .expect("server config");
     Arc::new(config)
 }
 
