@@ -61,6 +61,7 @@ pub mod channel_credential_custody;
 pub mod channel_key_material;
 pub mod client_credential_window;
 pub mod continuation_control;
+pub(crate) mod coordinate;
 pub mod credential_currency_bound;
 pub(crate) mod cross_machine;
 pub mod custody;

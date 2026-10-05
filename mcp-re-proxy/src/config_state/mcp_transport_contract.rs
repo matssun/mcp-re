@@ -15,6 +15,8 @@
 //! ordinary client can satisfy is an operator's decision, however unusual. Whether it SHOULD
 //! be narrowed is a product question, and a different commit.
 
+use crate::config_state::coordinate;
+use crate::config_state::coordinate::CoordinateFault;
 use crate::deployment_request::DeploymentRequest;
 
 /// The protocol versions a configuration declares. The representation is private and
@@ -39,13 +41,20 @@ pub fn classify(config: &DeploymentRequest) -> McpTransportContractState {
     }
 }
 
-/// The contract is mandatory: at least one accepted protocol version, none of them blank.
+/// The contract is mandatory: at least one accepted protocol version, none of them blank,
+/// and each in canonical form. A version is compared byte for byte against the trimmed
+/// `Mcp-Protocol-Version` header, so a padded one would refuse every request it names.
 pub fn violations(config: &DeploymentRequest) -> Vec<String> {
-    let blank = config
+    let faults: Vec<_> = config
         .mcp_protocol_versions
         .iter()
-        .any(|v| v.trim().is_empty());
-    if config.mcp_protocol_versions.is_empty() || blank {
+        .map(|v| (v, coordinate::fault(v)))
+        .collect();
+    if faults.is_empty()
+        || faults
+            .iter()
+            .any(|(_, f)| *f == Some(CoordinateFault::Blank))
+    {
         return vec![
             "the MCP transport contract is mandatory: pass --mcp-protocol-version <version> \
              (repeatable) naming each protocol version this deployment serves, for example \
@@ -53,7 +62,17 @@ pub fn violations(config: &DeploymentRequest) -> Vec<String> {
                 .to_string(),
         ];
     }
-    Vec::new()
+    faults
+        .into_iter()
+        .filter(|(_, f)| *f == Some(CoordinateFault::Padded))
+        .map(|(v, _)| {
+            format!(
+                "--mcp-protocol-version {v:?} has leading or trailing whitespace: it is \
+                 compared byte for byte against the trimmed Mcp-Protocol-Version header, so \
+                 it would refuse every request that names it"
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -82,8 +101,24 @@ mod tests {
         assert!(violations(&request_with(&["2026-07-28"])).is_empty());
     }
 
+    /// A padded version is refused by name. Accepted, it would be compared byte for byte
+    /// against the trimmed header and refuse every request naming that version, under a
+    /// contract the transcript reports as ENFORCED.
+    #[test]
+    fn a_padded_version_is_refused_by_name() {
+        for padded in [" 2026-07-28", "2026-07-28\n"] {
+            let refusals = violations(&request_with(&["2025-11-05", padded]));
+            assert_eq!(refusals.len(), 1, "{padded:?}: {refusals:?}");
+            assert!(
+                refusals[0].starts_with(&format!("--mcp-protocol-version {padded:?}")),
+                "{refusals:?}"
+            );
+        }
+    }
+
     /// The set is the deployment's own: this owner parses nothing and refuses nothing but
-    /// emptiness. A set no ordinary client can satisfy is an operator's decision.
+    /// a blank or padded entry. A set no ordinary client can satisfy is an operator's
+    /// decision.
     #[test]
     fn an_unusual_accepted_set_is_classified_rather_than_refused() {
         let config = request_with(&["not-a-version"]);

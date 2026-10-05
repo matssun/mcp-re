@@ -8632,7 +8632,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_failed_report_latches_the_write_failure",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::tests::an_unattributed_flood_cannot_consume_the_headroom_an_attributed_record_needs",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::tests::concurrent_offers_at_the_ceiling_admit_only_the_remaining_slots",
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::tests::the_no_audit_sink_records_nothing_and_does_not_panic",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::a_timed_out_audit_drain_never_reads_as_a_completed_one",
   # r11 R11-167 / R11-169. The two above exercise `drain_line`, a pure formatter over an
   # ALREADY-DECIDED outcome, so the WORDING was measured and the classification was not:
@@ -8649,13 +8648,12 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::an_acknowledged_drain_with_a_failed_write_behind_it_is_unknown",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::an_acknowledged_drain_with_no_failed_write_is_drained",
   # ADR-MCPRE-069 NP-155, CO-S3-2. The no-sink posture read on the serving path. Its
-  # containment is the unit's OWN existing conjunct rather than a clause of THM-0070's
-  # statement: `the_no_audit_sink_records_nothing_and_does_not_panic`, above, already stands
-  # for "no sink installed is the explicit no-emission posture", and the description's
-  # "bounded and non-blocking" is the property being read at its degenerate end. This is that
-  # same conjunct driven through a real client-proxy-backend round trip, so what it adds is
-  # that the SERVING path is undisturbed by the absent sink, not that the sink records
-  # nothing — it has no sink to inspect and asserts nothing about emission.
+  # containment is the unit's OWN conjunct rather than a clause of THM-0070's statement: no
+  # sink installed is the no-emission posture, the only representation audit OFF has, and
+  # the description's "bounded and non-blocking" is the property being read at its
+  # degenerate end. This drives it through a real client-proxy-backend round trip, so what
+  # it adds is that the SERVING path is undisturbed by the absent sink — it has no sink to
+  # inspect and asserts nothing about emission.
   #
   # It is a MIRROR and is named in no probe, deliberately: any weakening that turned it red
   # would have broken serving outright, which every other control in this file also reports.
@@ -10796,7 +10794,10 @@ tested_symbols = [
 id = "proxy.delegated_signing_configuration_state"
 class = "V0"
 description = "WHAT A DELEGATED-SIGNING POSTURE RESOLVES TO, AND WHICH ONES RESOLVE TO NOTHING: every fact is present and non-empty however it was produced — a whitespace-minted fact is refused like an empty one and a one-character fact is not refused by the emptiness guard — a TTL above the ceiling, an overlap outside the rotor range and an overlap outside the TTL are refused or resolve no window, an absent trust epoch names no posture, an explicit value overrides the fallback, the issuer-kid fallback is required only where the resolution reads it, and the two defaults are resolved by this owner. Says nothing about how the resolved window is used at signing time."
-paths = ["mcp-re-proxy/src/config_state/delegated_signing.rs"]
+paths = [
+  "mcp-re-proxy/src/config_state/delegated_signing.rs",
+  "mcp-re-proxy/src/config_state/coordinate.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -10928,8 +10929,11 @@ tested_symbols = [
 [[unit]]
 id = "proxy.server_identity_facts"
 class = "V0"
-description = "WHO THIS DEPLOYMENT IS, RESOLVED ONCE: a legal request yields ONE canonical actor identity, a missing coordinate leaves no identity and NAMES ITSELF, a request missing both coordinates reports both in one pass, a whitespace coordinate is empty and names itself, and the identity keyid follows the RESOLVED ISSUER rather than the server key id. Covers the classifier only; what the command line admits as a coordinate is the argv boundary's and has no unit."
-paths = ["mcp-re-proxy/src/config_state/server_identity.rs"]
+description = "WHO THIS DEPLOYMENT IS, RESOLVED ONCE: a legal request yields ONE canonical actor identity, a missing coordinate leaves no identity and NAMES ITSELF, a request missing both coordinates reports both in one pass, a whitespace coordinate is empty and names itself, a PADDED coordinate is refused by name rather than minted into every actor and `iss` (the shared canonical-coordinate rule in `config_state/coordinate.rs`), and the identity keyid follows the RESOLVED ISSUER rather than the server key id. Covers the classifier only; what the command line admits as a coordinate is the argv boundary's and has no unit."
+paths = [
+  "mcp-re-proxy/src/config_state/server_identity.rs",
+  "mcp-re-proxy/src/config_state/coordinate.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -10942,6 +10946,10 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_missing_coordinate_leaves_no_identity_and_names_itself",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_request_missing_both_coordinates_reports_both_in_one_pass",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_whitespace_coordinate_is_empty_and_names_itself",
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_padded_coordinate_leaves_no_identity_and_names_itself",
+  "//mcp-re-proxy:proxy_unit_test#config_state::coordinate::tests::a_canonical_value_has_no_fault",
+  "//mcp-re-proxy:proxy_unit_test#config_state::coordinate::tests::an_empty_or_whitespace_value_is_blank",
+  "//mcp-re-proxy:proxy_unit_test#config_state::coordinate::tests::a_value_unequal_to_its_trim_is_padded",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_identity_keyid_follows_the_resolved_issuer_not_the_server_key_id",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_trust_domain_projection_is_the_canonical_actors_own_coordinate",
 ]
@@ -11376,8 +11384,11 @@ tested_symbols = [
 [[unit]]
 id = "proxy.mcp_transport_contract_state"
 class = "V0"
-description = "THE MCP TRANSPORT/VERSION CONTRACT IS MANDATORY: a deployment that names no accepted protocol version (or a blank one) is REFUSED at the configuration boundary rather than served with no contract, the state carries the accepted set the operator declared, and an unusual accepted set is classified rather than refused because the set is the deployment's own consent, not a vocabulary this owner narrows."
-paths = ["mcp-re-proxy/src/config_state/mcp_transport_contract.rs"]
+description = "THE MCP TRANSPORT/VERSION CONTRACT IS MANDATORY: a deployment that names no accepted protocol version (or a blank one) is REFUSED at the configuration boundary rather than served with no contract, a PADDED version is refused by name rather than compared byte for byte against a trimmed header it can never equal, the state carries the accepted set the operator declared, and an unusual accepted set is classified rather than refused because the set is the deployment's own consent, not a vocabulary this owner narrows."
+paths = [
+  "mcp-re-proxy/src/config_state/mcp_transport_contract.rs",
+  "mcp-re-proxy/src/config_state/coordinate.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
@@ -11388,6 +11399,7 @@ evidence = [
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::an_unusual_accepted_set_is_classified_rather_than_refused",
   "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::declaring_no_version_is_refused_not_a_posture",
+  "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::a_padded_version_is_refused_by_name",
   "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::the_state_carries_the_set_the_operator_declared",
 ]
 
@@ -12051,7 +12063,7 @@ evidence = [
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::an_on_posture_always_carries_an_artifact_and_an_off_posture_never_does",
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::the_verified_context_carrier_is_attached_only_for_a_trusted_inner_channel",
-  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::the_security_audit_posture_follows_the_classified_audit_state",
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::the_security_audit_posture_travels_with_the_sink_it_installs",
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::evidence_retention_attaches_a_store_only_for_a_named_directory",
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::an_unopenable_retention_directory_refuses_startup_naming_the_flag",
 ]

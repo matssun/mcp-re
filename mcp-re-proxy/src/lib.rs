@@ -315,7 +315,6 @@ pub use audit_record::AuditRecord;
 pub use audit_record::AuditSubject;
 pub use audit_sink::AuditSink;
 pub use audit_sink::CollectingAuditSink;
-pub use audit_sink::NoAuditSink;
 pub use audit_sink::StderrAuditSink;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsConfig;

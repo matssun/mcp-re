@@ -8997,8 +8997,16 @@ unit = "proxy.mcp_transport_contract_state"
 theorem = "THM-0077"
 conjunct = "a deployment that names no accepted protocol version is refused at the configuration boundary rather than served with no transport contract"
 path = "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
-anchor = "    if config.mcp_protocol_versions.is_empty() || blank {\n"
-weakening = "    if false {\n"
+anchor = """
+    if faults.is_empty()
+        || faults
+            .iter()
+            .any(|(_, f)| *f == Some(CoordinateFault::Blank))
+    {
+"""
+weakening = """
+    if false {
+"""
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::declaring_no_version_is_refused_not_a_posture",
 ]
@@ -11585,4 +11593,45 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-http-profile:delegated_202_test#no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block",
+]
+
+[[probe]]
+id = "M461-proxy-audit-off-installs-no-sink"
+unit = "proxy.serving_capability_posture"
+theorem = "THM-0077"
+conjunct = "Every security capability held by the serving runtime is derived from validated semantic owner state"
+# The audit seam's artifact is the concrete stderr sink, so an ON line over a null sink no
+# longer compiles. What remains a runtime choice is which ARM attaches it: the NONE state
+# installing the sink is a capability nobody selected, announced as its own posture.
+path = "mcp-re-proxy/src/serving_capabilities.rs"
+anchor = """
+        crate::config_state::AuditState::None => Established::off(AUDIT_OFF),
+"""
+weakening = """
+        crate::config_state::AuditState::None => {
+            Established::on(crate::audit_sink::StderrAuditSink, AUDIT_OFF)
+        }
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::the_security_audit_posture_travels_with_the_sink_it_installs",
+]
+
+[[probe]]
+id = "M462-proxy-a-padded-coordinate-is-not-canonical"
+unit = "proxy.server_identity_facts"
+conjunct = "a configured coordinate the deployment mints or compares verbatim is legal only when non-blank and equal to its own trim"
+# The shared rule, weakened once: a padded value reads as canonical, and every owner that
+# consults it mints or compares the padded bytes.
+path = "mcp-re-proxy/src/config_state/coordinate.rs"
+anchor = """
+    } else if trimmed != value {
+        Some(CoordinateFault::Padded)
+"""
+weakening = """
+    } else if false {
+        Some(CoordinateFault::Padded)
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_padded_coordinate_leaves_no_identity_and_names_itself",
+  "//mcp-re-proxy:proxy_unit_test#config_state::coordinate::tests::a_value_unequal_to_its_trim_is_padded",
 ]

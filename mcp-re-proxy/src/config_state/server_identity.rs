@@ -32,6 +32,8 @@
 
 use mcp_re_http_profile::ActorIdentity;
 
+use crate::config_state::coordinate;
+use crate::config_state::coordinate::CoordinateFault;
 use crate::config_state::delegated_signing::DelegatedSigningFacts;
 use crate::deployment_request::DeploymentRequest;
 
@@ -69,8 +71,8 @@ impl ServerIdentityFacts {
     /// owner's. One coordinate, two derivations, which is the shape this owner exists to
     /// remove and which had merely moved from the server actor to the client one.
     ///
-    /// Both readings are the same string today, because the guard below refuses an empty
-    /// or whitespace domain before any validated deployment exists. `actor_id()` is a
+    /// Both readings are the same string today, because the guard below refuses an empty,
+    /// whitespace or padded domain before any validated deployment exists. `actor_id()` is a
     /// replay-key component, so a future divergence would partition the replay namespace
     /// between the two slots.
     pub fn trust_domain(&self) -> &str {
@@ -112,28 +114,39 @@ pub fn classify_and_validate(
     )
 }
 
-/// The two coordinates the identity cannot be built without.
+/// The two coordinates the identity cannot be built without, each in canonical form.
 ///
 /// Stated one field at a time, in the order an operator meets them. Neither is dereferenced
 /// at startup, so an empty one fails nothing — it silently stops distinguishing this
-/// deployment from another that also set none.
+/// deployment from another that also set none — and a padded one is minted verbatim into
+/// every actor and `iss`, naming a different coordinate from the one written without it.
 fn coordinate_violations(config: &DeploymentRequest) -> Vec<String> {
     [
         (
+            "--trust-domain",
             config.trust_domain.as_str(),
             "--trust-domain is empty: it is a component of every actor identity \
              (role:trust_domain:subject:keyid), so an empty domain removes a coordinate \
              from every actor this deployment names",
         ),
         (
+            "--server-signer",
             config.server_signer.as_str(),
             "--server-signer is empty: it is minted as the issuer of every response, and an \
              empty issuer names nobody for a verifier to resolve",
         ),
     ]
     .into_iter()
-    .filter(|(value, _)| value.trim().is_empty())
-    .map(|(_, message)| message.to_string())
+    .filter_map(
+        |(name, value, empty_message)| match coordinate::fault(value)? {
+            CoordinateFault::Blank => Some(empty_message.to_string()),
+            CoordinateFault::Padded => Some(format!(
+                "{name} {value:?} has leading or trailing whitespace: it is minted verbatim into \
+             every actor identity this deployment names, so it names a different coordinate \
+             from the one written without it"
+            )),
+        },
+    )
     .collect()
 }
 
@@ -245,6 +258,34 @@ mod tests {
             assert!(
                 violations.iter().any(|v| v.contains(flag)),
                 "{flag}: not named in {violations:?}"
+            );
+        }
+    }
+
+    /// A padded coordinate is refused by name rather than minted: ` corp.example` or
+    /// `did:x\n` would become an actor coordinate and an `iss` that differ byte for byte from
+    /// the ones the operator meant.
+    #[test]
+    fn a_padded_coordinate_leaves_no_identity_and_names_itself() {
+        for (flag, mutate) in [
+            (
+                "--trust-domain",
+                Box::new(|c: &mut DeploymentRequest| c.trust_domain = " corp.example".to_string())
+                    as Box<dyn FnOnce(&mut DeploymentRequest)>,
+            ),
+            (
+                "--server-signer",
+                Box::new(|c: &mut DeploymentRequest| c.server_signer = "did:x\n".to_string()),
+            ),
+        ] {
+            let mut config = legal_config();
+            mutate(&mut config);
+            let (identity, violations) = facts(&config);
+            assert!(identity.is_none(), "{flag}: an identity was built anyway");
+            assert_eq!(violations.len(), 1, "{flag}: {violations:?}");
+            assert!(
+                violations[0].starts_with(flag) && violations[0].contains("whitespace"),
+                "{flag}: {violations:?}"
             );
         }
     }

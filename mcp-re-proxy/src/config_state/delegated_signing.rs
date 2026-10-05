@@ -32,6 +32,8 @@
 
 use mcp_re_http_profile::custody::DelegatedKeyWindow;
 
+use crate::config_state::coordinate;
+use crate::config_state::coordinate::CoordinateFault;
 use crate::deployment_request::{DelegatedSigningRequest, DeploymentRequest};
 
 /// The delegated-key TTL `T` an operator did not state, in seconds.
@@ -216,19 +218,16 @@ fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
     // A label of spaces satisfies a presence check and names nothing, and a padded label
     // names a different one from the label written without the padding; these three are
     // minted verbatim into every delegation credential, so both are refused.
-    .filter_map(|(name, value, empty_message)| {
-        if value.trim().is_empty() {
-            Some(empty_message.to_string())
-        } else if value != value.trim() {
-            Some(format!(
+    .filter_map(
+        |(name, value, empty_message)| match coordinate::fault(value)? {
+            CoordinateFault::Blank => Some(empty_message.to_string()),
+            CoordinateFault::Padded => Some(format!(
                 "{name} {value:?} has leading or trailing whitespace: it is minted verbatim \
-                 into every delegation credential, so it names a different label from the one \
-                 written without it"
-            ))
-        } else {
-            None
-        }
-    })
+             into every delegation credential, so it names a different label from the one \
+             written without it"
+            )),
+        },
+    )
     .collect()
 }
 

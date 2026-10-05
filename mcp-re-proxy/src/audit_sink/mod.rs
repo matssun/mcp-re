@@ -182,15 +182,6 @@ fn offer(
     }
 }
 
-/// A sink that records nothing. The explicit no-audit posture, so a deployment states
-/// it rather than getting it by omission.
-#[derive(Debug, Default)]
-pub struct NoAuditSink;
-
-impl AuditSink for NoAuditSink {
-    fn record(&self, _record: &AuditRecord) {}
-}
-
 /// A harness sink, not a deployment one: it retains every record in memory, unbounded and
 /// sized by request rate (including rejections an unauthenticated peer drives), with each
 /// resolved `actor_id` unredacted for the sink's life. Nothing is evicted.
@@ -222,7 +213,8 @@ impl AuditSink for CollectingAuditSink {
     }
 }
 
-/// The installed audit sink, or `None` for no emission.
+/// The installed audit sink, or `None` for no emission: the one representation of audit
+/// off, which a deployment states as an OFF posture line rather than as a sink.
 pub type MaybeAuditSink = Option<Arc<dyn AuditSink>>;
 
 #[cfg(test)]
@@ -511,15 +503,5 @@ mod tests {
             "a queued record must be drainable at shutdown rather than lost with the \
              detached writer"
         );
-    }
-
-    #[test]
-    fn the_no_audit_sink_records_nothing_and_does_not_panic() {
-        NoAuditSink.record(&AuditRecord {
-            subject: AuditSubject::response_signed(),
-            actor_id: None,
-            status: 200,
-            at_unix: 1,
-        });
     }
 }

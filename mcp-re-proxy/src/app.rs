@@ -643,11 +643,13 @@ fn run_validated(
     proxy = proxy.with_verifier_policy(verifier_policy);
     proxy = proxy.with_transport_binding(binding);
 
-    // ADR-MCPS-035: the per-request security record. Both arms install a sink — the OFF
-    // state is a real `NoAuditSink` — so this one is a pair rather than an `Established`.
+    // ADR-MCPS-035: the per-request security record. OFF installs nothing: the serving
+    // path's absent sink is the no-emission posture.
     let (audit_sink, audit_state) =
-        crate::serving_capabilities::security_audit_record(config.state().audit());
-    proxy = proxy.with_audit_sink(audit_sink);
+        crate::serving_capabilities::security_audit_record(config.state().audit()).into_parts();
+    if let Some(sink) = audit_sink {
+        proxy = proxy.with_audit_sink(Arc::new(sink));
+    }
     posture.declare(Seam::SecurityAuditRecord, audit_state);
 
     // ADR-MCPRE-054: evidence retention. Opening the store is effectful and refuses

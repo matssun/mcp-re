@@ -147,34 +147,29 @@ pub(crate) fn mcp_transport_contract(
 
 /// ADR-MCPS-035 — the per-request accepted/rejected/signed attribution record.
 ///
-/// Returns a pair rather than an [`Established`], because both arms attach a sink: the
-/// OFF state is a real `NoAuditSink`, not the absence of one. Forcing it into the same
-/// shape as the others would mean either an `Established::off` carrying an artifact —
-/// which is exactly the invariant that type exists to hold — or the composition root
-/// re-deriving which sink to install from the posture. The capabilities are not uniform,
-/// and this is where that shows.
+/// The artifact is the concrete [`StderrAuditSink`](crate::audit_sink::StderrAuditSink),
+/// so the STDERR line cannot be paired with any other sink. OFF attaches nothing, and the
+/// serving path's absent sink is the no-emission posture.
 pub(crate) fn security_audit_record(
     state: crate::config_state::AuditState,
-) -> (Arc<dyn crate::audit_sink::AuditSink>, SeamState) {
+) -> Established<crate::audit_sink::StderrAuditSink> {
     match state {
-        crate::config_state::AuditState::Stderr => (
-            Arc::new(crate::audit_sink::StderrAuditSink),
-            SeamState::on(
-                "security audit record = STDERR (ADR-MCPS-035): one line per \
-                 accepted / rejected / signed decision, carrying the verifier-resolved actor \
-                 and the frozen mcp-re.* wire code.",
-            ),
+        crate::config_state::AuditState::Stderr => Established::on(
+            crate::audit_sink::StderrAuditSink,
+            "security audit record = STDERR (ADR-MCPS-035): a numbered line per \
+             accepted / rejected / signed decision, carrying the verifier-resolved actor \
+             and the frozen mcp-re.* wire code. Best-effort by design: a full queue drops \
+             lines rather than delaying a request, a gap in seq marks each drop, and the \
+             drop count is reported.",
         ),
-        crate::config_state::AuditState::None => (
-            Arc::new(crate::audit_sink::NoAuditSink),
-            SeamState::off(
-                "security audit record = NONE: no per-request accepted/rejected \
-                 record is emitted, so this deployment has no attribution surface for a later \
-                 incident. Pass --audit-sink stderr to enable it.",
-            ),
-        ),
+        crate::config_state::AuditState::None => Established::off(AUDIT_OFF),
     }
 }
+
+/// The OFF line for the attribution record.
+const AUDIT_OFF: &str = "security audit record = OFF (--audit-sink none): no per-request \
+     record is emitted, so this deployment has no attribution surface for a later \
+     incident. Pass --audit-sink stderr to enable it.";
 
 /// ADR-MCPRE-054 — retention of the full request and response of accepted calls.
 ///
@@ -189,32 +184,35 @@ pub(crate) fn evidence_retention(
     state: &crate::config_state::RetentionState,
 ) -> Result<Established<crate::transparency::EvidenceRetention>, String> {
     let Some(dir) = state.directory() else {
-        return Ok(Established::off(
-            "evidence retention = OFF: nothing is retained, so no SCITT \
-             statement can later be issued about a call served here. Pass \
-             --retained-evidence-dir <path> to enable it.",
-        ));
+        return Ok(Established::off(RETENTION_OFF));
     };
     let retention = crate::transparency::EvidenceRetention::open(dir)
         .map_err(|e| format!("--retained-evidence-dir {dir}: {e}"))?;
     Ok(Established::on(
         retention,
         format!(
-            "evidence retention = ON at {dir} (ADR-MCPRE-054): the full \
-             request and response messages of every ACCEPTED call are retained (rejected \
-             requests are not), and a store failure refuses the exchange with \
-             mcp-re.evidence_retention_unavailable. The store has NO expiry or quota — \
-             a full volume is therefore a total outage. Put it on a dedicated volume \
-             with a retention policy and free-space alerting."
+            "evidence retention = ON at {dir} (ADR-MCPRE-054): for every ACCEPTED call \
+             (rejected requests are not retained) the request and response bodies, \
+             signatures and the headers those signatures cover, and a store failure \
+             refuses the exchange with mcp-re.evidence_retention_unavailable. A covered \
+             credential header is retained with them, so the directory holds live bearer \
+             tokens and DPoP proofs: keep it readable by this process alone. The store has \
+             NO expiry or quota — a full volume is therefore a total outage. Put it on a \
+             dedicated volume with a retention policy and free-space alerting."
         ),
     ))
 }
 
+/// The OFF line for evidence retention.
+const RETENTION_OFF: &str = "evidence retention = OFF: nothing is retained, so no SCITT \
+     statement can later be issued about a call served here. Pass \
+     --retained-evidence-dir <path> to enable it.";
+
 /// #415 rev 2 §10 — the verified-context carrier.
 ///
-/// Caller-seeded context is stripped regardless; this decides only whether the PEP
-/// writes its OWN resolved actor in its place. `trusted` is an operator assertion about
-/// the inner channel that nothing here can verify.
+/// This decides only whether the PEP writes its OWN resolved actor into the forwarded
+/// body; removing caller-seeded context is the body boundary's, in every posture.
+/// `trusted` is an operator assertion about the inner channel that nothing here can verify.
 pub(crate) fn verified_context_carrier(
     state: crate::config_state::VerifiedContextState,
 ) -> Established<mcp_re_http_profile::VerifiedContextPolicy> {
@@ -227,15 +225,17 @@ pub(crate) fn verified_context_carrier(
              check that.",
         )
     } else {
-        Established::off(
-            "verified-context carrier = OFF (#415 §10): caller-seeded context is stripped \
-             and the PEP writes nothing in its place, so the inner server receives no \
-             resolved actor and must not make an authorization decision on identity. Pass \
-             --verified-context trusted only where nothing but this proxy can reach the \
-             inner server.",
-        )
+        Established::off(VERIFIED_CONTEXT_OFF)
     }
 }
+
+/// The OFF line for the verified-context carrier. It states what this seam decides and
+/// nothing about the reserved-key strip, which the body boundary performs and witnesses in
+/// every posture.
+const VERIFIED_CONTEXT_OFF: &str = "verified-context carrier = OFF (#415 §10): the PEP \
+     writes no resolved actor into the forwarded body, so the inner server must not make \
+     an authorization decision on identity. Pass --verified-context trusted only where \
+     nothing but this proxy can reach the inner server.";
 
 /// ADR-MCPS-047 — the MRTR continuation correlation capability, established as selected.
 ///
@@ -455,15 +455,19 @@ mod tests {
         assert!(matches!(posture, SeamState::Off { .. }));
     }
 
-    /// Every OFF line names what turns the capability on, or why nothing can.
+    /// Every OFF line this module writes names what turns the capability on, or why
+    /// nothing can.
     ///
     /// An operator reading a transcript is deciding what to DO about the line. The
     /// posture module makes that a rule and the prose is the only place it can be
-    /// broken, so it is asserted over the constants rather than left to review.
+    /// broken, so every OFF line here is a named constant and each is asserted.
     #[test]
     fn every_off_line_tells_the_operator_what_to_do_about_it() {
         let lines: &[(&str, &str)] = &[
             ("OCSP_OFF", OCSP_OFF),
+            ("AUDIT_OFF", AUDIT_OFF),
+            ("RETENTION_OFF", RETENTION_OFF),
+            ("VERIFIED_CONTEXT_OFF", VERIFIED_CONTEXT_OFF),
             #[cfg(feature = "redis_replay")]
             ("ADMISSION_OFF", ADMISSION_OFF),
             #[cfg(not(feature = "redis_replay"))]
@@ -510,13 +514,21 @@ mod tests {
         assert!(matches!(posture, SeamState::Off { .. }));
     }
 
-    /// The attribution posture is the one the classified state selected.
+    /// The STDERR posture installs the stderr sink and the NONE posture installs none.
+    ///
+    /// The artifact's type is the binding: `Option<StderrAuditSink>` is what the ON line
+    /// travels with, so a null sink under the STDERR line does not compile, and the OFF
+    /// arm has nothing to install.
     #[test]
-    fn the_security_audit_posture_follows_the_classified_audit_state() {
-        let (_sink, posture) = security_audit_record(crate::config_state::AuditState::Stderr);
+    fn the_security_audit_posture_travels_with_the_sink_it_installs() {
+        let (sink, posture): (Option<crate::audit_sink::StderrAuditSink>, _) =
+            security_audit_record(crate::config_state::AuditState::Stderr).into_parts();
+        assert!(sink.is_some());
         assert!(matches!(posture, SeamState::On { .. }));
 
-        let (_sink, posture) = security_audit_record(crate::config_state::AuditState::None);
+        let (sink, posture) =
+            security_audit_record(crate::config_state::AuditState::None).into_parts();
+        assert!(sink.is_none());
         assert!(matches!(posture, SeamState::Off { .. }));
     }
 
