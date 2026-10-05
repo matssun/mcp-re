@@ -1,0 +1,25 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "It establishes registration on A SERVICE whose key was resolved. It does NOT establish that\nthe service is honest, that its log is append-only, that the entry is unique, or anything\nabout the log's current state \u2014 this is offline verification, and none of those properties\nis checkable without the log.\n\nIt says nothing about the CALL the statement describes: that the retained evidence is the\nevidence the statement was made about is THM-0042, a separate proposition over a separate\nauthority.\n\nThe two RFC 9162 implementations in this tree stay two on purpose. `prototype` builds a\ntree and `merkle` verifies a path, and they are an independent cross-check; this claim is\nover the verification side alone and must not be read as a claim about the builder.\n`PrototypeTransparencyService` is a public compatibility surface, test/conformance support\nand a build-side oracle, and is NOT a production security product \u2014 no consequence here\ndepends on it.\n\n`ReceiptPositionProfile::Bound` is selected only by the pin's `position_profile`. The position\nconjunct above holds exactly for `Bound`. `Bound` is exercised only against the prototype\ntransparency service.\n",
+      "old": "It establishes registration on A SERVICE whose key was resolved. It does NOT establish that\nthe service is honest, that its log is append-only, that the entry is unique, or anything\nabout the log's current state \u2014 this is offline verification, and none of those properties\nis checkable without the log.\n\nIt says nothing about the CALL the statement describes: that the retained evidence is the\nevidence the statement was made about is THM-0042, a separate proposition over a separate\nauthority.\n\nThe two RFC 9162 implementations in this tree stay two on purpose. `prototype` builds a\ntree and `merkle` verifies a path, and they are an independent cross-check; this claim is\nover the verification side alone and must not be read as a claim about the builder.\n`PrototypeTransparencyService` is a public compatibility surface, test/conformance support\nand a build-side oracle, and is NOT a production security product \u2014 no consequence here\ndepends on it.\n\n`ReceiptPositionProfile::Bound` is exercised as conformance evidence and is NOT a selectable\nproduction configuration. A theorem about code this claim covers does not make a deployment\nposture supported.\n",
+      "reason": "The scope said `ReceiptPositionProfile::Bound` is not a selectable production configuration. #841 item 2 measured that wrong: an operator selects it by writing `position_profile` into the service pin (`tools/scitt_fetch_service_key.py --position-profile`), as `scitt/wire.rs` records. The paragraph now states the ratified three facts: Bound is selected only by the pin's `position_profile`, the position conjunct holds exactly for Bound, and Bound is exercised only against the prototype transparency service. The statement already conditioned the position conjunct on a pin that binds the position, so what is promised does not change; the scope stops denying a posture the code supports."
+    }
+  ],
+  "from_fingerprint": "sha256:c519e9028f1745cc456b65e53d8a73b0f64335ccfafa140a646ef6bfdfea8dda",
+  "packet": "docs/security/owner-approvals-2026-10-04.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "OWN-CLAIM CORRECTION, owner-ratified (Ruling 13). THM-0041's statement and security_consequence are byte-identical to the reviewed text; one scope paragraph is replaced. The ratification text voids this theorem's specification review; this record carries the merge path only.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5 (a correction where the old wording misdescribes what production establishes, the promise neither weakened, removed nor materially expanded), applied to the exact correction the owner ratified in OWNER-RULINGS.md Ruling 13: owner-signature:thm-0041-scope-bound-position-posture, sha256 1928222ba4e8cbbf0c28688daa68027ab31736a574939a5bf6d45d6151963684, docs/security/owner-approvals-2026-10-04.jsonl, whose text records that it voids THM-0041's specification review. A correction record is not an approval: it does not make the specification-review axis fresh, and release-mode establishment still asks for the owner.",
+  "severity_after": "high",
+  "severity_before": "high",
+  "subject": "THM-0041",
+  "to_fingerprint": "sha256:bab05d6e87871bc50528b92273f3c335b71f8a5a127d817bc7fd864fe178f90e"
+}

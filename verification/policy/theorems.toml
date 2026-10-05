@@ -2329,9 +2329,9 @@ over the verification side alone and must not be read as a claim about the build
 and a build-side oracle, and is NOT a production security product — no consequence here
 depends on it.
 
-`ReceiptPositionProfile::Bound` is exercised as conformance evidence and is NOT a selectable
-production configuration. A theorem about code this claim covers does not make a deployment
-posture supported.
+`ReceiptPositionProfile::Bound` is selected only by the pin's `position_profile`. The position
+conjunct above holds exactly for `Bound`. `Bound` is exercised only against the prototype
+transparency service.
 """
 owner = "http_profile.scitt_derived_root"
 review_requirement = "Owner security-specification review"
