@@ -15161,3 +15161,11 @@ control = "src/lib.rs#cli::runtime_flags::handshake_signing::tests::only_the_two
 decision = "new-proposition"
 proposition = "NP-034"
 recorded = "2026-10-05"
+
+[[disposition]]
+id = "CD-20397"
+project = ""
+control = "gate#scripts/os_entropy_census_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-10-06"

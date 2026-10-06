@@ -99,6 +99,8 @@ stage_static() {
     && python3 scripts/deploy_image_tag_gate.py \
     && python3 scripts/slo_invocation_gate.py --selftest \
     && python3 scripts/slo_invocation_gate.py \
+    && python3 scripts/os_entropy_census_gate.py --selftest \
+    && python3 scripts/os_entropy_census_gate.py \
     `# Fixture-feature gate: a test-only cargo feature enabled by a NORMAL dependency` \
     `# unifies onto every build in the workspace, including the library a production` \
     `# consumer links. mcp-re-host's own three controls read its own manifest and are` \

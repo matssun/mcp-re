@@ -122,6 +122,15 @@ jobs:
           python3 scripts/slo_invocation_gate.py --selftest
           python3 scripts/slo_invocation_gate.py
 
+      # OS-entropy census gate: `boundary.os_entropy` names exactly the production files
+      # that acquire OS entropy through `getrandom`. ASM-0068 states that count and requires
+      # owner review of a new site; the count was kept by hand and went stale once. Fast,
+      # python-only.
+      - name: OS-entropy census gate (boundary.os_entropy names every acquisition site)
+        run: |
+          python3 scripts/os_entropy_census_gate.py --selftest
+          python3 scripts/os_entropy_census_gate.py
+
       # Doc-path gate: refuses a path-like token in current text that does not resolve
       # to a file of this repository, and — the rule the whole class turns on — one that
       # resolves ONLY to a gitignored path. Fifteen citations of a `work/`-local design
