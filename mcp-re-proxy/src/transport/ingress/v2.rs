@@ -13,11 +13,12 @@ use std::collections::BTreeSet;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::parse_hash_id;
 use mcp_re_core::verify_ed25519_with;
+use mcp_re_core::MaxClockSkew;
 use mcp_re_core::McpReError;
 use mcp_re_core::VerificationKey;
 
+use super::LbAssertionV2BindingRefusal;
 use super::LbKeyEntry;
-use super::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
 use crate::transport::IdentitySource;
 use crate::transport::TransportIdentity;
 
@@ -151,7 +152,7 @@ pub struct LbAssertionV2 {
     pub key_id: String,
     /// The attestor's own ingress identity, DISTINCT from `key_id`. The node
     /// admits only ingress identities it has been configured to trust
-    /// ([`LbAssertionV2Binding::permit_ingress_identity`]).
+    /// ([`LbAssertionV2Binding::new`]).
     pub ingress_identity: String,
     /// The delegated (asserted) client identity.
     pub asserted_client_identity: String,
@@ -371,6 +372,22 @@ pub enum LbAssertionV2Rejection {
     Expired,
 }
 
+/// The configured attestor keys as trust-map entries, refusing a key id named twice: with
+/// two keys under one id, which one verifies would depend on the order they were listed.
+fn unique_key_entries(
+    keys: impl IntoIterator<Item = (String, VerificationKey)>,
+) -> Result<Vec<LbKeyEntry>, LbAssertionV2BindingRefusal> {
+    let mut entries: Vec<LbKeyEntry> = Vec::new();
+    let mut ids: BTreeSet<String> = BTreeSet::new();
+    for (key_id, key) in keys {
+        if !ids.insert(key_id.clone()) {
+            return Err(LbAssertionV2BindingRefusal::DuplicateKeyId(key_id));
+        }
+        entries.push(LbKeyEntry { key_id, key });
+    }
+    Ok(entries)
+}
+
 /// A node-side verifier for Mode-C (`mcp-re/lb-ingress-assertion/v2`) attested-
 /// ingress assertions (ADR-MCPS-023 §C1–C3, v0.10).
 ///
@@ -399,8 +416,8 @@ pub struct LbAssertionV2Binding {
     /// The ingress identities the node trusts; an assertion whose
     /// `ingress_identity` is absent fails closed.
     allowed_ingress_identities: BTreeSet<String>,
-    /// Maximum accepted assertion age (seconds) relative to `now_unix`.
-    max_age_secs: i64,
+    /// Maximum accepted distance between `validation_time` and `now_unix`, either way.
+    max_age: MaxClockSkew,
 }
 
 impl LbAssertionV2Binding {
@@ -411,41 +428,43 @@ impl LbAssertionV2Binding {
     /// not end-to-end client↔node channel binding.
     pub const GUARANTEE: &'static str = "attested_ingress_delegation";
 
-    /// Build a verifier for the node's `expected_audience` with no trusted keys or
-    /// ingress identities yet (every assertion fails closed until both a key and an
-    /// ingress identity are added) and the default freshness window
-    /// ([`DEFAULT_LB_ASSERTION_MAX_AGE_SECS`]). `source` is the [`IdentitySource`]
-    /// stamped on the yielded identity.
-    pub fn new(source: IdentitySource, expected_audience: impl Into<String>) -> Self {
-        LbAssertionV2Binding {
-            keys: Vec::new(),
-            source,
-            expected_audience: expected_audience.into(),
-            allowed_ingress_identities: BTreeSet::new(),
-            max_age_secs: DEFAULT_LB_ASSERTION_MAX_AGE_SECS,
+    /// Build a verifier for the node's `expected_audience` whose trust set is exactly
+    /// `keys` and `ingress_identities`, with freshness window `max_age`. `source` is the
+    /// [`IdentitySource`] stamped on the yielded identity.
+    ///
+    /// The trust set is fixed here and has no mutator: retiring an attestor key or an
+    /// ingress identity means building a new verifier from the new configuration. A set
+    /// that is empty, names one key id twice, or trusts a blank identity is refused, and
+    /// so is an audience the verbatim comparison could not match.
+    pub fn new(
+        source: IdentitySource,
+        expected_audience: impl Into<String>,
+        keys: impl IntoIterator<Item = (String, VerificationKey)>,
+        ingress_identities: impl IntoIterator<Item = String>,
+        max_age: MaxClockSkew,
+    ) -> Result<Self, LbAssertionV2BindingRefusal> {
+        let expected_audience = expected_audience.into();
+        if expected_audience.trim().is_empty() || expected_audience.trim() != expected_audience {
+            return Err(LbAssertionV2BindingRefusal::UnusableAudience);
         }
-    }
-
-    /// Override the freshness window (seconds).
-    pub fn with_max_age_secs(mut self, max_age_secs: i64) -> Self {
-        self.max_age_secs = max_age_secs;
-        self
-    }
-
-    /// Add a trusted attestor verification key addressed by `key_id`. A duplicate
-    /// `key_id` REPLACES the prior key (last write wins) so a rotating deployment
-    /// cannot end up with two live keys for one id.
-    pub fn add_key(&mut self, key_id: impl Into<String>, key: VerificationKey) {
-        let key_id = key_id.into();
-        self.keys.retain(|entry| entry.key_id != key_id);
-        self.keys.push(LbKeyEntry { key_id, key });
-    }
-
-    /// Trust an ingress identity; an assertion whose `ingress_identity` is not in
-    /// this set fails closed ([`LbAssertionV2Rejection::UntrustedIngressIdentity`]).
-    pub fn permit_ingress_identity(&mut self, ingress_identity: impl Into<String>) {
-        self.allowed_ingress_identities
-            .insert(ingress_identity.into());
+        let entries = unique_key_entries(keys)?;
+        if entries.is_empty() {
+            return Err(LbAssertionV2BindingRefusal::NoAttestorKey);
+        }
+        let allowed: BTreeSet<String> = ingress_identities.into_iter().collect();
+        if allowed.is_empty() {
+            return Err(LbAssertionV2BindingRefusal::NoIngressIdentity);
+        }
+        if allowed.iter().any(|id| id.trim().is_empty()) {
+            return Err(LbAssertionV2BindingRefusal::BlankIngressIdentity);
+        }
+        Ok(LbAssertionV2Binding {
+            keys: entries,
+            source,
+            expected_audience,
+            allowed_ingress_identities: allowed,
+            max_age,
+        })
     }
 
     /// Look up a trusted attestor verification key by key id.
@@ -508,10 +527,10 @@ impl LbAssertionV2Binding {
         //    plus the optional hard expiry.
         let age = now_unix.saturating_sub(assertion.validation_time);
         // Class R: the window is symmetric, so it is stated as one comparison against the
-        // magnitude. Negating `max_age_secs` to build the lower edge was the one partial
-        // operation between a signature that had just verified and the freshness verdict
-        // that admits the assertion — `i64::MIN` has no negation.
-        if age.saturating_abs() > self.max_age_secs {
+        // magnitude: negating the window to build the lower edge would be a partial
+        // operation between a verified signature and the freshness verdict. The window
+        // itself is a `MaxClockSkew`, so it is non-negative and bounded.
+        if age.saturating_abs() > self.max_age.secs() {
             return Err(LbAssertionV2Rejection::Stale);
         }
         if let Some(deadline) = assertion.expires_at {
@@ -604,13 +623,113 @@ mod tests {
     /// A v2 verifier trusting attestor key `attestor-1` (under `LB_SEED`), the
     /// canonical audience, and the canonical ingress identity.
     fn v2_binding() -> LbAssertionV2Binding {
-        let mut binding = LbAssertionV2Binding::new(IdentitySource::UriSan, V2_AUDIENCE);
-        binding.add_key(
-            "attestor-1",
-            SigningKey::from_seed_bytes(&LB_SEED).public_key(),
+        v2_binding_over(
+            vec![(
+                "attestor-1".to_string(),
+                SigningKey::from_seed_bytes(&LB_SEED).public_key(),
+            )],
+            vec![V2_INGRESS_ID.to_string()],
+        )
+        .expect("the canonical trust set builds")
+    }
+
+    fn v2_binding_over(
+        keys: Vec<(String, VerificationKey)>,
+        identities: Vec<String>,
+    ) -> Result<LbAssertionV2Binding, LbAssertionV2BindingRefusal> {
+        LbAssertionV2Binding::new(
+            IdentitySource::UriSan,
+            V2_AUDIENCE,
+            keys,
+            identities,
+            crate::transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE,
+        )
+    }
+
+    #[test]
+    fn v2_trust_set_is_exactly_the_configuration_it_was_built_from() {
+        let lb = SigningKey::from_seed_bytes(&LB_SEED).public_key();
+        let other = SigningKey::from_seed_bytes(&[7u8; 32]).public_key();
+        let ingress = vec![V2_INGRESS_ID.to_string()];
+        assert_eq!(
+            v2_binding_over(vec![], ingress.clone()).err(),
+            Some(LbAssertionV2BindingRefusal::NoAttestorKey)
         );
-        binding.permit_ingress_identity(V2_INGRESS_ID);
-        binding
+        assert_eq!(
+            v2_binding_over(
+                vec![
+                    ("attestor-1".to_string(), lb.clone()),
+                    ("attestor-1".to_string(), other.clone())
+                ],
+                ingress.clone()
+            )
+            .err(),
+            Some(LbAssertionV2BindingRefusal::DuplicateKeyId(
+                "attestor-1".to_string()
+            )),
+            "two keys under one id must be refused, not resolved by insertion order"
+        );
+        assert_eq!(
+            v2_binding_over(vec![("attestor-1".to_string(), lb.clone())], vec![]).err(),
+            Some(LbAssertionV2BindingRefusal::NoIngressIdentity)
+        );
+        assert_eq!(
+            v2_binding_over(
+                vec![("attestor-1".to_string(), lb.clone())],
+                vec![" ".to_string()]
+            )
+            .err(),
+            Some(LbAssertionV2BindingRefusal::BlankIngressIdentity)
+        );
+        for audience in ["", " did:example:server-1"] {
+            assert_eq!(
+                LbAssertionV2Binding::new(
+                    IdentitySource::UriSan,
+                    audience,
+                    vec![("attestor-1".to_string(), lb.clone())],
+                    ingress.clone(),
+                    crate::transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE,
+                )
+                .err(),
+                Some(LbAssertionV2BindingRefusal::UnusableAudience),
+                "audience {audience:?}"
+            );
+        }
+        // A key the configuration did not name never verifies: the set has no mutator,
+        // so a retired key is gone once the verifier is rebuilt without it.
+        let rebuilt = v2_binding_over(vec![("attestor-2".to_string(), other)], ingress)
+            .expect("a rotated trust set builds");
+        let now = 1_800_000_000;
+        let hash = in_hand_request_hash();
+        let wire = mint_v2(
+            &SigningKey::from_seed_bytes(&LB_SEED),
+            &v2_assertion(&hash, now),
+        );
+        assert_eq!(
+            rebuilt.verify(&wire, &hash, now).err(),
+            Some(LbAssertionV2Rejection::UnknownKeyId)
+        );
+    }
+
+    #[test]
+    fn v2_freshness_window_is_the_configured_bound_and_no_wider() {
+        let hash = in_hand_request_hash();
+        let signer = SigningKey::from_seed_bytes(&LB_SEED);
+        let now = 1_800_000_000;
+        let window = crate::transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE.secs();
+        let binding = v2_binding();
+        for edge in [now - window, now + window] {
+            let wire = mint_v2(&signer, &v2_assertion(&hash, edge));
+            assert!(binding.verify(&wire, &hash, now).is_ok(), "edge {edge}");
+        }
+        for beyond in [now - window - 1, now + window + 1] {
+            let wire = mint_v2(&signer, &v2_assertion(&hash, beyond));
+            assert_eq!(
+                binding.verify(&wire, &hash, now).err(),
+                Some(LbAssertionV2Rejection::Stale),
+                "beyond {beyond}"
+            );
+        }
     }
 
     #[test]

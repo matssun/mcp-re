@@ -223,6 +223,7 @@ attestations this view cannot see.
 | unit://proxy.listener_state_assembly | source, contracts or evidence | THM-0048 | _no consumer_ |
 | unit://proxy.mcp_transport_contract_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.mechanism_verified_credential | source, contracts or evidence | THM-0030 | proxy.authenticated_relationship_peer (COMPILE_DEPENDENCY), proxy.credential_currency (COMPILE_DEPENDENCY) |
+| unit://proxy.mode_c_trust_set | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
 | unit://proxy.operator_facing_redaction | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.outbound_destination | source, contracts or evidence | THM-0090 | _no consumer_ |

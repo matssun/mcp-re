@@ -219,6 +219,7 @@ not an omission to hide.
 | proxy.listener_state_assembly | V0 | THM-0048 | 1 |
 | proxy.mcp_transport_contract_state | V0 | _none_ | 0 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
+| proxy.mode_c_trust_set | V0 | _none_ | 0 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
 | proxy.operator_facing_redaction | V0 | _none_ | 0 |
 | proxy.outbound_destination | V0 | THM-0090 | 0 |

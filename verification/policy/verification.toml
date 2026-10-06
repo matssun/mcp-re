@@ -12752,6 +12752,30 @@ tested_symbols = [
 ]
 
 [[unit]]
+id = "proxy.mode_c_trust_set"
+class = "V0"
+description = "The dormant Mode-C verifier's trust set is exactly the configuration it was built from: `LbAssertionV2Binding::new` takes the attestor keys, the trusted ingress identities and the freshness window together and has no mutator, so a key the configuration no longer names never verifies once the verifier is rebuilt; an empty key or identity set, a key id named twice, a blank identity or an audience the verbatim comparison cannot match is refused rather than built; and the freshness window is a `MaxClockSkew`, so it is non-negative and bounded and an assertion one second outside it is `Stale`. Says nothing about what an accepted assertion proves — that is NP-073's — or whether a deployment may select Mode C, which the configuration owner refuses."
+# UC-1: `transport/mod.rs` declares `mod identity;` and `pub mod ingress;`, so both resolve
+# inside this unit's source closure and are measured with it.
+paths = [
+  "mcp-re-proxy/src/transport/mod.rs",
+  "mcp-re-proxy/src/transport/identity.rs",
+  "mcp-re-proxy/src/transport/ingress/**/*.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/transport/mode_c_trust_set",
+  "mutation://proxy/transport/mode_c_trust_set",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#transport::ingress::v2::tests::v2_trust_set_is_exactly_the_configuration_it_was_built_from",
+  "//mcp-re-proxy:proxy_unit_test#transport::ingress::v2::tests::v2_freshness_window_is_the_configured_bound_and_no_wider",
+  "//mcp-re-proxy:proxy_unit_test#transport::ingress::v2_binding_refusal::tests::a_duplicate_key_refusal_names_the_key_id",
+]
+
+[[unit]]
 id = "proxy.channel_peer_resolution"
 class = "V0"
 description = "WHAT THE SERVING RESOLVER ANSWERS ABOUT THE RELATIONSHIP IN HAND: the identity it yields is the one interpreted from the leaf of the credential THIS relationship authenticated with, under the field the deployment configured — so an issuer that also answers the policy from further up the accepted chain never becomes the peer, two live relationships resolve their own peers rather than one another's, a resumed relationship resolves the same identity as a full handshake while its establishment path stays distinct, and a leaf carrying no value in the configured field resolves NO identity rather than a weaker field's. It restates nothing the authority decides: the interpretation's own refusal algebra is `proxy.certificate_identity`'s, the composition that makes the pairing unconstructible is `proxy.authenticated_relationship_peer`'s, and the ROUTE each serving path takes to this resolver is `proxy.serving_identity_provenance`'s."

@@ -12444,3 +12444,40 @@ note = """
 An advance landing after the predecessor's `exp` retires it in `adopt` and again as a
 superseded live key: two retire events for one credential.
 """
+
+[[probe]]
+id = "M510-proxy-a-mode-c-key-id-named-twice-is-built"
+unit = "proxy.mode_c_trust_set"
+conjunct = "a key id named twice is refused rather than resolved by insertion order"
+path = "mcp-re-proxy/src/transport/ingress/v2.rs"
+anchor = """
+        if !ids.insert(key_id.clone()) {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#transport::ingress::v2::tests::v2_trust_set_is_exactly_the_configuration_it_was_built_from",
+]
+note = """
+The verifier accepts two keys under one id, and which one verifies depends on the order the
+configuration listed them: the ambiguity the add-only mutators used to settle at runtime.
+"""
+
+[[probe]]
+id = "M511-proxy-the-mode-c-freshness-window-is-widened"
+unit = "proxy.mode_c_trust_set"
+conjunct = "an assertion one second outside the configured window is Stale"
+path = "mcp-re-proxy/src/transport/ingress/v2.rs"
+anchor = """
+        if age.saturating_abs() > self.max_age.secs() {
+"""
+weakening = """
+        if age.saturating_abs() > self.max_age.secs().saturating_add(1) {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#transport::ingress::v2::tests::v2_freshness_window_is_the_configured_bound_and_no_wider",
+]
+note = """
+The freshness comparison admits one second beyond the window the verifier was built with.
+"""
