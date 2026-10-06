@@ -503,6 +503,7 @@ _PROXY_LIB_SRCS = [
     "src/signing_plane/rotation.rs",
     "src/signing_plane/trust_epoch_advance.rs",
     "src/signing_plane/epoch_watch.rs",
+    "src/signing_plane/epoch_watch/refusal.rs",
     "src/signing_plane/mint_successor.rs",
     "src/signing_plane/bounded_root_issuer.rs",
     # ADR-MCPRE-056 §8 (ADR-MCPRE-051 §6): the TLS plane — serving TLS config, the
@@ -652,6 +653,7 @@ _PROXY_LIB_SRCS = [
     # redis_replay-gated inside the module).
     "src/trust_epoch.rs",
     "src/trust_epoch/raise.rs",
+    "src/trust_epoch/advance.rs",
     # MCPRE-148: the trust plan lives with its owner; `startup_plan` re-exports it.
     "src/trust_plan.rs",
 ]

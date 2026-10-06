@@ -15225,3 +15225,27 @@ control = "src/lib.rs#cli::storage_flags::tests::a_stated_continuation_bound_kee
 decision = "new-proposition"
 proposition = "NP-025"
 recorded = "2026-10-06"
+
+[[disposition]]
+id = "CD-20405"
+project = "mcp-re-proxy"
+control = "src/lib.rs#signing_plane::epoch_watch::live::an_advance_back_to_the_mark_is_moved_past_it"
+decision = "new-proposition"
+proposition = "NP-150"
+recorded = "2026-10-07"
+
+[[disposition]]
+id = "CD-20406"
+project = "mcp-re-proxy"
+control = "src/lib.rs#trust_epoch::advance::live::an_advance_commits_the_counter_and_a_fresh_generation_together"
+decision = "new-proposition"
+proposition = "NP-150"
+recorded = "2026-10-07"
+
+[[disposition]]
+id = "CD-20407"
+project = "mcp-re-proxy"
+control = "src/lib.rs#trust_epoch::advance::live::concurrent_advances_are_each_counted_once"
+decision = "new-proposition"
+proposition = "NP-150"
+recorded = "2026-10-07"

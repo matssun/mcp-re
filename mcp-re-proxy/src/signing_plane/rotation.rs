@@ -307,6 +307,12 @@ mod tests {
         ) -> Result<i64, crate::trust_epoch::EpochReadError> {
             Err(crate::trust_epoch::EpochReadError("injected".into()))
         }
+        fn read_state(
+            &self,
+        ) -> Result<crate::trust_epoch::raise::EpochState, crate::trust_epoch::EpochReadError>
+        {
+            Err(crate::trust_epoch::EpochReadError("injected".into()))
+        }
     }
 
     /// An unreadable epoch is recorded once, when the wait first sees it, rather than

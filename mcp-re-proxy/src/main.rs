@@ -54,6 +54,18 @@ fn install_shutdown_handlers() -> Arc<AtomicBool> {
 fn main() -> ExitCode {
     let shutdown = install_shutdown_handlers();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(("trust-epoch", rest)) = args.split_first().map(|(c, r)| (c.as_str(), r)) {
+        return match mcp_re_proxy::trust_epoch::advance::run_command(rest) {
+            Ok(line) => {
+                println!("{line}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("mcp-re-proxy trust-epoch: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let result = mcp_re_proxy::cli::parse_args(&args)
         .and_then(|config| mcp_re_proxy::app::run(config, shutdown));
     match result {

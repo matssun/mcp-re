@@ -2,7 +2,7 @@
 //!
 //! A networked [`InvalidationChannel`](crate::trust_plane::InvalidationChannel)
 //! (ADR-MCPS-021 Tier 3) driven by a **monotonic trust-epoch counter**: an
-//! operator bumps a shared epoch (e.g. `INCR mcp-re:trust:epoch`) whenever the trust
+//! operator advances a shared epoch (`mcp-re-proxy trust-epoch advance`) whenever the trust
 //! store changes (a key revoked or rotated). Each replica polls the epoch; when it
 //! has ADVANCED past the last value this node saw, the source emits a single
 //! coarse [`InvalidationEvent::FlushAll`] so the bounded trust cache drops all
@@ -29,6 +29,7 @@ use std::time::Instant;
 use crate::trust_plane::InvalidationChannel;
 use crate::trust_plane::InvalidationEvent;
 
+pub mod advance;
 pub(crate) mod raise;
 
 /// Take a lock, recovering it if a panic elsewhere poisoned it.
@@ -237,8 +238,7 @@ const TRUST_EPOCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 );
 
 /// A [`EpochReader`] that reads the trust epoch from a Redis key via `GET`, with a
-/// bounded connection and ONE reconnect-and-retry on a broken connection. Operators
-/// advance the epoch with `INCR <key>`.
+/// bounded connection and ONE reconnect-and-retry on a broken connection.
 #[cfg(feature = "redis_replay")]
 pub struct RedisEpochReader {
     client: redis::Client,
@@ -275,7 +275,7 @@ impl RedisEpochReader {
                  is indistinguishable from a counter that was never created, was deleted, or \
                  was lost to a restore/eviction, and reading it as a baseline would leave the \
                  push kill switch inert or let a restarted replica mint under a rolled-back \
-                 epoch. Seed it with SET {epoch_key} 0 (or INCR it) before serving."
+                 epoch. Seed it with SET {epoch_key} 0 before serving."
             ))
         })
     }

@@ -175,7 +175,7 @@ Set `--revocation-tier push` with `--trust-epoch-redis-url`. A fleet must: under
 chart refuses to render more than one replica without `revocation.trustEpochRedisUrl`,
 because that counter is the only kill switch for the fleet's delegated response keys.
 Each replica polls a monotonic **trust-epoch** key every 5 s off the request path; when
-an operator advances it (`INCR`), every replica marks its cached trust bindings stale
+an operator advances it (`mcp-re-proxy trust-epoch advance`, below), every replica marks its cached trust bindings stale
 within one poll interval and re-resolves them against its trust store. The epoch reaches
 the CACHE, not the store: the store is a snapshot of `--trust` re-read every `R`
 seconds, so a key removed from `trust.json` stops resolving only once that re-read
@@ -185,7 +185,7 @@ lands, and advancing the epoch alone revokes no request-signer key. The
 | Tier | Bound |
 |---|---|
 | Trust key-status (a key removed from `--trust`) | `R + T` while re-reads succeed, 5 × `R` + `T` at worst; the epoch shortens neither, and a source outage falls back to bounded `T` (fail-closed) |
-| Delegated response keys | an `INCR` moves each replica to the next `<base>#<counter>` label at its next epoch read; credentials already issued end at their `exp` |
+| Delegated response keys | an advance moves each replica to the next `<base>#<counter>` label at its next epoch read; credentials already issued end at their `exp` |
 | Client-cert CRL | the `--client-crl-reload-secs` cadence (or the CRL `nextUpdate` with no reload configured) — applied per request, so it bounds peers holding established connections too, not only reconnecting ones |
 
 Zero-window revocation is **not** claimed on either tier. The proxy prints the
@@ -200,19 +200,32 @@ the sibling serves stale trust until the epoch advances.
 counter below the highest value it has read (its mark). The same read moves the shared key
 to one PAST that mark — one atomic `EVAL` that writes only while the key is absent or below
 the mark — and the replica mints again under that new label. A rollback therefore acts as a
-forward rotation: point the verifiers' accepted epochs at the new label, as after an `INCR`.
-An `INCR` issued against the rolled-back store, below the mark, ends past it too; an `INCR`
-above the mark is never overwritten; a second replica repairing from the same mark finds the
-first one's write and writes nothing. While the store cannot be repaired every poll prints
-why (`REGRESSED to …`, or `repair FAILED`). What to plan for:
+forward rotation: point the verifiers' accepted epochs at the new label, as after an advance.
+An advance above the mark is never overwritten; a second replica repairing from the same mark
+finds the first one's write and writes nothing. While the store cannot be repaired every poll
+prints why (`REGRESSED to …`, a fresh advance that `landed on` a minted label, or
+`repair FAILED`).
 
-- The proxy's Redis user needs `GET`, `SET` and `EVAL` on the epoch key. With read-only
-  access a rollback leaves every replica that held a higher mark refusing to mint until
-  you move the key past the fleet's last label by hand.
-- Marks that differ are not ordered by the repair: a replica that had read an `INCR` its
-  peer had not yet polled can find the peer's repair equal to its own mark, read no
-  regression, and keep its pre-rollback label. So can every replica, if an operator `INCR`
-  brings the rolled-back key back to exactly the mark before any replica reads it.
+**Advance the epoch with the proxy, not with `INCR`.**
+
+    mcp-re-proxy trust-epoch advance --trust-epoch-redis-url rediss://… [--trust-epoch-key …]
+
+commits the incremented counter together with a fresh 128-bit generation drawn from the OS
+entropy source, in one atomic step, and refuses with nothing written if the draw fails. A
+number alone cannot say whether an advance happened: after a rollback, a repair from a lower
+mark or an advance on the regressed store can bring the counter back to a value a replica has
+already minted under. The generation tells the two apart — a replica that reads a generation
+it has not seen on a counter at its mark moves the key one past the mark before minting — so
+every advance ends strictly beyond the label of every replica that reads it. A raw `INCR`
+still moves the counter but carries no generation, and that case is not covered: it is not a
+supported way to advance. What to plan for:
+
+- The proxy's Redis user needs `GET`, `MGET`, `SET` and `EVAL` on the epoch key and on
+  `<key>:generation`. With read-only access a rollback leaves every replica that held a
+  higher mark refusing to mint until you advance the key past the fleet's last label. A Redis
+  ACL can deny operator users `INCR` and `SET` on the key, which keeps the supported advance
+  the easy path; it does not make it the only one, because any user allowed `EVAL` can run
+  an arbitrary script against the key.
 - The mark is held in memory. A replica that restarts while the store is regressed mints
   under the regressed label until a live peer's repair moves the key, at most one poll
   later; a whole fleet that restarts while the store is regressed has no mark left to

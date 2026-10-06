@@ -12611,11 +12611,13 @@ tested_symbols = [
 [[unit]]
 id = "proxy.delegated_epoch_label"
 class = "V0"
-description = "THE DELEGATED-SIGNING PLANE MINTS UNDER THE LABEL ITS OWN READ OF THE SHARED TRUST-EPOCH COUNTER NAMES, AND UNDER NO OTHER: the label is always `<base>#<counter>` for the value that read returned, never the bare base and never a per-process baseline, so two replicas that read the same value mint the same label whichever started first, and a restarted replica resolves the label its peers mint; a read that fails, or that returns a value below the highest this process has read, yields no label, so nothing is minted (a regression is refused, not rebased) until a read at or above that mark succeeds. It says nothing about whether a read reflects an `INCR` issued on another connection, which is ASM-0071, nothing about credentials already issued under an earlier label, which stay verifiable until verifiers stop accepting that epoch, and nothing about the startup refusal when the first read fails, which is `proxy.signing_plane_epoch_read_refusal`'s. A replica that holds a mark and reads a value below it, or finds the counter absent, moves the shared counter to one past that mark in one atomic store step that writes only while the counter is absent or below the mark, and mints again once a read reaches the mark, so it never re-enters its pre-rollback label; at the counter maximum it refuses without writing; a replica with no mark writes nothing. Replicas with different marks are not ordered by the repair."
+description = "THE DELEGATED-SIGNING PLANE MINTS UNDER THE LABEL ITS OWN READ OF THE SHARED TRUST-EPOCH COUNTER NAMES, AND UNDER NO OTHER: the label is always `<base>#<counter>` for the value that read returned, never the bare base and never a per-process baseline, so two replicas that read the same value mint the same label whichever started first, and a restarted replica resolves the label its peers mint; a read that fails, or that returns a value below the highest this process has read, yields no label, so nothing is minted (a regression is refused, not rebased) until a read at or above that mark succeeds. It says nothing about whether a read reflects an `INCR` issued on another connection, which is ASM-0071, nothing about credentials already issued under an earlier label, which stay verifiable until verifiers stop accepting that epoch, and nothing about the startup refusal when the first read fails, which is `proxy.signing_plane_epoch_read_refusal`'s. A replica that holds a mark and reads a value below it, or finds the counter absent, moves the shared counter to one past that mark in one atomic store step that writes only while the counter is absent or below the mark, and mints again once a read reaches the mark, so it never re-enters its pre-rollback label; at the counter maximum it refuses without writing; a replica with no mark writes nothing. An operator advance commits the incremented counter together with a fresh generation drawn from OS entropy before anything is written, in one atomic store step, and a failed draw writes nothing; a replica that reads a generation it has not accounted for on a counter equal to its mark refuses and moves the counter one past the mark, accounting for the generation only once the counter is past it, so an advance that lands on an acknowledged label — after a repair from a lower mark or on a rolled-back store — ends strictly beyond the mark of every replica that reads it; an unchanged counter under an unchanged generation is no advance."
 paths = [
   "mcp-re-proxy/src/signing_plane/mod.rs",
   "mcp-re-proxy/src/signing_plane/epoch_watch.rs",
+  "mcp-re-proxy/src/signing_plane/epoch_watch/refusal.rs",
   "mcp-re-proxy/src/trust_epoch/raise.rs",
+  "mcp-re-proxy/src/trust_epoch/advance.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -12643,7 +12645,14 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_rollback_followed_by_an_operator_incr_below_the_mark_still_ends_past_it",
   "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_mark_at_the_counter_maximum_is_refused_without_a_write",
   "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::repairs_from_the_same_mark_write_once",
-  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_repair_from_a_lower_mark_can_land_on_a_higher_replicas_label",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::an_advance_repaired_onto_a_higher_replicas_label_still_ends_past_it",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::an_advance_back_to_the_mark_ends_past_it",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::an_unchanged_counter_and_generation_is_not_an_advance",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::an_unrepaired_advance_on_the_mark_stays_refused",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::refusal::tests::the_refusal_names_the_mark_and_the_repair_outcome",
+  "//mcp-re-proxy:proxy_unit_test#trust_epoch::advance::tests::a_failed_draw_advances_nothing",
+  "//mcp-re-proxy:proxy_unit_test#trust_epoch::advance::tests::the_committed_generation_is_the_drawn_one",
+  "//mcp-re-proxy:proxy_unit_test#trust_epoch::advance::tests::the_command_takes_the_store_url_and_an_optional_key",
   "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_repair_never_lowers_an_advanced_counter",
   "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::the_refusal_line_names_the_mark_and_the_missing_write_access",
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::raise::tests::the_raise_names_the_key_as_a_key_and_the_mark_and_target_as_arguments",

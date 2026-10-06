@@ -11291,10 +11291,10 @@ theorem = "THM-0133"
 conjunct = "a read below the highest this process has read yields no label: the regression is refused, not adopted"
 path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
 anchor = """
-            (Ok(counter), Some(high_water)) if counter < high_water => {
+            Ok(EpochState { counter, .. }) if counter < prior.high_water => {
 """
 weakening = """
-            (Ok(counter), Some(high_water)) if false && counter < high_water => {
+            Ok(EpochState { counter, .. }) if false && counter < prior.high_water => {
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::a_regressed_counter_is_refused_not_rebased",
@@ -12255,7 +12255,7 @@ unit = "proxy.delegated_epoch_label"
 conjunct = "a replica holding a mark moves a counter found below it, or absent, past the mark"
 path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
 anchor = """
-            Some(past) => self.reader.raise_past(high_water, past).map_err(|e| e.0),
+            Some(past) => self.reader.raise_past(below, past).map_err(|e| e.0),
 """
 weakening = """
             Some(_) => Err("not attempted".to_string()),
@@ -12273,13 +12273,13 @@ mark stops minting until an operator rewrites the key by hand.
 [[probe]]
 id = "M501-proxy-an-epoch-repair-raises-to-the-regressed-read"
 unit = "proxy.delegated_epoch_label"
-conjunct = "the repair moves the counter past the replica's mark, not to the regressed value it read"
+conjunct = "the repair moves the counter past the replica's mark, not to a value below it"
 path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
 anchor = """
-            Some(past) => self.reader.raise_past(high_water, past).map_err(|e| e.0),
+            Some(past) => self.reader.raise_past(below, past).map_err(|e| e.0),
 """
 weakening = """
-            Some(_) => self.reader.raise_past(high_water, *observed.as_ref().unwrap_or(&high_water)).map_err(|e| e.0),
+            Some(_) => self.reader.raise_past(below, high_water.saturating_sub(1)).map_err(|e| e.0),
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_regression_moves_the_store_past_the_high_water_mark_and_minting_resumes",
@@ -12296,10 +12296,10 @@ unit = "proxy.delegated_epoch_label"
 conjunct = "the repair writes one past the mark, never the mark itself, so the pre-rollback label is not re-entered and an INCR issued against the rolled-back store is not absorbed"
 path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
 anchor = """
-        let repair = match high_water.checked_add(1) {
+        match high_water.checked_add(1) {
 """
 weakening = """
-        let repair = match high_water.checked_add(0) {
+        match high_water.checked_add(0) {
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_repair_never_writes_the_mark",
@@ -12537,4 +12537,65 @@ expect_red = [
 note = """
 The Redis store is connected on plain `SET NX PX` while the startup audit line still
 advertises a fail-closed WAIT quorum.
+"""
+
+[[probe]]
+id = "M515-proxy-a-fresh-advance-on-the-mark-is-not-told-apart"
+unit = "proxy.delegated_epoch_label"
+conjunct = "a generation the replica has not accounted for, on a counter equal to its mark, is a fresh advance landing on an acknowledged label: refused and moved past the mark"
+path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
+anchor = """
+            }) if counter == prior.high_water && generation != prior.generation => {
+"""
+weakening = """
+            }) if false && counter == prior.high_water && generation != prior.generation => {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::an_advance_repaired_onto_a_higher_replicas_label_still_ends_past_it",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::an_advance_back_to_the_mark_ends_past_it",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::an_unrepaired_advance_on_the_mark_stays_refused",
+]
+note = """
+The number alone decides again: an operator advance that a repair from a lower mark, or a
+rollback, lands on a label a replica already minted under is read as no change, and that replica
+keeps its pre-rollback label — the absorbed rotation of 549fd8cc.
+"""
+
+[[probe]]
+id = "M516-proxy-a-reused-label-is-accounted-before-it-is-repaired"
+unit = "proxy.delegated_epoch_label"
+conjunct = "the fresh generation is accounted for only once the counter is past the mark, so a failed repair is refused again rather than minting under the reused label"
+path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
+anchor = """
+        if repair.as_ref().is_ok_and(|now| *now > prior.high_water) {
+"""
+weakening = """
+        if true {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::an_unrepaired_advance_on_the_mark_stays_refused",
+]
+note = """
+A replica whose repair failed records the advance anyway, and its next read mints under the
+label the advance landed on: the rotation is absorbed whenever the proxy cannot write the key.
+"""
+
+[[probe]]
+id = "M517-proxy-a-failed-entropy-draw-still-advances"
+unit = "proxy.delegated_epoch_label"
+conjunct = "the generation is drawn before anything is written, and a failed draw advances nothing; there is no fallback generation"
+path = "mcp-re-proxy/src/trust_epoch/advance.rs"
+anchor = """
+        fill(&mut bytes).ok()?;
+"""
+weakening = """
+        let _ = fill(&mut bytes);
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#trust_epoch::advance::tests::a_failed_draw_advances_nothing",
+]
+note = """
+A failed OS entropy draw commits the zeroed buffer as the generation: every such advance carries
+the same predictable generation, and a rolled-back store returning to it is a reused label no
+replica can tell from no change.
 """

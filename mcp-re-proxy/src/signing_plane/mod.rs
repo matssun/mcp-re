@@ -358,6 +358,13 @@ mod trust_epoch_watch_tests {
         fn raise_past(&self, _mark: i64, _to: i64) -> Result<i64, EpochReadError> {
             Err(EpochReadError("NOPERM".into()))
         }
+        fn read_state(&self) -> Result<crate::trust_epoch::raise::EpochState, EpochReadError> {
+            self.read_epoch()
+                .map(|counter| crate::trust_epoch::raise::EpochState {
+                    counter,
+                    generation: None,
+                })
+        }
     }
 
     /// Start a replica's watch over the shared counter. Constructing a NEW watch over
@@ -698,6 +705,9 @@ mod rotation_owner_tests {
 
     impl crate::trust_epoch::raise::EpochRaiser for UnreadableEpoch {
         fn raise_past(&self, _mark: i64, _to: i64) -> Result<i64, EpochReadError> {
+            Err(EpochReadError("epoch store unreachable".into()))
+        }
+        fn read_state(&self) -> Result<crate::trust_epoch::raise::EpochState, EpochReadError> {
             Err(EpochReadError("epoch store unreachable".into()))
         }
     }

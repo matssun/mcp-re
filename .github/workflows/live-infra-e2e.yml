@@ -189,13 +189,14 @@ jobs:
           //mcp-re-proxy:integration_ext_test
           --test_arg=redis_replay_e2e_test:: --test_arg=redis_trust_epoch_e2e_test:: --test_arg=ocsp_e2e_test:: --test_arg=redis_continuation_e2e_test::
 
-      # The trust-epoch raise is a crate-internal capability, so its live suites are unit
-      # tests in the `redis_replay` unit binary rather than an integration suite.
-      - name: Run live-infra e2e (trust-epoch rollback repair)
+      # The trust-epoch raise and advance are crate-internal capabilities, so their live
+      # suites are unit tests in the `redis_replay` unit binary rather than an integration suite.
+      - name: Run live-infra e2e (trust-epoch rollback repair and advance)
         run: >-
           scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
           //mcp-re-proxy:proxy_ext_unit_test
-          --test_arg=trust_epoch::raise::live:: --test_arg=signing_plane::epoch_watch::live::
+          --test_arg=trust_epoch::raise::live:: --test_arg=trust_epoch::advance::live::
+          --test_arg=signing_plane::epoch_watch::live::
 
       # The target compiles every backend's race lanes, and this job stands up Redis only,
       # so the etcd lanes — which REQUIRE_LIVE_INFRA makes binding — are the etcd job's.

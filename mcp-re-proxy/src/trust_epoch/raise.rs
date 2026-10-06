@@ -16,11 +16,23 @@
 use super::EpochReadError;
 use super::EpochReader;
 
+/// The counter and the generation of the advance that last set it, read together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EpochState {
+    pub(crate) counter: i64,
+    /// `None` while no [`advance`](super::advance) has ever written the key's generation.
+    pub(crate) generation: Option<String>,
+}
+
 /// An [`EpochReader`] that can also move the counter it reads past a rollback.
 pub(crate) trait EpochRaiser: EpochReader {
     /// Set the counter to `to` if it is absent or below `mark`; return the value it holds
     /// afterwards. A counter at or above `mark` is left untouched.
     fn raise_past(&self, mark: i64, to: i64) -> Result<i64, EpochReadError>;
+
+    /// The counter and its generation in one read, so an advance cannot fall between them.
+    /// An absent counter fails exactly as [`EpochReader::read_epoch`] does.
+    fn read_state(&self) -> Result<EpochState, EpochReadError>;
 }
 
 /// The repair, in one server-side step: a non-integer value is an error rather than
@@ -63,6 +75,45 @@ impl EpochRaiser for super::RedisEpochReader {
         }
         raised.map_err(|e| {
             EpochReadError(format!("raise {} past {mark} to {to}: {e}", self.epoch_key))
+        })
+    }
+
+    fn read_state(&self) -> Result<EpochState, EpochReadError> {
+        let mut guard = self
+            .conn
+            .lock()
+            .map_err(|_| EpochReadError("trust-epoch connection lock poisoned".into()))?;
+        if guard.is_none() {
+            *guard = Some(Self::fresh_conn(&self.client)?);
+        }
+        let Some(conn) = guard.as_mut() else {
+            return Err(EpochReadError("trust-epoch connection missing".into()));
+        };
+        let generation_key = super::advance::generation_key(&self.epoch_key);
+        let state_command = || {
+            let mut cmd = redis::cmd("MGET");
+            cmd.arg(&self.epoch_key).arg(&generation_key);
+            cmd
+        };
+        // The same one reconnect-and-retry as `read_epoch`: a broken socket is replaced and
+        // the read attempted once more; a second failure fails closed.
+        let (counter, generation) =
+            match state_command().query::<(Option<i64>, Option<String>)>(conn) {
+                Ok(state) => state,
+                Err(e) if super::is_transient(&e) => {
+                    *guard = None;
+                    let mut fresh = Self::fresh_conn(&self.client)?;
+                    let state = state_command()
+                        .query::<(Option<i64>, Option<String>)>(&mut fresh)
+                        .map_err(|e| EpochReadError(format!("MGET after reconnect: {e}")))?;
+                    *guard = Some(fresh);
+                    state
+                }
+                Err(e) => return Err(EpochReadError(format!("MGET {}: {e}", self.epoch_key))),
+            };
+        Ok(EpochState {
+            counter: Self::require_present(counter, &self.epoch_key)?,
+            generation,
         })
     }
 }

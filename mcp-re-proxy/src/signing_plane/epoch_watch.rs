@@ -25,16 +25,19 @@
 //! also REPAIRS, as a forward rotation: the replica moves the shared counter to one past
 //! its high-water mark ([`EpochRaiser::raise_past`]) and mints again once a read is at or
 //! above the mark — which the repaired counter is, under a label it never minted before.
-//! An `INCR` issued against the regressed store that leaves it below the mark ends past
-//! the mark too, so the repairing replica never re-enters its pre-rollback label.
 //! The write is atomic in the store and happens only while the counter is absent or below
 //! the mark: a second replica repairing from the same mark finds the first one's write and
-//! writes nothing, and an `INCR` above the mark is never overwritten. Replicas whose marks
-//! differ — one had read an `INCR` another had not yet polled — are not ordered by this:
-//! a repair from the lower mark can leave the counter EQUAL to the higher mark, and the
-//! replica holding that mark then reads no regression and keeps its pre-rollback label.
-//! Likewise an `INCR` that brings the rolled-back key back to exactly the mark before any
-//! replica reads it is indistinguishable, at every replica, from no rollback at all.
+//! writes nothing, and an advance above the mark is never overwritten.
+//!
+//! A number alone cannot say whether an advance happened: after a rollback the counter can
+//! return to a value this replica already minted under, by a peer's repair from a lower mark
+//! or by an advance on the regressed store. So the watch also tracks the GENERATION each
+//! operator advance writes beside the counter (`trust_epoch::advance`). A generation it has
+//! not seen, on a counter at its mark, is a fresh advance landing on an acknowledged label:
+//! the replica refuses and moves the counter past the mark exactly as for a regression, and
+//! records the generation only once the counter is past it. An unchanged generation on an
+//! unchanged counter is no advance. Every advance therefore ends strictly beyond the mark of
+//! every replica that reads it.
 //!
 //! Across a restart the high-water mark is gone: the shared counter is the only authority.
 //! A replica that starts while the store is regressed mints under the regressed label
@@ -44,61 +47,25 @@
 //! whether it is accepted, so the window costs availability, not authority. A fleet that
 //! restarts entirely while the store is regressed has no mark left to repair toward.
 
+mod refusal;
+
 use crate::trust_epoch::raise::EpochRaiser;
+use crate::trust_epoch::raise::EpochState;
 use mcp_re_http_profile::custody::TrustEpoch;
+pub(in crate::signing_plane) use refusal::EpochRefusal;
 
-/// Why there is no label to mint under.
-#[derive(Debug)]
-pub(super) enum EpochRefusal {
-    /// No read has succeeded in this process, so there is no mark to repair toward.
-    Unestablished(String),
-    /// The store is unreadable, below this replica's high-water mark, or has lost the
-    /// counter. `repair` is the counter after the raise, or why the raise failed.
-    Behind {
-        observed: Result<i64, String>,
-        high_water: i64,
-        repair: Result<i64, String>,
-    },
-}
-
-impl std::fmt::Display for EpochRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (high_water, repair) = match self {
-            EpochRefusal::Unestablished(e) => {
-                return write!(f, "the shared trust epoch is unreadable ({e})");
-            }
-            EpochRefusal::Behind {
-                observed: Ok(read),
-                high_water,
-                repair,
-            } => {
-                write!(f, "the shared trust epoch REGRESSED to {read}, below this replica's high-water mark {high_water}")?;
-                (high_water, repair)
-            }
-            EpochRefusal::Behind {
-                observed: Err(e),
-                high_water,
-                repair,
-            } => {
-                write!(
-                    f,
-                    "the shared trust epoch is unreadable ({e}) at high-water mark {high_water}"
-                )?;
-                (high_water, repair)
-            }
-        };
-        match repair {
-            Ok(now) => write!(f, "; moved the store to {now}, past the mark {high_water}, so the rollback acts as a forward rotation; minting resumes on the next read under the new label, which verifiers must accept"),
-            Err(e) => write!(f, "; repair FAILED ({e}): the proxy's Redis user needs write access (GET, SET, EVAL) to the epoch key"),
-        }
-    }
+/// What this replica has acknowledged: the highest counter it read, and the generation of
+/// the advance it last accounted for.
+struct Seen {
+    high_water: i64,
+    generation: Option<String>,
 }
 
 /// The delegated plane's view of the shared trust-epoch counter.
 pub(super) struct DelegatedEpochWatch {
     reader: Box<dyn EpochRaiser>,
     base: TrustEpoch,
-    high_water: std::sync::Mutex<Option<i64>>,
+    seen: std::sync::Mutex<Option<Seen>>,
 }
 
 impl DelegatedEpochWatch {
@@ -107,7 +74,7 @@ impl DelegatedEpochWatch {
         DelegatedEpochWatch {
             reader,
             base,
-            high_water: std::sync::Mutex::new(None),
+            seen: std::sync::Mutex::new(None),
         }
     }
 
@@ -137,38 +104,76 @@ impl DelegatedEpochWatch {
 
     /// The shared counter the label extends the base with, read once.
     pub(super) fn counter(&self) -> Result<i64, EpochRefusal> {
-        let read = self.reader.read_epoch();
-        let mut hw = self
-            .high_water
+        let read = self.reader.read_state();
+        let mut seen = self
+            .seen
             .lock()
             .map_err(|_| EpochRefusal::Unestablished("high-water lock poisoned".into()))?;
-        match (read, *hw) {
-            (Ok(counter), Some(high_water)) if counter < high_water => {
-                Err(self.behind(Ok(counter), high_water))
+        let Some(prior) = seen.as_mut() else {
+            let state = read.map_err(|e| EpochRefusal::Unestablished(e.0))?;
+            *seen = Some(Seen {
+                high_water: state.counter,
+                generation: state.generation,
+            });
+            return Ok(state.counter);
+        };
+        match read {
+            Err(e) => Err(self.behind(Err(e.0), prior.high_water)),
+            Ok(EpochState { counter, .. }) if counter < prior.high_water => {
+                Err(self.behind(Ok(counter), prior.high_water))
             }
-            (Ok(counter), _) => {
-                *hw = Some(counter);
+            Ok(EpochState {
+                counter,
+                generation,
+            }) if counter == prior.high_water && generation != prior.generation => {
+                Err(self.reused(prior, generation))
+            }
+            Ok(EpochState {
+                counter,
+                generation,
+            }) => {
+                *prior = Seen {
+                    high_water: counter,
+                    generation,
+                };
                 Ok(counter)
             }
-            (Err(e), Some(high_water)) => Err(self.behind(Err(e.0), high_water)),
-            (Err(e), None) => Err(EpochRefusal::Unestablished(e.0)),
         }
     }
 
     /// Refuse, and move the store past `high_water`. The mark itself is untouched: it moves
-    /// only when a read at or above it succeeds. At the counter's maximum there is no label
-    /// past the mark, and the refusal stands.
+    /// only when a read at or above it succeeds.
     fn behind(&self, observed: Result<i64, String>, high_water: i64) -> EpochRefusal {
-        let repair = match high_water.checked_add(1) {
-            Some(past) => self.reader.raise_past(high_water, past).map_err(|e| e.0),
-            None => Err(format!(
-                "the counter is at its maximum {high_water}; no label lies past it"
-            )),
-        };
         EpochRefusal::Behind {
             observed,
             high_water,
+            repair: self.raise_past(high_water, high_water),
+        }
+    }
+
+    /// A fresh advance landed on the mark: refuse, move the store past the mark, and account
+    /// for the generation only once the store is past it, so a failed repair is refused
+    /// again on the next read rather than minting under the reused label.
+    fn reused(&self, prior: &mut Seen, generation: Option<String>) -> EpochRefusal {
+        let repair = self.raise_past(prior.high_water, prior.high_water.saturating_add(1));
+        if repair.as_ref().is_ok_and(|now| *now > prior.high_water) {
+            prior.generation = generation;
+        }
+        EpochRefusal::Reused {
+            high_water: prior.high_water,
             repair,
+        }
+    }
+
+    /// Move the counter to one past `high_water` while it is below `below`: below the mark
+    /// for a regression, at or below it for a reused label. At the counter's maximum there
+    /// is no label past the mark, and nothing is written.
+    fn raise_past(&self, high_water: i64, below: i64) -> Result<i64, String> {
+        match high_water.checked_add(1) {
+            Some(past) => self.reader.raise_past(below, past).map_err(|e| e.0),
+            None => Err(format!(
+                "the counter is at its maximum {high_water}; no label lies past it"
+            )),
         }
     }
 }
@@ -178,15 +183,18 @@ mod tests {
     use super::DelegatedEpochWatch;
     use super::EpochRefusal;
     use crate::trust_epoch::raise::EpochRaiser;
+    use crate::trust_epoch::raise::EpochState;
     use crate::trust_epoch::EpochReadError;
     use crate::trust_epoch::EpochReader;
     use std::sync::Arc;
     use std::sync::Mutex;
 
-    /// The shared key, modelled as the raise script treats it: `None` is an absent key,
-    /// and a store that refuses writes answers a raise the way an ACL without `SET` does.
+    /// The shared key and its generation, modelled as the scripts treat them: `None` is an
+    /// absent key, and a store that refuses writes answers a raise the way an ACL without
+    /// `SET` does.
     struct Store {
         value: Mutex<Option<i64>>,
+        generation: Mutex<Option<String>>,
         writable: bool,
     }
 
@@ -194,6 +202,7 @@ mod tests {
         fn new(value: Option<i64>, writable: bool) -> Arc<Self> {
             Arc::new(Store {
                 value: Mutex::new(value),
+                generation: Mutex::new(None),
                 writable,
             })
         }
@@ -202,6 +211,16 @@ mod tests {
         }
         fn get(&self) -> Option<i64> {
             *self.value.lock().expect("store")
+        }
+        /// What a rollback restores: the counter AND the generation beside it.
+        fn restore(&self, value: Option<i64>, generation: Option<&str>) {
+            self.set(value);
+            *self.generation.lock().expect("store") = generation.map(str::to_string);
+        }
+        /// The operator's advance: the counter plus one, under a generation never used before.
+        fn advance(&self, generation: &str) {
+            let next = self.get().map_or(1, |c| c + 1);
+            self.restore(Some(next), Some(generation));
         }
     }
 
@@ -216,6 +235,13 @@ mod tests {
     }
 
     impl EpochRaiser for Replica {
+        fn read_state(&self) -> Result<EpochState, EpochReadError> {
+            Ok(EpochState {
+                counter: self.read_epoch()?,
+                generation: self.0.generation.lock().expect("store").clone(),
+            })
+        }
+
         fn raise_past(&self, mark: i64, to: i64) -> Result<i64, EpochReadError> {
             if !self.0.writable {
                 return Err(EpochReadError(
@@ -369,22 +395,92 @@ mod tests {
         assert_eq!(first.current_label().as_deref(), Some("epoch-min#10"));
     }
 
-    /// Marks that differ are not ordered by the repair: a repair from the lower mark can land
-    /// exactly on the higher replica's mark, which then reads no regression and keeps minting
-    /// its pre-rollback label.
+    /// Marks that differ: an advance on the rolled-back store, repaired from the lower mark
+    /// onto the higher replica's label, still ends past the higher mark, because the advance's
+    /// generation tells that replica a fresh advance landed on a label it already minted under.
     #[test]
-    fn a_repair_from_a_lower_mark_can_land_on_a_higher_replicas_label() {
+    fn an_advance_repaired_onto_a_higher_replicas_label_still_ends_past_it() {
         let store = Store::new(Some(9), true);
+        store.restore(Some(9), Some("g1"));
         let lagging = watch(&store);
         assert!(lagging.current_label().is_some());
-        store.set(Some(10));
+        store.advance("g2");
         let current = watch(&store);
-        assert!(current.current_label().is_some());
-
-        store.set(Some(3));
-        assert!(lagging.current_label().is_none());
-        assert_eq!(store.get(), Some(10));
         assert_eq!(current.current_label().as_deref(), Some("epoch-min#10"));
+
+        store.restore(Some(3), Some("g0")); // the rollback
+        store.advance("g3"); // the operator's advance, against the regressed store
+        assert!(lagging.current_label().is_none());
+        assert_eq!(
+            store.get(),
+            Some(10),
+            "the lower mark repairs onto the higher label"
+        );
+        assert!(matches!(
+            current.label(),
+            Err(EpochRefusal::Reused {
+                high_water: 10,
+                repair: Ok(11)
+            })
+        ));
+        assert_eq!(current.current_label().as_deref(), Some("epoch-min#11"));
+        assert_eq!(lagging.current_label().as_deref(), Some("epoch-min#11"));
+    }
+
+    /// An advance that brings the rolled-back key back to exactly the mark is not mistaken for
+    /// no change: its fresh generation moves every replica past the mark.
+    #[test]
+    fn an_advance_back_to_the_mark_ends_past_it() {
+        let store = Store::new(Some(10), true);
+        store.restore(Some(10), Some("g1"));
+        let first = watch(&store);
+        let second = watch(&store);
+        assert!(first.current_label().is_some() && second.current_label().is_some());
+
+        store.restore(Some(9), Some("g0"));
+        store.advance("g2");
+        assert_eq!(store.get(), Some(10));
+        assert!(first.current_label().is_none());
+        assert_eq!(store.get(), Some(11));
+        assert_eq!(second.current_label().as_deref(), Some("epoch-min#11"));
+        assert_eq!(first.current_label().as_deref(), Some("epoch-min#11"));
+        assert_eq!(
+            store.get(),
+            Some(11),
+            "the second replica found the repair and wrote nothing"
+        );
+    }
+
+    /// The same counter under the same generation is no advance: the replica keeps minting
+    /// its label and writes nothing.
+    #[test]
+    fn an_unchanged_counter_and_generation_is_not_an_advance() {
+        let store = Store::new(Some(10), true);
+        store.restore(Some(10), Some("g1"));
+        let w = watch(&store);
+        for _ in 0..3 {
+            assert_eq!(w.current_label().as_deref(), Some("epoch-min#10"));
+        }
+        assert_eq!(store.get(), Some(10));
+    }
+
+    /// A fresh advance on the mark that the replica cannot repair stays refused read after
+    /// read: the generation is not accounted for until the store is past the mark.
+    #[test]
+    fn an_unrepaired_advance_on_the_mark_stays_refused() {
+        let store = Store::new(Some(10), false);
+        store.restore(Some(10), Some("g1"));
+        let w = watch(&store);
+        assert!(w.current_label().is_some());
+        store.restore(Some(10), Some("g2"));
+        for _ in 0..3 {
+            assert!(matches!(
+                w.label(),
+                Err(EpochRefusal::Reused { repair: Err(_), .. })
+            ));
+        }
+        store.restore(Some(11), Some("g2"));
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#11"));
     }
 
     /// An operator's advance above the mark is never undone by a repair.
@@ -453,5 +549,34 @@ mod live {
         );
         assert_eq!(long_lived.current_label().as_deref(), Some("epoch-live#6"));
         assert_eq!(restarted.current_label().as_deref(), Some("epoch-live#6"));
+    }
+
+    /// An operator advance that brings the rolled-back key back to exactly a replica's mark
+    /// is told apart by its generation, and moves that replica past the mark.
+    #[test]
+    fn an_advance_back_to_the_mark_is_moved_past_it() {
+        let Some(url) = redis_url() else {
+            eprintln!("SKIP epoch watch live: MCP_RE_TEST_REDIS_URL unset");
+            return;
+        };
+        let key = unique_key("advance-to-mark");
+        let mut operator = admin(&url);
+        set(&mut operator, &key, "9");
+        assert_eq!(crate::trust_epoch::advance::advance(&url, &key), Ok(10));
+        let long_lived = replica(&url, &key);
+        assert_eq!(long_lived.current_label().as_deref(), Some("epoch-live#10"));
+
+        // The rollback restores the counter and the generation beside it.
+        set(&mut operator, &key, "9");
+        redis::cmd("DEL")
+            .arg(crate::trust_epoch::advance::generation_key(&key))
+            .query::<()>(&mut operator)
+            .expect("DEL");
+        assert_eq!(crate::trust_epoch::advance::advance(&url, &key), Ok(10));
+        assert!(
+            long_lived.current_label().is_none(),
+            "the reused label is refused"
+        );
+        assert_eq!(long_lived.current_label().as_deref(), Some("epoch-live#11"));
     }
 }
