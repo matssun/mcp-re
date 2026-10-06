@@ -36,6 +36,7 @@ Run:  python3 scripts/helm_render_gate.py
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -190,6 +191,25 @@ def check_documented_handshake_signing_bounds() -> list[str]:
     for phrase in (f"({consts['DEFAULT_RATE_PER_SEC']}/s, burst {consts['DEFAULT_BURST']})",
                    f"rate 1..={consts['MAX_RATE_PER_SEC']}",
                    f"burst 1..={consts['MAX_BURST']}"):
+        if phrase not in text:
+            problems.append(f"values.yaml does not state the code's {phrase!r}")
+    return problems
+
+
+def check_documented_continuation_bound() -> list[str]:
+    """The default and range `values.yaml` states for `continuationControl.maxLiveEntries`
+    are `ContinuationCapacity`'s, for the same reason as the handshake-signing capacity."""
+    owner = REPO / "mcp-re-proxy" / "src" / "continuation_store" / "capacity.rs"
+    code = owner.read_text(encoding="utf-8")
+    default = re.search(r"max_live_entries: ([0-9_]+),", code)
+    ceiling = re.search(r"pub const MAX_LIVE_ENTRIES: u32 = ([0-9_]+);", code)
+    if not default or not ceiling:
+        return [f"{owner.relative_to(REPO)} declares no default or ceiling; the chart's "
+                "documented continuation bound can no longer be checked against the code"]
+    text = " ".join((CHART / "values.yaml").read_text(encoding="utf-8").replace("#", " ").split())
+    problems = []
+    for phrase in (f"default ({default.group(1).replace('_', '')})",
+                   f"range (1..={ceiling.group(1).replace('_', '')})"):
         if phrase not in text:
             problems.append(f"values.yaml does not state the code's {phrase!r}")
     return problems
@@ -779,6 +799,27 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
         [("--tls-handshake-sign-rate", "0")],
         ["--tls-handshake-sign-burst"],
     ),
+    # The continuation live-entry bound follows the same rule: no chart default, and a
+    # set value — 0 included, which the proxy refuses — reaches the proxy verbatim.
+    (
+        "unset continuation bound omits the flag",
+        merged(),
+        [],
+        ["--continuation-max-live-entries"],
+    ),
+    (
+        "a continuation bound renders verbatim",
+        merged({"continuationControl": {"redisUrl": "rediss://r:6379",
+                                        "maxLiveEntries": 5000}}),
+        [("--continuation-max-live-entries", "5000")],
+        [],
+    ),
+    (
+        "a zero continuation bound reaches the proxy rather than the default",
+        merged({"continuationControl": {"redisUrl": "rediss://r:6379", "maxLiveEntries": 0}}),
+        [("--continuation-max-live-entries", "0")],
+        [],
+    ),
     # The proxy refuses the example.com trust domain itself, so the chart's fenced-fixture
     # acknowledgement must reach it as a flag — and only when given.
     (
@@ -1034,6 +1075,7 @@ def main() -> int:
         ("the documented in-flight default is the code's", check_documented_in_flight_default),
         ("the documented handshake-signing capacity is the code's",
          check_documented_handshake_signing_bounds),
+        ("the documented continuation bound is the code's", check_documented_continuation_bound),
         ("the drain arithmetic budgets the code's audit flush", check_audit_flush_budget),
     ):
         problems = check()

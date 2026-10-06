@@ -82,12 +82,16 @@
 use std::future::Future;
 use std::pin::Pin;
 
+mod capacity;
 mod consumption;
+mod creation;
 mod in_memory;
 mod key;
 mod retained_handles;
 
+pub use capacity::ContinuationCapacity;
 pub use consumption::Consumption;
+pub use creation::Creation;
 
 pub use in_memory::InMemoryContinuationStore;
 // Re-exported rather than relocated: the key and the contract are one public surface to
@@ -115,21 +119,6 @@ impl std::fmt::Display for ContinuationStoreError {
     }
 }
 
-/// What establishing a continuation entry found.
-///
-/// Two named outcomes and not a `bool`: at this boundary a boolean reads as "did it work",
-/// which both arms answer yes to. Deliberately not a [`ContinuationStoreError`] variant
-/// either — a collision is the store answering correctly, and folding it into the error arm
-/// would make it indistinguishable from an outage at the one site that must tell them
-/// apart: an outage may be retried, a taken key never will be.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Creation {
-    /// No live entry existed; this call established one.
-    Stored,
-    /// A live entry already exists under this key. It was NOT replaced.
-    Collision,
-}
-
 /// A boxed store future (the store's ops are `async`, awaited on the serving path).
 pub type ContinuationFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, ContinuationStoreError>> + Send + 'a>>;
@@ -154,14 +143,15 @@ pub trait AsyncContinuationStore: Send + Sync {
     /// ```text
     /// absent or expired key  ->  Ok(Creation::Stored)
     /// live key               ->  Ok(Creation::Collision), existing value unchanged
+    /// capacity reached       ->  Ok(Creation::AtCapacity), nothing recorded
     /// backing failure        ->  Err(Unavailable)
     /// ```
     ///
-    /// Implementations MUST make the test-and-set ATOMIC. A read followed by a write is
-    /// two operations with a window between them, and the shape this refuses — two open
-    /// legs racing on one key — is precisely the shape that lands in that window. Redis
-    /// has the primitive (`SET key value NX PX ttl`); the single-process tier holds its
-    /// map lock across both halves.
+    /// Implementations MUST make the test-and-set ATOMIC, and the capacity check with it.
+    /// A read followed by a write is two operations with a window between them, and the
+    /// shapes this refuses — two open legs racing on one key, or on the last free slot —
+    /// land precisely in that window. The Redis tier runs both in one server-side script;
+    /// the single-process tier holds its map lock across them.
     ///
     /// The outcome is a VALUE rather than an error because `Collision` is not a failure
     /// of the store. The store did exactly what it was asked and is reporting what it
@@ -327,6 +317,7 @@ mod tests {
             match handle.await.expect("the task completed") {
                 Creation::Stored => stored += 1,
                 Creation::Collision => collided += 1,
+                Creation::AtCapacity => panic!("two legs never fill the default capacity"),
             }
         }
         assert_eq!((stored, collided), (1, 1));

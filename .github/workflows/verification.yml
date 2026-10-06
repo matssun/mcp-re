@@ -129,6 +129,8 @@ on:
       - "mcp-re-proxy/src/remote_signer_call/**"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
+      - "mcp-re-proxy/src/redis_continuation_store/**"
+      - "mcp-re-proxy/src/deployment_request/storage/continuation_storage.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
       # runtime installs for the plan it was given, and the composition root's half of it.
       # `startup_posture` is here because the declaration conjunct is part of that claim.
@@ -531,6 +533,8 @@ on:
       - "mcp-re-proxy/src/remote_signer_call/**"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
+      - "mcp-re-proxy/src/redis_continuation_store/**"
+      - "mcp-re-proxy/src/deployment_request/storage/continuation_storage.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
       # runtime installs for the plan it was given, and the composition root's half of it.
       # `startup_posture` is here because the declaration conjunct is part of that claim.

@@ -29,12 +29,17 @@ use super::ContinuationPlane;
 /// unbounded stall in front of a response the backend has already produced.
 const RECORD_ATTEMPTS: usize = 3;
 
+/// What a full live set is reported as.
+const AT_CAPACITY: &str = "the continuation store holds its --continuation-max-live-entries \
+                           of live entries";
+
 impl ContinuationPlane {
     /// CONTINUATION-RECORDED — make an open leg answerable on any replica.
     ///
     /// ```text
     /// ensures   Ok  => the retained handles THIS leg produced are in the shared tier
-    ///           Err => 503 (shared tier unavailable) or 409 (the key is taken), bound
+    ///           Err => 503 (shared tier unavailable or at its live-entry bound) or
+    ///                  409 (the key is taken), bound
     /// refusal   NOT free
     /// ```
     ///
@@ -88,6 +93,17 @@ impl ContinuationPlane {
         // Named so the arm below stays an EXPRESSION: a block arm is a nesting level, and
         // this function is inside a loop inside a method already.
         let conflict = || Refusal::new(McpReError::ContinuationConflict, 409);
+        // A full live set is the store answering, not an outage, so it is not retried: the
+        // slots free as entries are answered or expire, not in the microseconds a retry
+        // spends. It is reported, since an operator sizing the bound needs to see it.
+        let full = || {
+            report(
+                Fault::ContinuationRecord,
+                "record the open leg",
+                &AT_CAPACITY,
+            );
+            Refusal::new(McpReError::ReplayCacheUnavailable, 503)
+        };
         // Arms as expressions, not blocks: `Err` spends an attempt (the transient case the
         // budget exists for), `Collision` stops immediately (a taken key answers the same
         // way every time), `Stored` is the only way out with an answerable leg.
@@ -95,6 +111,7 @@ impl ContinuationPlane {
             match store.create(&key, &bases, i64::from(self.ttl.get())).await {
                 Ok(Creation::Stored) => return Ok(Established::new((), OPEN_LEG_RECORDED)),
                 Ok(Creation::Collision) => return Err(conflict()),
+                Ok(Creation::AtCapacity) => return Err(full()),
                 Err(e) => report(Fault::ContinuationRecord, "record the open leg", &e),
             }
         }
@@ -348,6 +365,36 @@ mod tests {
         assert_unavailable_after_admission(&refusal);
         assert_eq!(store.0.load(Ordering::SeqCst), RECORD_ATTEMPTS);
         assert!((2..=5).contains(&RECORD_ATTEMPTS));
+    }
+
+    /// A full store refuses the leg with the retryable 503 on its FIRST answer, records
+    /// nothing, and leaves the incumbent entries alone.
+    #[tokio::test]
+    async fn a_store_at_its_live_entry_bound_refuses_the_open_leg() {
+        use crate::continuation_store::AsyncContinuationStore;
+        use crate::continuation_store::ContinuationCapacity;
+        use crate::continuation_store::InMemoryContinuationStore;
+
+        let store = std::sync::Arc::new(InMemoryContinuationStore::with_capacity(
+            ContinuationCapacity::new(1).expect("in range"),
+        ));
+        let incumbent = ContinuationKey::of_parts("aud", "someone-else", b"s-0");
+        let handles = RetainedHandles::over(b"prev", b"irr");
+        assert_eq!(
+            store.create(&incumbent, &handles, 300).await.ok(),
+            Some(Creation::Stored)
+        );
+        let plane = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
+        let refusal = record_over(&plane).await;
+        assert_unavailable_after_admission(&refusal);
+        assert_eq!(
+            store.peek(&incumbent).await.ok(),
+            Some(Some(handles)),
+            "the incumbent stays answerable"
+        );
     }
 
     #[tokio::test]

@@ -10,6 +10,7 @@
 
 use super::AsyncContinuationStore;
 use super::Consumption;
+use super::ContinuationCapacity;
 use super::ContinuationFuture;
 use super::ContinuationKey;
 use super::ContinuationStoreError;
@@ -36,23 +37,32 @@ fn poisoned<T>(_: std::sync::PoisonError<T>) -> ContinuationStoreError {
 /// a serving binary would hold a capability the deployment model does not offer and the
 /// posture line does not describe. It exists so the serving path has a non-`None` store in
 /// tests without a Redis dependency.
-#[derive(Default)]
 pub struct InMemoryContinuationStore {
-    /// Entry plus its monotonic expiry instant. The TTL is part of the trait contract — RF-07
-    /// requires a completed or abandoned continuation chain to leave no correlation
-    /// state — and binding it as `_ttl_secs` meant an unanswered continuation lived for
-    /// the whole process lifetime, so a long-running harness accumulated retained
-    /// signature bases that nothing would ever consume. The Redis twin sets a
-    /// real key TTL; this is the same bound, enforced on read.
+    /// Entry plus its monotonic expiry instant. The TTL is part of the trait contract: an
+    /// abandoned continuation leaves no correlation state past it, so an unanswered entry
+    /// does not live for the whole process. The Redis twin sets a real key TTL; this is
+    /// the same bound, enforced on read.
     entries:
         std::sync::Mutex<std::collections::HashMap<String, (RetainedHandles, std::time::Instant)>>,
+    /// The most live entries the map holds, as the Redis twin bounds its live set.
+    capacity: ContinuationCapacity,
 }
 
 impl InMemoryContinuationStore {
-    /// A fresh empty in-memory store.
+    /// A fresh empty in-memory store with the default capacity.
     pub fn new() -> Self {
+        Self::with_capacity(ContinuationCapacity::DEFAULT)
+    }
+
+    /// A fresh empty in-memory store holding at most `capacity` live entries.
+    ///
+    /// The capacity is checked after expired entries are dropped and after the collision
+    /// test, under the same lock, so a full map refuses only a NEW key and an expiry frees
+    /// a slot.
+    pub fn with_capacity(capacity: ContinuationCapacity) -> Self {
         InMemoryContinuationStore {
             entries: std::sync::Mutex::new(std::collections::HashMap::new()),
+            capacity,
         }
     }
 
@@ -64,6 +74,12 @@ impl InMemoryContinuationStore {
     fn expiry(now: std::time::Instant, ttl_secs: i64) -> Option<std::time::Instant> {
         let secs = u64::try_from(ttl_secs).unwrap_or(0);
         now.checked_add(std::time::Duration::from_secs(secs))
+    }
+}
+
+impl Default for InMemoryContinuationStore {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -94,6 +110,10 @@ impl InMemoryContinuationStore {
         entries.retain(|_, (_, expires_at)| *expires_at > now);
         if entries.contains_key(&key) {
             return Ok(Creation::Collision);
+        }
+        let held = u32::try_from(entries.len()).unwrap_or(u32::MAX);
+        if held >= self.capacity.max_live_entries() {
+            return Ok(Creation::AtCapacity);
         }
         entries.insert(key, (bases, expires_at));
         Ok(Creation::Stored)
@@ -151,8 +171,10 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
 mod tests {
     use super::AsyncContinuationStore;
     use super::Consumption;
+    use super::ContinuationCapacity;
     use super::ContinuationKey;
     use super::ContinuationStoreError;
+    use super::Creation;
     use super::InMemoryContinuationStore;
     use super::RetainedHandles;
     use std::future::Future;
@@ -284,5 +306,50 @@ mod tests {
             block_on(store.consume(&ContinuationKey::of_parts("aud", "actor", b"live"))),
             Ok(Consumption::Consumed)
         ));
+    }
+
+    /// The map holds at most its capacity of LIVE entries: a new key past it is refused and
+    /// nothing is recorded, a taken key is still a collision, and answering or expiry frees
+    /// the slot.
+    #[test]
+    fn a_full_map_refuses_a_new_key_until_an_entry_is_answered_or_expires() {
+        let store = InMemoryContinuationStore::with_capacity(
+            ContinuationCapacity::new(2).expect("in range"),
+        );
+        let key = |s: &[u8]| ContinuationKey::of_parts("aud", "actor", s);
+        assert_eq!(
+            block_on(store.create(&key(b"a"), &bases(), 300)).ok(),
+            Some(Creation::Stored)
+        );
+        assert_eq!(
+            block_on(store.create(&key(b"b"), &bases(), -1)).ok(),
+            Some(Creation::Stored)
+        );
+        // `b` has already expired, so the map holds one live entry and `c` fits.
+        assert_eq!(
+            block_on(store.create(&key(b"c"), &bases(), 300)).ok(),
+            Some(Creation::Stored)
+        );
+        assert_eq!(
+            block_on(store.create(&key(b"d"), &bases(), 300)).ok(),
+            Some(Creation::AtCapacity)
+        );
+        assert!(
+            matches!(block_on(store.peek(&key(b"d"))), Ok(None)),
+            "nothing recorded"
+        );
+        assert_eq!(
+            block_on(store.create(&key(b"a"), &bases(), 300)).ok(),
+            Some(Creation::Collision),
+            "a taken key is a collision whether or not the map is full"
+        );
+        assert!(matches!(
+            block_on(store.consume(&key(b"a"))),
+            Ok(Consumption::Consumed)
+        ));
+        assert_eq!(
+            block_on(store.create(&key(b"d"), &bases(), 300)).ok(),
+            Some(Creation::Stored)
+        );
     }
 }

@@ -619,13 +619,17 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPS-047: the MRTR continuation correlation store — trait + in-memory impl
     # always compiled; the Redis backend is redis_replay-gated inside the module.
     "src/continuation_store/mod.rs",
+    "src/continuation_store/capacity.rs",
     "src/continuation_store/consumption.rs",
+    "src/continuation_store/creation.rs",
     "src/continuation_store/in_memory.rs",
     "src/continuation_store/key.rs",
     "src/continuation_store/retained_handles.rs",
-    # ADR-MCPS-047: the Redis-backed continuation store (SET PX + GETDEL). #[cfg(feature
-    # = "redis_replay")] — cfg'd out of the default build, like async_redis_store.
+    # ADR-MCPS-047: the Redis-backed continuation store (bounded create and consume
+    # scripts + GET). #[cfg(feature = "redis_replay")] — cfg'd out of the default build,
+    # like async_redis_store.
     "src/redis_continuation_store.rs",
+    "src/redis_continuation_store/scripts.rs",
     # MCPRE-493 (#414 §4.3): the authoritative admission-state seam — trait + in-memory
     # impl always compiled, so the serving path's §7 currency gate builds by default.
     "src/admission_source/mod.rs",

@@ -173,6 +173,10 @@ spec:
             - "--continuation-control-redis-url"
             - {{ .Values.continuationControl.redisUrl | quote }}
             {{- end }}
+            {{- if not (kindIs "invalid" .Values.continuationControl.maxLiveEntries) }}
+            - "--continuation-max-live-entries"
+            - "{{ .Values.continuationControl.maxLiveEntries }}"
+            {{- end }}
             - "--max-client-cert-lifetime"
             - "{{ .Values.maxClientCertLifetimeSeconds }}"
             # The client certificate's chain, CRL status and validity window are

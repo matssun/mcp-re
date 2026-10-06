@@ -15209,3 +15209,19 @@ control = "src/lib.rs#signing_plane::epoch_watch::live::a_rollback_is_refused_re
 decision = "new-proposition"
 proposition = "NP-150"
 recorded = "2026-10-06"
+
+[[disposition]]
+id = "CD-20403"
+project = "mcp-re-proxy"
+control = "tests/integration_ext/main.rs#redis_continuation_e2e_test::the_live_set_bounds_open_legs_across_replicas_and_frees_on_consume_and_expiry"
+decision = "new-proposition"
+proposition = "NP-150"
+recorded = "2026-10-06"
+
+[[disposition]]
+id = "CD-20404"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::storage_flags::tests::a_stated_continuation_bound_keeps_its_provenance"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-10-06"

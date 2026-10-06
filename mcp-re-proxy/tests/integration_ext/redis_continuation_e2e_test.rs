@@ -16,7 +16,10 @@
 //!     once across replicas;
 //!   * `create` must apply a bounded TTL, so an unanswered continuation does not
 //!     linger forever, and must refuse a LIVE key rather than overwrite it — the
-//!     atomicity of that refusal is `SET NX`'s, which no in-memory tier can witness.
+//!     atomicity of that refusal is the create script's, which no in-memory tier can
+//!     witness;
+//!   * `create` must refuse a new key once the live set holds the store's capacity, and
+//!     expiry and consumption must return slots, across replicas racing for the last one.
 //!
 //! None of that is observable from the in-memory store, and the serving-path tests
 //! (`mrt_continuation_serving_test.rs`) run against the in-memory one. Until this
@@ -26,6 +29,7 @@
 
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
 use mcp_re_proxy::continuation_store::Consumption;
+use mcp_re_proxy::continuation_store::ContinuationCapacity;
 use mcp_re_proxy::continuation_store::ContinuationKey;
 use mcp_re_proxy::continuation_store::Creation;
 use mcp_re_proxy::continuation_store::RetainedHandles;
@@ -88,7 +92,8 @@ fn actor_b() -> mcp_re_http_profile::VerifiedMcpRequest {
 }
 
 /// A per-run suffix so each run targets a key space of its own: entries live for
-/// their TTL, and these tests assert a first `peek` finds what this run stored.
+/// their TTL, and these tests assert a first `peek` finds what this run stored. Each test
+/// also names its own state, because tests run in parallel and two can read one instant.
 fn run_id() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -125,10 +130,10 @@ fn bases(tag: &str) -> RetainedHandles {
 /// Two INDEPENDENT connections to the same Redis — replica A and replica B, which is
 /// the whole point of the shared tier.
 async fn two_replicas(url: &str) -> (RedisContinuationStore, RedisContinuationStore) {
-    let a = RedisContinuationStore::connect(url)
+    let a = RedisContinuationStore::connect(url, ContinuationCapacity::DEFAULT)
         .await
         .expect("replica A connects to Redis");
-    let b = RedisContinuationStore::connect(url)
+    let b = RedisContinuationStore::connect(url, ContinuationCapacity::DEFAULT)
         .await
         .expect("replica B connects to Redis");
     (a, b)
@@ -141,7 +146,7 @@ async fn peek_is_non_destructive_and_consume_is_one_shot_across_replicas() {
         return;
     };
     let (a, b) = two_replicas(&url).await;
-    let state = format!("state-{}", run_id());
+    let state = format!("state-one-shot-{}", run_id());
     let key = ContinuationKey::for_request(AUD, &actor_a(), state.as_bytes());
     let expected = bases("one-shot");
 
@@ -195,7 +200,7 @@ async fn one_actors_continuation_is_not_reachable_by_another() {
         return;
     };
     let (a, b) = two_replicas(&url).await;
-    let state = format!("state-{}", run_id());
+    let state = format!("state-scoped-{}", run_id());
     let a_key = ContinuationKey::for_request(AUD, &actor_a(), state.as_bytes());
     let b_key = ContinuationKey::for_request(AUD, &actor_b(), state.as_bytes());
     assert_ne!(
@@ -231,10 +236,10 @@ async fn a_recorded_continuation_carries_a_bounded_ttl() {
         eprintln!("SKIP: MCP_RE_TEST_REDIS_URL unset — live Redis continuation proof skipped");
         return;
     };
-    let store = RedisContinuationStore::connect(&url)
+    let store = RedisContinuationStore::connect(&url, ContinuationCapacity::DEFAULT)
         .await
         .expect("connects to Redis");
-    let state = format!("state-{}", run_id());
+    let state = format!("state-ttl-{}", run_id());
     let key = ContinuationKey::for_request(AUD, &actor_a(), state.as_bytes());
 
     store
@@ -268,7 +273,7 @@ async fn two_replicas_opening_one_key_yield_exactly_one_stored() {
         return;
     };
     let (a, b) = two_replicas(&url).await;
-    let state = format!("state-{}", run_id());
+    let state = format!("state-race-{}", run_id());
     let key = ContinuationKey::for_request(AUD, &actor_a(), state.as_bytes());
 
     let winner = bases("replica-a");
@@ -293,4 +298,105 @@ async fn two_replicas_opening_one_key_yield_exactly_one_stored() {
         b.consume(&key).await.expect("B consumes"),
         Consumption::Consumed
     );
+}
+
+/// The same server on logical database 15, which only the capacity proof uses: the live
+/// set is one per database, and the other tests here leave 300-second entries in theirs.
+fn capacity_database(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").expect("a redis URL");
+    let authority = rest.split('/').next().unwrap_or(rest);
+    format!("{scheme}://{authority}/15")
+}
+
+/// R27-3, live: the live set is a hard global bound across replicas.
+///
+/// Sequential on purpose — one database, emptied first — so the counts below are this
+/// test's alone. Twelve open legs race from two replicas for eight slots and exactly eight
+/// are stored; a refused key was recorded nowhere; consuming one entry returns its slot;
+/// and entries that expire return theirs without anything consuming them.
+#[tokio::test]
+async fn the_live_set_bounds_open_legs_across_replicas_and_frees_on_consume_and_expiry() {
+    let Some(url) = redis_url() else {
+        eprintln!("SKIP: MCP_RE_TEST_REDIS_URL unset — live Redis continuation proof skipped");
+        return;
+    };
+    let url = capacity_database(&url);
+    let mut admin = redis::Client::open(url.as_str())
+        .expect("client")
+        .get_multiplexed_async_connection()
+        .await
+        .expect("admin connects");
+    let _: () = redis::cmd("FLUSHDB")
+        .query_async(&mut admin)
+        .await
+        .expect("database 15 emptied");
+
+    let capacity = ContinuationCapacity::new(8).expect("in range");
+    let a = std::sync::Arc::new(
+        RedisContinuationStore::connect(&url, capacity)
+            .await
+            .expect("A"),
+    );
+    let b = std::sync::Arc::new(
+        RedisContinuationStore::connect(&url, capacity)
+            .await
+            .expect("B"),
+    );
+    let key = |i: u32| ContinuationKey::for_request(AUD, &actor_a(), format!("cap-{i}").as_bytes());
+
+    let mut legs = tokio::task::JoinSet::new();
+    for i in 0..12 {
+        let store = if i % 2 == 0 { a.clone() } else { b.clone() };
+        legs.spawn(async move { (i, store.create(&key(i), &bases("cap"), 300).await) });
+    }
+    let mut stored = Vec::new();
+    let mut refused = Vec::new();
+    while let Some(joined) = legs.join_next().await {
+        match joined.expect("leg ran") {
+            (i, Ok(Creation::Stored)) => stored.push(i),
+            (i, Ok(Creation::AtCapacity)) => refused.push(i),
+            other => panic!("a fresh key is stored or refused for capacity, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        stored.len(),
+        8,
+        "exactly the capacity is stored: {stored:?}"
+    );
+    assert_eq!(refused.len(), 4, "the rest are refused: {refused:?}");
+    for i in &refused {
+        assert_eq!(
+            a.peek(&key(*i)).await.expect("peek"),
+            None,
+            "a refused key holds nothing"
+        );
+    }
+
+    // Consuming returns a slot; the next new key fits, and the one after it does not.
+    assert_eq!(
+        a.consume(&key(stored[0])).await.expect("consume"),
+        Consumption::Consumed
+    );
+    assert_eq!(
+        b.create(&key(100), &bases("cap"), 1).await.expect("create"),
+        Creation::Stored
+    );
+    assert_eq!(
+        b.create(&key(101), &bases("cap"), 1).await.expect("create"),
+        Creation::AtCapacity
+    );
+
+    // Expiry returns a slot with nothing consuming it.
+    tokio::time::sleep(std::time::Duration::from_millis(1_400)).await;
+    assert_eq!(
+        a.create(&key(102), &bases("cap"), 300)
+            .await
+            .expect("create"),
+        Creation::Stored
+    );
+
+    let _: () = redis::cmd("FLUSHDB")
+        .query_async(&mut admin)
+        .await
+        .expect("cleanup");
 }

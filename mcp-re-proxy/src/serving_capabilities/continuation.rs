@@ -65,7 +65,7 @@ pub(crate) fn mrtr_continuation_store(
     plan: &crate::startup_plan::ContinuationControlPlan,
     control: Option<&crate::control_runtime::ControlRuntime>,
 ) -> Result<Established<Arc<dyn crate::continuation_store::AsyncContinuationStore>>, String> {
-    let Some(url) = plan.shared_store() else {
+    let Some((url, capacity)) = plan.shared() else {
         return Ok(Established::off(CONTINUATION_STORE_OFF));
     };
     let handle = control
@@ -74,13 +74,15 @@ pub(crate) fn mrtr_continuation_store(
         )?
         .handle();
     let store = handle
-        .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
+        .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url, capacity))
         .map_err(|e| format!("connect redis continuation store: {e}"))?;
     Ok(Established::on(
         Arc::new(store) as Arc<dyn crate::continuation_store::AsyncContinuationStore>,
         format!(
-            "MRTR continuation correlation = ON (shared async Redis backend, TTL {}s)",
-            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS
+            "MRTR continuation correlation = ON (shared async Redis backend, TTL {}s, at most \
+             {} live entries)",
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+            capacity.max_live_entries()
         ),
     ))
 }

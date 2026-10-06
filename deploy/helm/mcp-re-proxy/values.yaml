@@ -88,8 +88,15 @@ replay:
 # Same scheme rule as replay.redisUrl, governed by the same `replay.allowPlaintextRedis`
 # escape hatch: the correlation record binds an answer leg to the request that opened it,
 # so an unauthenticated peer who can write it can redirect a continuation.
+#
+# `maxLiveEntries` bounds how many continuation entries the shared store holds at once;
+# an open leg past it is refused with 503 until entries are answered or expire. Null
+# renders no flag and the proxy's default (100000) applies; a stated value is passed
+# through verbatim and the proxy owns the range (1..=10000000), refusing startup outside
+# it, and refusing it with no `redisUrl` to bound. Needs Redis 5 or later.
 continuationControl:
   redisUrl: ""
+  maxLiveEntries: null
 
 # Trust revocation (ADR-MCPS-021 / MCPS-84). The push tier + a trust-epoch Redis
 # source flushes every replica's trust cache on an epoch advance (bounded T on

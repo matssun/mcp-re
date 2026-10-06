@@ -8379,13 +8379,16 @@ class = "V0"
 description = "The MRTR continuation correlation entry is reachable only by the actor the verifier resolved, and a read that does not admit an answer leg does not destroy it."
 paths = [
   "mcp-re-proxy/src/continuation_store/mod.rs",
+  "mcp-re-proxy/src/continuation_store/creation.rs",
   "mcp-re-proxy/src/continuation_store/in_memory.rs",
   "mcp-re-proxy/src/continuation_store/key.rs",
   "mcp-re-proxy/src/continuation_store/retained_handles.rs",
   # The shared-tier arm. In the closure because the key derivation and the peek/consume
   # split are claims about the STORE, and a backend that implemented them differently
-  # would falsify them under a fingerprint that had not moved.
+  # would falsify them under a fingerprint that had not moved. The scripts are the
+  # commands that backend runs.
   "mcp-re-proxy/src/redis_continuation_store.rs",
+  "mcp-re-proxy/src/redis_continuation_store/scripts.rs",
 ]
 exported_contracts = []
 # TWO evidence classes. The key derivation's whole security content is three `hasher.update`
@@ -8537,6 +8540,7 @@ paths = [
   "mcp-re-proxy/src/continuation_store/consumption.rs",
   "mcp-re-proxy/src/continuation_store/in_memory.rs",
   "mcp-re-proxy/src/redis_continuation_store.rs",
+  "mcp-re-proxy/src/redis_continuation_store/scripts.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -8552,6 +8556,41 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::the_delete_count_is_the_one_shot_verdict",
   "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::every_error_reply_fails_closed_as_unavailable",
   "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::consume_answers_as_the_single_process_tier_answers",
+]
+
+# Owner Ruling 27.3 (finding 2942e46a): the continuation store's live population is bounded.
+[[unit]]
+id = "proxy.continuation_capacity"
+class = "V0"
+description = "The MRTR continuation store holds at most its `ContinuationCapacity` of live entries — the operator's `--continuation-max-live-entries` within `1..=10000000`, refused outside it and refused with no shared store to bound, 100000 when unstated — and an open leg past it is refused with 503 and records nothing. A taken key is still a collision, existing entries stay readable and consumable, and answering or expiry returns a slot. On the shared tier the prune, the count, the capacity test and the write are one server-side script, so replicas cannot race past the bound, and the count is derived from live members by the server's clock rather than kept, so it cannot drift. It is a GLOBAL bound: it establishes no fairness among actors."
+paths = [
+  "mcp-re-proxy/src/continuation_store/capacity.rs",
+  "mcp-re-proxy/src/continuation_store/creation.rs",
+  "mcp-re-proxy/src/continuation_store/in_memory.rs",
+  "mcp-re-proxy/src/redis_continuation_store.rs",
+  "mcp-re-proxy/src/redis_continuation_store/scripts.rs",
+  "mcp-re-proxy/src/config_state/continuation_control.rs",
+  "mcp-re-proxy/src/serving_capabilities/continuation.rs",
+  "mcp-re-proxy/src/http_profile_serve/continuation/open_leg.rs",
+  "mcp-re-proxy/src/deployment_request/storage/continuation_storage.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/continuation_capacity/bounded",
+  "mutation://proxy/continuation_capacity/bounded",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#continuation_store::capacity::tests::a_bound_within_range_is_kept_and_the_default_is_in_range",
+  "//mcp-re-proxy:proxy_unit_test#continuation_store::capacity::tests::zero_and_values_past_the_ceiling_are_refused",
+  "//mcp-re-proxy:proxy_unit_test#continuation_store::in_memory::tests::a_full_map_refuses_a_new_key_until_an_entry_is_answered_or_expires",
+  "//mcp-re-proxy:proxy_unit_test#config_state::continuation_control::tests::the_shared_store_carries_a_bound_and_an_unusable_bound_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::open_leg::tests::a_store_at_its_live_entry_bound_refuses_the_open_leg",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::scripts::tests::the_live_set_is_in_the_keyspace_and_is_no_entrys_key",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::scripts::tests::the_create_script_prunes_then_counts_then_writes_with_nx_and_px",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::a_full_live_set_answers_at_capacity_and_an_unknown_reply_is_unavailable",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::the_configured_capacity_is_the_bound_the_script_enforces",
 ]
 
 # Owner Ruling 19 B4c: the identity the actor seam is handed has one producer.

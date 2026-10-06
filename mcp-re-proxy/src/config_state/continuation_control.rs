@@ -5,8 +5,8 @@
 //!
 //! | State | Required | Forbidden | Guards |
 //! |---|---|---|---|
-//! | `Disabled` | — | the continuation locator | — |
-//! | `Redis` | the continuation locator | — | scheme-bearing URL |
+//! | `Disabled` | — | the continuation locator, a live-entry bound | — |
+//! | `Redis` | the continuation locator | — | scheme-bearing URL; bound within range |
 //!
 //! **`Disabled` is a state, not missing configuration.** MRTR continuation correlation is
 //! an OPTIONAL capability an operator selects with `--continuation-control-redis-url`, so
@@ -31,6 +31,7 @@
 //! and a crate feature with `Replay` is not a semantic edge. The endpoints may name the
 //! same Redis, and when they do that is an operator's deployment choice.
 
+use crate::continuation_store::ContinuationCapacity;
 use crate::deployment_request::{DeploymentRequest, RedactedLocator, SharedStoreRequest};
 
 /// Which continuation-control state a configuration requests.
@@ -57,6 +58,8 @@ enum ContinuationKind {
     Shared {
         /// Where retained continuation bases live.
         endpoint: SharedStoreRequest,
+        /// How many live entries that store may hold.
+        capacity: ContinuationCapacity,
     },
 }
 
@@ -75,8 +78,8 @@ impl ContinuationControlState {
     pub fn continuation_plan(&self) -> ContinuationControlPlan {
         match &self.kind {
             ContinuationKind::Disabled => ContinuationControlPlan { store: None },
-            ContinuationKind::Shared { endpoint } => ContinuationControlPlan {
-                store: Some(endpoint.clone()),
+            ContinuationKind::Shared { endpoint, capacity } => ContinuationControlPlan {
+                store: Some((endpoint.clone(), *capacity)),
             },
         }
     }
@@ -91,7 +94,7 @@ impl ContinuationControlState {
 /// an operator points both at the same Redis (CF-12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContinuationControlPlan {
-    store: Option<SharedStoreRequest>,
+    store: Option<(SharedStoreRequest, ContinuationCapacity)>,
 }
 
 impl ContinuationControlPlan {
@@ -99,7 +102,15 @@ impl ContinuationControlPlan {
     /// store is installed and a continuation-dependent leg is refused as a fact about the
     /// deployment (THM-0093).
     pub fn shared_store(&self) -> Option<&str> {
-        self.store.as_ref().map(SharedStoreRequest::locator)
+        self.store.as_ref().map(|(endpoint, _)| endpoint.locator())
+    }
+
+    /// The shared store to establish and the live-entry bound it is established with, or
+    /// `None` when none was selected.
+    pub fn shared(&self) -> Option<(&str, ContinuationCapacity)> {
+        self.store
+            .as_ref()
+            .map(|(endpoint, capacity)| (endpoint.locator(), *capacity))
     }
 
     /// Whether establishing this plan needs the shared control runtime.
@@ -127,10 +138,22 @@ fn is_scheme_bearing(locator: &str) -> bool {
 /// from an unchecked locator.
 ///
 /// Only the build-independent shape of the URL is checked. Whether this binary has a Redis
-/// client is layer B, and whether the store answers is layer C.
+/// client is layer B, and whether the store answers is layer C. A stated live-entry bound
+/// must be in range, and with no store it bounds nothing and is refused.
 pub fn classify_and_validate(
     config: &DeploymentRequest,
 ) -> (Option<ContinuationControlState>, Vec<String>) {
+    let stated = config.continuation_control.max_live_entries;
+    if let (None, Some(n)) = (&config.continuation_control.shared, stated) {
+        return (
+            None,
+            vec![format!(
+                "--continuation-max-live-entries {n} bounds the shared \
+                 continuation store, and none is selected: give \
+                 --continuation-control-redis-url, or omit the bound"
+            )],
+        );
+    }
     let Some(store) = config.continuation_control.shared.as_ref() else {
         return (
             Some(ContinuationControlState {
@@ -138,6 +161,11 @@ pub fn classify_and_validate(
             }),
             Vec::new(),
         );
+    };
+    let capacity = match stated.map(ContinuationCapacity::new) {
+        None => ContinuationCapacity::DEFAULT,
+        Some(Ok(capacity)) => capacity,
+        Some(Err(refusal)) => return (None, vec![refusal]),
     };
     let url = store.locator();
     if !is_scheme_bearing(url) {
@@ -155,6 +183,7 @@ pub fn classify_and_validate(
         Some(ContinuationControlState {
             kind: ContinuationKind::Shared {
                 endpoint: store.clone(),
+                capacity,
             },
         }),
         Vec::new(),
@@ -193,6 +222,46 @@ mod tests {
         );
         assert!(violations.is_empty(), "{violations:?}");
         assert!(state.is_shared());
+    }
+
+    /// A shared store carries its live-entry bound: the stated one when in range, the
+    /// default when none was stated. Out of range, or stated with no store to bound, is
+    /// refused and names no state.
+    #[test]
+    fn the_shared_store_carries_a_bound_and_an_unusable_bound_is_refused() {
+        let shared = |c: &mut DeploymentRequest| {
+            c.continuation_control.shared = Some(SharedStoreRequest::redis("redis://h:6379"));
+        };
+        let (state, _) = run(shared);
+        assert_eq!(
+            state.expect("legal").continuation_plan().shared(),
+            Some(("redis://h:6379", ContinuationCapacity::DEFAULT))
+        );
+        let (state, _) = run(|c| {
+            shared(c);
+            c.continuation_control.max_live_entries = Some(50);
+        });
+        assert_eq!(
+            state.expect("legal").continuation_plan().shared(),
+            Some((
+                "redis://h:6379",
+                ContinuationCapacity::new(50).expect("in range")
+            ))
+        );
+        let (state, _) = run(|_| {});
+        assert_eq!(state.expect("legal").continuation_plan().shared(), None);
+
+        for n in [0, u64::from(ContinuationCapacity::MAX_LIVE_ENTRIES) + 1] {
+            let (state, violations) = run(|c| {
+                shared(c);
+                c.continuation_control.max_live_entries = Some(n);
+            });
+            assert!(state.is_none(), "{n} is out of range");
+            assert!(violations[0].contains("--continuation-max-live-entries"));
+        }
+        let (state, violations) = run(|c| c.continuation_control.max_live_entries = Some(50));
+        assert!(state.is_none(), "a bound with no store bounds nothing");
+        assert!(violations[0].contains("--continuation-control-redis-url"));
     }
 
     /// The negative control for CF-12: absence is a posture the model names, so the

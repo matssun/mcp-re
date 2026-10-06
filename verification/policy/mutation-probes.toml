@@ -6596,12 +6596,12 @@ conjunct = "in a build that carries the backend, a selected continuation store t
 path = "mcp-re-proxy/src/serving_capabilities/continuation.rs"
 anchor = """
     let store = handle
-        .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
+        .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url, capacity))
         .map_err(|e| format!("connect redis continuation store: {e}"))?;
 """
 weakening = """
-    let Ok(store) =
-        handle.block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
+    let Ok(store) = handle
+        .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url, capacity))
     else {
         return Ok(Established::off(CONTINUATION_STORE_OFF));
     };
@@ -9040,7 +9040,7 @@ theorem = "THM-0077"
 conjunct = "the continuation-control machine decides only its own subject — the replay store does not switch it on"
 path = "mcp-re-proxy/src/config_state/continuation_control.rs"
 anchor = "            Some(ContinuationControlState {\n                kind: ContinuationKind::Disabled,\n            }),\n"
-weakening = "            Some(ContinuationControlState {\n                kind: match &config.replay.store {\n                    Some(store) => ContinuationKind::Shared {\n                        endpoint: SharedStoreRequest::redis(store.locator()),\n                    },\n                    None => ContinuationKind::Disabled,\n                },\n            }),\n"
+weakening = "            Some(ContinuationControlState {\n                kind: match &config.replay.store {\n                    Some(store) => ContinuationKind::Shared {\n                        endpoint: SharedStoreRequest::redis(store.locator()),\n                        capacity: ContinuationCapacity::DEFAULT,\n                    },\n                    None => ContinuationKind::Disabled,\n                },\n            }),\n"
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::continuation_control::tests::the_replay_tier_does_not_reach_this_machine",
 ]
@@ -12309,4 +12309,98 @@ expect_red = [
 note = """
 A rollback is repaired back to the mark: every replica re-enters the label it minted before the
 rollback, and an operator's INCR issued against the rolled-back store is absorbed by the repair.
+"""
+
+[[probe]]
+id = "M503-proxy-a-full-in-process-store-still-stores"
+unit = "proxy.continuation_capacity"
+conjunct = "an open leg past the capacity is refused and records nothing"
+path = "mcp-re-proxy/src/continuation_store/in_memory.rs"
+anchor = """
+        if held >= self.capacity.max_live_entries() {
+"""
+weakening = """
+        if held > u32::MAX.saturating_sub(1) {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#continuation_store::in_memory::tests::a_full_map_refuses_a_new_key_until_an_entry_is_answered_or_expires",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::continuation::open_leg::tests::a_store_at_its_live_entry_bound_refuses_the_open_leg",
+]
+note = """
+The capacity is never consulted: the store grows without bound and the open leg is never refused.
+"""
+
+[[probe]]
+id = "M504-proxy-the-shared-create-script-never-counts"
+unit = "proxy.continuation_capacity"
+conjunct = "on the shared tier the capacity test is inside the one create script"
+path = "mcp-re-proxy/src/redis_continuation_store/scripts.rs"
+anchor = """
+if redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[3]) then return -1 end \\
+"""
+weakening = """
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::scripts::tests::the_create_script_prunes_then_counts_then_writes_with_nx_and_px",
+]
+note = """
+The create script never refuses: the shared tier's population is bounded only by the verified
+request rate times the TTL. The unit lane sees the script's text; that the script refuses on a real
+server is redis_continuation_e2e_test's, in the live-infra lane.
+"""
+
+[[probe]]
+id = "M505-proxy-the-shared-create-script-never-prunes"
+unit = "proxy.continuation_capacity"
+conjunct = "expiry returns a slot: the count is of members whose expiry is still in the future"
+path = "mcp-re-proxy/src/redis_continuation_store/scripts.rs"
+anchor = """
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now) \\
+"""
+weakening = """
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::scripts::tests::the_create_script_prunes_then_counts_then_writes_with_nx_and_px",
+]
+note = """
+Expired entries are never pruned from the live set, so every slot an unanswered leg takes is lost
+for good and the store refuses every open leg once that many have expired. The behaviour on a real
+server is redis_continuation_e2e_test's, in the live-infra lane.
+"""
+
+[[probe]]
+id = "M506-proxy-a-full-shared-store-reads-as-stored"
+unit = "proxy.continuation_capacity"
+conjunct = "the shared tier's capacity refusal is its own answer"
+path = "mcp-re-proxy/src/redis_continuation_store.rs"
+anchor = """
+                Ok(-1) => Ok(Creation::AtCapacity),
+"""
+weakening = """
+                Ok(-1) => Ok(Creation::Stored),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_continuation_store::tests::a_full_live_set_answers_at_capacity_and_an_unknown_reply_is_unavailable",
+]
+note = """
+A refused write is reported as stored: the open leg returns an answerable continuation whose handles
+were never retained.
+"""
+
+[[probe]]
+id = "M507-proxy-the-operators-continuation-bound-is-ignored"
+unit = "proxy.continuation_capacity"
+conjunct = "the operator's stated bound is the one the store is built with"
+path = "mcp-re-proxy/src/config_state/continuation_control.rs"
+anchor = """
+        Some(Ok(capacity)) => capacity,
+"""
+weakening = """
+        Some(Ok(_)) => ContinuationCapacity::DEFAULT,
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::continuation_control::tests::the_shared_store_carries_a_bound_and_an_unusable_bound_is_refused",
+]
+note = """
+The operator's --continuation-max-live-entries is accepted and then ignored.
 """

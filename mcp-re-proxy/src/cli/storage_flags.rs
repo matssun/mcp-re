@@ -27,6 +27,7 @@ pub(super) struct StorageFlags {
     durability: Option<ReplayDurabilityTier>,
     replica_clock_divergence_secs: Option<i64>,
     continuation_url: Option<String>,
+    continuation_max_live_entries: Option<u64>,
     trust_epoch_url: Option<String>,
     trust_epoch_key: Option<String>,
 }
@@ -48,6 +49,7 @@ impl StorageFlags {
                 | "--replay-durability-tier"
                 | "--replay-clock-divergence-secs"
                 | "--continuation-control-redis-url"
+                | "--continuation-max-live-entries"
                 | "--trust-epoch-redis-url"
                 | "--trust-epoch-key"
         )
@@ -67,6 +69,9 @@ impl StorageFlags {
                 self.replica_clock_divergence_secs = Some(divergence_secs(value)?)
             }
             "--continuation-control-redis-url" => self.continuation_url = held(),
+            "--continuation-max-live-entries" => {
+                self.continuation_max_live_entries = Some(max_live_entries(value)?)
+            }
             "--trust-epoch-redis-url" => self.trust_epoch_url = held(),
             _ => self.trust_epoch_key = held(),
         }
@@ -86,6 +91,7 @@ impl StorageFlags {
             )?,
             continuation: ContinuationStoreRequest {
                 shared: shared(self.continuation_url),
+                max_live_entries: self.continuation_max_live_entries,
             },
             trust_epoch: trust_epoch(self.trust_epoch_url, self.trust_epoch_key)?,
         })
@@ -97,6 +103,13 @@ fn divergence_secs(value: &str) -> Result<i64, String> {
     value
         .parse()
         .map_err(|_| format!("--replay-clock-divergence-secs must be an integer, got {value:?}"))
+}
+
+/// `--continuation-max-live-entries`, as the integer the continuation owner bounds.
+fn max_live_entries(value: &str) -> Result<u64, String> {
+    value.parse().map_err(|_| {
+        format!("--continuation-max-live-entries must be a positive integer, got {value:?}")
+    })
 }
 
 /// The replay store and the durability claimed for it.
@@ -200,6 +213,29 @@ mod tests {
         assert_eq!(said.replica_clock_divergence_secs, Some(9));
         let silent = replay(None, None, None, None).expect("coherent");
         assert_eq!(silent.replica_clock_divergence_secs, None);
+    }
+
+    /// A stated live-entry bound travels as stated and silence stays silence; a value that
+    /// is not a non-negative integer is refused here, its range by the continuation owner.
+    #[test]
+    fn a_stated_continuation_bound_keeps_its_provenance() {
+        let mut flags = StorageFlags::default();
+        assert!(StorageFlags::owns("--continuation-max-live-entries"));
+        flags
+            .take("--continuation-max-live-entries", "500")
+            .expect("an integer");
+        let said = flags.finish().expect("coherent").continuation;
+        assert_eq!(said.max_live_entries, Some(500));
+        let silent = StorageFlags::default()
+            .finish()
+            .expect("coherent")
+            .continuation;
+        assert_eq!(silent.max_live_entries, None);
+        for bad in ["-1", "many", ""] {
+            assert!(StorageFlags::default()
+                .take("--continuation-max-live-entries", bad)
+                .is_err());
+        }
     }
 
     /// The spelling a refusal names is the one the parser reads to produce that store.

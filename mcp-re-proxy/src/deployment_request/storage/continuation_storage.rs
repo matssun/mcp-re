@@ -17,6 +17,10 @@ use super::SharedStoreRequest;
 pub struct ContinuationStoreRequest {
     /// The shared store retained continuation bases live in, where one is configured.
     pub shared: Option<SharedStoreRequest>,
+    /// The most live entries the shared store may hold, as the operator stated it. `None`
+    /// is "said nothing"; the continuation owner checks a stated value and supplies the
+    /// default.
+    pub max_live_entries: Option<u64>,
 }
 
 #[cfg(test)]
@@ -36,6 +40,7 @@ mod tests {
     fn one_redis_can_serve_two_roles_without_the_roles_becoming_one() {
         let continuation = ContinuationStoreRequest {
             shared: Some(SharedStoreRequest::redis("redis://h:6379")),
+            max_live_entries: None,
         };
         let admission = crate::deployment_request::AdmissionGateRequest {
             authority_kid: "a".to_string(),
@@ -54,6 +59,7 @@ mod tests {
 
         let distinct_continuation = ContinuationStoreRequest {
             shared: Some(SharedStoreRequest::redis("redis://c:6379")),
+            max_live_entries: None,
         };
         let distinct_admission = crate::deployment_request::AdmissionGateRequest {
             authority_kid: "a".to_string(),

@@ -60,6 +60,18 @@ and cannot see a peer's nonces).
    rather than documented. Two managed defaults will fail startup until you act:
    Memorystore ships `volatile-lru`, and ElastiCache renames `CONFIG` so the policy
    cannot be read at all. Set it on the instance before pointing a fleet at it.
+
+   If the fleet selects the shared MRTR continuation store
+   (`--continuation-control-redis-url`, Helm `continuationControl.redisUrl`), that Redis
+   must be **version 5 or later**: the store's create and consume steps are server-side
+   scripts that read the server clock before writing, which needs effects replication.
+   The store holds at most `--continuation-max-live-entries` live entries (Helm
+   `continuationControl.maxLiveEntries`; default 100000, range 1..=10000000), counted
+   fleet-wide on the server. An open leg past the bound is refused with
+   `replay_cache_unavailable` (503) and recorded nowhere, and the refusal is reported on
+   stderr; slots return as legs are answered or expire. The bound is global: one verified
+   actor opening legs it never answers can occupy it, so size it against the fleet's
+   unanswered-leg rate times the 300-second TTL.
 2. A Kubernetes **Secret** with the proxy's material: `tls.crt`, `tls.key`,
    `client-ca.pem`, `trust.json`, `signing-seed`.
 3. A container image of `mcp-re-proxy` built with the `redis_replay` feature.
