@@ -32,6 +32,13 @@
 //! must not happen, and reporting the outage as an unknown keyid would send the operator
 //! hunting a client bug. The verifier maps `Unavailable` to
 //! `mcp-re.trust_resolver_unavailable`, which is what a stale store actually is.
+//!
+//! # Ordering
+//!
+//! Every load and store of the four atomics is `SeqCst`, so all of them sit in one total
+//! order: a verification whose read follows a marking in that order observes it. No
+//! weaker ordering is used on the read side, because the latch is the security fact and
+//! its reads are not the hot cost of a verification.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -86,10 +93,10 @@ impl TrustStoreFreshness {
     }
 
     fn overdue(&self) -> bool {
-        let bound = self.success_bound_ms.load(Ordering::Relaxed);
+        let bound = self.success_bound_ms.load(Ordering::SeqCst);
         let since = self
             .elapsed_ms()
-            .saturating_sub(self.last_success_ms.load(Ordering::Relaxed));
+            .saturating_sub(self.last_success_ms.load(Ordering::SeqCst));
         bound != 0 && since > bound
     }
 
@@ -118,9 +125,7 @@ impl TrustStoreFreshness {
     }
 
     pub(super) fn is_stale(&self) -> bool {
-        self.terminal.load(Ordering::Relaxed)
-            || self.stale.load(Ordering::Relaxed)
-            || self.overdue()
+        self.terminal.load(Ordering::SeqCst) || self.stale.load(Ordering::SeqCst) || self.overdue()
     }
 }
 /// The request-trust resolver, refusing to answer at all once the store behind it has

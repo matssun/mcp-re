@@ -50,7 +50,7 @@
 mod refusal;
 
 use crate::trust_epoch::raise::EpochRaiser;
-use crate::trust_epoch::raise::EpochState;
+use crate::trust_epoch::EpochState;
 use mcp_re_http_profile::custody::TrustEpoch;
 pub(in crate::signing_plane) use refusal::EpochRefusal;
 
@@ -183,9 +183,9 @@ mod tests {
     use super::DelegatedEpochWatch;
     use super::EpochRefusal;
     use crate::trust_epoch::raise::EpochRaiser;
-    use crate::trust_epoch::raise::EpochState;
     use crate::trust_epoch::EpochReadError;
     use crate::trust_epoch::EpochReader;
+    use crate::trust_epoch::EpochState;
     use std::sync::Arc;
     use std::sync::Mutex;
 
@@ -232,16 +232,16 @@ mod tests {
                 .get()
                 .ok_or_else(|| EpochReadError("key absent".into()))
         }
-    }
 
-    impl EpochRaiser for Replica {
         fn read_state(&self) -> Result<EpochState, EpochReadError> {
             Ok(EpochState {
                 counter: self.read_epoch()?,
                 generation: self.0.generation.lock().expect("store").clone(),
             })
         }
+    }
 
+    impl EpochRaiser for Replica {
         fn raise_past(&self, mark: i64, to: i64) -> Result<i64, EpochReadError> {
             if !self.0.writable {
                 return Err(EpochReadError(

@@ -3229,10 +3229,10 @@ unit = "proxy.trust_epoch_source"
 conjunct = "a change of the shared epoch — any change, a regressed counter included — flushes; rollback is not representable on this side"
 path = "mcp-re-proxy/src/trust_epoch.rs"
 anchor = """
-            Some(prev) if epoch != prev => {
+            Some(ref prev) if epoch != *prev => {
 """
 weakening = """
-            Some(prev) if epoch > prev => {
+            Some(ref prev) if epoch.counter > prev.counter => {
 """
 expect_red = [
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
@@ -12598,4 +12598,63 @@ note = """
 A failed OS entropy draw commits the zeroed buffer as the generation: every such advance carries
 the same predictable generation, and a rolled-back store returning to it is a reused label no
 replica can tell from no change.
+"""
+
+[[probe]]
+id = "M518-proxy-a-trust-epoch-flush-keys-on-the-counter-alone"
+unit = "proxy.trust_epoch_source"
+conjunct = "the trust cache is flushed when the epoch state changes, and the state is the counter together with the generation of the advance that set it"
+path = "mcp-re-proxy/src/trust_epoch.rs"
+anchor = """
+            Some(ref prev) if epoch != *prev => {
+"""
+weakening = """
+            Some(ref prev) if epoch.counter != prev.counter => {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_advance_onto_an_already_seen_counter_still_flushes",
+]
+note = """
+A store rolled back and then advanced onto the counter a replica last saw reads as no change, so
+the pushed flush the advance exists to deliver never happens and cached trust answers until T.
+"""
+
+[[probe]]
+id = "M519-proxy-the-reload-off-line-drops-the-response-slot-posture"
+unit = "proxy.trust_reload_cadence"
+conjunct = "both reload postures state that the Response slot answers from the issuer key captured at startup and changes only on restart"
+path = "mcp-re-proxy/src/trust_plane/delivered_window.rs"
+anchor = """
+         above bounds CACHING, not the store itself. Set --trust-reload-secs to bound it. {}",
+        response_slot_posture(response_kid)
+"""
+weakening = """
+         above bounds CACHING, not the store itself. Set --trust-reload-secs to bound it.{}",
+        String::new()
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::delivered_window::tests::both_reload_postures_say_the_response_slot_changes_only_on_restart",
+]
+note = """
+A deployment with reload OFF is told nothing about the Response slot, which answers from a key
+captured at startup that no reload changes.
+"""
+
+[[probe]]
+id = "M520-proxy-the-tier-line-drops-the-numeric-cached-window"
+unit = "proxy.trust_reload_cadence"
+conjunct = "the tier line states the cached-trust window T as a number"
+path = "mcp-re-proxy/src/trust_plane/delivered_window.rs"
+anchor = """
+            format!("cached-trust-T={t_secs}s")
+"""
+weakening = """
+            "cached-trust-T".to_string()
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::delivered_window::tests::the_tier_line_states_the_cached_window_as_a_number",
+]
+note = """
+The tier line names T only symbolically, and a deployment with reload OFF prints its value nowhere
+at startup.
 """

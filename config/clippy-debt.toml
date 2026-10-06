@@ -198,11 +198,12 @@ crate = "mcp-re-proxy"
 lint = "excessive_nesting"
 count = 78
 
-# 0 -> 4: the same measurement correction as `arithmetic_side_effects` above.
+# 0 -> 4: the same measurement correction as `arithmetic_side_effects` above; 1 -> 0 when
+# the trust-epoch reader's second, GET-based read path was folded into the one MGET read.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "expect_used"
-count = 1
+count = 0
 
 # 0 -> 21: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]

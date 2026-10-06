@@ -3,8 +3,9 @@
 //! A networked [`InvalidationChannel`](crate::trust_plane::InvalidationChannel)
 //! (ADR-MCPS-021 Tier 3) driven by a **monotonic trust-epoch counter**: an
 //! operator advances a shared epoch (`mcp-re-proxy trust-epoch advance`) whenever the trust
-//! store changes (a key revoked or rotated). Each replica polls the epoch; when it
-//! has ADVANCED past the last value this node saw, the source emits a single
+//! store changes (a key revoked or rotated). Each replica polls the epoch state — the
+//! counter and the generation the last advance wrote beside it; when either differs
+//! from what this node last saw, the source emits a single
 //! coarse [`InvalidationEvent::FlushAll`] so the bounded trust cache drops all
 //! positive entries and re-resolves live.
 //!
@@ -31,6 +32,9 @@ use crate::trust_plane::InvalidationEvent;
 
 pub mod advance;
 pub(crate) mod raise;
+mod state;
+
+pub use state::EpochState;
 
 /// Take a lock, recovering it if a panic elsewhere poisoned it.
 ///
@@ -54,13 +58,17 @@ pub const DEFAULT_TRUST_EPOCH_KEY: &str = "mcp-re:trust:epoch";
 pub struct EpochReadError(pub String);
 
 /// The seam between the epoch→invalidation logic and its backend, so the logic is
-/// testable without a live store. Implementors read the current monotonic epoch (a
-/// missing/unset epoch reads as `0`).
+/// testable without a live store. An absent counter is a read failure, never `0`.
 pub trait EpochReader: Send + Sync {
-    /// Read the current trust epoch. An ABSENT key and an operational failure are
-    /// both [`EpochReadError`] (fail closed) — see
-    /// [`RedisEpochReader::require_present`] for why absence is not a baseline.
-    fn read_epoch(&self) -> Result<i64, EpochReadError>;
+    /// The counter and its generation in one read, so an advance cannot fall between them.
+    /// An ABSENT key and an operational failure are both [`EpochReadError`] (fail closed) —
+    /// see [`RedisEpochReader::require_present`] for why absence is not a baseline.
+    fn read_state(&self) -> Result<EpochState, EpochReadError>;
+
+    /// The counter of [`read_state`](Self::read_state).
+    fn read_epoch(&self) -> Result<i64, EpochReadError> {
+        self.read_state().map(|state| state.counter)
+    }
 }
 
 /// A poll-based, self-healing [`InvalidationChannel`] over an [`EpochReader`].
@@ -73,7 +81,7 @@ pub trait EpochReader: Send + Sync {
 /// startup flush). A read error marks the source unhealthy and emits nothing.
 pub struct TrustEpochSource<R: EpochReader> {
     reader: R,
-    last_seen: Mutex<Option<i64>>,
+    last_seen: Mutex<Option<EpochState>>,
     healthy: Mutex<bool>,
     /// Events produced by [`poll_once`](TrustEpochSource::poll_once) and not yet
     /// drained. This is what keeps the store read OFF the request path.
@@ -163,7 +171,7 @@ impl<R: EpochReader> TrustEpochSource<R> {
         // Recorded whatever the read says: this timestamp is proof the POLLER is
         // running, which is a different question from whether the STORE answered.
         *recover(self.last_poll.lock()) = Some(Instant::now());
-        let epoch = match self.reader.read_epoch() {
+        let epoch = match self.reader.read_state() {
             Ok(e) => e,
             Err(e) => {
                 // Fail closed without advancing the baseline, so an outage-time
@@ -179,7 +187,7 @@ impl<R: EpochReader> TrustEpochSource<R> {
                 // First poll: establish the baseline, emit nothing.
                 *last = Some(epoch);
             }
-            Some(prev) if epoch != prev => {
+            Some(ref prev) if epoch != *prev => {
                 // The queue push and the baseline advance have to happen together:
                 // advancing without queueing loses the flush permanently, since the
                 // next poll sees no further change.
@@ -285,7 +293,7 @@ impl RedisEpochReader {
     pub fn connect(url: &str, epoch_key: impl Into<String>) -> Result<Self, EpochReadError> {
         let reader = Self::connect_lazy(url, epoch_key)?;
         // Eager callers want the connection proven now.
-        reader.read_epoch()?;
+        reader.read_state()?;
         Ok(reader)
     }
 
@@ -330,38 +338,8 @@ fn is_transient(error: &redis::RedisError) -> bool {
 
 #[cfg(feature = "redis_replay")]
 impl EpochReader for RedisEpochReader {
-    fn read_epoch(&self) -> Result<i64, EpochReadError> {
-        let mut guard = self
-            .conn
-            .lock()
-            .map_err(|_| EpochReadError("trust-epoch connection lock poisoned".into()))?;
-        // Not connected yet (first read, or a previous failure dropped the socket):
-        // establish now. A failure here is an ordinary fail-closed read error.
-        if guard.is_none() {
-            *guard = Some(Self::fresh_conn(&self.client)?);
-        }
-        let conn = guard.as_mut().expect("connection established above");
-        match redis::cmd("GET")
-            .arg(&self.epoch_key)
-            .query::<Option<i64>>(conn)
-        {
-            Ok(v) => Self::require_present(v, &self.epoch_key),
-            Err(e) if is_transient(&e) => {
-                // One reconnect-and-retry: a broken socket is replaced, then the
-                // read is attempted once more; a second failure fails closed. The
-                // socket is dropped on failure so the NEXT read reconnects rather
-                // than reusing a known-broken connection.
-                *guard = None;
-                let mut fresh = Self::fresh_conn(&self.client)?;
-                let v = redis::cmd("GET")
-                    .arg(&self.epoch_key)
-                    .query::<Option<i64>>(&mut fresh)
-                    .map_err(|e| EpochReadError(format!("GET after reconnect: {e}")))?;
-                *guard = Some(fresh);
-                Self::require_present(v, &self.epoch_key)
-            }
-            Err(e) => Err(EpochReadError(format!("GET {}: {e}", self.epoch_key))),
-        }
+    fn read_state(&self) -> Result<EpochState, EpochReadError> {
+        self.mget_state()
     }
 }
 
@@ -457,6 +435,8 @@ mod tests {
     /// simulates a read failure.
     struct FakeReader {
         epoch: Mutex<Option<i64>>,
+        /// The generation an advance last wrote beside the counter.
+        generation: Mutex<Option<String>>,
         /// Counts reads, so a test can assert the REQUEST path performs none.
         reads: std::sync::atomic::AtomicUsize,
     }
@@ -464,6 +444,7 @@ mod tests {
         fn new(initial: i64) -> Self {
             FakeReader {
                 epoch: Mutex::new(Some(initial)),
+                generation: Mutex::new(None),
                 reads: std::sync::atomic::AtomicUsize::new(0),
             }
         }
@@ -484,6 +465,12 @@ mod tests {
                 Some(e) => Ok(e),
                 None => Err(EpochReadError("fake reader down".into())),
             }
+        }
+        fn read_state(&self) -> Result<EpochState, EpochReadError> {
+            Ok(EpochState {
+                counter: self.read_epoch()?,
+                generation: self.generation.lock().unwrap().clone(),
+            })
         }
     }
 
@@ -520,6 +507,24 @@ mod tests {
         src.reader.set(5);
         src.poll_once();
         assert_eq!(src.drain_pending(), vec![InvalidationEvent::FlushAll]);
+    }
+
+    /// A store rolled back between polls and then advanced back onto the counter this node
+    /// last saw still flushes: the advance wrote a fresh generation, and the counter alone
+    /// would have hidden it.
+    #[test]
+    fn an_advance_onto_an_already_seen_counter_still_flushes() {
+        let src = TrustEpochSource::new(FakeReader::new(10));
+        *src.reader.generation.lock().unwrap() = Some("g-before".into());
+        src.poll_once();
+        assert!(src.drain_pending().is_empty());
+        // Rolled back to 9 and advanced to 10 again, both between two polls.
+        *src.reader.generation.lock().unwrap() = Some("g-after".into());
+        src.poll_once();
+        assert_eq!(src.drain_pending(), vec![InvalidationEvent::FlushAll]);
+        // The same counter under the same generation is no change.
+        src.poll_once();
+        assert!(src.drain_pending().is_empty());
     }
 
     /// The property the poller exists for: draining costs NO store read. Inline, this
@@ -682,6 +687,12 @@ mod tests {
             let _ = self.entered.send(());
             let _ = recover(self.release.lock()).recv();
             Ok(1)
+        }
+        fn read_state(&self) -> Result<EpochState, EpochReadError> {
+            self.read_epoch().map(|counter| EpochState {
+                counter,
+                generation: None,
+            })
         }
     }
 
@@ -847,6 +858,12 @@ mod tests {
             let n = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             assert!(n == 0, "the poller's read panicked");
             Ok(1)
+        }
+        fn read_state(&self) -> Result<EpochState, EpochReadError> {
+            self.read_epoch().map(|counter| EpochState {
+                counter,
+                generation: None,
+            })
         }
     }
 

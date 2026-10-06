@@ -297,6 +297,11 @@ mod tests {
         fn read_epoch(&self) -> Result<i64, crate::trust_epoch::EpochReadError> {
             Err(crate::trust_epoch::EpochReadError("injected".into()))
         }
+        fn read_state(
+            &self,
+        ) -> Result<crate::trust_epoch::EpochState, crate::trust_epoch::EpochReadError> {
+            Err(crate::trust_epoch::EpochReadError("injected".into()))
+        }
     }
 
     impl crate::trust_epoch::raise::EpochRaiser for Unreadable {
@@ -305,12 +310,6 @@ mod tests {
             _mark: i64,
             _to: i64,
         ) -> Result<i64, crate::trust_epoch::EpochReadError> {
-            Err(crate::trust_epoch::EpochReadError("injected".into()))
-        }
-        fn read_state(
-            &self,
-        ) -> Result<crate::trust_epoch::raise::EpochState, crate::trust_epoch::EpochReadError>
-        {
             Err(crate::trust_epoch::EpochReadError("injected".into()))
         }
     }

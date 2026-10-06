@@ -1,18 +1,22 @@
 //! Tier 3 — push-invalidation trust cache (ADR-MCPS-021, Axis 2).
 //!
-//! Tier 3 caches trust resolutions like Tier 1 (bounded window `T`), BUT a
-//! revocation **event** invalidates affected cache entries *immediately* via an
-//! injected [`InvalidationChannel`]: a pushed eviction removes the entry before
-//! `T` elapses, so a revoked key is rejected on the next request instead of
-//! lingering for up to `T`.
+//! Tier 3 caches trust resolutions like Tier 1 (bounded window `T`), BUT an
+//! invalidation **event** from an injected [`InvalidationChannel`] takes cached
+//! entries' authority away *immediately*, before `T` elapses, so the next request
+//! re-resolves against the store instead of answering from the cache for up to `T`.
+//!
+//! The one production source, the trust-epoch poller (`crate::trust_epoch`), emits
+//! only [`InvalidationEvent::FlushAll`]: an advance says the trust configuration
+//! changed, not which key. The per-key [`InvalidationEvent::Evict`] is applied here for
+//! a channel that does know the key; no in-tree production channel produces one.
 //!
 //! ## The honesty rule (load-bearing)
 //!
 //! ADR-MCPS-021 is explicit: Tier 3 is **NOT "zero window"** unless its push
 //! mechanism proves reliable ordering and delivery with explicit failure
-//! handling. The in-process reference channel here does NOT prove that, so:
+//! handling. Neither the trust-epoch poller nor the inert stand-in proves that, so:
 //!
-//! - while the channel is **healthy**, pushed evictions take effect before `T` →
+//! - while the channel is **healthy**, pushed invalidations take effect before `T` →
 //!   window bounded by the store's re-read cadence;
 //! - if the channel is **unhealthy** (a missed heartbeat / disconnect), a
 //!   revocation push may be lost, so the cache MUST fall back to the bounded `T`:
@@ -24,12 +28,12 @@
 //! ([`RevocationTier::Push`](crate::RevocationTier)) and NEVER the zero-window
 //! claim. A reliable-ordering networked channel (e.g. an ordered Redis pub/sub
 //! with sequence numbers and gap detection) could justify a stronger claim; that
-//! would be a separate, feature-gated backend beyond this in-process reference.
+//! would be a separate, feature-gated backend beyond the trust-epoch poller.
 //!
 //! Internally this reuses the exact Tier-1 [`BoundedTrustCache`](crate::BoundedTrustCache)
 //! for the bounded-`T` caching and fail-closed-past-`T` behavior (so that
 //! load-bearing property is shared, not re-implemented), and layers the
-//! drain-pending-evictions step on top before each lookup.
+//! drain-pending-invalidations step on top before each lookup.
 
 use mcp_re_core::TrustResolver;
 use mcp_re_core::TrustResolverError;
@@ -44,8 +48,9 @@ use super::invalidation_channel::InvalidationEvent;
 ///
 /// Wraps a Tier-1 [`BoundedTrustCache`] (bounded `T`, fail-closed past `T`) and an
 /// injected [`InvalidationChannel`]. Before each `resolve`, it drains pending
-/// revocation events and evicts the affected entries from the bounded cache, so a
-/// pushed revocation rejects the key BEFORE `T` elapses. On channel failure the
+/// invalidation events and applies them to the bounded cache — a flush clears every
+/// cached binding, an eviction removes one — so the next lookup re-resolves BEFORE `T`
+/// elapses. On channel failure the
 /// bounded `T` still caps the exposure window (entries expire after `t_secs`) — so
 /// the guarantee degrades to bounded-`T`, never to "indefinitely stale".
 pub struct PushInvalidationTrustCache {

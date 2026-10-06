@@ -40,6 +40,34 @@ pub(super) fn store_change_cadence(reload: crate::startup_plan::TrustReloadPlan)
             .to_string(),
     }
 }
+/// The tier's cached-entry lifetime `T` as a number, carried on the tier line so every
+/// deployment states it at startup whatever its reload cadence. The tier's guarantee names
+/// `T` only symbolically.
+pub(super) fn cached_trust_window(tier: &RevocationTier) -> String {
+    match tier {
+        RevocationTier::BoundedCache { t_secs } | RevocationTier::Push { t_secs } => {
+            format!("cached-trust-T={t_secs}s")
+        }
+        RevocationTier::Live => "cached-trust-T=none (no positive trust is cached)".to_string(),
+    }
+}
+/// What no reload changes: the Response slot verifies against the issuer key captured at
+/// startup, which the store snapshot excludes, so replacing it always needs a restart.
+pub(super) fn response_slot_posture(response_kid: &str) -> String {
+    format!(
+        "The Response slot answers from the issuer key {response_kid} captured at startup; \
+         no reload changes it, so replacing it requires restarting every replica."
+    )
+}
+/// The startup line of a deployment whose `--trust` is never re-read.
+pub(super) fn reload_off_line(response_kid: &str) -> String {
+    format!(
+        "mcp-re-proxy: trust store reload OFF: --trust is read once at startup, so revoking a \
+         request-signer key requires restarting every replica. The revocation-tier guarantee \
+         above bounds CACHING, not the store itself. Set --trust-reload-secs to bound it. {}",
+        response_slot_posture(response_kid)
+    )
+}
 /// The revocation window the deployment actually delivers: the store cadence `R` and the
 /// tier's cached-entry lifetime `T` ADD, and this states the sum. The worst case is
 /// budget x R + T (budget x R for `Live`), the reload failure budget being the number of
@@ -163,5 +191,32 @@ mod tests {
             push.contains(&format!("{budget} x R + T at worst")),
             "{push}"
         );
+    }
+
+    #[test]
+    fn the_tier_line_states_the_cached_window_as_a_number() {
+        assert_eq!(
+            cached_trust_window(&RevocationTier::BoundedCache { t_secs: 45 }),
+            "cached-trust-T=45s"
+        );
+        assert_eq!(
+            cached_trust_window(&RevocationTier::Push { t_secs: 30 }),
+            "cached-trust-T=30s"
+        );
+        assert!(cached_trust_window(&RevocationTier::Live).starts_with("cached-trust-T=none"));
+    }
+
+    #[test]
+    fn both_reload_postures_say_the_response_slot_changes_only_on_restart() {
+        let off = reload_off_line("issuer-kid-1");
+        assert!(off.contains("issuer-kid-1"), "{off}");
+        assert!(off.contains("requires restarting every replica"), "{off}");
+        assert!(response_slot_posture("issuer-kid-1").contains("no reload changes it"));
+    }
+
+    #[test]
+    fn the_reload_off_line_carries_no_whitespace_runs() {
+        let off = reload_off_line("k");
+        assert!(!off.contains("  "), "{off:?}");
     }
 }

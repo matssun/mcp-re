@@ -16,8 +16,9 @@
 /// metadata; the reference events are just the invalidation to apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvalidationEvent {
-    /// Evict one `(signer, key_id)` binding — a precise, per-key revocation (the
-    /// in-process reference channel's granularity).
+    /// Evict one `(signer, key_id)` binding — a precise, per-key revocation, for a
+    /// channel that knows which key changed. The in-tree trust-epoch source does not,
+    /// and emits only [`FlushAll`](Self::FlushAll).
     Evict {
         /// The signer whose binding is revoked.
         signer: String,

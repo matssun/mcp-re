@@ -61,7 +61,10 @@ use snapshot::load_trust_snapshot;
 /// What revocation window this deployment actually DELIVERS, as the operator is told it at
 /// startup.
 pub(in crate::trust_plane) mod delivered_window;
+use delivered_window::cached_trust_window;
 use delivered_window::delivered_revocation_window;
+use delivered_window::reload_off_line;
+use delivered_window::response_slot_posture;
 use delivered_window::store_change_cadence;
 use freshness::StaleFailsClosed;
 use freshness::TrustStoreFreshness;
@@ -249,8 +252,9 @@ impl TrustPlane {
         // tier line itself: as a separate line further down it was routinely read as being
         // about something else, and the tier line was quoted on its own.
         eprintln!(
-            "mcp-re-proxy: {} store-change-cadence={}{}",
+            "mcp-re-proxy: {} {} store-change-cadence={}{}",
             plan.revocation().tier().startup_audit_line("trust-store"),
+            cached_trust_window(&plan.revocation().tier()),
             store_change_cadence(plan.reload()),
             window_policy::long_window_advisory(&plan.revocation().tier()).unwrap_or_default()
         );
@@ -307,15 +311,14 @@ impl TrustPlane {
             // push an entry cached just before the swap survives it by a further T, and
             // this is the line an operator greps for after removing a key.
             eprintln!(
-                "mcp-re-proxy: trust store reload ACTIVE every {interval_secs}s: a key removed \
-                 from {} stops resolving within {}, with no restart.",
+                "mcp-re-proxy: trust store reload ACTIVE every {interval_secs}s: a request-signer \
+                 key removed from {} stops resolving within {}, with no restart. {}",
                 plan.document_path(),
-                delivered_revocation_window(&plan.revocation().tier(), plan.reload())
+                delivered_revocation_window(&plan.revocation().tier(), plan.reload()),
+                response_slot_posture(response_kid)
             );
         } else {
-            eprintln!(
-                "mcp-re-proxy: trust store reload OFF: --trust is read once at startup, so              revoking a request-signer key requires restarting every replica. The              revocation-tier guarantee above bounds CACHING, not the store itself. Set              --trust-reload-secs to bound it."
-            );
+            eprintln!("{}", reload_off_line(response_kid));
         }
 
         // Build the RFC 9421 serving PEP (ADR-MCPRE-050 sole carrier). The trust file
@@ -337,7 +340,7 @@ impl TrustPlane {
         // the plane's documented post-owner transition would not exist for a deployment
         // that configured no cadence, which is the default tier's accepted shape. Where no
         // reload runs the flag is only ever set by `Drop`, so the standing cost is one
-        // relaxed atomic load per verification.
+        // atomic load per verification.
         let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> =
             Arc::new(StaleFailsClosed {
                 inner: resolver,

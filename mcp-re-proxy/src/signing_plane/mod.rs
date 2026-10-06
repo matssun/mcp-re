@@ -350,6 +350,13 @@ mod trust_epoch_watch_tests {
             }
             Ok(self.0.value.load(Ordering::SeqCst))
         }
+        fn read_state(&self) -> Result<crate::trust_epoch::EpochState, EpochReadError> {
+            self.read_epoch()
+                .map(|counter| crate::trust_epoch::EpochState {
+                    counter,
+                    generation: None,
+                })
+        }
     }
 
     /// A store this replica may read but not write, so a regression stays refused here;
@@ -357,13 +364,6 @@ mod trust_epoch_watch_tests {
     impl crate::trust_epoch::raise::EpochRaiser for CounterReader {
         fn raise_past(&self, _mark: i64, _to: i64) -> Result<i64, EpochReadError> {
             Err(EpochReadError("NOPERM".into()))
-        }
-        fn read_state(&self) -> Result<crate::trust_epoch::raise::EpochState, EpochReadError> {
-            self.read_epoch()
-                .map(|counter| crate::trust_epoch::raise::EpochState {
-                    counter,
-                    generation: None,
-                })
         }
     }
 
@@ -701,13 +701,13 @@ mod rotation_owner_tests {
         fn read_epoch(&self) -> Result<i64, EpochReadError> {
             Err(EpochReadError("epoch store unreachable".into()))
         }
+        fn read_state(&self) -> Result<crate::trust_epoch::EpochState, EpochReadError> {
+            Err(EpochReadError("epoch store unreachable".into()))
+        }
     }
 
     impl crate::trust_epoch::raise::EpochRaiser for UnreadableEpoch {
         fn raise_past(&self, _mark: i64, _to: i64) -> Result<i64, EpochReadError> {
-            Err(EpochReadError("epoch store unreachable".into()))
-        }
-        fn read_state(&self) -> Result<crate::trust_epoch::raise::EpochState, EpochReadError> {
             Err(EpochReadError("epoch store unreachable".into()))
         }
     }
