@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "Establishes refusal by the classifier over the relations it actually decides. Three are live \u2014\nX2a, that a delegated channel key object must name a backend the deployment already reaches,\nX6, that a deny list no reachable authorization profile will consult enforces nothing, and\nX9 \u2014 and those are what a validated deployment is held to.\n\nX9 refuses a `--fleet` deployment whose trust-revocation state has no shared epoch source. It\nreads the epoch-source decision from `TrustRevocationState` and the fleet decision from\n`topology::classify`; neither decision is re-derived.\n\nIt does not establish that the illegal combination is unrepresentable \u2014 `DeploymentRequest`\ncan hold one, which is why the refusal is a check the classifier performs and not a structural\nfact. It does not establish that the classifier is consulted on every startup path.\n",
+      "old": "Establishes refusal by the classifier over the relations it actually decides. Two are live \u2014\nX2a, that a delegated channel key object must name a backend the deployment already reaches,\nand X6, that a deny list no reachable authorization profile will consult enforces nothing \u2014\nand those are what a validated deployment is held to.\n\nX9 is deliberately a NO-OP and the claim says so rather than implying a refusal. The\ntrust-epoch posture is one decision, made by `TrustRevocationState` and carried in\n`DeploymentConfigState`, and both the trust plane and the delegated-signing plane consume\nTHAT decision; neither re-derives it and neither asks the other. There is therefore no second\ndecision left for a cross-machine rule to find incompatible. It is written down, empty,\nbecause a future rule joining those two machines needs an owner to be added to \u2014 not because\nit refuses anything today.\n\nIt does not establish that the illegal combination is unrepresentable \u2014 `DeploymentRequest`\ncan hold one, which is why the refusal is a check the classifier performs and not a structural\nfact. It does not establish that the classifier is consulted on every startup path.\n",
+      "reason": "THM-0049, in this theorem's dependency closure, field scope, replaced by the owner's Ruling 29.1 text: X9 refuses a `--fleet` deployment whose trust-revocation state has no shared epoch source (reading the epoch-source decision from `TrustRevocationState` and the fleet decision from `topology::classify`), and three relations are live (X2a, X6, X9) where the old scope said two were and called X9 a deliberate NO-OP. The old scope became false when a2cb4d9f (finding f3e6d4f0) made X9 refuse."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is unchanged. The dependency digest moved solely because THM-0049's claim digest moved.",
+  "from_fingerprint": "sha256:3b4f10cb7ea14d665ae8308080e59af548291133b243d9d186b228a7f83118e4",
+  "packet": "docs/security/owner-approvals-2026-10-06.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION from the owner-ratified correction of THM-0049 (Ruling 29.1). THM-0075's own statement, security_consequence and scope are byte-identical to the text at the previous link of its correction chain; only the dependency digest moved. Nothing in this theorem's own wording states that X9 is a no-op or that two cross-machine relations are live, so no wording of its own became false.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5. The authority covering this record is the authority covering its source: the owner's Ruling 29.1 ratification of THM-0049, recorded in docs/security/owner-approvals-2026-10-06.jsonl as owner-signature:thm-0049-x9-refuses-a-fleet-without-a-shared-epoch-source. A correction record is not an approval: it does not make the specification-review axis fresh.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0075",
+  "to_fingerprint": "sha256:6e34961f3e5d22c585dd390bbdb9d3c654c2bdaac1b4cf6f83ca089cb3039411"
+}

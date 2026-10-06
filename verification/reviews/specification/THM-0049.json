@@ -2,13 +2,13 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:c90442429f9908e51506174e59083a636bdcc987f3d83f7987dee685875afdde",
+    "theorem_claim": "sha256:0d750213ca49c16b2b6c69f0f2cde5f15c81683c1238036a1b2984f81cfbb277",
     "theorem_dependencies": {},
     "theorem_id": "THM-0049",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. X9 wording corrected. The scope no longer implies `cross_machine` refuses an X9 incompatibility: it states the two relations actually refused (X2a, X6) and records that X9 is deliberately a no-op because the trust-epoch posture is already a single owner decision consumed by both sides, leaving no second decision to find incompatible.",
-  "reviewed_fingerprint": "sha256:708cb6db38e1d8a5171bac95857c6ef850620a27c9e003c9ce28bc878c5d595f",
+  "notes": "Owner ratification of 2026-10-07, OWNER-RULINGS.md Ruling 29.1, recorded in docs/security/owner-approvals-2026-10-06.jsonl as owner-signature:thm-0049-x9-refuses-a-fleet-without-a-shared-epoch-source, sha256 922a4af73536f9de2b8ddfb1c2dfb26e494bebaca5fb7faeb73a060517a7cd76. Two scope sentences are the owner's text (line-wrapped only): X9 refuses a `--fleet` deployment whose trust-revocation state has no shared epoch source, reading the epoch-source decision from `TrustRevocationState` and the fleet decision from `topology::classify`, neither re-derived; and three relations are live (X2a, X6, X9), replacing 'Two are live'. Title, statement, security consequence, severity, owner and support are unchanged. The X9 refusal it describes is config_state/cross_machine.rs x9 (finding f3e6d4f0, a2cb4d9f), pinned by probe M498. This SUPERSEDES the review of 2026-08-31 at sha256:708cb6db\u2026: that scope called X9 a deliberate NO-OP, which a2cb4d9f made false.",
+  "reviewed_fingerprint": "sha256:fc4ece44cecbb86d54c6467e3e19ed89f9c7bab6fdebfcff5ab603a0c9775c65",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0049"
 }

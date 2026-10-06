@@ -2673,18 +2673,14 @@ device-resident.
 """
 direct_consequence_severity = "high"
 scope = """
-Establishes refusal by the classifier over the relations it actually decides. Two are live —
+Establishes refusal by the classifier over the relations it actually decides. Three are live —
 X2a, that a delegated channel key object must name a backend the deployment already reaches,
-and X6, that a deny list no reachable authorization profile will consult enforces nothing —
-and those are what a validated deployment is held to.
+X6, that a deny list no reachable authorization profile will consult enforces nothing, and
+X9 — and those are what a validated deployment is held to.
 
-X9 is deliberately a NO-OP and the claim says so rather than implying a refusal. The
-trust-epoch posture is one decision, made by `TrustRevocationState` and carried in
-`DeploymentConfigState`, and both the trust plane and the delegated-signing plane consume
-THAT decision; neither re-derives it and neither asks the other. There is therefore no second
-decision left for a cross-machine rule to find incompatible. It is written down, empty,
-because a future rule joining those two machines needs an owner to be added to — not because
-it refuses anything today.
+X9 refuses a `--fleet` deployment whose trust-revocation state has no shared epoch source. It
+reads the epoch-source decision from `TrustRevocationState` and the fleet decision from
+`topology::classify`; neither decision is re-derived.
 
 It does not establish that the illegal combination is unrepresentable — `DeploymentRequest`
 can hold one, which is why the refusal is a check the classifier performs and not a structural
