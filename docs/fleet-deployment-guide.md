@@ -184,6 +184,22 @@ drives a sibling `HttpProfileProxy` wired as `app.rs` wires production (a Tier-3
 push cache over the live Redis epoch source) and includes a negative control —
 the sibling serves stale trust until the epoch advances.
 
+**A rolled-back counter is repaired, not adopted.** A replica refuses to mint under a
+counter below the highest value it has read. The same read raises the shared key back to
+that mark — one atomic `EVAL` that writes only upward, so concurrent repairs converge on the
+largest mark in the fleet and an `INCR` above it is never overwritten — and the replica
+mints again once a read reaches the mark. While the store cannot be raised every poll
+prints why (`REGRESSED to …`, or `repair FAILED`). Two consequences to plan for:
+
+- The proxy's Redis user needs `GET`, `SET` and `EVAL` on the epoch key. With read-only
+  access a rollback leaves every replica that held a higher mark refusing to mint until
+  you `SET` the key back by hand.
+- The mark is held in memory. A replica that restarts while the store is regressed mints
+  under the regressed label until a live peer's repair raises the key, at most one poll
+  later; a whole fleet that restarts while the store is regressed has no mark left to
+  repair toward. And an `INCR` issued against the regressed store before the repair lands
+  at or below the mark and is absorbed: re-issue it once the replicas report the mark.
+
 ### 3. Inner-session affinity (clause 2, MCPS-83)
 
 MCP-RE replicates **no** inner-server session state across replicas. Under

@@ -299,17 +299,19 @@ mod tests {
         }
     }
 
+    impl crate::trust_epoch::raise::EpochRaiser for Unreadable {
+        fn raise_to(&self, _floor: i64) -> Result<i64, crate::trust_epoch::EpochReadError> {
+            Err(crate::trust_epoch::EpochReadError("injected".into()))
+        }
+    }
+
     /// An unreadable epoch is recorded once, when the wait first sees it, rather than
     /// only when the window opens an hour later; the wait keeps polling until halted.
     #[test]
     fn an_unreadable_epoch_is_recorded_when_first_seen_not_when_the_window_opens() {
         let signer =
             crate::delegated_wiring::test_support::published(now_unix() + 3600, 9).signer();
-        let watch = DelegatedEpochWatch {
-            reader: Box::new(Unreadable),
-            base_label: "epoch-1".into(),
-            high_water: std::sync::Mutex::new(None),
-        };
+        let watch = DelegatedEpochWatch::new(Box::new(Unreadable), "epoch-1".into());
         let deployment = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let workers = crate::managed_worker::WorkerSet::new(Arc::clone(&deployment));
         let halt = workers.halt();

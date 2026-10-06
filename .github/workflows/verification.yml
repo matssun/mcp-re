@@ -155,6 +155,7 @@ on:
       # defect this gate exists for.
       - "mcp-re-proxy/src/trust_plane/**"
       - "mcp-re-proxy/src/trust_epoch.rs"
+      - "mcp-re-proxy/src/trust_epoch/**"
       - "mcp-re-proxy/src/reloading_trust.rs"
       # v0.17: the trust-document parser, `proxy.trust_document_interpretation`.
       - "mcp-re-proxy/src/trust_document.rs"
@@ -556,6 +557,7 @@ on:
       # defect this gate exists for.
       - "mcp-re-proxy/src/trust_plane/**"
       - "mcp-re-proxy/src/trust_epoch.rs"
+      - "mcp-re-proxy/src/trust_epoch/**"
       - "mcp-re-proxy/src/reloading_trust.rs"
       # v0.17: the trust-document parser, `proxy.trust_document_interpretation`.
       - "mcp-re-proxy/src/trust_document.rs"

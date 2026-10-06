@@ -11,8 +11,9 @@
 //!
 //! * an UNREADABLE or REGRESSED epoch stops minting entirely. A credential without a
 //!   comparable epoch is unrevokable, and rebasing onto a value this replica made up would
-//!   produce exactly that. The current key keeps serving until its `exp`, after which the
-//!   hot path fails closed on its own.
+//!   produce exactly that. The watch raises a regressed store back to its mark and minting
+//!   resumes once a read reaches it; until then the current key keeps serving until its
+//!   `exp`, after which the hot path fails closed on its own.
 //! * a DECLINED advance leaves `last_label` where it was, so the next pass re-enters and
 //!   retries. Advancing it here would report a revocation that never happened and never
 //!   look at it again — and the operator''s break-glass would be silently not in force.
@@ -22,6 +23,7 @@ use std::sync::Arc;
 use crate::clock::now_unix;
 use crate::delegated_server_signer::TrustEpochAdvance;
 
+use super::epoch_watch::EpochRefusal;
 use super::rotation_jitter;
 use super::DelegatedEpochWatch;
 
@@ -44,13 +46,13 @@ pub(super) fn epoch_moved(
     last_label: &str,
     unreadable_seen: &mut bool,
 ) -> bool {
-    match watch.current_label() {
-        Some(l) => l != last_label,
-        None => {
+    match watch.label() {
+        Ok(l) => l != last_label,
+        Err(refusal) => {
             if !std::mem::replace(unreadable_seen, true) {
                 let n = signer.metrics().record_failure();
                 eprintln!(
-                    "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed during the steady-state wait; minting will be refused when the window opens unless it recovers; consecutive_failures {n}"
+                    "mcp-re-proxy: WARNING: {refusal} during the steady-state wait; minting will be refused when the window opens unless it recovers; consecutive_failures {n}"
                 );
             }
             false
@@ -78,8 +80,9 @@ pub(super) fn observe_trust_epoch(
     let Some(watch) = epoch_watch.as_ref() else {
         return EpochStep::Proceed;
     };
-    let Some(label) = watch.current_label() else {
-        return refuse_to_mint_without_a_comparable_epoch(signer, halt);
+    let label = match watch.label() {
+        Ok(label) => label,
+        Err(refusal) => return refuse_to_mint_without_a_comparable_epoch(signer, &refusal, halt),
     };
     if label == *last_label {
         return EpochStep::Proceed;
@@ -94,6 +97,7 @@ pub(super) fn observe_trust_epoch(
 /// until its `exp`, after which the hot path fails closed on its own.
 fn refuse_to_mint_without_a_comparable_epoch(
     signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    refusal: &EpochRefusal,
     halt: &crate::managed_worker::Halt,
 ) -> EpochStep {
     use crate::delegated_server_signer::rotation_backoff;
@@ -101,7 +105,7 @@ fn refuse_to_mint_without_a_comparable_epoch(
     let ttl = signer.seconds_to_expiry(now_unix());
     let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
     eprintln!(
-        "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed; \
+        "mcp-re-proxy: WARNING: {refusal}; \
          NOT minting (a credential without a comparable epoch is unrevokable). \
          Current key serves until exp then fails closed. \
          consecutive_failures {}, time-to-expiry {}s. Retrying in {}ms.",

@@ -11269,12 +11269,12 @@ id = "M447-proxy-the-minted-label-is-not-the-counter"
 unit = "proxy.delegated_epoch_label"
 theorem = "THM-0133"
 conjunct = "the label is `<base>#<counter>` for the value the read returned, never the bare base"
-path = "mcp-re-proxy/src/signing_plane/mod.rs"
+path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
 anchor = """
-        Some(format!("{}#{}", self.base_label, counter))
+                Ok(format!("{}#{}", self.base_label, counter))
 """
 weakening = """
-        Some(self.base_label.clone())
+                Ok({ let _ = counter; self.base_label.clone() })
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::label_is_always_base_hash_counter_never_the_bare_base",
@@ -11290,15 +11290,16 @@ id = "M448-proxy-a-regressed-epoch-read-is-adopted"
 unit = "proxy.delegated_epoch_label"
 theorem = "THM-0133"
 conjunct = "a read below the highest this process has read yields no label: the regression is refused, not adopted"
-path = "mcp-re-proxy/src/signing_plane/mod.rs"
+path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
 anchor = """
-        if matches!(*hw, Some(prev) if counter < prev) {
+            (Ok(counter), Some(high_water)) if counter < high_water => {
 """
 weakening = """
-        if false && matches!(*hw, Some(prev) if counter < prev) {
+            (Ok(counter), Some(high_water)) if false && counter < high_water => {
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::a_regressed_counter_is_refused_not_rebased",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_regression_raises_the_store_to_the_high_water_mark_and_minting_resumes",
 ]
 note = """
 A store reset or a failover to a stale instance is adopted as the new epoch, and the plane
@@ -12248,3 +12249,44 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::delegated_signing::tests::an_epoch_base_that_renders_an_ambiguous_label_is_refused",
 ]
+
+[[probe]]
+id = "M500-proxy-a-regressed-epoch-is-never-repaired"
+unit = "proxy.delegated_epoch_label"
+conjunct = "a replica holding a mark raises a counter found below it, or absent, back to the mark"
+path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
+anchor = """
+        let repair = self.reader.raise_to(high_water).map_err(|e| e.0);
+"""
+weakening = """
+        let repair: Result<i64, String> = Err("not attempted".into());
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_regression_raises_the_store_to_the_high_water_mark_and_minting_resumes",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_lost_counter_is_recreated_at_the_high_water_mark",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::concurrent_repairs_converge_on_the_largest_mark",
+]
+note = """
+A rolled-back or lost counter is refused and never repaired: every replica that held a higher
+mark stops minting until an operator rewrites the key by hand.
+"""
+
+[[probe]]
+id = "M501-proxy-an-epoch-repair-raises-to-the-regressed-read"
+unit = "proxy.delegated_epoch_label"
+conjunct = "the repair raises the counter to the replica's mark, not to the regressed value it read"
+path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
+anchor = """
+        let repair = self.reader.raise_to(high_water).map_err(|e| e.0);
+"""
+weakening = """
+        let repair = self.reader.raise_to(*observed.as_ref().unwrap_or(&high_water)).map_err(|e| e.0);
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_regression_raises_the_store_to_the_high_water_mark_and_minting_resumes",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::concurrent_repairs_converge_on_the_largest_mark",
+]
+note = """
+The repair writes back the regressed value instead of the mark, so the store stays below every
+replica's mark and the fleet stays wedged while reporting a repair.
+"""

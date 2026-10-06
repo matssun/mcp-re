@@ -119,7 +119,10 @@ revocation:
   # epoch 0: a key that was never created, points at the wrong database, or was
   # lost to a restore or an eviction is indistinguishable from a live counter at 0,
   # and reading it as a baseline leaves the kill switch inert — or lets a restarted
-  # replica re-mint under an epoch the operator had already revoked.
+  # replica re-mint under an epoch the operator had already revoked. The proxy's
+  # Redis user needs GET, SET and EVAL on this key: a replica that reads a counter
+  # below its high-water mark raises the key back to that mark (upward only), and
+  # with read-only access a rolled-back counter stops minting until it is reset by hand.
   trustEpochKey: "mcp-re:trust:epoch"
   trustReloadSeconds: 60
 

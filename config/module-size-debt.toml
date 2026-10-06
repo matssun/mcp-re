@@ -423,7 +423,7 @@ status = "unreviewed"
 # the file's real size.
 [[debt]]
 path = "mcp-re-proxy/src/signing_plane/mod.rs"
-baseline_prod_loc = 340
+baseline_prod_loc = 281
 baseline_sha = "255465e"
 status = "unreviewed"
 

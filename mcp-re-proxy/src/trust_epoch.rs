@@ -29,6 +29,8 @@ use std::time::Instant;
 use crate::trust_plane::InvalidationChannel;
 use crate::trust_plane::InvalidationEvent;
 
+pub(crate) mod raise;
+
 /// Take a lock, recovering it if a panic elsewhere poisoned it.
 ///
 /// What these mutexes guard is a queue of pending invalidations, the last epoch this

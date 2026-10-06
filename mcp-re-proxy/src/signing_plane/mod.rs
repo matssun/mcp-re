@@ -49,6 +49,10 @@ mod rotation;
 /// The break-glass half: what the shared trust epoch says, and what asking it costs.
 mod trust_epoch_advance;
 
+/// The shared trust-epoch counter as this plane reads it, and the repair of a regression.
+mod epoch_watch;
+use epoch_watch::DelegatedEpochWatch;
+
 /// Asking the root for a successor, and reading its answer honestly.
 mod mint_successor;
 
@@ -231,65 +235,6 @@ fn rotation_jitter() -> u64 {
         Err(_) => 0,
     }
 }
-/// The shared trust-epoch counter, watched by the delegated-rotation owner so an
-/// operator's `INCR <trust-epoch-key>` invalidates the outstanding epoch of delegated
-/// response keys across the fleet (ADR-MCPRE-052 §7). The RESPONSE-side counterpart to
-/// [`build_trust_epoch_channel`], which flushes the REQUEST-trust cache on the same
-/// advance. Read-only; a read error leaves the epoch unchanged (never advance on a
-/// transient blip).
-///
-/// What an advance does and does not do: it stops this fleet MINTING under the prior
-/// epoch. It does not reach credentials already issued under it — no verifier reads the
-/// counter, so `accepted_epochs` is static verifier configuration and a leaked
-/// credential stays verifiable until the verifiers are pointed at the new epoch
-/// (docs/spec/delegated-required-validation-matrix.md §C.1, "Operational consequence").
-/// The counter is therefore also a fleet availability dependency: anyone who can write
-/// the shared key can advance it and make every replica mint a label the currently
-/// configured verifiers reject.
-///
-/// The emitted label is ALWAYS `<base>#<counter>` — never the bare base label. That is
-/// what makes an operator `INCR` survive a replica restart: the label is derived purely
-/// from shared state, so every replica at counter `N` mints `<base>#N` regardless of
-/// when it started. The previous design compared the counter against a baseline read at
-/// *this process's* startup and emitted the bare base label while they matched, so a
-/// replica restarting after an `INCR` adopted the advanced value as its own baseline,
-/// never observed an advance, and kept minting an epoch verifiers still accepted — the
-/// kill switch was process-relative rather than durable.
-///
-/// `high_water` makes the emitted epoch monotone WITHIN a process: a read that goes
-/// backwards (store reset, failover to a stale replica, a reconnect landing on the
-/// wrong instance) is refused rather than rebased, so reconnection can never re-mint
-/// under an epoch a verifier has already stopped accepting. Across a restart the shared
-/// counter is the only authority, by construction — a store that loses its counter is a
-/// trust-store failure, not something a replica can detect locally.
-struct DelegatedEpochWatch {
-    reader: Box<dyn crate::trust_epoch::EpochReader>,
-    base_label: String,
-    high_water: std::sync::Mutex<Option<i64>>,
-}
-
-impl DelegatedEpochWatch {
-    /// The label to mint under, or `None` when the shared epoch cannot be established.
-    ///
-    /// `None` is FAIL CLOSED FOR MINTING: the caller must not issue a credential,
-    /// because it cannot produce an epoch verifiers can compare. It does not retire the
-    /// current key — the fleet keeps signing off it until its `exp` and the hot path
-    /// then fails closed on its own (ADR-MCPRE-052 §6). Crucially it is also not treated
-    /// as "no change": a blip must never be read as an advance, nor as permission to
-    /// mint under a stale label.
-    fn current_label(&self) -> Option<String> {
-        let counter = self.reader.read_epoch().ok()?;
-        let mut hw = self.high_water.lock().ok()?;
-        if matches!(*hw, Some(prev) if counter < prev) {
-            // Regression. Refuse rather than rebase: minting under the lower epoch
-            // would resurrect credentials the fleet's verifiers already reject.
-            return None;
-        }
-        *hw = Some(counter);
-        Some(format!("{}#{}", self.base_label, counter))
-    }
-}
-
 /// Build the delegated-signing trust-epoch watcher from the SHARED epoch plan (CF-09).
 ///
 /// The plan is an input, not something read from configuration here. This function and the
@@ -320,11 +265,7 @@ fn build_delegated_epoch_watch(
         return Ok(None);
     };
     match crate::trust_epoch::RedisEpochReader::connect_lazy(source.url(), source.key()) {
-        Ok(reader) => Ok(Some(DelegatedEpochWatch {
-            reader: Box::new(reader),
-            base_label,
-            high_water: std::sync::Mutex::new(None),
-        })),
+        Ok(reader) => Ok(Some(DelegatedEpochWatch::new(Box::new(reader), base_label))),
         Err(e) => {
             // Only a malformed URL reaches here (`Client::open` parses, it does not
             // connect), so this is a configuration error, not an outage.
@@ -411,14 +352,21 @@ mod trust_epoch_watch_tests {
         }
     }
 
+    /// A store this replica may read but not write, so a regression stays refused here;
+    /// the repair is `epoch_watch`'s to test.
+    impl crate::trust_epoch::raise::EpochRaiser for CounterReader {
+        fn raise_to(&self, _floor: i64) -> Result<i64, EpochReadError> {
+            Err(EpochReadError("NOPERM".into()))
+        }
+    }
+
     /// Start a replica's watch over the shared counter. Constructing a NEW watch over
     /// the SAME counter is exactly what a restart looks like: no carried-over state.
     fn replica(counter: &Arc<SharedCounter>) -> DelegatedEpochWatch {
-        DelegatedEpochWatch {
-            reader: Box::new(CounterReader(Arc::clone(counter))),
-            base_label: BASE.to_string(),
-            high_water: Mutex::new(None),
-        }
+        DelegatedEpochWatch::new(
+            Box::new(CounterReader(Arc::clone(counter))),
+            BASE.to_string(),
+        )
     }
 
     /// The label is derived purely from shared state, so it is globally comparable.
@@ -748,6 +696,12 @@ mod rotation_owner_tests {
         }
     }
 
+    impl crate::trust_epoch::raise::EpochRaiser for UnreadableEpoch {
+        fn raise_to(&self, _floor: i64) -> Result<i64, EpochReadError> {
+            Err(EpochReadError("epoch store unreachable".into()))
+        }
+    }
+
     fn plan(epoch: TrustEpochPlan) -> SigningPlan {
         SigningPlan {
             custody: mcp_re_http_profile::CustodyConfig {
@@ -845,11 +799,7 @@ mod rotation_owner_tests {
         let signer = Arc::clone(&wiring.signer);
         // The root is HEALTHY throughout: the only thing that may stop a mint here is
         // the epoch refusal.
-        let watch = DelegatedEpochWatch {
-            reader: Box::new(UnreadableEpoch),
-            base_label: "epoch-1".to_string(),
-            high_water: std::sync::Mutex::new(None),
-        };
+        let watch = DelegatedEpochWatch::new(Box::new(UnreadableEpoch), "epoch-1".to_string());
         let rotor = drive_loop(wiring.rotor, Arc::clone(&signer), Some(watch));
 
         assert_eq!(
