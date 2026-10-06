@@ -12181,3 +12181,23 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::a_stream_states_its_start_once_naming_its_run",
 ]
+
+[[probe]]
+id = "M496-proxy-an-inert-push-channel-is-not-operational"
+unit = "proxy.trust_resolution_window"
+conjunct = "a Push tier with no networked source runs over a channel nothing can publish to, and that channel does not report itself operational"
+path = "mcp-re-proxy/src/trust_plane/invalidation_channel.rs"
+anchor = """
+    fn is_healthy(&self) -> bool {
+        false
+    }
+"""
+weakening = """
+    fn is_healthy(&self) -> bool {
+        true
+    }
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::revocation_resolver::tests::a_push_tier_without_a_networked_source_reports_its_channel_not_operational",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::invalidation_channel::tests::an_inert_channel_never_reports_itself_operational",
+]

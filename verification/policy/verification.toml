@@ -9149,7 +9149,7 @@ evidence = [
 # WHAT IS AND IS NOT IN THE BATTERY.
 #
 # Every member is an in-process control over ONE replica, driving the plane through the
-# `InvalidationChannel` seam with the in-memory reference channel — the theorem is about the
+# `InvalidationChannel` seam with the drivable in-memory test channel — the theorem is about the
 # reaction, and the reaction is the same whichever channel delivers the event. The lane that
 # drives a real Redis — `tests/integration_ext/redis_trust_epoch_e2e_test.rs` — is
 # deliberately NOT a member: it self-skips by returning `ok` when no store is provisioned, so
@@ -9198,6 +9198,10 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#trust_plane::revocation_resolver::tests::live_tier_wrapping_reflects_a_store_revocation_immediately",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::revocation_resolver::tests::bounded_cache_tier_wrapping_caches_within_t",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::revocation_resolver::tests::push_tier_wrapping_behaves_as_bounded_t_with_an_inert_channel",
+  # --- a Push tier with no networked source does not claim an operational channel ---
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::revocation_resolver::tests::a_push_tier_without_a_networked_source_reports_its_channel_not_operational",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::invalidation_channel::tests::an_inert_channel_never_reports_itself_operational",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::invalidation_channel::tests::an_inert_channel_delivers_nothing",
   # --- freshness: the three-state latch and what it does at the resolver ---
   "//mcp-re-proxy:proxy_unit_test#trust_plane::store_cadence_tests::a_frozen_store_stops_answering_instead_of_serving_the_revoked_key",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::freshness_transition_tests::a_reload_landing_after_the_owner_is_gone_cannot_report_the_store_fresh",

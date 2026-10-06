@@ -20,21 +20,20 @@
 /// - [`RevocationTier::Live`] → a Tier-2 [`LiveTrustResolver`] that consults the
 ///   inner store on every call (no positive caching), so a store revocation is
 ///   visible on the very next request.
-/// - [`RevocationTier::Push`] → a Tier-3 [`PushInvalidationTrustCache`] over an
-///   in-process [`InMemoryInvalidationChannel`]. NOTE: no networked event source
-///   ships yet, so the reference channel delivers no external pushes and the cache
+/// - [`RevocationTier::Push`] → a Tier-3 [`PushInvalidationTrustCache`] over the
+///   injected channel, or over the [`InertInvalidationChannel`] when none is wired. The
+///   inert channel delivers no pushes and reports itself not operational, so the cache
 ///   operates at its honest bounded-`T` fallback (exactly what
-///   [`RevocationTier::Push`]'s `guarantee()` already states). The wrapping is
-///   still correct: it is the same code path a real push backend will drive, and
-///   it never claims a pushed window the channel cannot prove.
+///   [`RevocationTier::Push`]'s `guarantee()` already states) and never claims a pushed
+///   window the channel cannot prove.
 ///
 /// Pure and unit-testable: the `clock` is injected (tests pass a controllable one),
 /// and the negative TTL is the named [`crate::trust_plane::trust_cache::DEFAULT_NEGATIVE_TTL_SECS`].
 /// For the [`RevocationTier::Push`] (ADR-MCPS-021 Tier 3) tier a caller may inject a
 /// networked [`InvalidationChannel`](super::push_trust::InvalidationChannel) — e.g. the
-/// MCPS-84 Redis trust-epoch source. When `push_channel` is `None` the Push tier falls
-/// back to the inert in-process reference channel (today's default: bounded-`T`, no
-/// networked pushes). Non-Push tiers ignore `push_channel`.
+/// MCPS-84 Redis trust-epoch source. When `push_channel` is `None` the Push tier gets the
+/// inert channel (bounded-`T`, no networked pushes, not operational). Non-Push tiers
+/// ignore `push_channel`.
 ///
 /// ONE entry point. There used to be a second, `build_revocation_resolver`, whose whole
 /// body was `build_revocation_resolver(tier, base, clock, None)` — a strictly
@@ -64,15 +63,7 @@ pub(super) fn build_revocation_resolver(
             Box::new(crate::trust_plane::live_trust::LiveTrustResolver::new(base))
         }
         crate::revocation_tier::RevocationTier::Push { t_secs } => {
-            // Tier 3: use the injected networked channel (MCPS-84 Redis trust-epoch
-            // source) when present; otherwise the in-process reference channel is
-            // inert and the cache runs at its bounded-`T` fallback (the honest
-            // guarantee when no push backend is wired).
-            let channel = push_channel.unwrap_or_else(|| {
-                Box::new(
-                    crate::trust_plane::invalidation_channel::InMemoryInvalidationChannel::new(),
-                )
-            });
+            let channel = push_tier_channel(push_channel);
             Box::new(
                 crate::trust_plane::push_trust::PushInvalidationTrustCache::new(
                     base,
@@ -84,6 +75,18 @@ pub(super) fn build_revocation_resolver(
             )
         }
     }
+}
+
+/// The channel a Push tier runs over: the injected networked source when one is wired,
+/// otherwise the [`InertInvalidationChannel`], which nothing can publish to.
+fn push_tier_channel(
+    push_channel: Option<
+        Box<dyn crate::trust_plane::invalidation_channel::InvalidationChannel + Send + Sync>,
+    >,
+) -> Box<dyn crate::trust_plane::invalidation_channel::InvalidationChannel + Send + Sync> {
+    push_channel.unwrap_or_else(|| {
+        Box::new(crate::trust_plane::invalidation_channel::InertInvalidationChannel)
+    })
 }
 
 #[cfg(test)]
@@ -226,7 +229,7 @@ mod tests {
 
     #[test]
     fn push_tier_wrapping_behaves_as_bounded_t_with_an_inert_channel() {
-        // Tier 3 over the inert in-process channel (no networked event source ships)
+        // Tier 3 with no networked source wired runs over the inert channel and
         // behaves exactly as bounded-T: within T a second resolve is a cache hit; a
         // store revocation is not picked up until T elapses.
         let inner = Arc::new(ScriptedRevResolver::new(Ok(rev_key())));
@@ -259,5 +262,19 @@ mod tests {
             "past T the bounded fallback re-resolves and picks up the revocation"
         );
         assert_eq!(inner.calls(), 2);
+    }
+
+    #[test]
+    fn a_push_tier_without_a_networked_source_reports_its_channel_not_operational() {
+        use crate::trust_plane::invalidation_channel::drivable::InMemoryInvalidationChannel;
+        assert!(
+            !super::push_tier_channel(None).is_healthy(),
+            "nothing can publish to the inert channel, so it is not operational"
+        );
+        assert!(
+            super::push_tier_channel(Some(Box::new(InMemoryInvalidationChannel::new())))
+                .is_healthy(),
+            "an injected source reports its own health"
+        );
     }
 }

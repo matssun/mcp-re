@@ -124,7 +124,7 @@ impl TrustResolver for PushInvalidationTrustCache {
 
 #[cfg(test)]
 mod tests {
-    use super::super::invalidation_channel::InMemoryInvalidationChannel;
+    use super::super::invalidation_channel::drivable::InMemoryInvalidationChannel;
     use super::InvalidationChannel;
     use super::PushInvalidationTrustCache;
 
