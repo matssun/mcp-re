@@ -2450,13 +2450,16 @@ is not distinguishable from a good one by any test, and that is the case this en
 registers. It is an environment premise and not a cryptographic one: the algorithms consuming
 the bytes are `boundary.crypto_primitives`' premises, and this states only what they are fed.
 
-`boundary.os_entropy` names five direct OS-entropy acquisition sites. Of those, three are not
+`boundary.os_entropy` names six direct OS-entropy acquisition sites. Of those, three are not
 relied upon by any verification unit in this scope: the rotation-backoff jitter in
 `signing_plane/mod.rs`, which falls back to no jitter on `Err`; the OCSP request nonce in
 `ocsp.rs`, which belongs to no unit; and the audit stream run identity in
 `audit_sink/stream.rs`, which refuses startup on `Err` and is used to distinguish process
 incarnations rather than as a secret or authorization token. No unit in this scope rests on any
-of those three sites.
+of those three sites. The trust-epoch advance generation in `trust_epoch/advance.rs` refuses the
+advance on `Err` and is relied upon by `proxy.delegated_epoch_label` to distinguish a fresh
+authoritative advance from a previously observed epoch state; its purpose is freshness/collision
+resistance, not secrecy.
 
 It stops being acceptable if `getrandom` is configured with a backend other than the host OS
 CSPRNG, if a site starts continuing with a buffer it did not fill after an `Err`, or if a host
