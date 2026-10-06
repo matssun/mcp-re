@@ -222,6 +222,9 @@ mod tests {
         requests: RefCell<Vec<HttpRequest>>,
         /// Fail the next `n` polls at the transport, to exercise the retry.
         poll_failures: Cell<u32>,
+        /// A failed poll returns only once its request's deadline has passed, so the
+        /// service — not the scheduler — decides that the budget ends on a failed poll.
+        failed_polls_hold_to_deadline: bool,
     }
 
     impl HermeticService {
@@ -236,11 +239,17 @@ mod tests {
                 receipt: RefCell::new(Vec::new()),
                 requests: RefCell::new(Vec::new()),
                 poll_failures: Cell::new(0),
+                failed_polls_hold_to_deadline: false,
             }
         }
 
         fn with_poll_failures(self, n: u32) -> Self {
             self.poll_failures.set(n);
+            self
+        }
+
+        fn holding_failed_polls_to_deadline(mut self) -> Self {
+            self.failed_polls_hold_to_deadline = true;
             self
         }
 
@@ -285,6 +294,9 @@ mod tests {
             }
             if self.poll_failures.get() > 0 {
                 self.poll_failures.set(self.poll_failures.get() - 1);
+                if self.failed_polls_hold_to_deadline {
+                    std::thread::sleep(request.deadline.saturating_duration_since(Instant::now()));
+                }
                 return Err("connection reset".to_owned());
             }
             if self.pending.get() > 0 {
@@ -606,12 +618,18 @@ mod tests {
     /// A poll that never completes is named, not reported as slowness.
     #[test]
     fn a_poll_that_never_completes_names_its_transport_failure() {
-        let service =
-            HermeticService::new(Mode::Asynchronous { pending: 0 }).with_poll_failures(u32::MAX);
-        let client = Scrapi11RegistrationClient::new(service, BASE, tight_policy());
+        let service = HermeticService::new(Mode::Asynchronous { pending: 0 })
+            .with_poll_failures(u32::MAX)
+            .holding_failed_polls_to_deadline();
+        let client = Scrapi11RegistrationClient::new(service, BASE, policy());
         let refused = client
             .register(a_statement().to_cose())
             .expect_err("no poll ever completed");
+        assert_eq!(
+            client.exchange.requests.borrow().len(),
+            2,
+            "the submission, then one poll that failed at the transport and ended the budget",
+        );
         assert!(
             matches!(refused, RegistrationError::Indeterminate(_)),
             "{refused:?}",
