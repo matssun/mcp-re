@@ -96,10 +96,19 @@ pub(super) static STREAM: OnceLock<AuditPositions> = OnceLock::new();
 pub(super) fn open(
     cell: &'static OnceLock<AuditPositions>,
 ) -> Option<(&'static AuditPositions, bool)> {
+    open_drawing(cell, AuditIncarnation::draw)
+}
+
+/// [`open`] with the run drawn by `draw`. There is no other run to fall back to: a failed
+/// draw leaves `cell` empty and opens nothing.
+fn open_drawing(
+    cell: &'static OnceLock<AuditPositions>,
+    draw: fn() -> Option<AuditIncarnation>,
+) -> Option<(&'static AuditPositions, bool)> {
     if let Some(stream) = cell.get() {
         return Some((stream, false));
     }
-    let drawn = AuditPositions::starting(AuditIncarnation::draw()?);
+    let drawn = AuditPositions::starting(draw()?);
     let mut won = false;
     let stream = cell.get_or_init(|| {
         won = true;
@@ -169,6 +178,18 @@ mod tests {
             rendered.chars().all(|c| c.is_ascii_hexdigit()),
             "{rendered}"
         );
+    }
+
+    /// A CSPRNG failure opens no stream and leaves no run behind to number records under;
+    /// the next successful draw opens it.
+    #[test]
+    fn a_failed_draw_opens_nothing() {
+        let cell = Box::leak(Box::new(OnceLock::new()));
+        assert!(open_drawing(cell, || None).is_none());
+        assert!(cell.get().is_none(), "a failed draw must not leave a run");
+        let (_, drew) = open_drawing(cell, AuditIncarnation::draw)
+            .expect("the OS CSPRNG yields an incarnation");
+        assert!(drew, "the first successful draw opens the stream");
     }
 
     #[test]

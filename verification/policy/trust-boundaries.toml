@@ -345,11 +345,12 @@ kind = "environment"
 # enters the system, named by the rule `boundary.clock` uses: the authority, not the callers
 # of a wrapper. `SystemNonceSource` in `nonce.rs` is the injected `NonceSource` seam the
 # request path reads its nonce through; its callers hold no entropy authority of their own
-# and are not listed. The other three draw directly: the delegated response-signing key seed
-# (`delegated_wiring.rs`), the rotation backoff jitter (`signing_plane/mod.rs`) and the OCSP
-# request nonce (`ocsp.rs`).
+# and are not listed. The other four draw directly: the audit stream's run identity
+# (`audit_sink/stream.rs`), the delegated response-signing key seed (`delegated_wiring.rs`),
+# the rotation backoff jitter (`signing_plane/mod.rs`) and the OCSP request nonce (`ocsp.rs`).
 paths = [
   "mcp-re-host/src/nonce.rs",
+  "mcp-re-proxy/src/audit_sink/stream.rs",
   "mcp-re-proxy/src/delegated_wiring.rs",
   "mcp-re-proxy/src/ocsp.rs",
   "mcp-re-proxy/src/signing_plane/mod.rs",

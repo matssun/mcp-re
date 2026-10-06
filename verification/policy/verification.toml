@@ -8846,6 +8846,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_position_has_no_number_in_another_run",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_run_renders_as_32_hex_digits",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::the_process_stream_is_drawn_once",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_failed_draw_opens_nothing",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::tests::the_ceiling_a_record_is_admitted_at_is_chosen_by_its_attribution",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_burst_that_stops_still_reports_what_it_cost",
   # "One record in, one line out" is a DELIVERY claim: whatever the record says, the stream
