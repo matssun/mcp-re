@@ -256,17 +256,19 @@ mod tests {
             assert!(err.contains("cpstore_etcd"), "{err}");
         }
 
-        // The redis arm's refusal is reachable without a control runtime only in a build
-        // without the backend; with it, the connect would be attempted first.
-        if !cfg!(feature = "redis_replay") {
-            let err = match MaterializedReplay::materialize(
-                &crate::config_state::test_support::redis_replay_plan(),
-                crate::config_state::test_support::freshness(60),
-                None,
-            ) {
-                Ok(_) => panic!("refused without the backend"),
-                Err(e) => e,
-            };
+        // The redis arm refuses without a control runtime in either build: without the
+        // backend it names the feature, and with it the runtime is read before any connect.
+        let err = match MaterializedReplay::materialize(
+            &crate::config_state::test_support::redis_replay_plan(),
+            crate::config_state::test_support::freshness(60),
+            None,
+        ) {
+            Ok(_) => panic!("the redis arm cannot materialize without a control runtime"),
+            Err(e) => e,
+        };
+        if cfg!(feature = "redis_replay") {
+            assert!(err.contains("control runtime"), "{err}");
+        } else {
             assert!(err.contains("redis_replay"), "{err}");
         }
     }

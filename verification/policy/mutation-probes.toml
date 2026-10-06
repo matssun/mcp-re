@@ -11031,12 +11031,12 @@ unit = "proxy.replay_materialization"
 conjunct = "each shared backend is connected on the clock held back by the declared replica clock divergence, so the padding reaches the store that serves"
 path = "mcp-re-proxy/src/replay_plane/backends.rs"
 anchor = """
-                    freshness
-                        .replica_clock_divergence()
-                        .retention_clock(crate::async_redis_store::system_clock()),
+        clock: freshness
+            .replica_clock_divergence()
+            .retention_clock(crate::async_redis_store::system_clock()),
 """
 weakening = """
-                    crate::async_redis_store::system_clock(),
+        clock: crate::async_redis_store::system_clock(),
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#replay_plane::backends::tests::both_shared_backends_are_connected_on_the_held_back_clock",
@@ -12480,4 +12480,23 @@ expect_red = [
 ]
 note = """
 The freshness comparison admits one second beyond the window the verifier was built with.
+"""
+
+[[probe]]
+id = "M512-proxy-the-redis-replay-arm-drops-its-wait-quorum"
+unit = "proxy.redis_replay_establishment"
+conjunct = "the Redis replay store is connected in the WAIT quorum the plan declares"
+path = "mcp-re-proxy/src/replay_plane/backends.rs"
+anchor = """
+        wait_quorum: tier.wait_quorum_params(),
+"""
+weakening = """
+        wait_quorum: None,
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#replay_plane::backends::tests::the_redis_arm_connects_in_the_declared_wait_quorum",
+]
+note = """
+The Redis store is connected on plain `SET NX PX` while the startup audit line still
+advertises a fail-closed WAIT quorum.
 """

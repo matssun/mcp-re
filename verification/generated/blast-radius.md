@@ -236,6 +236,7 @@ attestations this view cannot see.
 | unit://proxy.pre_dispatch_refusal_precedence | source, contracts or evidence | THM-0078 | _no consumer_ |
 | unit://proxy.process_group_set | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.redis_replay_adapter | source, contracts or evidence | THM-0106 | _no consumer_ |
+| unit://proxy.redis_replay_establishment | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.refusal_audit_emission | source, contracts or evidence | THM-0085 | _no consumer_ |
 | unit://proxy.refusal_provenance | source, contracts or evidence | THM-0046, THM-0069, THM-0071, THM-0078 | _no consumer_ |
 | unit://proxy.refusal_site_totality | source, contracts or evidence | THM-0081 | _no consumer_ |

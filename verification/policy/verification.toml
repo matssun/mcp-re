@@ -7771,6 +7771,27 @@ tested_symbols = [
 ]
 
 [[unit]]
+id = "proxy.redis_replay_establishment"
+class = "V0"
+description = "In a build carrying `redis_replay`, the Redis replay arm reads what connecting needs off the plan before contacting anything: it refuses, with a sentence naming the missing control runtime, when none was established, and otherwise connects the store in the `WAIT` quorum the plan declares, so the store that serves runs the fail-closed quorum tier the startup audit line advertises rather than plain `SET NX PX`. Says nothing about what the store does with the quorum once connected (the store's own protocol tests) or which tier a deployment may declare (the configuration owner)."
+paths = [
+  "mcp-re-proxy/src/replay_plane/mod.rs",
+  "mcp-re-proxy/src/replay_plane/backends.rs",
+  "mcp-re-proxy/src/replay_plane/materialized.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/replay_materialization/redis_arm_establishment",
+  "mutation://proxy/replay_materialization/redis_arm_establishment",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_ext_unit_test#replay_plane::backends::tests::the_redis_arm_connects_in_the_declared_wait_quorum",
+  "//mcp-re-proxy:proxy_ext_unit_test#replay_plane::backends::tests::the_redis_arm_refuses_without_the_control_runtime",
+]
+
+[[unit]]
 id = "proxy.replay_materialization"
 class = "V0"
 description = "The replay tier handed to the serving path is the one the plan selected, and a tier that self-declares the volatile single-process posture is never handed over."

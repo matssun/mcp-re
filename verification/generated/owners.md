@@ -232,6 +232,7 @@ not an omission to hide.
 | proxy.pre_dispatch_refusal_precedence | V0 | _none_ | 0 |
 | proxy.process_group_set | V0 | _none_ | 0 |
 | proxy.redis_replay_adapter | V0 | THM-0106 | 3 |
+| proxy.redis_replay_establishment | V0 | _none_ | 0 |
 | proxy.refusal_audit_emission | V0 | THM-0085 | 0 |
 | proxy.refusal_provenance | V0 | THM-0046 | 0 |
 | proxy.refusal_site_totality | V0 | THM-0081 | 0 |
