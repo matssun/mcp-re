@@ -185,20 +185,26 @@ push cache over the live Redis epoch source) and includes a negative control —
 the sibling serves stale trust until the epoch advances.
 
 **A rolled-back counter is repaired, not adopted.** A replica refuses to mint under a
-counter below the highest value it has read. The same read raises the shared key back to
-that mark — one atomic `EVAL` that writes only upward, so concurrent repairs converge on the
-largest mark in the fleet and an `INCR` above it is never overwritten — and the replica
-mints again once a read reaches the mark. While the store cannot be raised every poll
-prints why (`REGRESSED to …`, or `repair FAILED`). Two consequences to plan for:
+counter below the highest value it has read (its mark). The same read moves the shared key
+to one PAST that mark — one atomic `EVAL` that writes only while the key is absent or below
+the mark — and the replica mints again under that new label. A rollback therefore acts as a
+forward rotation: point the verifiers' accepted epochs at the new label, as after an `INCR`.
+An `INCR` issued against the rolled-back store, below the mark, ends past it too; an `INCR`
+above the mark is never overwritten; a second replica repairing from the same mark finds the
+first one's write and writes nothing. While the store cannot be repaired every poll prints
+why (`REGRESSED to …`, or `repair FAILED`). What to plan for:
 
 - The proxy's Redis user needs `GET`, `SET` and `EVAL` on the epoch key. With read-only
   access a rollback leaves every replica that held a higher mark refusing to mint until
-  you `SET` the key back by hand.
+  you move the key past the fleet's last label by hand.
+- Marks that differ are not ordered by the repair: a replica that had read an `INCR` its
+  peer had not yet polled can find the peer's repair equal to its own mark, read no
+  regression, and keep its pre-rollback label. So can every replica, if an operator `INCR`
+  brings the rolled-back key back to exactly the mark before any replica reads it.
 - The mark is held in memory. A replica that restarts while the store is regressed mints
-  under the regressed label until a live peer's repair raises the key, at most one poll
+  under the regressed label until a live peer's repair moves the key, at most one poll
   later; a whole fleet that restarts while the store is regressed has no mark left to
-  repair toward. And an `INCR` issued against the regressed store before the repair lands
-  at or below the mark and is absorbed: re-issue it once the replicas report the mark.
+  repair toward.
 
 ### 3. Inner-session affinity (clause 2, MCPS-83)
 

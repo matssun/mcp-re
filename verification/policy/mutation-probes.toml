@@ -11299,7 +11299,7 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::a_regressed_counter_is_refused_not_rebased",
-  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_regression_raises_the_store_to_the_high_water_mark_and_minting_resumes",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_regression_moves_the_store_past_the_high_water_mark_and_minting_resumes",
 ]
 note = """
 A store reset or a failover to a stale instance is adopted as the new epoch, and the plane
@@ -12253,18 +12253,18 @@ expect_red = [
 [[probe]]
 id = "M500-proxy-a-regressed-epoch-is-never-repaired"
 unit = "proxy.delegated_epoch_label"
-conjunct = "a replica holding a mark raises a counter found below it, or absent, back to the mark"
+conjunct = "a replica holding a mark moves a counter found below it, or absent, past the mark"
 path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
 anchor = """
-        let repair = self.reader.raise_to(high_water).map_err(|e| e.0);
+            Some(past) => self.reader.raise_past(high_water, past).map_err(|e| e.0),
 """
 weakening = """
-        let repair: Result<i64, String> = Err("not attempted".into());
+            Some(_) => Err("not attempted".to_string()),
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_regression_raises_the_store_to_the_high_water_mark_and_minting_resumes",
-  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_lost_counter_is_recreated_at_the_high_water_mark",
-  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::concurrent_repairs_converge_on_the_largest_mark",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_regression_moves_the_store_past_the_high_water_mark_and_minting_resumes",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_lost_counter_is_recreated_past_the_high_water_mark",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::repairs_from_the_same_mark_write_once",
 ]
 note = """
 A rolled-back or lost counter is refused and never repaired: every replica that held a higher
@@ -12274,19 +12274,39 @@ mark stops minting until an operator rewrites the key by hand.
 [[probe]]
 id = "M501-proxy-an-epoch-repair-raises-to-the-regressed-read"
 unit = "proxy.delegated_epoch_label"
-conjunct = "the repair raises the counter to the replica's mark, not to the regressed value it read"
+conjunct = "the repair moves the counter past the replica's mark, not to the regressed value it read"
 path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
 anchor = """
-        let repair = self.reader.raise_to(high_water).map_err(|e| e.0);
+            Some(past) => self.reader.raise_past(high_water, past).map_err(|e| e.0),
 """
 weakening = """
-        let repair = self.reader.raise_to(*observed.as_ref().unwrap_or(&high_water)).map_err(|e| e.0);
+            Some(_) => self.reader.raise_past(high_water, *observed.as_ref().unwrap_or(&high_water)).map_err(|e| e.0),
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_regression_raises_the_store_to_the_high_water_mark_and_minting_resumes",
-  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::concurrent_repairs_converge_on_the_largest_mark",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_regression_moves_the_store_past_the_high_water_mark_and_minting_resumes",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::repairs_from_the_same_mark_write_once",
 ]
 note = """
 The repair writes back the regressed value instead of the mark, so the store stays below every
 replica's mark and the fleet stays wedged while reporting a repair.
+"""
+
+[[probe]]
+id = "M502-proxy-an-epoch-repair-re-enters-the-pre-rollback-label"
+unit = "proxy.delegated_epoch_label"
+conjunct = "the repair writes one past the mark, never the mark itself, so the pre-rollback label is not re-entered and an INCR issued against the rolled-back store is not absorbed"
+path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
+anchor = """
+        let repair = match high_water.checked_add(1) {
+"""
+weakening = """
+        let repair = match high_water.checked_add(0) {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_repair_never_writes_the_mark",
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::epoch_watch::tests::a_rollback_followed_by_an_operator_incr_below_the_mark_still_ends_past_it",
+]
+note = """
+A rollback is repaired back to the mark: every replica re-enters the label it minted before the
+rollback, and an operator's INCR issued against the rolled-back store is absorbed by the repair.
 """

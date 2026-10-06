@@ -355,7 +355,7 @@ mod trust_epoch_watch_tests {
     /// A store this replica may read but not write, so a regression stays refused here;
     /// the repair is `epoch_watch`'s to test.
     impl crate::trust_epoch::raise::EpochRaiser for CounterReader {
-        fn raise_to(&self, _floor: i64) -> Result<i64, EpochReadError> {
+        fn raise_past(&self, _mark: i64, _to: i64) -> Result<i64, EpochReadError> {
             Err(EpochReadError("NOPERM".into()))
         }
     }
@@ -697,7 +697,7 @@ mod rotation_owner_tests {
     }
 
     impl crate::trust_epoch::raise::EpochRaiser for UnreadableEpoch {
-        fn raise_to(&self, _floor: i64) -> Result<i64, EpochReadError> {
+        fn raise_past(&self, _mark: i64, _to: i64) -> Result<i64, EpochReadError> {
             Err(EpochReadError("epoch store unreachable".into()))
         }
     }

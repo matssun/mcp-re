@@ -300,7 +300,11 @@ mod tests {
     }
 
     impl crate::trust_epoch::raise::EpochRaiser for Unreadable {
-        fn raise_to(&self, _floor: i64) -> Result<i64, crate::trust_epoch::EpochReadError> {
+        fn raise_past(
+            &self,
+            _mark: i64,
+            _to: i64,
+        ) -> Result<i64, crate::trust_epoch::EpochReadError> {
             Err(crate::trust_epoch::EpochReadError("injected".into()))
         }
     }

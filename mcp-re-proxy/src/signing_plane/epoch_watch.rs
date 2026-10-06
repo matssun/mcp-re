@@ -22,13 +22,19 @@
 //! backwards (store reset, failover to a stale replica, a reconnect landing on the wrong
 //! instance) or a counter that has vanished is refused rather than rebased, so reconnection
 //! can never re-mint under an epoch a verifier has already stopped accepting. The refusal
-//! also REPAIRS: the replica raises the shared counter back to its high-water mark
-//! ([`EpochRaiser::raise_to`]) and mints again once a read is at or above it. The raise
-//! only writes a value this replica already read, only upward, and atomically in the
-//! store, so concurrent repairs converge on the largest high-water mark in the fleet and
-//! an `INCR` above it is never overwritten. An `INCR` issued against the regressed store,
-//! before the repair, lands at or below the mark and is absorbed by it; the refusal line
-//! names the mark, and the operator re-issues the `INCR` once the fleet reports it.
+//! also REPAIRS, as a forward rotation: the replica moves the shared counter to one past
+//! its high-water mark ([`EpochRaiser::raise_past`]) and mints again once a read is at or
+//! above the mark — which the repaired counter is, under a label it never minted before.
+//! An `INCR` issued against the regressed store that leaves it below the mark ends past
+//! the mark too, so the repairing replica never re-enters its pre-rollback label.
+//! The write is atomic in the store and happens only while the counter is absent or below
+//! the mark: a second replica repairing from the same mark finds the first one's write and
+//! writes nothing, and an `INCR` above the mark is never overwritten. Replicas whose marks
+//! differ — one had read an `INCR` another had not yet polled — are not ordered by this:
+//! a repair from the lower mark can leave the counter EQUAL to the higher mark, and the
+//! replica holding that mark then reads no regression and keeps its pre-rollback label.
+//! Likewise an `INCR` that brings the rolled-back key back to exactly the mark before any
+//! replica reads it is indistinguishable, at every replica, from no rollback at all.
 //!
 //! Across a restart the high-water mark is gone: the shared counter is the only authority.
 //! A replica that starts while the store is regressed mints under the regressed label
@@ -81,7 +87,7 @@ impl std::fmt::Display for EpochRefusal {
             }
         };
         match repair {
-            Ok(now) => write!(f, "; raised the store to {now}, minting resumes on the next read at or above {high_water}. An INCR issued since the regression is absorbed by the mark: re-issue it once this replica reports #{high_water}"),
+            Ok(now) => write!(f, "; moved the store to {now}, past the mark {high_water}, so the rollback acts as a forward rotation; minting resumes on the next read under the new label, which verifiers must accept"),
             Err(e) => write!(f, "; repair FAILED ({e}): the proxy's Redis user needs write access (GET, SET, EVAL) to the epoch key"),
         }
     }
@@ -136,10 +142,16 @@ impl DelegatedEpochWatch {
         }
     }
 
-    /// Refuse, and raise the store back to `high_water`. The mark itself is untouched: it
-    /// moves only when a read at or above it succeeds.
+    /// Refuse, and move the store past `high_water`. The mark itself is untouched: it moves
+    /// only when a read at or above it succeeds. At the counter's maximum there is no label
+    /// past the mark, and the refusal stands.
     fn behind(&self, observed: Result<i64, String>, high_water: i64) -> EpochRefusal {
-        let repair = self.reader.raise_to(high_water).map_err(|e| e.0);
+        let repair = match high_water.checked_add(1) {
+            Some(past) => self.reader.raise_past(high_water, past).map_err(|e| e.0),
+            None => Err(format!(
+                "the counter is at its maximum {high_water}; no label lies past it"
+            )),
+        };
         EpochRefusal::Behind {
             observed,
             high_water,
@@ -191,14 +203,17 @@ mod tests {
     }
 
     impl EpochRaiser for Replica {
-        fn raise_to(&self, floor: i64) -> Result<i64, EpochReadError> {
+        fn raise_past(&self, mark: i64, to: i64) -> Result<i64, EpochReadError> {
             if !self.0.writable {
                 return Err(EpochReadError(
                     "NOPERM this user has no permissions to run the 'eval' command".into(),
                 ));
             }
             let mut value = self.0.value.lock().expect("store");
-            let now = value.map_or(floor, |c| c.max(floor));
+            let now = match *value {
+                Some(c) if c >= mark => c,
+                _ => to,
+            };
             *value = Some(now);
             Ok(now)
         }
@@ -209,9 +224,9 @@ mod tests {
     }
 
     /// The repair: a rolled-back counter is refused on the read that sees it, the store is
-    /// raised to the replica's mark, and the next read mints under the mark again.
+    /// moved one past the replica's mark, and the next read mints under that new label.
     #[test]
-    fn a_regression_raises_the_store_to_the_high_water_mark_and_minting_resumes() {
+    fn a_regression_moves_the_store_past_the_high_water_mark_and_minting_resumes() {
         let store = Store::new(Some(9), true);
         let w = watch(&store);
         assert_eq!(w.current_label().as_deref(), Some("epoch-min#9"));
@@ -223,29 +238,53 @@ mod tests {
                 Err(EpochRefusal::Behind {
                     observed: Ok(2),
                     high_water: 9,
-                    repair: Ok(9)
+                    repair: Ok(10)
                 })
             ),
-            "the read that sees the regression mints nothing and raises the store to the mark"
+            "the read that sees the regression mints nothing and moves the store past the mark"
         );
-        assert_eq!(
-            store.get(),
-            Some(9),
-            "the store is back at the mark, not at the regressed value"
-        );
-        assert_eq!(w.current_label().as_deref(), Some("epoch-min#9"));
+        assert_eq!(store.get(), Some(10));
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#10"));
+    }
+
+    /// The repair never writes the mark itself, so the pre-rollback label is not re-entered.
+    #[test]
+    fn a_repair_never_writes_the_mark() {
+        for rolled_back_to in [None, Some(0), Some(5), Some(8)] {
+            let store = Store::new(Some(9), true);
+            let w = watch(&store);
+            assert!(w.current_label().is_some());
+            store.set(rolled_back_to);
+            assert!(w.current_label().is_none());
+            assert_eq!(store.get(), Some(10), "rolled back to {rolled_back_to:?}");
+            assert_ne!(w.current_label().as_deref(), Some("epoch-min#9"));
+        }
+    }
+
+    /// An operator's INCR on the rolled-back store, below the mark, does not pull the fleet
+    /// back to the pre-rollback label: the repair still ends past the mark.
+    #[test]
+    fn a_rollback_followed_by_an_operator_incr_below_the_mark_still_ends_past_it() {
+        let store = Store::new(Some(9), true);
+        let w = watch(&store);
+        assert!(w.current_label().is_some());
+        store.set(Some(2));
+        store.set(Some(3)); // the operator's INCR, against the regressed store
+        assert!(w.current_label().is_none());
+        assert_eq!(store.get(), Some(10));
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#10"));
     }
 
     /// A counter lost from the store is repaired the same way once the replica holds a mark.
     #[test]
-    fn a_lost_counter_is_recreated_at_the_high_water_mark() {
+    fn a_lost_counter_is_recreated_past_the_high_water_mark() {
         let store = Store::new(Some(4), true);
         let w = watch(&store);
         assert!(w.current_label().is_some());
         store.set(None);
         assert!(w.current_label().is_none());
-        assert_eq!(store.get(), Some(4));
-        assert_eq!(w.current_label().as_deref(), Some("epoch-min#4"));
+        assert_eq!(store.get(), Some(5));
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#5"));
     }
 
     /// With no successful read there is no mark, and nothing is written: an absent or
@@ -256,6 +295,21 @@ mod tests {
         let w = watch(&store);
         assert!(matches!(w.label(), Err(EpochRefusal::Unestablished(_))));
         assert_eq!(store.get(), None);
+    }
+
+    /// At the counter's maximum there is no label past the mark: the refusal stands and the
+    /// store is not written.
+    #[test]
+    fn a_mark_at_the_counter_maximum_is_refused_without_a_write() {
+        let store = Store::new(Some(i64::MAX), true);
+        let w = watch(&store);
+        assert!(w.current_label().is_some());
+        store.set(Some(2));
+        assert!(matches!(
+            w.label(),
+            Err(EpochRefusal::Behind { repair: Err(_), .. })
+        ));
+        assert_eq!(store.get(), Some(2));
     }
 
     /// A store the proxy may not write keeps the replica failing closed, read after read,
@@ -282,27 +336,39 @@ mod tests {
         assert_eq!(w.current_label().as_deref(), Some("epoch-min#9"));
     }
 
-    /// Two replicas with different marks repair the same store: it converges on the larger
-    /// mark, and both mint under it.
+    /// Two replicas repairing from the same mark: the first moves the store past it, the
+    /// second finds that write, writes nothing, and both mint under the new label.
     #[test]
-    fn concurrent_repairs_converge_on_the_largest_mark() {
+    fn repairs_from_the_same_mark_write_once() {
         let store = Store::new(Some(9), true);
-        let behind = watch(&store);
-        assert!(behind.current_label().is_some());
-        store.set(Some(10));
-        let ahead = watch(&store);
-        assert!(ahead.current_label().is_some());
+        let first = watch(&store);
+        let second = watch(&store);
+        assert!(first.current_label().is_some() && second.current_label().is_some());
 
         store.set(Some(3));
-        assert!(behind.current_label().is_none());
-        assert_eq!(store.get(), Some(9));
-        assert!(
-            ahead.current_label().is_none(),
-            "9 is still below this replica's mark"
-        );
+        assert!(first.current_label().is_none());
         assert_eq!(store.get(), Some(10));
-        assert_eq!(behind.current_label().as_deref(), Some("epoch-min#10"));
-        assert_eq!(ahead.current_label().as_deref(), Some("epoch-min#10"));
+        assert_eq!(second.current_label().as_deref(), Some("epoch-min#10"));
+        assert_eq!(store.get(), Some(10));
+        assert_eq!(first.current_label().as_deref(), Some("epoch-min#10"));
+    }
+
+    /// Marks that differ are not ordered by the repair: a repair from the lower mark can land
+    /// exactly on the higher replica's mark, which then reads no regression and keeps minting
+    /// its pre-rollback label.
+    #[test]
+    fn a_repair_from_a_lower_mark_can_land_on_a_higher_replicas_label() {
+        let store = Store::new(Some(9), true);
+        let lagging = watch(&store);
+        assert!(lagging.current_label().is_some());
+        store.set(Some(10));
+        let current = watch(&store);
+        assert!(current.current_label().is_some());
+
+        store.set(Some(3));
+        assert!(lagging.current_label().is_none());
+        assert_eq!(store.get(), Some(10));
+        assert_eq!(current.current_label().as_deref(), Some("epoch-min#10"));
     }
 
     /// An operator's advance above the mark is never undone by a repair.
@@ -349,10 +415,10 @@ mod live {
         DelegatedEpochWatch::new(Box::new(reader), "epoch-live".into())
     }
 
-    /// A rollback by `SET` is refused, repaired by the replica that holds the mark, and
-    /// minting resumes for it and for a peer that never saw the higher value.
+    /// A rollback by `SET` is refused, repaired past the mark by the replica that holds it,
+    /// and minting resumes under the new label for it and for a peer that never saw the mark.
     #[test]
-    fn a_rollback_is_refused_repaired_and_minting_resumes() {
+    fn a_rollback_is_refused_repaired_past_the_mark_and_minting_resumes() {
         let Some(url) = redis_url() else {
             eprintln!("SKIP epoch watch live: MCP_RE_TEST_REDIS_URL unset");
             return;
@@ -369,7 +435,7 @@ mod live {
             long_lived.current_label().is_none(),
             "the regressed read mints nothing"
         );
-        assert_eq!(long_lived.current_label().as_deref(), Some("epoch-live#5"));
-        assert_eq!(restarted.current_label().as_deref(), Some("epoch-live#5"));
+        assert_eq!(long_lived.current_label().as_deref(), Some("epoch-live#6"));
+        assert_eq!(restarted.current_label().as_deref(), Some("epoch-live#6"));
     }
 }
