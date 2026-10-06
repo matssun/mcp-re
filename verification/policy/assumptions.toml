@@ -2468,6 +2468,7 @@ class is admitted whose CSPRNG can answer before it is seeded.
 scope = [
   "unit://host.request_freshness_inputs",
   "unit://proxy.delegated_signing_credential",
+  "unit://proxy.delegated_epoch_label",
   "boundary://boundary.os_entropy",
 ]
 owner = "mats@sundvall.name"

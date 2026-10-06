@@ -28,7 +28,7 @@ about the boundary.
 | boundary.inner_server_channel | deployment-topology | V0 | ASM-0050, ASM-0051 | _no theorem_ |
 | boundary.libc | ffi | V0 | _no premise_ | _no theorem_ |
 | boundary.monotonic_clock | environment | V0 | _no premise_ | _no theorem_ |
-| boundary.os_entropy | environment | V0 | ASM-0068 | THM-0062, THM-0063, THM-0114 |
+| boundary.os_entropy | environment | V0 | ASM-0068 | THM-0062, THM-0063, THM-0114, THM-0133 |
 | boundary.pkcs11 | ffi | V0 | ASM-0052, ASM-0053, ASM-0054 | THM-0116 |
 | boundary.rust_std | language-runtime | _no cap_ | ASM-0002, ASM-0003, ASM-0005, ASM-0006, ASM-0010, ASM-0014, ASM-0020, ASM-0056 | THM-0001, THM-0002, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022, THM-0132 |
 | boundary.shared_state_store | external-service | V0 | ASM-0040, ASM-0041, ASM-0044, ASM-0047, ASM-0048, ASM-0058, ASM-0059, ASM-0071 | THM-0087, THM-0092, THM-0106, THM-0107, THM-0133 |
