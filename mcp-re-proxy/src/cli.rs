@@ -3049,6 +3049,12 @@ mod tests {
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
                 "redis-wait-quorum:2:500",
+                "--revocation-tier",
+                "push:60",
+                "--trust-reload-secs",
+                "30",
+                "--trust-epoch-redis-url",
+                "redis://127.0.0.1:6379",
             ]),
         );
         let config = parse_args(&a).expect("--fleet + shared wait-quorum must parse");

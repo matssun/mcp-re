@@ -400,8 +400,9 @@ fn build_trust_epoch_channel(
     eprintln!(
         "mcp-re-proxy: revocation-tier PUSH: networked trust-epoch source ACTIVE (redis, \
          epoch key {key:?}, polled every {TRUST_EPOCH_POLL_SECS}s off the request path); \
-         the trust cache flushes within one poll interval of an epoch advance and \
-         reverts to the bounded-T guarantee on a read outage."
+         cached trust re-resolves against the store within one poll interval of an epoch \
+         advance (a removed --trust key still waits for the re-read) and reverts to the \
+         bounded-T guarantee on a read outage."
     );
     Ok(Some(Box::new(crate::trust_epoch::SharedEpochChannel(
         source,

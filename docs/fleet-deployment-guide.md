@@ -158,14 +158,22 @@ exactly one 200 and 63 replay rejections.
 
 ### 2. Trust/revocation coherence (W1 proof b, MCPS-84/85)
 
-Set `--revocation-tier push` with `--trust-epoch-redis-url`. Each replica polls a
-monotonic **trust-epoch** key; when an operator advances it (`INCR`), every
-replica flushes its trust cache on the next request and re-resolves live. The
+Set `--revocation-tier push` with `--trust-epoch-redis-url`. A fleet must: under
+`--fleet` the proxy refuses to start without a networked trust-epoch source, and the
+chart refuses to render more than one replica without `revocation.trustEpochRedisUrl`,
+because that counter is the only kill switch for the fleet's delegated response keys.
+Each replica polls a monotonic **trust-epoch** key every 5 s off the request path; when
+an operator advances it (`INCR`), every replica marks its cached trust bindings stale
+within one poll interval and re-resolves them against its trust store. The epoch reaches
+the CACHE, not the store: the store is a snapshot of `--trust` re-read every `R`
+seconds, so a key removed from `trust.json` stops resolving only once that re-read
+lands, and advancing the epoch alone revokes no request-signer key. The
 **cross-replica revocation-lag bound is per tier** (ADR-MCPS-049 clause 3):
 
 | Tier | Bound |
 |---|---|
-| Trust key-status | the next request after an epoch advance when the trust-epoch source is healthy, against a store as fresh as its last `--trust` re-read (`R` while re-reads succeed, 5 × `R` at worst); bounded `T` on a source outage (fail-closed); bounded `T` with no source |
+| Trust key-status (a key removed from `--trust`) | `R + T` while re-reads succeed, 5 × `R` + `T` at worst; the epoch shortens neither, and a source outage falls back to bounded `T` (fail-closed) |
+| Delegated response keys | an `INCR` moves each replica to the next `<base>#<counter>` label at its next epoch read; credentials already issued end at their `exp` |
 | Client-cert CRL | the `--client-crl-reload-secs` cadence (or the CRL `nextUpdate` with no reload configured) — applied per request, so it bounds peers holding established connections too, not only reconnecting ones |
 
 Zero-window revocation is **not** claimed on either tier. The proxy prints the

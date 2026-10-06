@@ -168,30 +168,31 @@ impl SigningPlane {
             window,
         } = crate::delegated_wiring::build_delegated_signing(plan, root_signer)?;
         // Resolve the shared trust epoch BEFORE the first key is minted, so the very
-        // first credential carries the globally comparable `<base>#<counter>` label
-        // rather than the bare base. Minting under the bare label is what let a
-        // restarted replica appear unrevoked to verifiers pinned past an `INCR`.
+        // first credential carries the comparable `<base>#<counter>` label.
         let epoch_watch =
             build_delegated_epoch_watch(&plan.epoch, rotor.trust_epoch().to_string())?;
         if let Some(watch) = epoch_watch.as_ref() {
             // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
-            // read means we cannot produce an epoch verifiers can compare, so we must
-            // not issue at all. Refusing to start is the honest outcome — the previous
-            // behaviour was to start anyway with the switch wired to nothing.
+            // read yields no epoch verifiers can compare, so nothing is issued.
             let label = watch.current_label().ok_or_else(|| {
                 "delegated-signing: --trust-epoch-redis-url is configured but the shared trust \
-                 epoch could NOT be read at startup, so no credential can carry a comparable \
-                 epoch. Refusing to start rather than minting keys the operator's kill switch \
-                 cannot revoke (fail closed, ADR-MCPRE-052 §7)."
+                 epoch could NOT be read at startup; refusing to start rather than mint keys the \
+                 operator's kill switch cannot revoke (fail closed, ADR-MCPRE-052 §7)."
                     .to_string()
             })?;
             eprintln!(
                 "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {label:?}. An \
-                 operator INCR moves every replica to the next label, so verifiers pinned to the \
-                 prior accepted-epoch set reject fleet-wide — and a restarted replica resolves \
-                 the SAME label as its peers."
+                 operator INCR moves every replica to the next label, and a restarted replica \
+                 resolves the SAME label as its peers."
             );
             rotor.set_trust_epoch_before_first_issue(label);
+        } else {
+            eprintln!(
+                "mcp-re-proxy: NO trust-epoch source is wired (--trust-epoch-redis-url): \
+                 delegated keys are minted under the bare base {:?}, which never advances; \
+                 short of a restart, a credential's exp is the only thing that ends it.",
+                rotor.trust_epoch()
+            );
         }
         // Initial issuance MUST succeed before serving (fail closed, ADR-MCPRE-052 §6).
         rotor.rotate(startup_now_unix).map_err(|_| {
@@ -206,10 +207,9 @@ impl SigningPlane {
              the request path; delegated key {window}. \
              Initial delegated key issued.",
         );
-        // Cold-path rotation worker: rotates within each key's overlap window, off the
-        // per-core runtimes, and re-issues on a trust-epoch advance so an operator `INCR`
-        // revokes outstanding delegated keys fleet-wide (ADR-MCPRE-052 §7). Its halt is
-        // this plane's alone, so it keeps the key maintained through the fleet drain.
+        // Cold-path rotation worker: rotates within each key's overlap window and re-issues
+        // on a trust-epoch advance (ADR-MCPRE-052 §7). Its halt is this plane's alone, so
+        // it keeps the key maintained through the fleet drain.
         let retirement = rotor.retirement();
         let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         spawn_delegated_rotation_task(&mut workers, rotor, window.overlap(), epoch_watch)?;

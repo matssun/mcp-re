@@ -1524,14 +1524,9 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
     // LIVE and PUSH state their window in terms of consulting the trust store, so
     // both require a reload cadence — without one the store is frozen at startup and
     // neither tier can revoke anything.
-    run_ok(&[
-        "--fleet",
-        "--revocation-tier",
-        "live",
-        "--trust-reload-secs",
-        "60",
-    ]);
-    run_ok(&["--fleet", "--revocation-tier", "bounded-cache:90"]);
+    // Single-node: under --fleet only push with an epoch source starts (X9).
+    run_ok(&["--revocation-tier", "live", "--trust-reload-secs", "60"]);
+    run_ok(&["--revocation-tier", "bounded-cache:90"]);
     run_ok(&["--revocation-tier", "push:60", "--trust-reload-secs", "60"]); // push, single-node, no trust-epoch
 }
 

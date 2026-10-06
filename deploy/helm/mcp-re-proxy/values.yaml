@@ -94,7 +94,9 @@ continuationControl:
 # Trust revocation (ADR-MCPS-021 / MCPS-84). The push tier + a trust-epoch Redis
 # source flushes every replica's trust cache on an epoch advance (bounded T on
 # outage); the store itself is as fresh as its last --trust re-read. Set
-# trustEpochRedisUrl to "" to run the push tier inert (bounded-T only).
+# trustEpochRedisUrl to "" to run the push tier inert (bounded-T only) — legal only for
+# one replica with fleet=false: the epoch is the only kill switch for delegated keys
+# across replicas, so the chart refuses more than one replica, or fleet=true, without it.
 #
 # Same scheme rule as replay.redisUrl, and the stakes are higher: the epoch value
 # read from this key drives credential minting, so an attacker who can write it

@@ -12217,3 +12217,34 @@ expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_placeholder_trust_domain_is_refused_without_the_fixture_acknowledgement",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_fixture_acknowledgement_admits_the_placeholder_and_nothing_else_needs_it",
 ]
+
+[[probe]]
+id = "M498-proxy-a-delegated-signing-fleet-needs-a-trust-epoch-source"
+unit = "proxy.cross_machine_legality"
+conjunct = "a --fleet deployment whose trust-revocation state carries no networked epoch source is refused, since across replicas that counter is the only kill switch for delegated keys"
+path = "mcp-re-proxy/src/config_state/cross_machine.rs"
+anchor = """
+    if !topology.is_fleet() || state.has_networked_epoch() {
+"""
+weakening = """
+    if !topology.is_fleet() || !state.has_networked_epoch() {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::a_fleet_with_a_networked_epoch_source_is_legal",
+  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::a_fleet_without_a_networked_epoch_source_is_refused",
+]
+
+[[probe]]
+id = "M499-proxy-an-epoch-base-cannot-hold-the-label-separator"
+unit = "proxy.delegated_signing_configuration_state"
+conjunct = "a --delegated-trust-epoch base holding '#' or past the length bound is refused, so <base>#<counter> parses back to one pair"
+path = "mcp-re-proxy/src/config_state/delegated_signing.rs"
+anchor = """
+    (base.contains('#') || base.len() > MAX_DELEGATED_TRUST_EPOCH_BASE_LEN).then(|| {
+"""
+weakening = """
+    (base.len() > MAX_DELEGATED_TRUST_EPOCH_BASE_LEN).then(|| {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::delegated_signing::tests::an_epoch_base_that_renders_an_ambiguous_label_is_refused",
+]

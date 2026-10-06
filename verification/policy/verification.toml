@@ -4382,7 +4382,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.cross_machine_legality"
 class = "V0"
-description = "Pass 2 of the layer-A legality boundary: the relations that join two configuration machines. No relation re-decides a state a machine already classified: X9 reads the recognised trust-revocation state and refuses no configuration, X2a reads the signing-source and channel-key request selections, and X6 reads a deny-list field no machine classifies. Each illegal combination X2a and X6 declare is refused unconditionally rather than reinterpreted into a weaker posture."
+description = "Pass 2 of the layer-A legality boundary: the relations that join two configuration machines. No relation re-decides a state a machine already classified: X9 reads the recognised trust-revocation state's epoch decision and the topology machine's fleet decision and refuses a fleet with no networked trust-epoch source, X2a reads the signing-source and channel-key request selections, and X6 reads a deny-list field no machine classifies. Each illegal combination X2a, X6 and X9 declare is refused unconditionally rather than reinterpreted into a weaker posture."
 paths = ["mcp-re-proxy/src/config_state/cross_machine.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -4391,14 +4391,16 @@ evidence = [
   "test://proxy/config_state/cross_machine_relations",
   "mutation://proxy/config_state/cross_machine_relations",
 ]
-# The last control pins X9's no-op: a push-networked trust-epoch configuration draws no X9
-# refusal. It cannot see whether a plan re-derives the epoch posture; no plan is in `paths`.
+# The last three controls pin X9: a fleet with a push-networked epoch source draws no refusal,
+# every tier without one is refused under --fleet, and one node without one stays legal.
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::a_selector_matching_the_custody_state_is_legal",
   "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::every_selector_is_refused_under_every_other_custody_state",
   "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::a_deny_list_no_profile_will_read_is_refused",
   "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::the_exclusive_custody_relation_has_no_configuration_left_to_refuse",
-  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::the_trust_epoch_posture_is_not_re_derived_here",
+  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::a_fleet_with_a_networked_epoch_source_is_legal",
+  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::a_fleet_without_a_networked_epoch_source_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#config_state::cross_machine::tests::a_single_node_without_an_epoch_source_is_legal",
 ]
 
 [[unit]]
@@ -9304,7 +9306,8 @@ evidence = [
   "mutation://proxy/trust_epoch_source/one_read_one_event",
 ]
 # THIS is the unit ASM-0044 is scoped to. The fleet-shaped sentence the proxy prints —
-# "the trust cache flushes within one poll interval of an epoch advance" — is true of a
+# "cached trust re-resolves against the store within one poll interval of an epoch
+# advance" — is true of a
 # fleet only if every replica's read returns the advanced value, and that is the store's
 # fact. Splitting the source from the plane is what keeps that premise off THM-0097, a
 # claim about what a replica does with an event it was handed, which is true whether or
@@ -11071,6 +11074,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::delegated_signing::tests::a_fact_that_resolves_to_empty_is_refused_however_it_got_that_way",
   "//mcp-re-proxy:proxy_unit_test#config_state::delegated_signing::tests::a_legal_request_resolves_every_fact_and_reports_nothing",
   "//mcp-re-proxy:proxy_unit_test#config_state::delegated_signing::tests::a_one_character_fact_is_not_refused_by_the_emptiness_guard",
+  "//mcp-re-proxy:proxy_unit_test#config_state::delegated_signing::tests::an_epoch_base_that_renders_an_ambiguous_label_is_refused",
   "//mcp-re-proxy:proxy_unit_test#config_state::delegated_signing::tests::a_range_defect_is_reported_and_resolves_no_facts",
   "//mcp-re-proxy:proxy_unit_test#config_state::delegated_signing::tests::a_ttl_above_the_ceiling_is_refused",
   "//mcp-re-proxy:proxy_unit_test#config_state::delegated_signing::tests::a_whitespace_minted_fact_is_refused_like_an_empty_one",
