@@ -166,15 +166,10 @@ impl SigningPlane {
         root_signer: impl crate::key_source::ResponseSigner + Send + 'static,
         startup_now_unix: i64,
     ) -> Result<SigningPlane, String> {
-        let crate::delegated_wiring::DelegatedSigningWiring {
-            signer,
-            mut rotor,
-            window,
-        } = crate::delegated_wiring::build_delegated_signing(plan, root_signer)?;
-        // Resolve the shared trust epoch BEFORE the first key is minted, so the very
-        // first credential carries the comparable `<base>#<counter>` label.
+        // Resolve the shared epoch BEFORE the custody exists: its first credential carries it.
         let epoch_watch =
-            build_delegated_epoch_watch(&plan.epoch, rotor.trust_epoch().to_string())?;
+            build_delegated_epoch_watch(&plan.epoch, plan.custody.trust_epoch.clone())?;
+        let mut minting = plan.clone();
         if let Some(watch) = epoch_watch.as_ref() {
             // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
             // read yields no epoch verifiers can compare, so nothing is issued.
@@ -189,17 +184,22 @@ impl SigningPlane {
                  operator INCR moves every replica to the next label, and a restarted replica \
                  resolves the SAME label as its peers."
             );
-            rotor.set_trust_epoch_before_first_issue(label);
+            minting.custody.trust_epoch = label;
         } else {
             eprintln!(
                 "mcp-re-proxy: NO trust-epoch source is wired (--trust-epoch-redis-url): \
                  delegated keys are minted under the bare base {:?}, which never advances; \
                  short of a restart, a credential's exp is the only thing that ends it.",
-                rotor.trust_epoch()
+                plan.custody.trust_epoch
             );
         }
+        let crate::delegated_wiring::DelegatedSigningWiring {
+            signer,
+            mut rotor,
+            window,
+        } = crate::delegated_wiring::build_delegated_signing(&minting, root_signer)?;
         // Initial issuance MUST succeed before serving (fail closed, ADR-MCPRE-052 §6).
-        rotor.rotate(startup_now_unix).map_err(|_| {
+        mint_successor::rotate_and_announce(&mut rotor, startup_now_unix).map_err(|_| {
             format!(
                 "delegated-signing: initial delegated key issuance FAILED at startup ({}); \
                  the root issuer must be available before serving (fail closed, ADR-MCPRE-052 §6)",

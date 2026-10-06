@@ -132,7 +132,9 @@ fn apply_epoch_advance(
     halt: &crate::managed_worker::Halt,
 ) -> EpochStep {
     use crate::delegated_server_signer::rotation_backoff;
-    match rotor.advance_trust_epoch(label.clone(), now_unix()) {
+    let outcome = rotor.advance_trust_epoch(label.clone(), now_unix());
+    super::mint_successor::announce_lifecycle(rotor);
+    match outcome {
         Ok(TrustEpochAdvance::Advanced) => {
             *last_label = label;
             signer.metrics().record_success(now_unix());
@@ -155,9 +157,10 @@ fn apply_epoch_advance(
             let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
             eprintln!(
                 "mcp-re-proxy: WARNING: trust epoch advance to {label} NOT APPLIED (root issuer \
-                 declined); this replica is STILL MINTING under the prior epoch on its current \
-                 key, until that key's exp ({}s) and then FAILS CLOSED. The break-glass \
-                 revocation is not yet in force here. consecutive_failures {}. Retrying in {}ms.",
+                 declined); this replica is STILL SIGNING with its prior-epoch key until that \
+                 key's exp ({}s), and mints its next key under {label}; if no issuance succeeds \
+                 by then it FAILS CLOSED. The break-glass revocation is not yet in force here. \
+                 consecutive_failures {}. Retrying in {}ms.",
                 ttl.unwrap_or(0),
                 consecutive_failures,
                 backoff.as_millis(),

@@ -55,29 +55,44 @@ pub(super) fn attempt_rotation(
     let before_kid = signer
         .current(now_unix())
         .map(|a| a.delegated_kid().to_owned());
-    match rotor.rotate(now_unix()) {
+    match rotate_and_announce(rotor, now_unix()) {
         Ok(()) if !rotation_made_progress(signer, &before_kid, overlap) => {
             back_off_after_failure(signer, halt, issuance_failure(rotor.last_refusal()), true)
         }
         Ok(()) => {
             signer.metrics().record_success(now_unix());
-            if let Some(ev) = rotor.audit().last() {
-                let ttl = signer.seconds_to_expiry(now_unix()).unwrap_or(0);
-                eprintln!(
-                    "mcp-re-proxy: delegated key {} (kid {}, exp {}); time-to-expiry {}s; \
-             rotations_ok {}",
-                    ev.event_type,
-                    ev.delegated_kid,
-                    ev.exp,
-                    ttl,
-                    signer.metrics().rotations_ok(),
-                );
-            }
+            eprintln!(
+                "mcp-re-proxy: delegated key rotated; time-to-expiry {}s; rotations_ok {}",
+                signer.seconds_to_expiry(now_unix()).unwrap_or(0),
+                signer.metrics().rotations_ok(),
+            );
             RotationStep::Continue(0)
         }
         Err(_) => {
             back_off_after_failure(signer, halt, issuance_failure(rotor.last_refusal()), false)
         }
+    }
+}
+
+/// Rotate, then announce the lifecycle events of that step whatever it answered.
+pub(super) fn rotate_and_announce(
+    rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
+    now: i64,
+) -> Result<(), mcp_re_http_profile::custody::CustodyError> {
+    let outcome = rotor.rotate(now);
+    announce_lifecycle(rotor);
+    outcome
+}
+
+/// One line per key-lifecycle event (issue / rotate / retire) the rotor's latest step
+/// produced (ADR-MCPRE-052 §7). The custody keeps only that step's events, so an event not
+/// announced here before the next step is announced nowhere.
+pub(super) fn announce_lifecycle(rotor: &crate::delegated_wiring::ProdDelegatedRotor) {
+    for ev in rotor.step_events() {
+        eprintln!(
+            "mcp-re-proxy: delegated key {} (kid {}, exp {})",
+            ev.event_type, ev.delegated_kid, ev.exp
+        );
     }
 }
 

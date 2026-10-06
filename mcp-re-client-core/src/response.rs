@@ -1296,7 +1296,7 @@ mod delegated_tests {
             .sign_response(NOW, &mut resp, signed.request())
             .expect("server delegated-signs the success response");
         let jti = custody
-            .audit()
+            .step_events()
             .last()
             .expect("an issued key-lifecycle event carrying the credential jti")
             .jti

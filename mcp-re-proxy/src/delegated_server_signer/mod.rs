@@ -274,15 +274,6 @@ where
         self.custody.trust_epoch()
     }
 
-    /// Set the trust epoch WITHOUT issuing — used once at startup to pin the resolved
-    /// `<base>#<counter>` label before the first key is minted, so the very first
-    /// credential carries a globally comparable epoch rather than the bare base label.
-    /// After startup use [`advance_trust_epoch`](Self::advance_trust_epoch), which
-    /// re-issues so the change takes effect immediately.
-    pub fn set_trust_epoch_before_first_issue(&mut self, epoch: String) {
-        self.custody.set_trust_epoch(epoch);
-    }
-
     /// Advance the minted trust epoch and immediately re-issue under it, publishing the
     /// fresh snapshot for the hot path (ADR-MCPRE-052 §7). Called by the rotation owner
     /// when the shared trust-epoch counter advances: verifiers pinned to the prior
@@ -302,8 +293,7 @@ where
         epoch: String,
         now: i64,
     ) -> Result<TrustEpochAdvance, CustodyError> {
-        self.custody.set_trust_epoch(epoch);
-        match self.custody.reissue(now) {
+        match self.custody.advance_trust_epoch(epoch, now) {
             Ok(Some(successor)) => self
                 .publish(successor)
                 .map(|()| TrustEpochAdvance::Advanced),
@@ -317,9 +307,11 @@ where
         }
     }
 
-    /// The audited key-lifecycle events so far (issue / rotate / retire).
-    pub fn audit(&self) -> &[KeyLifecycleEvent] {
-        self.custody.audit()
+    /// The key-lifecycle events (issue / rotate / retire) the latest [`rotate`](Self::rotate)
+    /// or [`advance_trust_epoch`](Self::advance_trust_epoch) produced; the next call replaces
+    /// them, so the driver surfaces them after each.
+    pub fn step_events(&self) -> &[KeyLifecycleEvent] {
+        self.custody.step_events()
     }
 
     /// Why the most recent issuance adopted nothing, while no later one has adopted.

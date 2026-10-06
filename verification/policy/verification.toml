@@ -8299,7 +8299,7 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.delegated_signing_custody"
 class = "V0"
-description = "The delegated-signing credential lifecycle: the root is never touched within a key's life, a successor is minted in the overlap window and under an advanced trust epoch, a signature window never outlives the credential it was issued under, an adopted credential's window lies inside the one requested and is open when requested, a predecessor displaced after its own expiry is retired in the lifecycle audit, and an issuance that fails after expiry fails closed rather than continuing on the predecessor."
+description = "The delegated-signing credential lifecycle: the root is never touched within a key's life, a successor is minted in the overlap window and under an advanced trust epoch, a signature window never outlives the credential it was issued under, an adopted credential's window lies inside the one requested and is open when requested, a predecessor displaced after its own expiry is retired once in the lifecycle events of the step that displaced it, the machine holds only its latest step's lifecycle events however long it runs, a declined epoch advance leaves the advanced epoch installed so the next issuance mints under it, and an issuance that fails after expiry fails closed rather than continuing on the predecessor."
 paths = [
   "mcp-re-http-profile/src/custody/mod.rs",
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
@@ -8338,6 +8338,9 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_declined_reissue_leaves_the_predecessor_untouched",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_minted_credential_carries_the_configured_scope_and_trust_epoch",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::an_unrepresentable_expiry_refuses_rather_than_wrapping",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_events_held_are_one_steps_however_long_the_machine_runs",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::an_advance_over_an_expired_predecessor_retires_it_once",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::after_a_declined_advance_the_next_issuance_mints_under_the_advanced_epoch",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::issuance_terms::tests::every_term_fails_restrictively",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::issuance_terms::tests::the_retry_interval_has_a_floor",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::issuance_terms::tests::an_uncomputable_rotation_threshold_reads_as_due",

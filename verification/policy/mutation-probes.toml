@@ -11649,7 +11649,7 @@ path = "mcp-re-http-profile/src/custody/mod.rs"
 anchor = """
         if let Some(expired) = self.active.take().filter(|_| !is_rotation) {
             let event = self.retired(&expired, now);
-            self.audit.push(event);
+            self.step_events.push(event);
         }
 """
 weakening = """
@@ -12403,4 +12403,44 @@ expect_red = [
 ]
 note = """
 The operator's --continuation-max-live-entries is accepted and then ignored.
+"""
+
+[[probe]]
+id = "M508-custody-keeps-every-step-it-ever-ran"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "the custody holds only its latest step's lifecycle events, however long it runs"
+path = "mcp-re-http-profile/src/custody/mod.rs"
+anchor = """
+        self.step_events.clear();
+        let needs = match &self.active {
+"""
+weakening = """
+        let needs = match &self.active {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_events_held_are_one_steps_however_long_the_machine_runs",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::signing_never_touches_the_root_within_a_key_life",
+]
+note = """
+The scheduled path stops replacing its step's events, so the lifecycle trail grows for the
+life of the process again: the unbounded in-memory audit this owner no longer keeps.
+"""
+
+[[probe]]
+id = "M509-custody-an-expired-predecessor-is-retired-twice"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "a predecessor displaced by an epoch advance is retired once"
+path = "mcp-re-http-profile/src/custody/mod.rs"
+anchor = """
+        if let (Some(_), Some(p)) = (&successor, previous.filter(|p| now < p.exp())) {
+"""
+weakening = """
+        if let (Some(_), Some(p)) = (&successor, previous) {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::an_advance_over_an_expired_predecessor_retires_it_once",
+]
+note = """
+An advance landing after the predecessor's `exp` retires it in `adopt` and again as a
+superseded live key: two retire events for one credential.
 """

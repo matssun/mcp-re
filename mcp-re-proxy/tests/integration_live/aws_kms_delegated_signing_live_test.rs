@@ -312,6 +312,7 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
         .sign_response(NOW, &mut predecessor_rsp, &req)
         .expect("custody signs (issuance)");
     let first_kid = custody.active_kid().expect("a key is active").to_owned();
+    let mut lifecycle = custody.step_events().to_vec();
 
     for _ in 1..RESPONSES_PER_KEY {
         let mut rsp = fresh_response();
@@ -358,6 +359,7 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
     custody
         .sign_response(after, &mut successor_rsp, &req)
         .expect("custody signs (rotation)");
+    lifecycle.extend_from_slice(custody.step_events());
     let second_kid = custody
         .active_kid()
         .expect("a successor key is active")
@@ -396,7 +398,7 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
         .expect("predecessor response still verifies during the overlap window (no gap)");
 
     // --- Audited lifecycle: issue then rotate ---------------------------------
-    let audit = custody.audit();
+    let audit = &lifecycle;
     assert_eq!(audit.len(), 2, "one issuance + one rotation audited");
     assert_eq!(audit[0].event_type, "mcp-re.delegated_key.issued");
     assert_eq!(audit[0].delegated_kid, first_kid);
