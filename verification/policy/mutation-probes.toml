@@ -9917,13 +9917,12 @@ theorem = "THM-0077"
 conjunct = "Every security capability held by the serving runtime is derived from validated semantic owner state"
 path = "mcp-re-proxy/src/signing_plane/mod.rs"
 anchor = """
-            let label = watch.current_label().ok_or_else(|| {
+            minting.custody.trust_epoch = watch.epoch().map_err(|_| {
 """
 weakening = """
-            let label = watch
-                .current_label()
-                .or_else(|| Some(rotor.trust_epoch().to_string()))
-                .ok_or_else(|| {
+            minting.custody.trust_epoch = watch.epoch().or_else(|_| {
+                Ok::<_, epoch_watch::EpochRefusal>(plan.custody.trust_epoch.clone())
+            }).map_err(|_| {
 """
 expect_red = [
   "//mcp-re-proxy:proxy_ext_unit_test#signing_plane::rotation_owner_tests::materialize_refuses_when_the_configured_shared_epoch_cannot_be_read",
@@ -11271,10 +11270,10 @@ theorem = "THM-0133"
 conjunct = "the label is `<base>#<counter>` for the value the read returned, never the bare base"
 path = "mcp-re-proxy/src/signing_plane/epoch_watch.rs"
 anchor = """
-                Ok(format!("{}#{}", self.base_label, counter))
+        self.counter().map(|counter| self.base.at(counter))
 """
 weakening = """
-                Ok({ let _ = counter; self.base_label.clone() })
+        self.counter().map(|_| self.base.clone())
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::trust_epoch_watch_tests::label_is_always_base_hash_counter_never_the_bare_base",
@@ -12241,10 +12240,10 @@ unit = "proxy.delegated_signing_configuration_state"
 conjunct = "a --delegated-trust-epoch base holding '#' or past the length bound is refused, so <base>#<counter> parses back to one pair"
 path = "mcp-re-proxy/src/config_state/delegated_signing.rs"
 anchor = """
-    (base.contains('#') || base.len() > MAX_DELEGATED_TRUST_EPOCH_BASE_LEN).then(|| {
+    (refusal != TrustEpochRefusal::Empty).then(|| {
 """
 weakening = """
-    (base.len() > MAX_DELEGATED_TRUST_EPOCH_BASE_LEN).then(|| {
+    (refusal == TrustEpochRefusal::TooLong).then(|| {
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::delegated_signing::tests::an_epoch_base_that_renders_an_ambiguous_label_is_refused",
@@ -12443,6 +12442,45 @@ expect_red = [
 note = """
 An advance landing after the predecessor's `exp` retires it in `adopt` and again as a
 superseded live key: two retire events for one credential.
+"""
+
+[[probe]]
+id = "M513-custody-the-trust-epoch-steps-back"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "the custody's trust epoch only moves forward"
+path = "mcp-re-http-profile/src/custody/trust_epoch.rs"
+anchor = """
+            .is_none_or(|held| counter >= held)
+"""
+weakening = """
+            .is_none_or(|_| true)
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::an_advance_below_the_held_epoch_is_refused_and_the_held_one_reissues",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::trust_epoch::tests::an_epoch_never_moves_below_the_counter_it_holds",
+]
+note = """
+The epoch accepts any counter, so a custody advanced to `#5` can be moved back to `#4` and
+mint under a label an operator already advanced past.
+"""
+
+[[probe]]
+id = "M514-custody-a-trust-epoch-base-holds-the-separator"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "a trust-epoch base renders exactly one label"
+path = "mcp-re-http-profile/src/custody/trust_epoch.rs"
+anchor = """
+        if base.contains('#') {
+"""
+weakening = """
+        if base.contains("##") {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::trust_epoch::tests::a_base_is_refused_when_empty_separated_or_too_long",
+]
+note = """
+A base holding one `#` is accepted, so `a#1` at counter 2 renders `a#1#2`, a label two
+(base, counter) pairs share.
 """
 
 [[probe]]

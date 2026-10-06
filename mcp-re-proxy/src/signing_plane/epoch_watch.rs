@@ -45,6 +45,7 @@
 //! restarts entirely while the store is regressed has no mark left to repair toward.
 
 use crate::trust_epoch::raise::EpochRaiser;
+use mcp_re_http_profile::custody::TrustEpoch;
 
 /// Why there is no label to mint under.
 #[derive(Debug)]
@@ -96,16 +97,16 @@ impl std::fmt::Display for EpochRefusal {
 /// The delegated plane's view of the shared trust-epoch counter.
 pub(super) struct DelegatedEpochWatch {
     reader: Box<dyn EpochRaiser>,
-    base_label: String,
+    base: TrustEpoch,
     high_water: std::sync::Mutex<Option<i64>>,
 }
 
 impl DelegatedEpochWatch {
     #[cfg(any(test, feature = "redis_replay"))]
-    pub(super) fn new(reader: Box<dyn EpochRaiser>, base_label: String) -> Self {
+    pub(super) fn new(reader: Box<dyn EpochRaiser>, base: TrustEpoch) -> Self {
         DelegatedEpochWatch {
             reader,
-            base_label,
+            base,
             high_water: std::sync::Mutex::new(None),
         }
     }
@@ -118,12 +119,24 @@ impl DelegatedEpochWatch {
     /// then fails closed on its own (ADR-MCPRE-052 §6). Crucially it is also not treated
     /// as "no change": a blip must never be read as an advance, nor as permission to
     /// mint under a stale label.
+    #[cfg(test)]
     pub(super) fn current_label(&self) -> Option<String> {
         self.label().ok()
     }
 
     /// [`current_label`](Self::current_label), with the reason when there is none.
+    #[cfg(test)]
     pub(super) fn label(&self) -> Result<String, EpochRefusal> {
+        self.epoch().map(|epoch| epoch.label())
+    }
+
+    /// The epoch to mint under: the base at the shared counter, read once.
+    pub(super) fn epoch(&self) -> Result<TrustEpoch, EpochRefusal> {
+        self.counter().map(|counter| self.base.at(counter))
+    }
+
+    /// The shared counter the label extends the base with, read once.
+    pub(super) fn counter(&self) -> Result<i64, EpochRefusal> {
         let read = self.reader.read_epoch();
         let mut hw = self
             .high_water
@@ -135,7 +148,7 @@ impl DelegatedEpochWatch {
             }
             (Ok(counter), _) => {
                 *hw = Some(counter);
-                Ok(format!("{}#{}", self.base_label, counter))
+                Ok(counter)
             }
             (Err(e), Some(high_water)) => Err(self.behind(Err(e.0), high_water)),
             (Err(e), None) => Err(EpochRefusal::Unestablished(e.0)),
@@ -220,7 +233,10 @@ mod tests {
     }
 
     fn watch(store: &Arc<Store>) -> DelegatedEpochWatch {
-        DelegatedEpochWatch::new(Box::new(Replica(Arc::clone(store))), "epoch-min".into())
+        DelegatedEpochWatch::new(
+            Box::new(Replica(Arc::clone(store))),
+            "epoch-min".parse().expect("base"),
+        )
     }
 
     /// The repair: a rolled-back counter is refused on the read that sees it, the store is
@@ -412,7 +428,7 @@ mod live {
 
     fn replica(url: &str, key: &str) -> DelegatedEpochWatch {
         let reader = RedisEpochReader::connect_lazy(url, key).expect("reader");
-        DelegatedEpochWatch::new(Box::new(reader), "epoch-live".into())
+        DelegatedEpochWatch::new(Box::new(reader), "epoch-live".parse().expect("base"))
     }
 
     /// A rollback by `SET` is refused, repaired past the mark by the replica that holds it,

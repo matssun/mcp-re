@@ -173,24 +173,24 @@ impl SigningPlane {
         if let Some(watch) = epoch_watch.as_ref() {
             // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
             // read yields no epoch verifiers can compare, so nothing is issued.
-            let label = watch.current_label().ok_or_else(|| {
+            minting.custody.trust_epoch = watch.epoch().map_err(|_| {
                 "delegated-signing: --trust-epoch-redis-url is configured but the shared trust \
                  epoch could NOT be read at startup; refusing to start rather than mint keys the \
                  operator's kill switch cannot revoke (fail closed, ADR-MCPRE-052 §7)."
                     .to_string()
             })?;
             eprintln!(
-                "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {label:?}. An \
+                "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {:?}. An \
                  operator INCR moves every replica to the next label, and a restarted replica \
-                 resolves the SAME label as its peers."
+                 resolves the SAME label as its peers.",
+                minting.custody.trust_epoch.label()
             );
-            minting.custody.trust_epoch = label;
         } else {
             eprintln!(
                 "mcp-re-proxy: NO trust-epoch source is wired (--trust-epoch-redis-url): \
                  delegated keys are minted under the bare base {:?}, which never advances; \
                  short of a restart, a credential's exp is the only thing that ends it.",
-                plan.custody.trust_epoch
+                plan.custody.trust_epoch.label()
             );
         }
         let crate::delegated_wiring::DelegatedSigningWiring {
@@ -259,13 +259,13 @@ fn rotation_jitter() -> u64 {
 #[cfg(feature = "redis_replay")]
 fn build_delegated_epoch_watch(
     epoch: &crate::startup_plan::TrustEpochPlan,
-    base_label: String,
+    base: mcp_re_http_profile::custody::TrustEpoch,
 ) -> Result<Option<DelegatedEpochWatch>, String> {
     let Some(source) = epoch.networked_source()? else {
         return Ok(None);
     };
     match crate::trust_epoch::RedisEpochReader::connect_lazy(source.url(), source.key()) {
-        Ok(reader) => Ok(Some(DelegatedEpochWatch::new(Box::new(reader), base_label))),
+        Ok(reader) => Ok(Some(DelegatedEpochWatch::new(Box::new(reader), base))),
         Err(e) => {
             // Only a malformed URL reaches here (`Client::open` parses, it does not
             // connect), so this is a configuration error, not an outage.
@@ -290,7 +290,7 @@ fn build_delegated_epoch_watch(
 #[cfg(not(feature = "redis_replay"))]
 fn build_delegated_epoch_watch(
     epoch: &crate::startup_plan::TrustEpochPlan,
-    _base_label: String,
+    _base: mcp_re_http_profile::custody::TrustEpoch,
 ) -> Result<Option<DelegatedEpochWatch>, String> {
     match epoch.unsupported_by_build() {
         Some(refusal) => Err(refusal),
@@ -365,7 +365,7 @@ mod trust_epoch_watch_tests {
     fn replica(counter: &Arc<SharedCounter>) -> DelegatedEpochWatch {
         DelegatedEpochWatch::new(
             Box::new(CounterReader(Arc::clone(counter))),
-            BASE.to_string(),
+            BASE.parse().expect("base"),
         )
     }
 
@@ -543,6 +543,10 @@ mod epoch_watch_wiring_tests {
         TrustEpochPlan::redis(url, crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY)
     }
 
+    fn base() -> mcp_re_http_profile::custody::TrustEpoch {
+        "epoch-1".parse().expect("base")
+    }
+
     /// An operator who configured a kill switch must not get a replica that mints without
     /// one. A URL that cannot be turned into a reader previously became `None`, which is
     /// indistinguishable from "no source configured": the plane skipped its own
@@ -556,8 +560,7 @@ mod epoch_watch_wiring_tests {
     #[cfg(feature = "redis_replay")]
     #[test]
     fn a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably() {
-        let Err(err) =
-            build_delegated_epoch_watch(&planned("http://127.0.0.1:6379"), "epoch-1".to_string())
+        let Err(err) = build_delegated_epoch_watch(&planned("http://127.0.0.1:6379"), base())
         else {
             panic!("a kill switch that cannot be wired must refuse the plane");
         };
@@ -577,10 +580,8 @@ mod epoch_watch_wiring_tests {
     #[cfg(not(feature = "redis_replay"))]
     #[test]
     fn a_planned_source_this_build_cannot_read_refuses_instead_of_minting_unrevocably() {
-        let Err(err) = build_delegated_epoch_watch(
-            &planned("redis://epoch-store.invalid"),
-            "epoch-1".to_string(),
-        ) else {
+        let Err(err) = build_delegated_epoch_watch(&planned("redis://epoch-store.invalid"), base())
+        else {
             panic!("a planned source this build cannot read must refuse the plane");
         };
         assert!(
@@ -597,8 +598,7 @@ mod epoch_watch_wiring_tests {
     /// refusal.
     #[test]
     fn no_planned_epoch_source_is_still_accepted() {
-        match build_delegated_epoch_watch(&TrustEpochPlan::NoNetworkChannel, "epoch-1".to_string())
-        {
+        match build_delegated_epoch_watch(&TrustEpochPlan::NoNetworkChannel, base()) {
             Ok(None) => {}
             Ok(Some(_)) => panic!("no source must yield no watcher"),
             Err(e) => panic!("an unconfigured kill switch is not a misconfiguration: {e}"),
@@ -710,7 +710,7 @@ mod rotation_owner_tests {
                 profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
                 aud: "verifier-1".to_string(),
                 audience_hash: "aud-hash".to_string(),
-                trust_epoch: "epoch-1".to_string(),
+                trust_epoch: "epoch-1".parse().expect("epoch base"),
                 server_role: "server".to_string(),
                 server_trust_domain: "example.com".to_string(),
                 server_subject: "did:example:server".to_string(),
@@ -799,7 +799,8 @@ mod rotation_owner_tests {
         let signer = Arc::clone(&wiring.signer);
         // The root is HEALTHY throughout: the only thing that may stop a mint here is
         // the epoch refusal.
-        let watch = DelegatedEpochWatch::new(Box::new(UnreadableEpoch), "epoch-1".to_string());
+        let watch =
+            DelegatedEpochWatch::new(Box::new(UnreadableEpoch), "epoch-1".parse().expect("base"));
         let rotor = drive_loop(wiring.rotor, Arc::clone(&signer), Some(watch));
 
         assert_eq!(
@@ -939,7 +940,7 @@ mod handle_lifetime_tests {
             while !halt.requested() {
                 std::thread::sleep(Duration::from_millis(2));
             }
-            let _ = rotor.advance_trust_epoch("epoch-1#2".into(), now_unix());
+            let _ = rotor.advance_trust_epoch(2, now_unix());
         });
         let signer = plane.signer();
         assert!(

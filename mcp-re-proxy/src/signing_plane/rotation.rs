@@ -117,7 +117,7 @@ pub(super) fn rotation_loop(
     // The epoch this node is currently minting under (starts at the configured baseline
     // label from the startup issuance). An advance of the shared counter moves it;
     // verifiers pinned to the old label then reject across replicas.
-    let mut last_label = rotor.trust_epoch().to_string();
+    let mut last_epoch = rotor.trust_epoch().clone();
     loop {
         if halt.requested() {
             return;
@@ -125,14 +125,14 @@ pub(super) fn rotation_loop(
         // Skipped while retrying after a failure: the backoff below is the wait then, and
         // waiting for the window as well would delay a recovery the window has passed.
         if consecutive_failures == 0
-            && wait_for_window(signer, overlap, epoch_watch, &last_label, halt)
+            && wait_for_window(signer, overlap, epoch_watch, &last_epoch, halt)
         {
             return;
         }
         if halt.requested() {
             return;
         }
-        match observe_trust_epoch(rotor, signer, epoch_watch, &mut last_label, halt) {
+        match observe_trust_epoch(rotor, signer, epoch_watch, &mut last_epoch, halt) {
             EpochStep::Halt => return,
             EpochStep::Retry(failures) => {
                 consecutive_failures = failures;
@@ -163,7 +163,7 @@ fn wait_for_window(
     signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
     overlap: i64,
     epoch_watch: Option<&DelegatedEpochWatch>,
-    last_label: &str,
+    last_epoch: &mcp_re_http_profile::custody::TrustEpoch,
     halt: &crate::managed_worker::Halt,
 ) -> bool {
     let wake_at = match signer.current(now_unix()) {
@@ -184,7 +184,7 @@ fn wait_for_window(
         }
         // Poll the shared trust epoch ~every 500ms (10 * 50ms).
         if let Some(watch) = epoch_watch.filter(|_| ticks.is_multiple_of(10)) {
-            if epoch_moved(signer, watch, last_label, &mut unreadable_seen) {
+            if epoch_moved(signer, watch, last_epoch, &mut unreadable_seen) {
                 break;
             }
         }
@@ -315,7 +315,8 @@ mod tests {
     fn an_unreadable_epoch_is_recorded_when_first_seen_not_when_the_window_opens() {
         let signer =
             crate::delegated_wiring::test_support::published(now_unix() + 3600, 9).signer();
-        let watch = DelegatedEpochWatch::new(Box::new(Unreadable), "epoch-1".into());
+        let watch =
+            DelegatedEpochWatch::new(Box::new(Unreadable), "epoch-1".parse().expect("base"));
         let deployment = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let workers = crate::managed_worker::WorkerSet::new(Arc::clone(&deployment));
         let halt = workers.halt();
@@ -327,7 +328,10 @@ mod tests {
             }
         });
 
-        let halted = wait_for_window(&signer, 60, Some(&watch), "epoch-1#0", &halt);
+        let last = "epoch-1"
+            .parse::<mcp_re_http_profile::custody::TrustEpoch>()
+            .expect("base");
+        let halted = wait_for_window(&signer, 60, Some(&watch), &last.at(0), &halt);
         stopper.join().expect("stopper thread");
 
         assert!(

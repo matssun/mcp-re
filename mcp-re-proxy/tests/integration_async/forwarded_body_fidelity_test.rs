@@ -105,7 +105,7 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: AUDIENCE.into(),
         audience_hash: audience().audience_hash(),
-        trust_epoch: "epoch-1".into(),
+        trust_epoch: "epoch-1".parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),

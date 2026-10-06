@@ -25,7 +25,7 @@
 //! `mcp_re_http_profile::custody::DelegatedKeyWindow`, and only that struct can hold a relation
 //! between its own fields. This owner produces one and never restates it.
 
-use mcp_re_http_profile::custody::DelegatedKeyWindow;
+use mcp_re_http_profile::custody::{DelegatedKeyWindow, TrustEpoch, TrustEpochRefusal};
 
 use crate::config_state::coordinate;
 use crate::config_state::coordinate::CoordinateFault;
@@ -58,7 +58,7 @@ const _: () = {
 /// §7 epoch gate was satisfied and that both defaulting rules have already been applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DelegatedSigningFacts {
-    trust_epoch: String,
+    trust_epoch: TrustEpoch,
     issuer_kid: String,
     audience_hash: String,
     rotation: DelegatedKeyWindow,
@@ -68,7 +68,7 @@ impl DelegatedSigningFacts {
     /// The base label delegated credentials are minted under: the whole label without a
     /// shared counter, else the signing plane extends it to `<base>#<counter>`, which an
     /// operator `INCR` moves and which is not this owner's to promise.
-    pub fn trust_epoch(&self) -> &str {
+    pub fn trust_epoch(&self) -> &TrustEpoch {
         &self.trust_epoch
     }
 
@@ -144,33 +144,33 @@ pub fn classify_and_validate(
     if !window_is_valid {
         return (None, violations);
     }
-    let facts = DelegatedSigningFacts {
-        trust_epoch,
-        rotation: window,
-        issuer_kid: requested
-            .issuer_kid
-            .clone()
-            .unwrap_or_else(|| config.server_key_id.clone()),
-        audience_hash: requested
-            .audience_hash
-            .clone()
-            .unwrap_or_else(|| config.audience.clone()),
-    };
+    let issuer_kid = (requested.issuer_kid.clone()).unwrap_or_else(|| config.server_key_id.clone());
+    let audience_hash =
+        (requested.audience_hash.clone()).unwrap_or_else(|| config.audience.clone());
     // Each fact is checked AFTER resolution, so an empty flag and an empty defaulting source
     // are one question (CF-10): every fact is minted verbatim into every delegation
     // credential, where an empty issuer names no issuer and an empty epoch no deployment.
-    let mut fact_defects = empty_fact_violations(&facts);
-    fact_defects.extend(epoch_base_violation(&facts.trust_epoch));
-    if !fact_defects.is_empty() {
+    let fact_defects =
+        empty_fact_violations([&trust_epoch, &issuer_kid, &audience_hash].map(String::as_str));
+    let epoch = TrustEpoch::fixed(trust_epoch);
+    if !fact_defects.is_empty() || epoch.is_err() {
         violations.extend(fact_defects);
+        violations.extend(epoch.err().and_then(epoch_base_violation));
         return (None, violations);
     }
-    (Some(facts), violations)
+    let facts = epoch.map(|trust_epoch| DelegatedSigningFacts {
+        trust_epoch,
+        rotation: window,
+        issuer_kid,
+        audience_hash,
+    });
+    (facts.ok(), violations)
 }
 
 /// A base holding `#` renders a `<base>#<counter>` two pairs share (`a#1` at 2 is `a#1#2`).
-fn epoch_base_violation(base: &str) -> Option<String> {
-    (base.contains('#') || base.len() > MAX_DELEGATED_TRUST_EPOCH_BASE_LEN).then(|| {
+/// An empty base is [`empty_fact_violations`]'s to report.
+fn epoch_base_violation(refusal: TrustEpochRefusal) -> Option<String> {
+    (refusal != TrustEpochRefusal::Empty).then(|| {
         format!(
             "--delegated-trust-epoch must not contain '#' and is at most \
              {MAX_DELEGATED_TRUST_EPOCH_BASE_LEN} bytes: `#` separates the base from the \
@@ -180,7 +180,7 @@ fn epoch_base_violation(base: &str) -> Option<String> {
 }
 
 /// The longest `--delegated-trust-epoch` base, in bytes; it is minted into every credential.
-pub const MAX_DELEGATED_TRUST_EPOCH_BASE_LEN: usize = 128;
+pub const MAX_DELEGATED_TRUST_EPOCH_BASE_LEN: usize = TrustEpoch::MAX_BASE_LEN;
 
 /// The resolved facts that are not canonical: empty, or unequal to their trimmed form.
 ///
@@ -191,11 +191,11 @@ pub const MAX_DELEGATED_TRUST_EPOCH_BASE_LEN: usize = 128;
 /// A minted fact is non-empty and equal to its trimmed form. It is refused rather than
 /// trimmed because the same string is read verbatim by other owners (`server_key_id`,
 /// `audience`), so trimming here would fork the credential's label from the one they hold.
-fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
+fn empty_fact_violations([trust_epoch, issuer_kid, audience_hash]: [&str; 3]) -> Vec<String> {
     [
         (
             "--delegated-trust-epoch",
-            facts.trust_epoch.as_str(),
+            trust_epoch,
             "--delegated-trust-epoch is empty: the base label is minted into every delegation \
              credential — verbatim where no shared counter is configured, and as the base of \
              <base>#<counter> where one is — so an empty base names no deployment in either \
@@ -203,14 +203,14 @@ fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
         ),
         (
             "the delegated issuer kid",
-            facts.issuer_kid.as_str(),
+            issuer_kid,
             "the delegated issuer kid resolves to empty: set --delegated-issuer-kid, or give \
              --server-key-id a value, since the credential chains to whichever this resolves \
              to and an empty kid names no root key for a verifier to find",
         ),
         (
             "the delegated audience scope",
-            facts.audience_hash.as_str(),
+            audience_hash,
             "the delegated audience scope resolves to empty: set --delegated-audience-hash, \
              or give --audience a value, since an empty scope makes two deployments' \
              credentials indistinguishable to the verifier that checks them",
@@ -302,7 +302,7 @@ mod tests {
         let (facts, violations) = run(|_| {});
         assert!(violations.is_empty(), "{violations:?}");
         let facts = facts.expect("the legal fixture names an epoch");
-        assert!(!facts.trust_epoch().is_empty());
+        assert!(!facts.trust_epoch().base().is_empty());
         assert!(!facts.issuer_kid().is_empty());
         assert!(!facts.audience_hash().is_empty());
     }
@@ -435,7 +435,7 @@ mod tests {
         });
         assert!(violations.is_empty(), "{violations:?}");
         let facts = facts.expect("a one-character fact is a fact");
-        assert_eq!(facts.trust_epoch(), "e");
+        assert_eq!(facts.trust_epoch().label(), "e");
         assert_eq!(facts.issuer_kid(), "k");
         assert_eq!(facts.audience_hash(), "a");
     }

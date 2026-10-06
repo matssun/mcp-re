@@ -53,11 +53,13 @@ mod issuance_refusal;
 mod issuance_terms;
 mod key_window;
 mod signing_window;
+mod trust_epoch;
 mod window_emission;
 pub use active_key::ActiveDelegatedKey;
 pub use issuance_refusal::IssuanceRefusal;
 pub use key_window::{DelegatedKeyWindow, KeyWindowError};
 pub use signing_window::SigningWindow;
+pub use trust_epoch::{TrustEpoch, TrustEpochRefusal};
 pub use window_emission::{
     build_delegated_rejection, build_delegated_rejection_preflight, sign_delegated_accepted_202,
     sign_delegated_response_full, sign_delegated_response_unbound,
@@ -71,6 +73,8 @@ pub enum CustodyError {
     FailClosedIssuance,
     /// The response-signing step itself failed (evidence assembly / signing).
     Sign(HttpProfileError),
+    /// An epoch advance named a counter below the held one; nothing changed.
+    EpochBehind,
 }
 
 /// One audited key-lifecycle event (ADR-MCPRE-052 §7). Carries no key material and
@@ -101,8 +105,8 @@ pub struct CustodyConfig {
     pub aud: String,
     /// The service/audience-scope hash the delegated key is scoped to.
     pub audience_hash: String,
-    /// The current trust epoch minted into each credential.
-    pub trust_epoch: String,
+    /// The trust epoch the custody starts under; it then moves only forward.
+    pub trust_epoch: TrustEpoch,
     /// The server-signer identity template — `role` / `trust_domain` / `subject`
     /// are fixed; `keyid` is set to each delegated key's id.
     pub server_role: String,
@@ -144,8 +148,7 @@ where
     Issue: FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
     Factory: FnMut() -> SigningKey,
 {
-    /// Build a custody state machine. No key is issued until the first
-    /// [`sign_response`](Self::sign_response) or [`ensure_active`](Self::ensure_active).
+    /// Build a custody state machine; no key is issued until the first signing or activation.
     pub fn new(cfg: CustodyConfig, root: VerificationKey, issue: Issue, factory: Factory) -> Self {
         Self {
             cfg,
@@ -184,19 +187,20 @@ where
     }
 
     /// The trust epoch currently minted into new credentials.
-    pub fn trust_epoch(&self) -> &str {
+    pub fn trust_epoch(&self) -> &TrustEpoch {
         &self.cfg.trust_epoch
     }
 
-    /// Mint every SUBSEQUENT credential under `epoch` and re-issue at once (ADR-MCPRE-052
-    /// §7); outcomes are [`reissue`](Self::reissue)'s. The epoch stays installed on a decline:
-    /// restoring the prior one would let a scheduled rotation mint under the revoked epoch.
+    /// Mint later credentials under the epoch at `counter` and re-issue now (ADR-MCPRE-052 §7);
+    /// outcomes are `reissue`'s. A counter behind the held one is `EpochBehind`, nothing changed;
+    /// a decline keeps the new epoch, so a scheduled rotation never re-mints the revoked one.
     pub fn advance_trust_epoch(
         &mut self,
-        epoch: String,
+        counter: i64,
         now: i64,
     ) -> Result<Option<ActiveDelegatedKey>, CustodyError> {
-        self.cfg.trust_epoch = epoch;
+        let epoch = self.cfg.trust_epoch.forward_to(counter);
+        self.cfg.trust_epoch = epoch.ok_or(CustodyError::EpochBehind)?;
         self.reissue(now)
     }
 
@@ -460,7 +464,7 @@ where
             mcp_re_key_use: KEY_USE_RESPONSE_SIGNING.to_owned(),
             delegated_kid: delegated_kid.clone(),
             issuer_kid: self.cfg.issuer_kid.clone(),
-            trust_epoch: self.cfg.trust_epoch.clone(),
+            trust_epoch: self.cfg.trust_epoch.label(),
             cnf: Cnf {
                 jwk: DelegatedJwk {
                     kty: JWK_KTY_OKP.to_owned(),
@@ -494,7 +498,7 @@ mod tests {
             profile: "mcp-re-http-v1".into(),
             aud: "verifier-1".into(),
             audience_hash: "aud-scope-1".into(),
-            trust_epoch: "epoch-1".into(),
+            trust_epoch: "epoch-1".parse().expect("epoch base"),
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
             server_subject: "did:example:server".into(),
@@ -783,12 +787,12 @@ mod tests {
         // Operator bumped the shared trust epoch: advance + re-issue WELL INSIDE the
         // current key's life (no scheduled rotation would fire here).
         let successor = c
-            .advance_trust_epoch(format!("{base_epoch}#1"), 1_010)
+            .advance_trust_epoch(1, 1_010)
             .expect("reissue under the new epoch")
             .expect("the successor was minted");
         assert_eq!(successor.delegated_kid(), c.active_kid().unwrap());
 
-        assert_eq!(c.trust_epoch(), format!("{base_epoch}#1"));
+        assert_eq!(c.trust_epoch().label(), format!("{base_epoch}#1"));
         let second_kid = c.active_kid().unwrap().to_string();
         assert_ne!(first_kid, second_kid, "a fresh delegated key was minted");
         assert_eq!(
@@ -1002,7 +1006,7 @@ mod tests {
         let before = c.active_kid().expect("a key is active").to_string();
 
         assert!(c
-            .advance_trust_epoch("epoch-1#2".into(), 1_010)
+            .advance_trust_epoch(2, 1_010)
             .expect("the predecessor keeps serving")
             .is_none());
 
@@ -1084,7 +1088,7 @@ mod tests {
         );
 
         let minted = c
-            .advance_trust_epoch("epoch-1#2".into(), 1_010)
+            .advance_trust_epoch(2, 1_010)
             .expect("reissue under the new epoch")
             .expect("the successor was minted");
         let second = c.active_snapshot().expect("a successor is active");
@@ -1201,7 +1205,7 @@ mod tests {
         let mut surfaced = 0usize;
         for (i, now) in (1_000..1_000 + 20 * T).step_by(7).enumerate() {
             if i % 25 == 24 {
-                c.advance_trust_epoch(format!("epoch-1#{i}"), now)
+                c.advance_trust_epoch(i64::try_from(i).expect("small"), now)
                     .expect("the root answers");
             } else {
                 c.ensure_active(now).expect("no gap");
@@ -1226,7 +1230,7 @@ mod tests {
         let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
         let first_jti = c.step_events()[0].jti.clone();
-        c.advance_trust_epoch("epoch-1#2".into(), 1_000 + T + 5)
+        c.advance_trust_epoch(2, 1_000 + T + 5)
             .expect("the root answers")
             .expect("a successor was minted");
         let retirements: Vec<_> = c
@@ -1253,10 +1257,10 @@ mod tests {
         c.ensure_active(1_000).expect("issue");
         let first = c.active_kid().expect("active").to_owned();
         assert!(c
-            .advance_trust_epoch("epoch-1#2".into(), 1_010)
+            .advance_trust_epoch(2, 1_010)
             .expect("the predecessor keeps serving")
             .is_none());
-        assert_eq!(c.trust_epoch(), "epoch-1#2");
+        assert_eq!(c.trust_epoch().label(), "epoch-1#2");
         assert_eq!(c.active_kid(), Some(first.as_str()));
 
         let rotated_at = (1_011..1_000 + T)
@@ -1284,5 +1288,31 @@ mod tests {
             verify(&["epoch-1#2"]).expect("advanced").trust_epoch,
             "epoch-1#2"
         );
+    }
+
+    /// The custody owns the epoch's order: a counter below the held one is refused with
+    /// nothing changed — no issuance, no epoch moved — and the held counter re-issues under
+    /// the installed epoch, which is how a declined advance is retried.
+    #[test]
+    fn an_advance_below_the_held_epoch_is_refused_and_the_held_one_reissues() {
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
+        c.ensure_active(1_000).expect("issue");
+        c.advance_trust_epoch(5, 1_010)
+            .expect("the root answers")
+            .expect("a successor under #5");
+        let held = c.active_kid().expect("active").to_owned();
+
+        assert!(matches!(
+            c.advance_trust_epoch(4, 1_020),
+            Err(CustodyError::EpochBehind)
+        ));
+        assert_eq!(c.trust_epoch().label(), "epoch-1#5");
+        assert_eq!(c.active_kid(), Some(held.as_str()));
+
+        c.advance_trust_epoch(5, 1_030)
+            .expect("the root answers")
+            .expect("the held epoch re-issues");
+        assert_eq!(c.trust_epoch().label(), "epoch-1#5");
+        assert_ne!(c.active_kid(), Some(held.as_str()));
     }
 }

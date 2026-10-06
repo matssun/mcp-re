@@ -14,7 +14,7 @@
 //!   produce exactly that. The watch raises a regressed store back to its mark and minting
 //!   resumes once a read reaches it; until then the current key keeps serving until its
 //!   `exp`, after which the hot path fails closed on its own.
-//! * a DECLINED advance leaves `last_label` where it was, so the next pass re-enters and
+//! * a DECLINED advance leaves `last` where it was, so the next pass re-enters and
 //!   retries. Advancing it here would report a revocation that never happened and never
 //!   look at it again — and the operator''s break-glass would be silently not in force.
 
@@ -22,6 +22,8 @@ use std::sync::Arc;
 
 use crate::clock::now_unix;
 use crate::delegated_server_signer::TrustEpochAdvance;
+use mcp_re_http_profile::custody::TrustEpoch;
+use mcp_re_http_profile::CustodyError;
 
 use super::epoch_watch::EpochRefusal;
 use super::rotation_jitter;
@@ -37,17 +39,17 @@ pub(super) enum EpochStep {
     Proceed,
 }
 
-/// Whether the shared trust epoch has moved off `last_label`. An unreadable or regressed
+/// Whether the shared trust epoch has moved off `last`. An unreadable or regressed
 /// epoch is recorded as a rotation failure the first time it is seen, and not again on later
 /// polls of the same wait.
 pub(super) fn epoch_moved(
     signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
     watch: &DelegatedEpochWatch,
-    last_label: &str,
+    last: &TrustEpoch,
     unreadable_seen: &mut bool,
 ) -> bool {
-    match watch.label() {
-        Ok(l) => l != last_label,
+    match watch.counter() {
+        Ok(counter) => Some(counter) != last.counter(),
         Err(refusal) => {
             if !std::mem::replace(unreadable_seen, true) {
                 let n = signer.metrics().record_failure();
@@ -74,20 +76,20 @@ pub(super) fn observe_trust_epoch(
     rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
     signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
     epoch_watch: Option<&DelegatedEpochWatch>,
-    last_label: &mut String,
+    last: &mut TrustEpoch,
     halt: &crate::managed_worker::Halt,
 ) -> EpochStep {
     let Some(watch) = epoch_watch.as_ref() else {
         return EpochStep::Proceed;
     };
-    let label = match watch.label() {
-        Ok(label) => label,
+    let counter = match watch.counter() {
+        Ok(counter) => counter,
         Err(refusal) => return refuse_to_mint_without_a_comparable_epoch(signer, &refusal, halt),
     };
-    if label == *last_label {
+    if Some(counter) == last.counter() {
         return EpochStep::Proceed;
     }
-    apply_epoch_advance(rotor, signer, label, last_label, halt)
+    apply_epoch_advance(rotor, signer, counter, last, halt)
 }
 
 /// FAIL CLOSED FOR MINTING when the shared epoch is unreadable or regressed.
@@ -121,25 +123,26 @@ fn refuse_to_mint_without_a_comparable_epoch(
 
 /// Ask the root to re-issue under the new epoch, and read its answer.
 ///
-/// Three outcomes and only one advances this replica. On a DECLINE, `last_label` is
+/// Three outcomes and only one advances this replica. On a DECLINE, `last` is
 /// deliberately left where it was so the next pass re-enters and retries; advancing it
 /// here would report a revocation that never happened and never look at it again.
 fn apply_epoch_advance(
     rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
     signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
-    label: String,
-    last_label: &mut String,
+    counter: i64,
+    last: &mut TrustEpoch,
     halt: &crate::managed_worker::Halt,
 ) -> EpochStep {
     use crate::delegated_server_signer::rotation_backoff;
-    let outcome = rotor.advance_trust_epoch(label.clone(), now_unix());
+    let label = last.at(counter);
+    let outcome = rotor.advance_trust_epoch(counter, now_unix());
     super::mint_successor::announce_lifecycle(rotor);
     match outcome {
         Ok(TrustEpochAdvance::Advanced) => {
-            *last_label = label;
+            *last = label;
             signer.metrics().record_success(now_unix());
             eprintln!(
-                "mcp-re-proxy: trust epoch advanced -> {last_label}: delegated keys re-issued \
+                "mcp-re-proxy: trust epoch advanced -> {last}: delegated keys re-issued \
                  under the new epoch. This replica no longer mints under the prior epoch. \
                  Credentials already issued under it stay VERIFIABLE until verifiers are \
                  pointed at the new epoch — update the verifiers' accepted epochs to complete \
@@ -147,7 +150,7 @@ fn apply_epoch_advance(
             );
             EpochStep::Retry(0)
         }
-        // The root declined and the PRIOR-epoch key is still valid. `last_label` is
+        // The root declined and the PRIOR-epoch key is still valid. `last` is
         // deliberately left where it was, so the next pass re-enters this arm and retries;
         // advancing it here would report a revocation that never happened and never look at
         // it again.
@@ -169,6 +172,11 @@ fn apply_epoch_advance(
                 return EpochStep::Halt;
             }
             EpochStep::Retry(consecutive_failures)
+        }
+        // The custody refused a counter below its epoch; nothing moved, so nothing to retry.
+        Err(CustodyError::EpochBehind) => {
+            eprintln!("mcp-re-proxy: WARNING: trust epoch {label} is BEHIND {last}; refused.");
+            EpochStep::Proceed
         }
         Err(_) => {
             let consecutive_failures = signer.metrics().record_failure();

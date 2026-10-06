@@ -153,7 +153,7 @@ fn custody_cfg(issuer_kid: &str) -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: AUD.into(),
         audience_hash: AUD_SCOPE.into(),
-        trust_epoch: EPOCH.into(),
+        trust_epoch: EPOCH.parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),

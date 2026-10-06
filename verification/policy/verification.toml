@@ -8320,7 +8320,7 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.delegated_signing_custody"
 class = "V0"
-description = "The delegated-signing credential lifecycle: the root is never touched within a key's life, a successor is minted in the overlap window and under an advanced trust epoch, a signature window never outlives the credential it was issued under, an adopted credential's window lies inside the one requested and is open when requested, a predecessor displaced after its own expiry is retired once in the lifecycle events of the step that displaced it, the machine holds only its latest step's lifecycle events however long it runs, a declined epoch advance leaves the advanced epoch installed so the next issuance mints under it, and an issuance that fails after expiry fails closed rather than continuing on the predecessor."
+description = "The delegated-signing credential lifecycle: the root is never touched within a key's life, a successor is minted in the overlap window and under an advanced trust epoch, a signature window never outlives the credential it was issued under, an adopted credential's window lies inside the one requested and is open when requested, a predecessor displaced after its own expiry is retired once in the lifecycle events of the step that displaced it, the machine holds only its latest step's lifecycle events however long it runs, a declined epoch advance leaves the advanced epoch installed so the next issuance mints under it, the epoch only moves forward — an advance to a counter below the held one is refused with nothing changed, and the held counter re-issues — and an issuance that fails after expiry fails closed rather than continuing on the predecessor."
 paths = [
   "mcp-re-http-profile/src/custody/mod.rs",
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
@@ -8328,6 +8328,7 @@ paths = [
   "mcp-re-http-profile/src/custody/active_key.rs",
   "mcp-re-http-profile/src/custody/issuance_refusal.rs",
   "mcp-re-http-profile/src/custody/signing_window.rs",
+  "mcp-re-http-profile/src/custody/trust_epoch.rs",
   "mcp-re-http-profile/src/custody/window_emission.rs",
 ]
 exported_contracts = []
@@ -8362,6 +8363,10 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_events_held_are_one_steps_however_long_the_machine_runs",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::an_advance_over_an_expired_predecessor_retires_it_once",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::after_a_declined_advance_the_next_issuance_mints_under_the_advanced_epoch",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::an_advance_below_the_held_epoch_is_refused_and_the_held_one_reissues",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::trust_epoch::tests::an_epoch_never_moves_below_the_counter_it_holds",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::trust_epoch::tests::the_label_is_the_base_alone_or_base_hash_counter",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::trust_epoch::tests::a_base_is_refused_when_empty_separated_or_too_long",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::issuance_terms::tests::every_term_fails_restrictively",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::issuance_terms::tests::the_retry_interval_has_a_floor",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::issuance_terms::tests::an_uncomputable_rotation_threshold_reads_as_due",

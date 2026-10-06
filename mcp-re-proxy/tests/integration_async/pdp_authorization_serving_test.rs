@@ -347,7 +347,7 @@ fn ready_signer() -> Arc<DelegatedServerSigner> {
             profile: PROFILE_TAG.into(),
             aud: VERIFIER_AUD.into(),
             audience_hash: "aud-scope-1".into(),
-            trust_epoch: "epoch-1".into(),
+            trust_epoch: "epoch-1".parse().expect("epoch base"),
             server_role: "server".into(),
             server_trust_domain: TRUST_DOMAIN.into(),
             server_subject: "did:example:server".into(),

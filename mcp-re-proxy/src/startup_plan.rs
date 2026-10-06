@@ -318,7 +318,7 @@ impl SigningPlan {
                 profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
                 aud: values.audience.clone(),
                 audience_hash: facts.audience_hash().to_string(),
-                trust_epoch: facts.trust_epoch().to_string(),
+                trust_epoch: facts.trust_epoch().clone(),
                 // The three identity components come from the ONE derived identity rather
                 // than from the primitives; a second assembly here is what let this and
                 // `app::run_validated` disagree about what the server's actor identity is.

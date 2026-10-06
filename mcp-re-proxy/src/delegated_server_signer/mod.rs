@@ -26,6 +26,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::custody::TrustEpoch;
 use mcp_re_http_profile::ActiveDelegatedKey;
 use mcp_re_http_profile::CustodyError;
 use mcp_re_http_profile::DelegatedSigningCustody;
@@ -270,7 +271,7 @@ where
     }
 
     /// The trust epoch currently minted into new credentials.
-    pub fn trust_epoch(&self) -> &str {
+    pub fn trust_epoch(&self) -> &TrustEpoch {
         self.custody.trust_epoch()
     }
 
@@ -290,16 +291,18 @@ where
     /// record success.
     pub fn advance_trust_epoch(
         &mut self,
-        epoch: String,
+        counter: i64,
         now: i64,
     ) -> Result<TrustEpochAdvance, CustodyError> {
-        match self.custody.advance_trust_epoch(epoch, now) {
+        match self.custody.advance_trust_epoch(counter, now) {
             Ok(Some(successor)) => self
                 .publish(successor)
                 .map(|()| TrustEpochAdvance::Advanced),
             // The predecessor keeps serving until its own `exp` (ADR-MCPRE-052 §6) — not
             // retired, because a root blip must not compose an epoch advance into an outage.
             Ok(None) => Ok(TrustEpochAdvance::Declined),
+            // Refused before anything moved: the published key is still this epoch's.
+            Err(CustodyError::EpochBehind) => Err(CustodyError::EpochBehind),
             Err(e) => {
                 self.signer.retire();
                 Err(e)
@@ -350,7 +353,7 @@ mod tests {
             profile: PROFILE_TAG.into(),
             aud: "verifier-1".into(),
             audience_hash: "aud-scope-1".into(),
-            trust_epoch: "epoch-1".into(),
+            trust_epoch: "epoch-1".parse().expect("epoch base"),
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
             server_subject: "did:example:server".into(),
@@ -419,15 +422,15 @@ mod tests {
             .expect("K1 serves")
             .delegated_kid()
             .to_owned();
-        assert_eq!(rotor.trust_epoch(), "epoch-1");
+        assert_eq!(rotor.trust_epoch().label(), "epoch-1");
 
         assert_eq!(
             rotor
-                .advance_trust_epoch("epoch-1#2".into(), NOW + 5)
+                .advance_trust_epoch(2, NOW + 5)
                 .expect("re-issue under the advanced epoch"),
             TrustEpochAdvance::Advanced
         );
-        assert_eq!(rotor.trust_epoch(), "epoch-1#2");
+        assert_eq!(rotor.trust_epoch().label(), "epoch-1#2");
         let snap = signer.current(NOW + 5).expect("a key is published");
         assert_ne!(
             snap.delegated_kid(),
@@ -475,7 +478,7 @@ mod tests {
 
         assert_eq!(
             rotor
-                .advance_trust_epoch("epoch-1#2".into(), NOW + 5)
+                .advance_trust_epoch(2, NOW + 5)
                 .expect("a still-valid predecessor is not an error"),
             TrustEpochAdvance::Declined,
             "the root declined, so the epoch advance did NOT happen here"
