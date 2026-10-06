@@ -11191,7 +11191,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.server_identity_facts"
 class = "V0"
-description = "WHO THIS DEPLOYMENT IS, RESOLVED ONCE: a legal request yields ONE canonical actor identity, a missing coordinate leaves no identity and NAMES ITSELF, a request missing both coordinates reports both in one pass, a whitespace coordinate is empty and names itself, a PADDED coordinate is refused by name rather than minted into every actor and `iss` (the shared canonical-coordinate rule in `config_state/coordinate.rs`), the identity keyid follows the RESOLVED ISSUER rather than the server key id, and a delegated owner that resolved no facts leaves no identity and no refusal of this owner's, the legality boundary reporting that owner's refusal rather than an internal error. Covers the classifier only; what the command line admits as a coordinate is the argv boundary's and has no unit."
+description = "WHO THIS DEPLOYMENT IS, RESOLVED ONCE: a legal request yields ONE canonical actor identity, a missing coordinate leaves no identity and NAMES ITSELF, a request missing both coordinates reports both in one pass, a whitespace coordinate is empty and names itself, a PADDED coordinate is refused by name rather than minted into every actor and `iss` (the shared canonical-coordinate rule in `config_state/coordinate.rs`), the shipped `example.com` trust domain yields no identity unless a fenced fixture run was acknowledged, the identity keyid follows the RESOLVED ISSUER rather than the server key id, and a delegated owner that resolved no facts leaves no identity and no refusal of this owner's, the legality boundary reporting that owner's refusal rather than an internal error. Covers the classifier only; what the command line admits as a coordinate is the argv boundary's and has no unit."
 paths = [
   "mcp-re-proxy/src/config_state/server_identity.rs",
   "mcp-re-proxy/src/config_state/coordinate.rs",
@@ -11215,6 +11215,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::coordinate::tests::a_value_unequal_to_its_trim_is_padded",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_identity_keyid_follows_the_resolved_issuer_not_the_server_key_id",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_trust_domain_projection_is_the_canonical_actors_own_coordinate",
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_placeholder_trust_domain_is_refused_without_the_fixture_acknowledgement",
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_fixture_acknowledgement_admits_the_placeholder_and_nothing_else_needs_it",
 ]
 
 [[unit]]

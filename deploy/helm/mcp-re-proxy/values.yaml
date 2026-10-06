@@ -348,7 +348,8 @@ identity:
   # actor id, so a harness driven by those fixtures MUST deploy with the matching
   # identity — the placeholder guard would otherwise make the fixtures unusable.
   # Setting this true is a statement that the deployment is a fenced validation run,
-  # not a production boundary; leave it false everywhere else.
+  # not a production boundary; leave it false everywhere else. It also renders
+  # `--allow-example-fixtures`, without which the proxy refuses the example.com domain.
   allowExampleFixtures: false
 
 # Inner MCP plane (ADR-MCPRE-051 §3). The proxy NO LONGER launches a subprocess;

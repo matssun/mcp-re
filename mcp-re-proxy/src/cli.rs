@@ -67,6 +67,7 @@ impl Flags {
     /// Route one valueless flag to the family that owns it, reporting whether one did.
     fn take_switch(&mut self, flag: &str) -> bool {
         self.signing_source.take_switch(flag)
+            || self.identity.take_switch(flag)
             || self.serving.take_switch(flag)
             || self.peer_identity.take_switch(flag)
     }
@@ -161,6 +162,7 @@ impl Flags {
             mcp_protocol_versions: protocol.versions,
             target_uri: protocol.target_uri,
             trust_domain: identity.trust_domain,
+            allow_example_fixtures: identity.allow_example_fixtures,
             route: serving.route,
             response_signing,
             channel_credential: channel.credential,

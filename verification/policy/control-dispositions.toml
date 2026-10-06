@@ -15169,3 +15169,11 @@ control = "gate#scripts/os_entropy_census_gate.py"
 decision = "not-evidence"
 reason_family = "ND-003"
 recorded = "2026-10-06"
+
+[[disposition]]
+id = "CD-20398"
+project = "mcp-re-proxy"
+control = "src/lib.rs#cli::identity_flags::tests::the_fixture_acknowledgement_is_off_unless_given"
+decision = "new-proposition"
+proposition = "NP-055"
+recorded = "2026-10-06"

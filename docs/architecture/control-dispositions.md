@@ -1749,7 +1749,7 @@ checked* are the same sentence about different objects.
 **Controls:** `config_state/server_identity.rs`.
 **Statement.** *A legal request yields ONE canonical identity; a missing coordinate leaves no identity and NAMES ITSELF; a request missing both coordinates reports both in one pass; a whitespace coordinate is empty and names itself; and the identity keyid follows the RESOLVED ISSUER rather than the server key id.*
 **If false.** The proxy signs under an identity assembled from a coordinate nobody supplied, or advertises a keyid that is not the one the issuer resolved — which is the identity-not-locator failure at the configuration layer.
-**Likely owner:** `proxy.server_identity_facts` owns the classifier half. The two `cli::identity_flags` controls are the argv half and it does not own them.
+**Likely owner:** `proxy.server_identity_facts` owns the classifier half. The `cli::identity_flags` controls are the argv half and it does not own them.
 **Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
 **Severity:** `critical`.
 
@@ -1759,7 +1759,8 @@ checked* are the same sentence about different objects.
 `M310-proxy-the-identity-keyid-follows-the-resolved-issuer` demonstrated red.
 
 **WHAT REMAINS, AND WHY IT DID NOT LAND.** `lib#cli::identity_flags::tests::a_complete_set_is_accepted`
-and `lib#cli::identity_flags::tests::every_coordinate_is_required_and_named_when_absent` state a
+, `lib#cli::identity_flags::tests::every_coordinate_is_required_and_named_when_absent` and
+`lib#cli::identity_flags::tests::the_fixture_acknowledgement_is_off_unless_given` state a
 different proposition — what the COMMAND LINE admits as a coordinate, not what the classifier
 resolves — and `mcp-re-proxy/src/cli/identity_flags.rs` is in no unit's `paths`. Declaring it in
 this unit would make one unit answer for two authorities, and

@@ -8,7 +8,7 @@
 //!
 //! | Field | Kind | Rule |
 //! |---|---|---|
-//! | `trust_domain` | required | non-empty; a coordinate of every actor this deployment names |
+//! | `trust_domain` | required | non-empty, not the shipped placeholder; a coordinate of every actor this deployment names |
 //! | `server_signer` | required | non-empty; the server's `subject` |
 //! | role | constant | `"server"`, owned here rather than typed at each use |
 //! | keyid | derived | [`DelegatedSigningFacts::issuer_kid`], already resolved by its owner |
@@ -45,7 +45,8 @@ const SERVER_ROLE: &str = "server";
 
 /// What layer A established about this deployment's own identity.
 ///
-/// Holding one is evidence that both coordinates are present and that the canonical
+/// Holding one is evidence that both coordinates are present, that the trust domain is not
+/// the shipped placeholder unless a fixture run was acknowledged, and that the canonical
 /// [`ActorIdentity`] was derived once, from the resolved issuer kid rather than from
 /// whichever primitive a consumer happened to reach for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,11 +89,12 @@ impl ServerIdentityFacts {
 /// keyid IS [`DelegatedSigningFacts::issuer_kid`] — recomputing it from
 /// `--delegated-issuer-kid`/`--server-key-id` here would be the second derivation this
 /// owner exists to remove.
-pub fn classify_and_validate(
+pub(in crate::config_state) fn classify_and_validate(
     config: &DeploymentRequest,
     delegated: Option<&DelegatedSigningFacts>,
 ) -> (Option<ServerIdentityFacts>, Vec<String>) {
-    let violations = coordinate_violations(config);
+    let mut violations = coordinate_violations(config);
+    violations.extend(placeholder_violation(config));
     if !violations.is_empty() {
         return (None, violations);
     }
@@ -114,12 +116,32 @@ pub fn classify_and_validate(
     )
 }
 
+/// The trust domain the Helm chart ships as a placeholder, refused here as the chart refuses it.
+const PLACEHOLDER_TRUST_DOMAIN: &str = "example.com";
+
+/// The shipped placeholder trust domain, unless the operator acknowledged a fixture run.
+///
+/// Every install that kept the placeholder shares one identity namespace: their actors
+/// differ only by subject and keyid, so a credential minted for one names an actor the
+/// others would also resolve. `--allow-example-fixtures` is the fenced validation run whose
+/// trust document `emit_mtls_fixtures` writes under exactly this domain.
+fn placeholder_violation(config: &DeploymentRequest) -> Option<String> {
+    (config.trust_domain == PLACEHOLDER_TRUST_DOMAIN && !config.allow_example_fixtures).then(|| {
+        format!(
+            "--trust-domain {PLACEHOLDER_TRUST_DOMAIN} is the shipped placeholder: every install \
+             that kept it shares one identity namespace. Set this deployment's own trust \
+             domain, or pass --allow-example-fixtures for a fenced fixture run"
+        )
+    })
+}
+
 /// The two coordinates the identity cannot be built without, each in canonical form.
 ///
-/// Stated one field at a time, in the order an operator meets them. Neither is dereferenced
-/// at startup, so an empty one fails nothing — it silently stops distinguishing this
-/// deployment from another that also set none — and a padded one is minted verbatim into
-/// every actor and `iss`, naming a different coordinate from the one written without it.
+/// Stated one field at a time, in the order an operator meets them. Both are read at
+/// startup only as strings minted into identities — neither is resolved as a locator — so
+/// an empty one fails nothing loudly: it silently stops distinguishing this deployment from
+/// another that also set none. A padded one is minted verbatim into every actor and `iss`,
+/// naming a different coordinate from the one written without it.
 fn coordinate_violations(config: &DeploymentRequest) -> Vec<String> {
     [
         (
@@ -311,6 +333,43 @@ mod tests {
         };
         assert!(refusal.contains("--delegated-trust-epoch"), "{refusal}");
         assert!(!refusal.contains("internal error"), "{refusal}");
+    }
+
+    /// The shipped placeholder domain is refused by name and builds no identity.
+    #[test]
+    fn the_placeholder_trust_domain_is_refused_without_the_fixture_acknowledgement() {
+        let mut config = legal_config();
+        config.trust_domain = PLACEHOLDER_TRUST_DOMAIN.to_string();
+        let (identity, violations) = facts(&config);
+        assert!(
+            identity.is_none(),
+            "an identity was built under the placeholder"
+        );
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("--allow-example-fixtures"),
+            "{violations:?}"
+        );
+    }
+
+    /// The acknowledgement admits exactly the placeholder; a domain merely containing it is
+    /// this deployment's own and needs none.
+    #[test]
+    fn the_fixture_acknowledgement_admits_the_placeholder_and_nothing_else_needs_it() {
+        let mut config = legal_config();
+        config.trust_domain = PLACEHOLDER_TRUST_DOMAIN.to_string();
+        config.allow_example_fixtures = true;
+        let (identity, violations) = facts(&config);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(
+            identity.expect("acknowledged").trust_domain(),
+            PLACEHOLDER_TRUST_DOMAIN
+        );
+
+        let config = legal_config();
+        assert!(!config.allow_example_fixtures);
+        assert_ne!(config.trust_domain, PLACEHOLDER_TRUST_DOMAIN);
+        assert!(facts(&config).0.is_some());
     }
 
     /// One pass, not one offender: the coordinates are reported independently.

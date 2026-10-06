@@ -12201,3 +12201,19 @@ expect_red = [
   "//mcp-re-proxy:proxy_unit_test#trust_plane::revocation_resolver::tests::a_push_tier_without_a_networked_source_reports_its_channel_not_operational",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::invalidation_channel::tests::an_inert_channel_never_reports_itself_operational",
 ]
+
+[[probe]]
+id = "M497-proxy-the-placeholder-trust-domain-needs-the-fixture-acknowledgement"
+unit = "proxy.server_identity_facts"
+conjunct = "the shipped example.com trust domain yields no identity unless the operator acknowledged a fenced fixture run"
+path = "mcp-re-proxy/src/config_state/server_identity.rs"
+anchor = """
+    (config.trust_domain == PLACEHOLDER_TRUST_DOMAIN && !config.allow_example_fixtures).then(|| {
+"""
+weakening = """
+    (config.trust_domain == PLACEHOLDER_TRUST_DOMAIN && config.allow_example_fixtures).then(|| {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_placeholder_trust_domain_is_refused_without_the_fixture_acknowledgement",
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_fixture_acknowledgement_admits_the_placeholder_and_nothing_else_needs_it",
+]

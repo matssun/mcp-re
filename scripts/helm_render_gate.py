@@ -741,6 +741,20 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
         [("--tls-handshake-sign-rate", "0")],
         ["--tls-handshake-sign-burst"],
     ),
+    # The proxy refuses the example.com trust domain itself, so the chart's fenced-fixture
+    # acknowledgement must reach it as a flag — and only when given.
+    (
+        "the fixture acknowledgement is omitted by default",
+        merged(),
+        [],
+        ["--allow-example-fixtures"],
+    ),
+    (
+        "allowExampleFixtures renders the proxy's fixture acknowledgement",
+        merged({"identity": {"trustDomain": "example.com", "allowExampleFixtures": True}}),
+        [("--trust-domain", "example.com"), "--allow-example-fixtures"],
+        [],
+    ),
     # ADR-MCPS-035: a chart-rendered pod must carry the per-request security record,
     # and the revocation flags the posture claims must actually be emitted.
     (

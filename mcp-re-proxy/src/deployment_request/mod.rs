@@ -99,6 +99,9 @@ pub struct DeploymentRequest {
     pub target_uri: String,
     /// The trust domain assigned to resolved actors (RFC 9421 ActorIdentity).
     pub trust_domain: String,
+    /// The operator's acknowledgement that this is a fenced fixture run, which alone lets
+    /// the identity coordinates hold the shipped `example.com` / `did:example:` placeholders.
+    pub allow_example_fixtures: bool,
     /// Optional audience route/tenant discriminator.
     pub route: Option<String>,
     /// Which key signs this deployment's responses, and the mechanism holding it.
@@ -153,10 +156,9 @@ pub struct DeploymentRequest {
     /// MCPRE-114: the admission limit AS THE OPERATOR STATED IT — per core, fleet-wide, or
     /// not at all.
     ///
-    /// One field, because there is one decision. The two flags are alternatives at
-    /// different altitudes, and holding them in two `Option`s made the illegal both-set
-    /// combination writable and made absence indistinguishable from a value equal to the
-    /// default. Neither is expressible here.
+    /// One field, because there is one decision: the two flags are alternatives at
+    /// different altitudes, so neither both-set nor an absence equal to the default is
+    /// expressible here.
     ///
     /// `Unspecified` does NOT mean unbounded:
     /// [`in_flight_limit`](crate::config_state::in_flight_limit) applies the fail-safe
@@ -164,10 +166,8 @@ pub struct DeploymentRequest {
     pub in_flight_limit: crate::config_state::InFlightLimitRequest,
     /// Where shared replay state lives, and what durability this deployment claims for it.
     ///
-    /// The REPLAY store, and nothing else. One field once also decided where the MRTR
-    /// continuation store lived, which made it carry two different facts depending on the
-    /// tier beside it; `continuation_control` owns that fact, and each role names its own
-    /// store (ADR-MCPRE-067 §10, CF-12).
+    /// The REPLAY store, and nothing else: `continuation_control` names the MRTR
+    /// continuation store (ADR-MCPRE-067 §10, CF-12).
     pub replay: ReplayStorageRequest,
     /// ADR-MCPS-047: where a retained cross-replica MRTR continuation base lives.
     ///

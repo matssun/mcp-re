@@ -79,8 +79,8 @@ fn trust_store(kid: &str, signer: &str) -> Arc<mcp_re_proxy::reloading_trust::Re
     ))
 }
 
-/// The server identity the actor seam answers the Response slot with, as its owner derives
-/// it from a parsed deployment: `subject` signing under the issuer kid `kid`.
+/// The server identity the actor seam answers the Response slot with, as the validated
+/// deployment holds it: `subject` signing under the issuer kid `kid`.
 fn server_identity(
     subject: &str,
     kid: &str,
@@ -118,16 +118,16 @@ fn server_identity(
         "epoch-1",
         "--trust-domain",
         "example.com",
+        "--allow-example-fixtures",
     ]
     .iter()
     .map(|s| s.to_string())
     .collect();
     let config = mcp_re_proxy::cli::parse_args(&args).expect("a legal deployment");
-    let (delegated, _) =
-        mcp_re_proxy::config_state::delegated_signing::classify_and_validate(&config);
-    mcp_re_proxy::config_state::server_identity::classify_and_validate(&config, delegated.as_ref())
-        .0
-        .expect("a legal server identity")
+    mcp_re_proxy::config_state::validation::validate_configuration(&config)
+        .expect("a legal deployment")
+        .server_identity()
+        .clone()
 }
 
 fn resolver_over(trust: Arc<dyn TrustResolver + Send + Sync>) -> mcp_re_proxy::ActorResolver {

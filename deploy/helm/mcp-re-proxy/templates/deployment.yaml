@@ -283,6 +283,11 @@ spec:
             - {{ .Values.identity.targetUri | quote }}
             - "--trust-domain"
             - {{ .Values.identity.trustDomain | quote }}
+            {{- if .Values.identity.allowExampleFixtures }}
+            # The binary refuses the example.com placeholder domain itself; the same
+            # fenced-fixture acknowledgement the chart's guard reads is passed on to it.
+            - "--allow-example-fixtures"
+            {{- end }}
             {{- if .Values.identity.route }}
             - "--route"
             - {{ .Values.identity.route | quote }}

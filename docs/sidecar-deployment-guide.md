@@ -68,6 +68,7 @@ shown are the real defaults from that parser.
 | `--target-uri <uri>` | **Required.** The URI a signed request must name. With `--audience` and `--route` it forms the audience TUPLE the verifier compares against, so it must equal what the client signs as `@target-uri` — not merely resemble it. |
 | `--mcp-protocol-version <version>` | **Required, repeatable.** Each occurrence adds an accepted `MCP-Protocol-Version` (for example `2026-07-28`). The MCP transport contract is mandatory: every request must carry `Mcp-Method` and `MCP-Protocol-Version`, `Mcp-Name` for every target-naming method (`tools/call`, `prompts/get`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`) must agree with the protected body and is refused on any other message, a bodyless GET or DELETE must carry `MCP-Protocol-Version` and no `Mcp-Method` or `Mcp-Name`, and a version outside the accepted set is refused. There is no way to run without it. |
 | `--trust-domain <domain>` | **Required.** The trust domain the server actor identity is scoped to. It must agree with what clients sign; a mismatch is an actor-resolution failure, not a warning. |
+| `--allow-example-fixtures` | Off by default. Acknowledges a fenced fixture run, and is the only way `--trust-domain example.com` — the shipped placeholder, which every install that kept it would share — is accepted. The Helm chart renders it from `identity.allowExampleFixtures`. |
 | `--inner-http-url <url>` | The Streamable-HTTP inner MCP backend the PEP forwards to. **Required.** Repeat or comma-separate for a backend fleet (round-robin). |
 
 `--max-clock-skew` defaults to `300` seconds.
@@ -277,7 +278,7 @@ bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --trust /etc/mcp-re/trust.json \
   --target-uri https://mcp.example.com/mcp \
   --mcp-protocol-version 2026-07-28 \
-  --trust-domain example.com \
+  --trust-domain mcp.example.com \
   --transport-binding exact \
   --transport-identity-source uri_san \
   --max-client-cert-lifetime 1h \
