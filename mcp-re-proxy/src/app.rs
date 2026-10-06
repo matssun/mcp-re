@@ -636,7 +636,7 @@ fn run_validated(
     // ADR-MCPS-035: the per-request security record. OFF installs nothing: the serving
     // path's absent sink is the no-emission posture.
     let (audit_sink, audit_state) =
-        crate::serving_capabilities::security_audit_record(config.state().audit()).into_parts();
+        crate::serving_capabilities::security_audit_record(config.state().audit())?.into_parts();
     if let Some(sink) = audit_sink {
         proxy = proxy.with_audit_sink(Arc::new(sink));
     }
@@ -898,8 +898,10 @@ mod tests {
 
             // Attributed records, so the unattributed ceiling cannot drop any of them and
             // an absent seq means "lost at exit" rather than "refused by the queue".
+            let sink = crate::audit_sink::StderrAuditSink::open()
+                .expect("the OS CSPRNG yields an incarnation");
             for i in 0..BATCH {
-                crate::audit_sink::StderrAuditSink.record(&crate::audit_record::AuditRecord {
+                sink.record(&crate::audit_record::AuditRecord {
                     subject: crate::audit_record::AuditSubject::request_accepted(
                         &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                         crate::admission_enforcer::AdmissionFacet::NotConfigured,
@@ -958,6 +960,21 @@ mod tests {
             stderr.contains("audit stream drained at shutdown"),
             "shutdown must STATE which of the two audit outcomes happened, and this run \
              drained: {stderr}"
+        );
+        // The run's stream opens with a start line naming the run, and the records and the
+        // shutdown line carry that same run: a collector partitions on it, and a run with a
+        // start line and no shutdown line ended with an unknown tail.
+        let run = stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("mcp-re-proxy: audit stream started run="))
+            .unwrap_or_else(|| panic!("the stream never stated its start: {stderr}"));
+        assert!(
+            stderr.contains(&format!("audit seq=0 run={run} ")),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!("audit stream drained at shutdown run={run}:")),
+            "{stderr}"
         );
     }
 

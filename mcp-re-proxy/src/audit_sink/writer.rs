@@ -43,8 +43,8 @@ pub(super) enum AuditMessage {
 
 /// The writer's channel, started on first use.
 ///
-/// Process-global because the sink is a unit type installed once and shared by every
-/// core: one stderr, one thread that owns it, one queue in front of it.
+/// Process-global because the process has one audit stream shared by every core: one
+/// stderr, one thread that owns it, one queue in front of it.
 pub(super) static STDERR_AUDIT_WRITER: std::sync::OnceLock<
     std::sync::mpsc::SyncSender<AuditMessage>,
 > = std::sync::OnceLock::new();
@@ -181,13 +181,14 @@ fn report_drops(stderr: &mut impl std::io::Write, counter: &AtomicU64, failed: &
         return;
     }
     let report = format!(
-        "mcp-re-proxy: audit dropped={dropped} (the audit hand-off queue was full; \
+        "mcp-re-proxy: audit dropped={dropped}{run} (the audit hand-off queue was full; \
          that many decisions are missing from this stream, and their seq numbers are \
-         the gaps in it)"
+         the gaps in it)",
+        run = super::stream::run_suffix()
     );
     if !write_record(stderr, &report) {
         // A wrapping add that cannot wrap: the counter never exceeds the records ever
-        // offered, one per `STDERR_AUDIT_SEQ` value, and 2^64 offers outlast any process.
+        // offered, one per position allocated, and 2^64 offers outlast any process.
         // It exists so the report never understates the loss.
         counter.fetch_add(dropped, Ordering::Relaxed);
         failed.store(true, Ordering::Relaxed);

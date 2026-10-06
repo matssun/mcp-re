@@ -369,6 +369,8 @@ _PROXY_LIB_SRCS = [
     # The writer's teardown obligation: the bound, the wait, and the two-valued outcome.
     "src/audit_sink/drain.rs",
     "src/audit_sink/writer.rs",
+    "src/audit_sink/stream.rs",
+    "src/audit_sink/stderr.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
     # "pkcs11_keysource")]; cfg'd out of the default build).
     "src/pkcs11_keysource/mod.rs",

@@ -8809,7 +8809,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.audit_delivery"
 class = "V0"
-description = "Whether the record stream is honest about what reached it: bounded and non-blocking, order-preserving, every record sequence-numbered, drops counted and reported, and a timed-out drain distinguishable from a completed one."
+description = "Whether the record stream is honest about what reached it: bounded and non-blocking, order-preserving, every record sequence-numbered within one incarnation of the process and naming that incarnation, a stream that states its start, drops counted and reported, and a timed-out drain distinguishable from a completed one."
 paths = [
   "mcp-re-proxy/src/audit_sink/mod.rs",
   "mcp-re-proxy/src/audit_sink/drain.rs",
@@ -8818,6 +8818,9 @@ paths = [
   # when the code its own evidence lives in changed — `report_drops` could be rewritten
   # under a standing attestation. A unit's paths must contain the code it cites.
   "mcp-re-proxy/src/audit_sink/writer.rs",
+  # The sink and the run it numbers within: `seq` is ordered only inside one incarnation.
+  "mcp-re-proxy/src/audit_sink/stderr.rs",
+  "mcp-re-proxy/src/audit_sink/stream.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -8833,7 +8836,16 @@ evidence = [
 # TIMED OUT has not established that the queue emptied, which is a different fact from a
 # drain that completed, and must never collapse into it.
 tested_symbols = [
-  "//mcp-re-proxy:proxy_unit_test#audit_sink::tests::every_record_carries_a_sequence_number",
+  # A position is `(run, seq)`: `seq` is numbered within one incarnation of the process,
+  # every line names the run, and a seq from one run has no meaning in another.
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::every_line_names_its_run_and_its_number_in_that_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::a_stream_states_its_start_once_naming_its_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::recorded_lines_are_drainable_at_shutdown",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::each_record_of_a_run_takes_the_next_number",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::two_runs_with_the_same_numbers_stay_distinguishable",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_position_has_no_number_in_another_run",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_run_renders_as_32_hex_digits",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::the_process_stream_is_drawn_once",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::tests::the_ceiling_a_record_is_admitted_at_is_chosen_by_its_attribution",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_burst_that_stops_still_reports_what_it_cost",
   # "One record in, one line out" is a DELIVERY claim: whatever the record says, the stream

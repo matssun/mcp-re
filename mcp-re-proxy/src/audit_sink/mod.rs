@@ -24,8 +24,6 @@ pub(crate) mod drain;
 
 use std::sync::Arc;
 
-use crate::audit_record::text::render_record;
-use crate::audit_record::text::AuditField;
 use crate::audit_record::AuditRecord;
 
 /// A sink for [`AuditRecord`]s.
@@ -42,52 +40,17 @@ pub trait AuditSink: Send + Sync {
     fn record(&self, record: &AuditRecord);
 }
 
-/// The default sink: one structured line per decision on stderr, the proxy's
-/// diagnostic channel.
-///
-/// Deliberately plain text with stable `key=value` fields rather than JSON — the
-/// startup lines and rotation warnings on this channel already use this shape, and a
-/// deployment that wants structured audit ships its own [`AuditSink`].
-///
-/// The line is formatted on the request path and then HANDED OFF: a dedicated thread
-/// owns stderr, so the trait's "MUST NOT block the request path" is a property of the
-/// implementation rather than a hope about the writer. It matters because `record` is
-/// reached from the preflight rejection path — before any signature verifies — so an
-/// unauthenticated peer decides how often it is called. Writing inline meant a log
-/// collector applying backpressure, a rotation, or a full volume stalled the serving
-/// core inside the request future, and a closed stderr PANICKED the connection task.
-/// Neither degrades to "audit lost, request served", which is the documented intent.
-///
-/// The hand-off queue is bounded and DROPS when full, which is the same intent from the
-/// other side: audit must never fail or delay a request. Three things keep that from
-/// becoming an attacker-chosen blind spot:
-///
-/// * **Every line carries a monotonic `seq`**, assigned before the hand-off. A dropped
-///   record is then a numbered hole in the stream, so which decisions are missing is
-///   readable from the surviving records rather than inferred from an aggregate.
-/// * **An unattributed record cannot consume the whole queue.** The flood an
-///   unauthenticated peer can produce is by construction unattributed — no actor was
-///   resolved — so those records are admitted only while the queue is below
-///   [`STDERR_AUDIT_UNATTRIBUTED_CEILING`]. The remaining depth is reachable only by a
-///   record naming a verifier-resolved actor, which is what stops a preflight flood from
-///   evicting the decisions an attacker wants unrecorded.
-/// * **The drop count is reported on a timer**, not only by the next record. A burst that
-///   ends in silence still says so.
-///
-/// What none of that changes: records still in the queue at process exit are lost unless
-/// the shutdown path calls [`drain::at_shutdown`].
-#[derive(Debug, Default)]
-pub struct StderrAuditSink;
+/// The default sink: one line per decision on stderr.
+mod stderr;
 
-/// The sequence number of the next record, so a drop is a visible hole. Assigned by the
-/// SINK, before the hand-off: a number the writer assigned would not number the records the
-/// writer never received.
-static STDERR_AUDIT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub use stderr::StderrAuditSink;
+
+/// This process's run and the position of each record within it.
+mod stream;
 
 /// What the writer thread does with a line, and what it can truthfully say afterwards.
 mod writer;
 
-use writer::{stderr_audit_writer, STDERR_AUDIT_DROPPED, STDERR_AUDIT_QUEUED};
 use writer::{AuditMessage, STDERR_AUDIT_WRITER};
 
 /// Bounded hand-off depth. Deep enough to absorb a burst while the writer is inside one
@@ -105,29 +68,6 @@ const STDERR_AUDIT_UNATTRIBUTED_CEILING: usize = 3 * STDERR_AUDIT_QUEUE_DEPTH / 
 
 /// How long the writer waits for a record before reporting drops it already knows about.
 const STDERR_AUDIT_DROP_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
-
-impl AuditSink for StderrAuditSink {
-    fn record(&self, record: &AuditRecord) {
-        let seq = STDERR_AUDIT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        // The sequence number is this sink's own coordinate — it is what makes a drop a
-        // visible hole in THIS stream — so the sink contributes it and the record
-        // contributes everything else. The sink interprets nothing it was handed: a field
-        // slice carries no vocabulary, and `render_record` owns every question of spelling.
-        let mut fields = vec![AuditField::number(
-            "seq",
-            i64::try_from(seq).unwrap_or(i64::MAX),
-        )];
-        fields.extend(record.audit_fields());
-        let line = format!("mcp-re-proxy: audit {}", render_record(&fields));
-        offer(
-            stderr_audit_writer(),
-            &STDERR_AUDIT_DROPPED,
-            &STDERR_AUDIT_QUEUED,
-            line,
-            admission_ceiling(record),
-        );
-    }
-}
 
 /// The queue depth a record may be admitted at, decided from the record's OWN attribution
 /// — so the mapping is a fact a control can drive, not one a call site supplies.
@@ -221,6 +161,7 @@ pub type MaybeAuditSink = Option<Arc<dyn AuditSink>>;
 mod tests {
     use super::*;
     use crate::admission_enforcer::AdmissionFacet;
+    use crate::audit_record::text::{render_record, AuditField};
     use crate::audit_record::AuditSubject;
     use crate::authorization::AuthorizationFacet;
     use crate::authorization::AuthorizationRefusalFacet;
@@ -466,42 +407,5 @@ mod tests {
             );
             drop(held);
         }
-    }
-
-    /// A record carries a sequence number, so a dropped one is a numbered hole rather
-    /// than an aggregate nobody can attribute.
-    #[test]
-    fn every_record_carries_a_sequence_number() {
-        let first = STDERR_AUDIT_SEQ.load(std::sync::atomic::Ordering::SeqCst);
-        StderrAuditSink.record(&AuditRecord {
-            subject: AuditSubject::request_accepted(
-                &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
-                AdmissionFacet::NotConfigured,
-            ),
-            actor_id: Some("actor-a".into()),
-            status: 200,
-            at_unix: 10,
-        });
-        StderrAuditSink.record(&AuditRecord {
-            subject: AuditSubject::request_rejected(
-                Some(&mcp_re_core::McpReError::ReplayDetected),
-                AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
-                AdmissionFacet::NotConfigured,
-            ),
-            actor_id: None,
-            status: 403,
-            at_unix: 11,
-        });
-        assert_eq!(
-            STDERR_AUDIT_SEQ.load(std::sync::atomic::Ordering::SeqCst),
-            first + 2,
-            "each record takes the next number, whether or not it survives the queue"
-        );
-        assert_eq!(
-            drain::flush_for_test(std::time::Duration::from_secs(5)),
-            drain::AuditDrain::Drained,
-            "a queued record must be drainable at shutdown rather than lost with the \
-             detached writer"
-        );
     }
 }

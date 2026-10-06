@@ -154,16 +154,19 @@ fn drain_line(outcome: AuditDrain, report: bool, unreported_drops: u64) -> Optio
         // exchanges are still recording. A record offered during or after the flush is
         // outside the claim, so a line that said "every record" would be claiming an
         // ordering nothing establishes.
-        AuditDrain::Drained => "mcp-re-proxy: audit stream drained at shutdown: every record \
-                                handed to the audit writer before this drain reached stderr"
-            .to_string(),
+        AuditDrain::Drained => format!(
+            "mcp-re-proxy: audit stream drained at shutdown{}: every record handed to the \
+             audit writer before this drain reached stderr",
+            super::stream::run_suffix()
+        ),
         AuditDrain::OutcomeUnknown => format!(
-            "mcp-re-proxy: WARNING: the audit stream did not complete a clean drain — it either \
+            "mcp-re-proxy: WARNING: the audit stream{} did not complete a clean drain — it either \
              failed to acknowledge within {}s or reported a failed write. This is NOT a report \
              that records were lost and NOT a clean shutdown of the audit stream: whether the \
              decisions recorded last reached stderr is UNKNOWN. Their seq numbers are the gap \
              to look for, and the writer's backing channel (a stalled log collector, a full \
              volume, a closed stderr) is what to check.{}",
+            super::stream::run_suffix(),
             AUDIT_FLUSH_TIMEOUT.as_secs(),
             unreported_drops_sentence(unreported_drops)
         ),

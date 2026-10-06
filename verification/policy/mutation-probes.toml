@@ -11592,12 +11592,13 @@ conjunct = "Every security capability held by the serving runtime is derived fro
 # installing the sink is a capability nobody selected, announced as its own posture.
 path = "mcp-re-proxy/src/serving_capabilities.rs"
 anchor = """
-        crate::config_state::AuditState::None => Established::off(AUDIT_OFF),
+        crate::config_state::AuditState::None => Ok(Established::off(AUDIT_OFF)),
 """
 weakening = """
-        crate::config_state::AuditState::None => {
-            Established::on(crate::audit_sink::StderrAuditSink, AUDIT_OFF)
-        }
+        crate::config_state::AuditState::None => Ok(Established::on(
+            crate::audit_sink::StderrAuditSink::open().ok_or("the OS CSPRNG failed")?,
+            AUDIT_OFF,
+        )),
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::tests::the_security_audit_posture_travels_with_the_sink_it_installs",
@@ -12133,4 +12134,50 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#transport::tests::request_headers_parse_reads_nothing_after_the_header_terminator",
   "//mcp-re-proxy:proxy_unit_test#transport::tests::request_headers_parse_a_block_that_starts_with_its_terminator_holds_no_header",
+]
+
+[[probe]]
+id = "M493-proxy-every-audit-line-names-its-run"
+unit = "proxy.audit_delivery"
+conjunct = "every audit record line names the incarnation its seq is numbered within"
+path = "mcp-re-proxy/src/audit_sink/stderr.rs"
+anchor = """
+        AuditField::text("run", run.to_string()),
+"""
+weakening = """
+        // no run field
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::every_line_names_its_run_and_its_number_in_that_run",
+]
+
+[[probe]]
+id = "M494-proxy-a-seq-has-no-meaning-in-another-run"
+unit = "proxy.audit_delivery"
+conjunct = "a position's seq is handed out only for its own run, so two runs' numbers cannot be compared as one order"
+path = "mcp-re-proxy/src/audit_sink/stream.rs"
+anchor = """
+        (self.run == *run).then_some(self.seq)
+"""
+weakening = """
+        let _ = run;
+        Some(self.seq)
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stream::tests::a_position_has_no_number_in_another_run",
+]
+
+[[probe]]
+id = "M495-proxy-a-run-states-its-start"
+unit = "proxy.audit_delivery"
+conjunct = "a run's stream opens with one start line naming the run, so a run with no shutdown line is one whose tail is unknown"
+path = "mcp-re-proxy/src/audit_sink/stderr.rs"
+anchor = """
+            offer(queue, dropped, queued, line, STDERR_AUDIT_QUEUE_DEPTH);
+"""
+weakening = """
+            let _ = (queue, dropped, queued, line);
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::stderr::tests::a_stream_states_its_start_once_naming_its_run",
 ]

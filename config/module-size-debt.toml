@@ -659,15 +659,6 @@ baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
 [[debt]]
-# MCPRE-154 moved the writer's teardown obligation to its own owner, and `flush_stderr_audit`
-# went with it — the bound, the wait and the outcome are one authority. The sink became a
-# subtree so the subordinate is declared by its owner; the debt moves WITH the file.
-path = "mcp-re-proxy/src/audit_sink/mod.rs"
-baseline_prod_loc = 227
-baseline_sha = "cdc51d1"
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/delegated_tls.rs"
 baseline_prod_loc = 313
 baseline_sha = "d1fc5fa"

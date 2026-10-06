@@ -152,17 +152,20 @@ pub(crate) fn mcp_transport_contract(
 /// serving path's absent sink is the no-emission posture.
 pub(crate) fn security_audit_record(
     state: crate::config_state::AuditState,
-) -> Established<crate::audit_sink::StderrAuditSink> {
+) -> Result<Established<crate::audit_sink::StderrAuditSink>, String> {
     match state {
-        crate::config_state::AuditState::Stderr => Established::on(
-            crate::audit_sink::StderrAuditSink,
+        crate::config_state::AuditState::Stderr => Ok(Established::on(
+            crate::audit_sink::StderrAuditSink::open().ok_or(
+                "--audit-sink stderr: the OS CSPRNG did not yield the audit stream's run \
+                 identity, so its records could not be told from another run's",
+            )?,
             "security audit record = STDERR (ADR-MCPS-035): a numbered line per \
              accepted / rejected / signed decision, carrying the verifier-resolved actor \
-             and the frozen mcp-re.* wire code. Best-effort by design: a full queue drops \
-             lines rather than delaying a request, a gap in seq marks each drop, and the \
-             drop count is reported.",
-        ),
-        crate::config_state::AuditState::None => Established::off(AUDIT_OFF),
+             and the frozen mcp-re.* wire code, numbered within a run named on every line. \
+             Best-effort by design: a full queue drops lines rather than delaying a request, \
+             a gap in a run's seq marks each drop, and the drop count is reported.",
+        )),
+        crate::config_state::AuditState::None => Ok(Established::off(AUDIT_OFF)),
     }
 }
 
@@ -522,12 +525,15 @@ mod tests {
     #[test]
     fn the_security_audit_posture_travels_with_the_sink_it_installs() {
         let (sink, posture): (Option<crate::audit_sink::StderrAuditSink>, _) =
-            security_audit_record(crate::config_state::AuditState::Stderr).into_parts();
+            security_audit_record(crate::config_state::AuditState::Stderr)
+                .expect("the OS CSPRNG yields an incarnation")
+                .into_parts();
         assert!(sink.is_some());
         assert!(matches!(posture, SeamState::On { .. }));
 
-        let (sink, posture) =
-            security_audit_record(crate::config_state::AuditState::None).into_parts();
+        let (sink, posture) = security_audit_record(crate::config_state::AuditState::None)
+            .expect("OFF opens nothing")
+            .into_parts();
         assert!(sink.is_none());
         assert!(matches!(posture, SeamState::Off { .. }));
     }
