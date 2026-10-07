@@ -1170,10 +1170,11 @@ mod tests {
             SigningSourceRequest::File(_)
         ));
         assert_eq!(config.peer_identity.flag_value(), "exact");
-        // Safe defaults: URI SAN identity, bounded resources.
+        // Safe defaults: no identity field named (the channel-binding owner holds it to the
+        // URI SAN), bounded resources.
         assert_eq!(
-            config.peer_identity.credential_identity_field(),
-            Some(IdentityPolicy::UriSan)
+            config.peer_identity.credential_identity().map(|c| c.field),
+            Some(None)
         );
         assert_eq!(config.authorization.kind, AuthzKind::Off);
         assert_eq!(config.limits.max_header_bytes, 64 * 1024);
@@ -1265,9 +1266,10 @@ mod tests {
             parse_args(&a)
                 .expect("parse")
                 .peer_identity
-                .credential_identity_field()
-                .expect("the channel-credential form"),
-            IdentityPolicy::UriSan
+                .credential_identity()
+                .expect("the channel-credential form")
+                .field,
+            Some(IdentityPolicy::UriSan)
         );
 
         let mut a = minimal_durable();
@@ -1276,9 +1278,10 @@ mod tests {
             parse_args(&a)
                 .expect("parse")
                 .peer_identity
-                .credential_identity_field()
-                .expect("the channel-credential form"),
-            IdentityPolicy::DnsSan
+                .credential_identity()
+                .expect("the channel-credential form")
+                .field,
+            Some(IdentityPolicy::DnsSan)
         );
     }
 

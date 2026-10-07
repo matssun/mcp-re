@@ -94,7 +94,9 @@ impl MachineStates {
             freshness: r.freshness.ok_or_else(|| unrecognised("freshness"))?,
             in_flight_limit: t.in_flight_limit,
             key_file_access: t.key_file_access,
-            mcp_transport_contract: t.mcp_transport_contract,
+            mcp_transport_contract: r
+                .mcp_transport_contract
+                .ok_or_else(|| unrecognised("mcp-transport-contract"))?,
             replay: r.replay.ok_or_else(|| unrecognised("replay"))?,
             retention: t.retention,
             server_identity: r

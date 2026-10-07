@@ -192,6 +192,7 @@ fn legality_violations(
         custody,
         delegated_signing,
         freshness,
+        mcp_transport_contract,
         replay,
         trust_document,
         client_credential_window,
@@ -260,9 +261,7 @@ fn legality_violations(
     // it disables it for every request.
     violations.extend(residue::target_uri_violations(config));
     // The transport contract is mandatory: the accepted version set must name a version.
-    violations.extend(crate::config_state::mcp_transport_contract::violations(
-        config,
-    ));
+    violations.extend(mcp_transport_contract);
     // Seventh, and it arrives here from the TRUST plane, where it had no business being:
     // whether a deployment names an inner server is a statement about the request, not
     // about trust, and refusing it there meant the trust plane could reject a

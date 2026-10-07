@@ -10,21 +10,27 @@ use crate::transport::IdentityPolicy;
 /// carries the identity* — survives that certificate being replaced by something else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ChannelCredentialIdentityRequest {
-    /// The authoritative identity field. No implicit fallback: a credential that does not
-    /// carry this field carries no identity here.
-    pub field: IdentityPolicy,
+    /// The authoritative identity field the operator named, or `None` where they named
+    /// none. The default field is the classifying owner's to apply, so an omitted field and
+    /// an explicit `uri_san` stay two requests. No implicit fallback at serving: a
+    /// credential that does not carry the field carries no identity here.
+    pub field: Option<IdentityPolicy>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The default is the URI SAN, which is the recommended, unambiguous form.
+    /// A request that names no field records that it named none, rather than the field a
+    /// default would have chosen for it.
     #[test]
-    fn the_default_identity_field_is_the_uri_san() {
-        assert_eq!(
-            ChannelCredentialIdentityRequest::default().field,
-            IdentityPolicy::UriSan
+    fn a_default_request_names_no_field() {
+        assert_eq!(ChannelCredentialIdentityRequest::default().field, None);
+        assert_ne!(
+            ChannelCredentialIdentityRequest::default(),
+            ChannelCredentialIdentityRequest {
+                field: Some(IdentityPolicy::UriSan)
+            }
         );
     }
 }

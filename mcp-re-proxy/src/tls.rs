@@ -224,7 +224,7 @@ impl ServerOptions {
     /// revocation index or custody flag stays a compile error there.
     pub fn new(client_credential_window: crate::config_state::ClientCredentialWindow) -> Self {
         ServerOptions {
-            identity_policy: IdentityPolicy::default(),
+            identity_policy: IdentityPolicy::RECOMMENDED,
             peer_identity_provenance: PeerIdentityProvenance::default(),
             limits: ServerLimits::default(),
             client_credential_window,

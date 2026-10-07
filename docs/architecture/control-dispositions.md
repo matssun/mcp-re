@@ -1404,7 +1404,7 @@ claims to hold — a posture that states a currency it does not have.
 
 ## NP-033 — attested ingress is configured whole or not at all
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (9), `mcp-re-proxy/src/cli/peer_identity_flags` (4).
+**Controls:** `mcp-re-proxy/src/cli.rs` (9), `mcp-re-proxy/src/cli/peer_identity_flags` (6).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1412,7 +1412,8 @@ claims to hold — a posture that states a currency it does not have.
 
 *Attested ingress is configured whole or not at all: it requires an attestor key,
 an identity and an audience, it fails closed without pinned mTLS, its flags do not dangle
-without the binding, an invalid or malformed LB key is refused, a duplicate LB key id is
+without the binding, an identity field does not dangle under a form that reads no
+certificate field, an omitted identity field stays distinguishable from a chosen one, an invalid or malformed LB key is refused, a duplicate LB key id is
 refused, and an LB assertion binding requires at least one key.* If false, ingress
 attestation is half-configured — flags present, binding absent — and the deployment believes
 a hop it never verified.

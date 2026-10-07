@@ -131,6 +131,11 @@ pub(crate) fn online_ocsp() -> Established<std::convert::Infallible> {
 /// §4.1 — the MCP transport/version contract, enforced for the protocol versions the
 /// operator declares. There is no state without it: the failure it prevents is a signed
 /// request that names one tool in its header and invokes another in its body.
+///
+/// A startup value, and the only one: the deployment request is classified once per
+/// process and nothing re-reads it, so the accepted set a running process enforces is the
+/// one it started with. A changed set takes effect by restart; no seam exists for it to go
+/// stale against.
 pub(crate) fn mcp_transport_contract(
     state: &crate::config_state::McpTransportContractState,
 ) -> (mcp_re_http_profile::McpTransportPolicy, SeamState) {

@@ -753,9 +753,11 @@ mod tests {
                 .0
                 .expect("the legal fixture names a trust document"),
             custody: test_support::custody_pkcs11(),
-            mcp_transport_contract: mcp_transport_contract::classify(
+            mcp_transport_contract: mcp_transport_contract::classify_and_validate(
                 &test_support::versioned_transport_config(),
-            ),
+            )
+            .0
+            .expect("the versioned fixture names an accepted version"),
             delegated_signing: delegated_signing::classify_and_validate(
                 &test_support::legal_config(),
             )

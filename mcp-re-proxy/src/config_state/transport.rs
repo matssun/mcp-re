@@ -143,7 +143,12 @@ fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, V
     // The identity FIELD is asked of the form that has one. No other form reads a
     // certificate, so under those there is no field to be deprecated — where the old shape
     // had a sibling `identity_source` that every form carried and only one consulted.
-    let identity = match form.credential_identity_field() {
+    // The default field is applied HERE, after the request has recorded whether the
+    // operator chose one.
+    let field = form
+        .credential_identity()
+        .map(|identity| identity.field.unwrap_or(IdentityPolicy::RECOMMENDED));
+    let identity = match field {
         Some(IdentityPolicy::UriSan) => Some(ChannelBindingState::ExactUriSan),
         Some(IdentityPolicy::DnsSan) => Some(ChannelBindingState::ExactDnsSan),
         Some(IdentityPolicy::CnLegacy) => {
@@ -520,7 +525,7 @@ mod tests {
         assert_ne!(uri, dns, "the same form, two states");
         for form in every_form()
             .into_iter()
-            .filter(|form| form.credential_identity_field().is_none())
+            .filter(|form| form.credential_identity().is_none())
         {
             let named = form.flag_value();
             let (state, _) = binding(|c| c.peer_identity = form);
@@ -535,7 +540,7 @@ mod tests {
     fn only_exact_binding_becomes_a_state_and_every_other_kind_is_refused_aloud() {
         for form in every_form() {
             let named = form.flag_value();
-            let is_credential = form.credential_identity_field().is_some();
+            let is_credential = form.credential_identity().is_some();
             let (state, violations) = binding(|c| c.peer_identity = form);
             if is_credential {
                 assert_eq!(state, Some(ChannelBindingState::ExactUriSan));

@@ -478,7 +478,8 @@ status = "unreviewed"
 path = "mcp-re-proxy/src/config_state/transport.rs"
 baseline_prod_loc = 488
 baseline_sha = "d1fc5fa"
-status = "unreviewed"
+status = "reviewed-action-required"
+review_ref = "EX-018 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-http-profile/src/custody/mod.rs"

@@ -72,19 +72,20 @@ impl Default for PeerIdentityEvidenceRequest {
 }
 
 impl PeerIdentityEvidenceRequest {
-    /// The channel-credential form over the default identity field, which is what an
-    /// operator who named no form has asked for.
+    /// The channel-credential form over an identity field the operator chose.
     pub fn channel_credential(field: crate::transport::IdentityPolicy) -> Self {
-        PeerIdentityEvidenceRequest::ChannelCredential(ChannelCredentialIdentityRequest { field })
+        PeerIdentityEvidenceRequest::ChannelCredential(ChannelCredentialIdentityRequest {
+            field: Some(field),
+        })
     }
 
-    /// The identity field of the channel credential, where that is the form.
+    /// The channel credential's identity request, where that is the form.
     ///
     /// `None` under every other form is not a missing value: no other form reads a
     /// certificate field, so there is none to name.
-    pub fn credential_identity_field(&self) -> Option<crate::transport::IdentityPolicy> {
+    pub fn credential_identity(&self) -> Option<ChannelCredentialIdentityRequest> {
         match self {
-            PeerIdentityEvidenceRequest::ChannelCredential(identity) => Some(identity.field),
+            PeerIdentityEvidenceRequest::ChannelCredential(identity) => Some(*identity),
             _ => None,
         }
     }
@@ -113,8 +114,8 @@ mod tests {
     fn a_form_carries_only_its_own_material() {
         let credential = PeerIdentityEvidenceRequest::channel_credential(IdentityPolicy::DnsSan);
         assert_eq!(
-            credential.credential_identity_field(),
-            Some(IdentityPolicy::DnsSan)
+            credential.credential_identity().map(|c| c.field),
+            Some(Some(IdentityPolicy::DnsSan))
         );
         let attested = PeerIdentityEvidenceRequest::AttestedIngress(AttestedIngressRequest {
             asserted_identity_kind: IdentityPolicy::UriSan,
@@ -123,17 +124,20 @@ mod tests {
             audience: String::new(),
             pinned_channel: PinnedChannelAcknowledgement::acknowledged(),
         });
-        assert_eq!(attested.credential_identity_field(), None);
+        assert_eq!(attested.credential_identity(), None);
         assert_eq!(attested.flag_value(), "attested-ingress");
     }
 
     /// The default is the channel credential's own identity: a deployment that named no
-    /// form reads the peer it authenticated, and never a header.
+    /// form reads the peer it authenticated, and never a header. It names no field either,
+    /// so it is not the request of an operator who chose `uri_san`.
     #[test]
-    fn the_default_form_is_the_channel_credential() {
-        assert_eq!(
-            PeerIdentityEvidenceRequest::default(),
-            PeerIdentityEvidenceRequest::channel_credential(IdentityPolicy::default())
+    fn the_default_form_is_the_channel_credential_naming_no_field() {
+        let default = PeerIdentityEvidenceRequest::default();
+        assert_eq!(default.credential_identity().map(|c| c.field), Some(None));
+        assert_ne!(
+            default,
+            PeerIdentityEvidenceRequest::channel_credential(IdentityPolicy::UriSan)
         );
     }
 }

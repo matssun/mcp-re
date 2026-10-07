@@ -18,7 +18,11 @@ impl PeerIdentityFlags {
     pub(super) fn stray_value_refusal(&self) -> Result<(), String> {
         let lb = matches!(self.form, Form::IngressAssertion);
         let attested = matches!(self.form, Form::AttestedIngress);
-        let stray: [(bool, &str); 5] = [
+        let stray: [(bool, &str); 6] = [
+            (
+                self.identity_field.is_some() && lb,
+                "--transport-identity-source|exact|attested-ingress",
+            ),
             (
                 !self.lb_keys.is_empty() && !lb,
                 "--ingress-lb-key|lb-assertion",

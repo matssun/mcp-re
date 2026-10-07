@@ -55,12 +55,12 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ContinuationControlPlan` | `config_state/continuation_control.rs` | `shared_store() -> Option<&str>`, `needs_control_runtime()` |
 | `AdmissionState` | `config_state/admission.rs` | `enforced() -> Option<EnforcedAdmission<'_>>`, `is_enforced()` |
 | `RetentionState` | `config_state/evidence.rs` | `directory() -> Option<&str>`, `is_on()` |
-| `McpTransportContractState` | `config_state/mcp_transport_contract.rs` | `enforced_versions() -> Option<&[String]>`, `is_enforced()` |
+| `McpTransportContractState` | `config_state/mcp_transport_contract.rs` | `versions() -> &[String]` (non-empty: `classify_and_validate` produces no state for a refused set) |
 | `TrustRevocationState` | `config_state/trust_revocation.rs` | `epoch_source() -> Option<EpochSource<'_>>`, `reload_cadence()`, `tier()`, `declared_window_secs()`, `push_channel_is_inert()`, `has_networked_epoch()` |
 | `CrlRevocationState` | `config_state/transport.rs` | `client_revocation_plan()`, `paths()`, `reload_cadence_secs()`, `is_enforced()` |
 | `ClientRevocationPlan` | `config_state/transport.rs` | `paths()`, `reload_cadence_secs()`, `is_enforced()` |
 | `ChannelCredentialCustodyState` | `config_state/channel_credential_custody.rs` | `exposure()`, `material()` |
-| `CustodyState` | `config_state/custody.rs` | `material() -> CustodyMaterial<'_>`, `disk_secret_paths()`, `is_non_exporting_device()` |
+| `CustodyState` | `config_state/custody.rs` | `material() -> CustodyMaterial<'_>`, `disk_secret_paths()`, `exposure() -> PrivateKeyExposure` |
 | `FreshnessWindow` | `config_state/freshness.rs` | `verifier_skew_secs()`, `replay_retain_until()` |
 | `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
 | `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |

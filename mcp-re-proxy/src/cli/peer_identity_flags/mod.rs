@@ -45,7 +45,7 @@ pub(super) enum Form {
 #[derive(Default)]
 pub(super) struct PeerIdentityFlags {
     form: Form,
-    identity_field: IdentityPolicy,
+    identity_field: Option<IdentityPolicy>,
     lb_keys: Vec<(String, String)>,
     attestor_keys: Vec<(String, String)>,
     identities: Vec<String>,
@@ -124,7 +124,7 @@ impl PeerIdentityFlags {
 
     /// Read `--transport-identity-source`.
     fn take_identity_field(&mut self, value: &str) -> Result<(), String> {
-        self.identity_field = match value {
+        self.identity_field = Some(match value {
             "uri_san" => IdentityPolicy::UriSan,
             "dns_san" => IdentityPolicy::DnsSan,
             "cn_legacy" => IdentityPolicy::CnLegacy,
@@ -133,7 +133,7 @@ impl PeerIdentityFlags {
                     "unknown --transport-identity-source '{other}' (uri_san|dns_san|cn_legacy)"
                 ))
             }
-        };
+        });
         Ok(())
     }
 
@@ -178,7 +178,9 @@ impl PeerIdentityFlags {
             }
             Form::AttestedIngress => {
                 PeerIdentityEvidenceRequest::AttestedIngress(AttestedIngressRequest {
-                    asserted_identity_kind: self.identity_field,
+                    asserted_identity_kind: self
+                        .identity_field
+                        .unwrap_or(IdentityPolicy::RECOMMENDED),
                     attestor_keys: self.attestor_keys,
                     identities: self.identities,
                     audience: self.audience.unwrap_or_default(),
@@ -261,11 +263,36 @@ mod tests {
         assert!(err.contains("--ingress-pinned-mtls"), "{err}");
     }
 
-    /// The default form is the channel credential over the default identity field.
+    /// The default form is the channel credential, naming no identity field.
     #[test]
     fn the_default_command_line_names_the_channel_credential() {
         assert_eq!(
             PeerIdentityFlags::default().finish().expect("the default"),
+            PeerIdentityEvidenceRequest::default()
+        );
+    }
+
+    /// An identity field under a form that reads no certificate field is refused rather
+    /// than dropped: the operator chose a binding the deployment would not perform.
+    #[test]
+    fn an_identity_field_under_the_lb_assertion_form_is_refused() {
+        let mut flags = PeerIdentityFlags::default();
+        flags.take_form("lb-assertion").expect("a known form");
+        flags.take_identity_field("dns_san").expect("a known field");
+        let err = flags.finish().expect_err("a stray identity field");
+        assert!(
+            err.starts_with("--transport-identity-source has no effect"),
+            "{err}"
+        );
+    }
+
+    /// A chosen field and an omitted one are two requests.
+    #[test]
+    fn a_chosen_uri_san_is_not_the_request_of_one_who_named_none() {
+        let mut flags = PeerIdentityFlags::default();
+        flags.take_identity_field("uri_san").expect("a known field");
+        assert_ne!(
+            flags.finish().expect("exact"),
             PeerIdentityEvidenceRequest::default()
         );
     }

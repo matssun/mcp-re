@@ -12796,3 +12796,64 @@ note = """
 Two requests under one signer and audience share one store key, so the second is refused as a replay
 of the first, and the first's nonce no longer identifies anything.
 """
+
+[[probe]]
+id = "M528-proxy-a-refused-accepted-set-is-still-a-state"
+unit = "proxy.mcp_transport_contract_state"
+conjunct = "a held transport-contract state names at least one accepted version, none blank or padded, whatever order validation runs in"
+path = "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
+anchor = """
+    let state = refusals.is_empty().then(|| McpTransportContractState {
+"""
+weakening = """
+    let state = Some(McpTransportContractState {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::a_refused_set_yields_no_state",
+]
+note = """
+The state would exist beside its own refusal, so a caller reading the state without the refusal list
+holds a contract naming no version — the seal would again rest on call order.
+"""
+
+[[probe]]
+id = "M529-proxy-the-in-flight-default-reads-the-value-not-the-absence"
+unit = "proxy.in_flight_limit_basis"
+conjunct = "the default is applied to absence alone"
+path = "mcp-re-proxy/src/config_state/in_flight_limit.rs"
+anchor = """
+        InFlightLimitRequest::FleetTotal(requests) => InFlightLimitBasis::FleetTotal { requests },
+"""
+weakening = """
+        InFlightLimitRequest::FleetTotal(requests) if requests.get() == DEFAULT_PER_CORE_IN_FLIGHT => {
+            InFlightLimitBasis::PerCore { requests }
+        }
+        InFlightLimitRequest::FleetTotal(requests) => InFlightLimitBasis::FleetTotal { requests },
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::the_default_is_applied_to_absence_and_never_to_a_value_that_equals_it",
+]
+note = """
+A fleet-wide target equal to the default would become a per-core ceiling, multiplying the fleet's
+admission by its core count.
+"""
+
+[[probe]]
+id = "M530-http-profile-an-unreadable-body-is-read-as-null"
+unit = "http_profile.mcp_transport_contract"
+conjunct = "a request whose body the contract cannot read is refused as malformed evidence"
+path = "mcp-re-http-profile/src/mcp_transport/agreement.rs"
+anchor = """
+        let body: Value = serde_json::from_slice(&request.body)
+            .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
+"""
+weakening = """
+        let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::a_body_that_is_not_json_is_refused_whatever_the_headers_say",
+]
+note = """
+An unreadable body would be treated as one with no method, so the refusal would depend on which
+header happened to disagree with nothing rather than on the body being evidence the contract cannot read.
+"""

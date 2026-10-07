@@ -192,6 +192,27 @@ mod tests {
 
     const CALL: &str = r#"{"method":"tools/call","params":{"name":"deploy"}}"#;
 
+    /// A body that is not JSON is refused as malformed evidence, before any header is
+    /// compared: with no body method there is nothing a signed header could agree with,
+    /// and agreeing headers must not carry a body the contract cannot read.
+    #[test]
+    fn a_body_that_is_not_json_is_refused_whatever_the_headers_say() {
+        let headers = [
+            (MCP_METHOD_HEADER, "tools/call"),
+            (MCP_PROTOCOL_VERSION_HEADER, "2026-07-28"),
+            (MCP_NAME_HEADER, "deploy"),
+        ];
+        for body in ["", "not json", r#"{"method":"tools/call""#] {
+            assert!(
+                matches!(
+                    policy().enforce(&request(&headers, body)),
+                    Err(HttpProfileError::MalformedEvidence("body json"))
+                ),
+                "{body:?} was not refused as malformed"
+            );
+        }
+    }
+
     /// A method that REQUIRES `Mcp-Name` and a body with nothing for it to mirror fails
     /// closed. Otherwise an absent `params.name` would license an arbitrary covered name.
     #[test]

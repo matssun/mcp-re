@@ -20,8 +20,8 @@ use crate::config_state::coordinate::CoordinateFault;
 use crate::deployment_request::DeploymentRequest;
 
 /// The protocol versions a configuration declares. The representation is private and
-/// [`classify`] is the only producer; [`violations`] refuses the empty set before a
-/// configuration state exists, so a state that is held names at least one version.
+/// [`classify_and_validate`] is the only producer, and it produces a state only for a set it
+/// does not refuse: a state that is held names at least one version, none blank or padded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpTransportContractState {
     versions: Vec<String>,
@@ -34,17 +34,23 @@ impl McpTransportContractState {
     }
 }
 
-/// Recognise the declared set. Total: emptiness is [`violations`]' to refuse, not a state.
-pub fn classify(config: &DeploymentRequest) -> McpTransportContractState {
-    McpTransportContractState {
+/// Recognise the declared set, or refuse it. The state exists only when there is nothing to
+/// refuse, so no caller can hold an empty or malformed accepted set whatever order it asks
+/// in.
+pub(in crate::config_state) fn classify_and_validate(
+    config: &DeploymentRequest,
+) -> (Option<McpTransportContractState>, Vec<String>) {
+    let refusals = violations(config);
+    let state = refusals.is_empty().then(|| McpTransportContractState {
         versions: config.mcp_protocol_versions.clone(),
-    }
+    });
+    (state, refusals)
 }
 
 /// The contract is mandatory: at least one accepted protocol version, none of them blank,
 /// and each in canonical form. A version is compared byte for byte against the trimmed
 /// `Mcp-Protocol-Version` header, so a padded one would refuse every request it names.
-pub fn violations(config: &DeploymentRequest) -> Vec<String> {
+fn violations(config: &DeploymentRequest) -> Vec<String> {
     let faults: Vec<_> = config
         .mcp_protocol_versions
         .iter()
@@ -89,7 +95,9 @@ mod tests {
     /// The declared set is carried verbatim, in the order given.
     #[test]
     fn the_state_carries_the_set_the_operator_declared() {
-        let state = classify(&request_with(&["2026-07-28", "2025-11-05"]));
+        let (state, refusals) = classify_and_validate(&request_with(&["2026-07-28", "2025-11-05"]));
+        assert!(refusals.is_empty(), "{refusals:?}");
+        let state = state.expect("a declared set is a state");
         assert_eq!(state.versions(), ["2026-07-28", "2025-11-05"]);
     }
 
@@ -99,6 +107,17 @@ mod tests {
         assert_eq!(violations(&request_with(&[])).len(), 1);
         assert_eq!(violations(&request_with(&["2026-07-28", " "])).len(), 1);
         assert!(violations(&request_with(&["2026-07-28"])).is_empty());
+    }
+
+    /// A refused set is never a state: whoever asks, in whatever order, gets no contract
+    /// naming zero versions, a blank one or a padded one.
+    #[test]
+    fn a_refused_set_yields_no_state() {
+        for versions in [&[][..], &["2026-07-28", " "][..], &[" 2026-07-28"][..]] {
+            let (state, refusals) = classify_and_validate(&request_with(versions));
+            assert!(state.is_none(), "{versions:?} produced a state");
+            assert_eq!(refusals.len(), 1, "{versions:?}: {refusals:?}");
+        }
     }
 
     /// A padded version is refused by name. Accepted, it would be compared byte for byte
@@ -122,7 +141,11 @@ mod tests {
     #[test]
     fn an_unusual_accepted_set_is_classified_rather_than_refused() {
         let config = request_with(&["not-a-version"]);
-        assert!(violations(&config).is_empty());
-        assert_eq!(classify(&config).versions(), ["not-a-version"]);
+        let (state, refusals) = classify_and_validate(&config);
+        assert!(refusals.is_empty(), "{refusals:?}");
+        assert_eq!(
+            state.expect("an unusual set is a state").versions(),
+            ["not-a-version"]
+        );
     }
 }

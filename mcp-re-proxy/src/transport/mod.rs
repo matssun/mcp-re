@@ -55,12 +55,10 @@ use crate::communication_assurance::VerifiedRequestSubject;
 /// selected field is absent from the client certificate, identity extraction
 /// returns `None` and the (required) transport binding fails closed — a missing
 /// URI SAN must never be quietly downgraded to a DNS SAN or a Common Name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityPolicy {
-    /// URI Subject Alternative Name (SPIFFE-style). The recommended default:
-    /// URI SANs are unambiguous, namespaced, and the SPIFFE/workload-identity
-    /// convention.
-    #[default]
+    /// URI Subject Alternative Name (SPIFFE-style). The recommended field: URI SANs are
+    /// unambiguous, namespaced, and the SPIFFE/workload-identity convention.
     UriSan,
     /// DNS Subject Alternative Name. Use only when the deployment's client
     /// identities are genuinely DNS names and this is an explicit choice.
@@ -69,6 +67,11 @@ pub enum IdentityPolicy {
     /// for identity by the CA/Browser Forum. Selecting it emits a startup
     /// warning; prefer a URI or DNS SAN.
     CnLegacy,
+}
+
+impl IdentityPolicy {
+    /// The field where none is named: a constant, not a `Default`, so the owner applies it.
+    pub const RECOMMENDED: Self = Self::UriSan;
 }
 
 /// The parsed HTTP request headers of an inbound connection. This is a thin,

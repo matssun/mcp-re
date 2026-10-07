@@ -6943,6 +6943,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::every_target_naming_method_requires_an_agreeing_name",
   "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::a_covered_name_with_no_target_in_the_body_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::a_case_or_padding_variant_of_a_listed_method_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::agreement::tests::a_body_that_is_not_json_is_refused_whatever_the_headers_say",
   "//mcp-re-http-profile:mcp_re_http_profile_test#mcp_transport::tests::a_bodyless_request_states_a_supported_version_and_no_routing_header",
   "//mcp-re-http-profile:bodyless_202_test#the_bodyless_signer_covers_every_conditionally_mandatory_header",
 ]
@@ -11744,7 +11745,7 @@ evidence = [
 ]
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::a_stated_basis_is_carried_through_unchanged",
-  "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::an_absent_limit_is_distinguishable_from_one_that_equals_the_default",
+  "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::the_default_is_applied_to_absence_and_never_to_a_value_that_equals_it",
   "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::exactly_one_projection_answers_for_every_basis",
   "//mcp-re-proxy:proxy_unit_test#config_state::in_flight_limit::tests::saying_nothing_resolves_to_the_bounded_default",
 ]
@@ -11769,6 +11770,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::declaring_no_version_is_refused_not_a_posture",
   "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::a_padded_version_is_refused_by_name",
   "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::the_state_carries_the_set_the_operator_declared",
+  "//mcp-re-proxy:proxy_unit_test#config_state::mcp_transport_contract::tests::a_refused_set_yields_no_state",
 ]
 
 [[unit]]

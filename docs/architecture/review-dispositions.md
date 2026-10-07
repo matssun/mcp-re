@@ -2902,3 +2902,49 @@ growth-authorization: mcp-re-transport/src/lib.rs 234 -> 240
 grants nothing to the file or crate, and expires with the same decomposition obligation.
 `HttpProfileProxy::handle` (61/60) is the other Ruling 14.4 function waiver and is already
 inside `mcp-re-proxy`'s clippy-debt count, so it needs no attribute.
+
+
+## EX-018 — `mcp-re-proxy/src/config_state/transport.rs` — **census complete, disposition: ACTION REQUIRED, no exception sought**
+
+The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit (finding
+`4232fb9da5d69c46`).
+
+1. **Owns.** How a verified request signer is bound to the authenticated channel AND which
+   offline client-certificate revocation posture the deployment holds AND the client
+   certificate lifetime ceiling. Two "and"s mark a shallow boundary.
+2. **Authorities.** Three: (a) the `ChannelBinding` machine and the peer-identity form
+   legality it depends on — `classify_binding`, `binding_kind_refusals`,
+   `classify_and_validate_binding`, `undeployable_transport_binding_refusal`,
+   `ingress_assertion_refusal`, `attested_ingress_refusal`, `verification_keys_refusal`,
+   `ingress_assertion_violation`; (b) the `CrlRevocation` machine — `CrlRevocationState`,
+   `ClientRevocationPlan`, `classify_crl`, `classify_and_validate_crl`; (c)
+   `MAX_CLIENT_CERT_LIFETIME`, whose deciding reader is `client_credential_window`.
+3. **Decides.** Whether a peer-identity form can be deployed and which exact identity field
+   binds; whether the CRL configuration names a posture; nothing for (c), which is a bound
+   another owner applies.
+4. **Executes.** Nothing; no I/O.
+5. **Transports.** `ClientRevocationPlan` to the TLS materialization; the binding state to
+   `app.rs`.
+6. **Reconstructs.** Nothing another owner decided. The identity-field default is applied
+   here, after the request records whether the operator chose one.
+7. **Ordering-only relationships.** `ingress_assertion_violation` is spliced at its own
+   clause position in `validation::legality_violations`, separate from the binding
+   machine's refusals; the binding machine's state does not depend on it.
+8. **Test-only interface.** None.
+9. **Unreachable.** None found under the current legality model; `IdentityPolicy::CnLegacy`
+   is reachable from argv and refused here.
+10. **Represented twice.** `MAX_CLIENT_CERT_LIFETIME` lives here but is read by
+    `client_credential_window` and the CLI; it is one constant, held by the wrong owner.
+11. **Constructible inconsistency.** None: both states are private-field types produced
+    only by their classifiers.
+12. **Lanes.** `proxy_unit_test` (`config_state::transport::tests`), the validation
+    precedence tests in `config_refusal_precedence_test`.
+
+### Disposition
+
+Action required: move authority (b) into a new sibling module `crl_revocation` under `config_state`, with its tests
+(a sibling of `transport.rs`; `config_state/mod.rs` gains one `mod` line and re-exports the
+two types it already re-exports), and move authority (c) into
+`config_state/client_credential_window.rs`, its one deciding reader. Authority (a) stays in
+`transport.rs`. Recorded, not performed, under the campaign's size-is-recorded rule; the
+file may not grow meanwhile.
