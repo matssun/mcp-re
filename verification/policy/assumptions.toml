@@ -2375,6 +2375,13 @@ differs.
 scope = [
   "unit://http_profile.scitt_algorithm_agreement",
   "unit://http_profile.scitt_derived_root",
+
+A change inside this version is detected rather than remembered: the golden vector
+`the_manifest_signing_input_and_signature_are_byte_stable` pins the exact signing-input bytes
+of a fixed manifest and the exact signature a fixed org key makes over them, and fails on any
+change to the serialization, the preimage or the field order. That makes a breach of the
+constraint visible; it does not discharge it, because the constraint is what released clients
+consume, which no test here controls.
   "boundary://boundary.crypto_primitives",
 ]
 owner = "mats@sundvall.name"

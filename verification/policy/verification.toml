@@ -4486,6 +4486,7 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::anchors::tests::a_current_unrevoked_issuer_resolves_for_the_response_slot_only",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_signer_kid_is_covered_by_the_signature",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::preimage::tests::the_signer_kid_manifest_boundary_cannot_be_moved",
+  "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_manifest_signing_input_and_signature_are_byte_stable",
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::manifest_validity::tests::the_deadline_is_inclusive_of_the_instant_it_names",
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::manifest_validity::tests::a_hand_assembled_picture_has_no_deadline_to_miss",
 ]

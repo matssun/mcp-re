@@ -492,6 +492,71 @@ mod tests {
         );
     }
 
+    /// The golden vector for the frozen manifest serialization (ASM-0066): a fixed manifest
+    /// under a fixed org key has exactly these signing-input bytes and exactly this
+    /// signature, and a verifier accepts that signature over the manifest it parses back.
+    /// A change to the serialization, the preimage, or the field order turns this red.
+    #[test]
+    fn the_manifest_signing_input_and_signature_are_byte_stable() {
+        let m = TrustAnchorManifest {
+            profile: PROFILE.into(),
+            manifest_version: 7,
+            current_issuers: vec![ManifestIssuer {
+                issuer_kid: "root-A".into(),
+                public_key: "PUBKEY_A".into(),
+                role: "server".into(),
+                trust_domain: "trust.invalid".into(),
+                subject: "did:example:issuer".into(),
+            }],
+            retiring_issuers: vec![RetiringIssuer {
+                issuer_kid: "root-B".into(),
+                public_key: "PUBKEY_B".into(),
+                role: "server".into(),
+                trust_domain: "trust.invalid".into(),
+                subject: "did:example:old".into(),
+                valid_until: 9_000,
+            }],
+            revoked_issuers: vec!["root-C".into()],
+            issued_at: 1_000,
+            expires_at: 10_000,
+        };
+        let body = concat!(
+            r#"{"profile":"mcp-re-http-v1","manifest_version":7,"#,
+            r#""current_issuers":[{"issuer_kid":"root-A","public_key":"PUBKEY_A","role":"server","#,
+            r#""trust_domain":"trust.invalid","subject":"did:example:issuer"}],"#,
+            r#""retiring_issuers":[{"issuer_kid":"root-B","public_key":"PUBKEY_B","role":"server","#,
+            r#""trust_domain":"trust.invalid","subject":"did:example:old","valid_until":9000}],"#,
+            r#""revoked_issuers":["root-C"],"issued_at":1000,"expires_at":10000}"#,
+        );
+        let mut expected = b"mcp-re/trust-anchor-manifest/v1".to_vec();
+        expected.extend_from_slice(&(ORG_KID.len() as u64).to_be_bytes());
+        expected.extend_from_slice(ORG_KID.as_bytes());
+        expected.extend_from_slice(body.as_bytes());
+        assert_eq!(
+            manifest_signing_preimage(&m, ORG_KID).expect("preimage"),
+            expected
+        );
+
+        let signed = sign_manifest(&m, &org_key(), ORG_KID);
+        assert_eq!(
+            signed.signature,
+            "YQKSkMCHFUu6qyEq0Pr0lqhtFoOhl6xdV3JbLO_py12y8nStTccF5P1aM7m6uWwPDwOr0O96rS6WApYjiUAPAQ"
+        );
+        let parsed: SignedTrustAnchorManifest =
+            serde_json::from_str(&serde_json::to_string(&signed).expect("serializes"))
+                .expect("parses");
+        let verified = verify_ed25519_with(
+            &expected,
+            &parsed.signature,
+            &org_key().public_key(),
+            McpReError::InvalidSignature,
+        );
+        assert!(
+            verified.is_ok(),
+            "the golden signature verifies over the golden bytes"
+        );
+    }
+
     #[test]
     fn signed_manifest_loads_current_issuers() {
         let m = manifest(1, vec![issuer("root-A", &root_a())], vec![], vec![]);
