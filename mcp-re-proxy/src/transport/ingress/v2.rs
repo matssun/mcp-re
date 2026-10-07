@@ -467,7 +467,9 @@ impl LbAssertionV2Binding {
         })
     }
 
-    /// Look up a trusted attestor verification key by key id.
+    /// Look up a trusted attestor verification key by key id. An early-exit search, as the
+    /// audience and ingress-identity checks in `verify` are ordinary equality: every operand
+    /// is a public identifier the assertion itself carries, so timing reveals no secret.
     fn key_for(&self, key_id: &str) -> Option<&VerificationKey> {
         self.keys
             .iter()

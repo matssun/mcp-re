@@ -239,7 +239,7 @@ mod tests {
             "--ingress-identity",
             "spiffe://example.org/ingress-1",
             "--ingress-audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--ingress-pinned-mtls",
         ])
     }
@@ -445,9 +445,9 @@ mod tests {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--signing-key-seed",
@@ -489,9 +489,9 @@ mod tests {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--signing-key-seed",
@@ -1157,7 +1157,7 @@ mod tests {
         // durable replay backend; every other value here is a plain default.
         let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(config.bind, "127.0.0.1:8443");
-        assert_eq!(config.audience, "did:example:server-1");
+        assert_eq!(config.audience, "did:web:server-1.mcp.example.com");
         // The default skew is the profile's own, so the freshness gate the verifier
         // runs and the retention the replay tier applies cannot drift apart.
         assert_eq!(
@@ -1431,7 +1431,7 @@ mod tests {
         let mut config = parse_args(&minimal_durable()).expect("the base config parses");
         config.peer_identity = mode_c_form(
             vec!["spiffe://example.org/ingress-1".to_string()],
-            "did:example:server-1".to_string(),
+            "did:web:server-1.mcp.example.com".to_string(),
         );
         let violations = unsafe_config_violations(&config);
         assert!(
@@ -1457,7 +1457,7 @@ mod tests {
                 "--ingress-identity",
                 "spiffe://example.org/ingress-1",
                 "--ingress-audience",
-                "did:example:server-1",
+                "did:web:server-1.mcp.example.com",
                 // no --ingress-pinned-mtls
             ]),
         );
@@ -1513,7 +1513,10 @@ mod tests {
                 "--ingress-identity",
                 "spiffe://example.org/ingress-1".to_string(),
             ),
-            ("--ingress-audience", "did:example:server-1".to_string()),
+            (
+                "--ingress-audience",
+                "did:web:server-1.mcp.example.com".to_string(),
+            ),
         ] {
             let mut a = minimal();
             a.splice(0..0, args(&[flag, &val]));
@@ -1539,7 +1542,7 @@ mod tests {
                 "--ingress-identity",
                 "spiffe://example.org/ingress-1",
                 "--ingress-audience",
-                "did:example:server-1",
+                "did:web:server-1.mcp.example.com",
                 "--ingress-pinned-mtls",
             ]),
         );
@@ -1816,9 +1819,9 @@ mod tests {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--key-source",
@@ -1984,9 +1987,9 @@ mod tests {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--key-source",
@@ -3300,9 +3303,9 @@ mod tests {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--key-source",

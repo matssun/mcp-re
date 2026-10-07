@@ -3371,10 +3371,10 @@ theorem = "THM-0099"
 conjunct = "a Resolved Request-slot actor's subject is the signer the current snapshot binds the key_id to, not a value derived from the request"
 path = "mcp-re-proxy/src/app.rs"
 anchor = """
-                    subject: signer,
+                identity: server.client_actor(signer, kid),
 """
 weakening = """
-                    subject: kid.to_string(),
+                identity: server.client_actor(kid.to_string(), kid),
 """
 expect_red = [
   "//mcp-re-proxy:integration_test#revocation_serving_wiring_test::active_binding_resolves_the_key_the_tier_returns",
@@ -11906,7 +11906,7 @@ anchor = """
                 identity: server.actor().clone(),
 """
 weakening = """
-                identity: ActorIdentity {
+                identity: mcp_re_http_profile::ActorIdentity {
                     subject: kid.to_owned(),
                     ..server.actor().clone()
                 },
@@ -12208,10 +12208,14 @@ unit = "proxy.server_identity_facts"
 conjunct = "the shipped example.com trust domain yields no identity unless the operator acknowledged a fenced fixture run"
 path = "mcp-re-proxy/src/config_state/server_identity.rs"
 anchor = """
-    (config.trust_domain == PLACEHOLDER_TRUST_DOMAIN && !config.allow_example_fixtures).then(|| {
+    if config.allow_example_fixtures {
+        return Vec::new();
+    }
 """
 weakening = """
-    (config.trust_domain == PLACEHOLDER_TRUST_DOMAIN && config.allow_example_fixtures).then(|| {
+    if !config.allow_example_fixtures {
+        return Vec::new();
+    }
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_placeholder_trust_domain_is_refused_without_the_fixture_acknowledgement",
@@ -12714,4 +12718,42 @@ expect_red = [
 ]
 note = """
 The lowest 2^64 mod span draws land on some residues once more often than the rest.
+"""
+
+[[probe]]
+id = "M524-proxy-the-did-example-placeholders-pass-without-the-fixture-acknowledgement"
+unit = "proxy.server_identity_facts"
+conjunct = "the chart's did:example: audience and server-signer placeholders yield no identity unless the operator acknowledged a fenced fixture run"
+path = "mcp-re-proxy/src/config_state/server_identity.rs"
+anchor = """
+    .filter(|(_, value)| value.starts_with(PLACEHOLDER_DID_PREFIX))
+"""
+weakening = """
+    .filter(|(_, value)| value.is_empty())
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_placeholder_audience_and_signer_are_refused_without_the_fixture_acknowledgement",
+]
+note = """
+Two installs that kept the chart's placeholder audience accept each other's requests under a shared
+trust anchor, and the binary started them anyway where the chart would have refused to render.
+"""
+
+[[probe]]
+id = "M525-proxy-a-client-actor-is-minted-outside-the-deployments-trust-domain"
+unit = "proxy.server_identity_facts"
+conjunct = "a client actor carries the client role and the deployment's own trust domain, built by the owner"
+path = "mcp-re-proxy/src/config_state/server_identity.rs"
+anchor = """
+            trust_domain: self.actor.trust_domain.clone(),
+"""
+weakening = """
+            trust_domain: String::new(),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_client_actor_carries_the_client_role_and_the_owners_trust_domain",
+]
+note = """
+A request signer's actor_id stops sharing the deployment's coordinate with the server actor, so the
+request and response slots partition the replay namespace between them.
 """

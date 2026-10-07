@@ -197,7 +197,7 @@ mod tests {
             "--audience",
             "verifier-1",
             "--server-signer",
-            "did:example:server",
+            "did:web:server.mcp.example.com",
             "--server-key-id",
             "root-kid",
             "--signing-key-seed",
@@ -464,14 +464,14 @@ pub(crate) mod test_support {
     pub(crate) fn cfg(ttl: i64, overlap: i64) -> CustodyConfig {
         CustodyConfig {
             issuer_kid: ROOT_KID.into(),
-            iss: "did:example:server".into(),
+            iss: "did:web:server.mcp.example.com".into(),
             profile: "mcp-re-http-v1".into(),
             aud: "verifier-1".into(),
             audience_hash: "aud-scope-1".into(),
             trust_epoch: "epoch-1".parse().expect("epoch base"),
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
-            server_subject: "did:example:server".into(),
+            server_subject: "did:web:server.mcp.example.com".into(),
             window: DelegatedKeyWindow::of(ttl, overlap).expect("0 < overlap < ttl"),
         }
     }

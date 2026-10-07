@@ -661,6 +661,7 @@ fn spawn_proxy(
         .args([
             "--bind",
             "127.0.0.1:0",
+            "--allow-example-fixtures",
             "--audience",
             AUDIENCE,
             "--server-signer",
@@ -1471,6 +1472,7 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
         let mut v: Vec<String> = [
             "--bind",
             bind.as_str(),
+            "--allow-example-fixtures",
             "--audience",
             AUDIENCE,
             "--server-signer",
@@ -1592,6 +1594,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     let argv: Vec<String> = [
         "--bind",
         bind.as_str(),
+        "--allow-example-fixtures",
         "--audience",
         AUDIENCE,
         "--server-signer",
@@ -1944,6 +1947,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
     let argv: Vec<String> = [
         "--bind",
         bind.as_str(),
+        "--allow-example-fixtures",
         "--audience",
         AUDIENCE,
         "--server-signer",

@@ -159,6 +159,9 @@ pub fn bind_request_to_peer(
     peer: AuthenticatedChannelPeer,
     subject: VerifiedRequestSubject,
 ) -> Result<RequestPeerBindingFacts, RequestPeerBindingRefusal> {
+    // Ordinary equality, deliberately: both operands are public principal names — one is in
+    // the peer's certificate, the other in the signed request — so the comparison's timing
+    // reveals nothing an observer could not read from either.
     if peer.identity().as_str() != subject.as_str() {
         return Err(RequestPeerBindingRefusal::DifferentPrincipals {
             peer: peer.identity().as_str().to_owned(),

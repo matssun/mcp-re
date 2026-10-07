@@ -42,6 +42,7 @@ fn base_args(m: &Material) -> Vec<String> {
     [
         "--bind",
         "127.0.0.1:0",
+        "--allow-example-fixtures",
         "--audience",
         serving_fixtures::AUDIENCE,
         "--server-signer",
@@ -539,6 +540,7 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
         let v: Vec<String> = [
             "--bind",
             "127.0.0.1:0",
+            "--allow-example-fixtures",
             "--audience",
             AUDIENCE,
             "--server-signer",

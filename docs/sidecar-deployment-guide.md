@@ -68,7 +68,7 @@ shown are the real defaults from that parser.
 | `--target-uri <uri>` | **Required.** The URI a signed request must name. With `--audience` and `--route` it forms the audience TUPLE the verifier compares against, so it must equal what the client signs as `@target-uri` — not merely resemble it. |
 | `--mcp-protocol-version <version>` | **Required, repeatable.** Each occurrence adds an accepted `MCP-Protocol-Version` (for example `2026-07-28`). The MCP transport contract is mandatory: every request must carry `Mcp-Method` and `MCP-Protocol-Version`, `Mcp-Name` for every target-naming method (`tools/call`, `prompts/get`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`) must agree with the protected body and is refused on any other message, a bodyless GET or DELETE must carry `MCP-Protocol-Version` and no `Mcp-Method` or `Mcp-Name`, and a version outside the accepted set is refused. There is no way to run without it. |
 | `--trust-domain <domain>` | **Required.** The trust domain the server actor identity is scoped to. It must agree with what clients sign; a mismatch is an actor-resolution failure, not a warning. |
-| `--allow-example-fixtures` | Off by default. Acknowledges a fenced fixture run, and is the only way `--trust-domain example.com` — the shipped placeholder, which every install that kept it would share — is accepted. The Helm chart renders it from `identity.allowExampleFixtures`. |
+| `--allow-example-fixtures` | Off by default. Acknowledges a fenced fixture run, and is the only way the shipped placeholders — `--trust-domain example.com` and a `did:example:` `--audience` or `--server-signer`, which every install that kept them would share — are accepted. The Helm chart renders it from `identity.allowExampleFixtures`. |
 | `--inner-http-url <url>` | The Streamable-HTTP inner MCP backend the PEP forwards to. **Required.** Repeat or comma-separate for a backend fleet (round-robin). |
 
 `--max-clock-skew` defaults to `300` seconds.
@@ -77,10 +77,11 @@ The worked example below is fed to the real parser by
 `mcp-re-proxy/tests/integration/documented_cli_test.rs`, so it cannot drift into a command line the
 proxy refuses to start with.
 
-Its identity values are **placeholders**: `did:example:server-1`, `example.com` and
-`epoch-1` are refused by name at Helm render time precisely so a real deployment cannot
-ship them. The CLI accepts them — nothing about them is malformed — which is why the
-chart, not the parser, is where that guard lives.
+Its identity values are this example's own, not the shipped placeholders. The chart's
+`did:example:` audience and signer and its `example.com` trust domain are refused by name both
+at Helm render time and by the proxy at startup, unless `--allow-example-fixtures`
+(`identity.allowExampleFixtures`) acknowledges a fenced fixture run. The chart's `epoch-1`
+trust-epoch placeholder is refused at render time.
 
 ### Inner plane (`http_inner.rs`)
 
@@ -266,8 +267,8 @@ or an external stdio↔HTTP adapter exposing HTTP):
 # Port 8600 = mcp_re_proxy in config/ports.toml (reserved 8600-8699 band).
 bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --bind 127.0.0.1:8600 \
-  --audience did:example:server-1 \
-  --server-signer did:example:server-1 \
+  --audience did:web:server-1.mcp.example.com \
+  --server-signer did:web:server-1.mcp.example.com \
   --server-key-id server-key-1 \
   --delegated-trust-epoch epoch-1 \
   --key-source file \

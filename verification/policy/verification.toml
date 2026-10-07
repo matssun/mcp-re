@@ -11299,6 +11299,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_trust_domain_projection_is_the_canonical_actors_own_coordinate",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_placeholder_trust_domain_is_refused_without_the_fixture_acknowledgement",
   "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_fixture_acknowledgement_admits_the_placeholder_and_nothing_else_needs_it",
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::the_placeholder_audience_and_signer_are_refused_without_the_fixture_acknowledgement",
+  "//mcp-re-proxy:proxy_unit_test#config_state::server_identity::tests::a_client_actor_carries_the_client_role_and_the_owners_trust_domain",
 ]
 
 [[unit]]

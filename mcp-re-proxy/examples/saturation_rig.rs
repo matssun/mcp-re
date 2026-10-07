@@ -333,6 +333,7 @@ fn spawn_proxy(
         .args([
             "--bind",
             "127.0.0.1:0",
+            "--allow-example-fixtures",
             "--audience",
             AUDIENCE,
             "--server-signer",

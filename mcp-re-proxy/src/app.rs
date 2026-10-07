@@ -22,7 +22,6 @@ use crate::transport::IdentityPolicy;
 use crate::transport::TransportBinding;
 use crate::HttpProfileProxy;
 use crate::ServerOptions;
-use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
@@ -80,12 +79,7 @@ pub fn build_actor_resolver(
                 Err(_) => return ResolverOutcome::NotTrusted,
             };
             ResolverOutcome::Resolved(Box::new(ResolvedActor {
-                identity: ActorIdentity {
-                    role: "client".to_string(),
-                    trust_domain: server.trust_domain().to_owned(),
-                    subject: signer,
-                    keyid: kid.to_string(),
-                },
+                identity: server.client_actor(signer, kid),
                 verification_key: key,
                 slot,
             }))
