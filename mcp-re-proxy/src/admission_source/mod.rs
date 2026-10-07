@@ -67,6 +67,10 @@ pub use verifier::AdmissionRecordVerifier;
 // classification is the rule the statement quantifies over every source. `answer`'s module
 // body stays private, so nothing else about it becomes crate API.
 pub(crate) use answer::classify_answer;
+#[cfg(feature = "redis_replay")]
+pub(crate) use answer::classify_stored_bytes;
+#[cfg(feature = "redis_replay")]
+pub(crate) use answer::classify_unreadable_reply;
 pub use answer::AnsweredAs;
 
 /// A fail-closed admission-source failure: the authority could not be reached or

@@ -12936,3 +12936,24 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#async_replay::tests::a_charge_is_held_until_the_padded_store_horizon",
 ]
+
+[[probe]]
+id = "M536-proxy-a-server-error-about-the-admission-key-reaches-the-degraded-fork"
+unit = "proxy.admission_state_source"
+theorem = "THM-0129"
+conjunct = "a reachable store that answered about the workload's key — including an error reply such as WRONGTYPE — is a definitive negative and never the outage routed to the replica-wide degraded window"
+# The weakening restores the defect: every error reply about the key is filed as an outage,
+# which a store writer without a signing key can induce for one revoked workload while other
+# workloads' answered reads keep the degraded window open.
+path = "mcp-re-proxy/src/redis_admission_source/reply.rs"
+anchor = """
+    if is_outage(error) {
+"""
+weakening = """
+    if is_outage(error) || error.code().is_some() {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_wrongtype_reply_is_an_answer_about_the_key_and_not_an_outage",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::tests::a_key_of_another_type_is_a_refused_record_and_not_an_outage",
+]
+

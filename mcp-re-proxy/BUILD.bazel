@@ -642,6 +642,7 @@ _PROXY_LIB_SRCS = [
     # copy). #[cfg(feature = "redis_replay")] — cfg'd out of the default build.
     "src/redis_admission_source/mod.rs",
     "src/redis_admission_source/refusal_report.rs",
+    "src/redis_admission_source/reply.rs",
     "src/transport/mod.rs",
     "src/transport/ingress/mod.rs",
     "src/transport/ingress/v2.rs",

@@ -1588,6 +1588,10 @@ paths = [
   # and a `report_once` that panicked would unwind through it and turn a definitive
   # negative into a fault. That is the claim failing, so a change here must dirty the unit.
   "mcp-re-proxy/src/redis_admission_source/refusal_report.rs",
+  # Which `GET` replies are an outage and which are the store answering about the key. The
+  # degraded fork is reachable only through this file's `Err`, so it is the adapter's half
+  # of the classification clause.
+  "mcp-re-proxy/src/redis_admission_source/reply.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -1613,6 +1617,18 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::a_record_filed_under_another_workload_is_refused",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::a_deleted_record_is_a_definitive_negative",
   "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::tests::a_publish_refusal_is_a_verdict_and_not_an_outage",
+  # A store writer chooses what TYPE a key holds. The server's reply about the key — a
+  # `WRONGTYPE` error, a value that is not a string, bytes that are not text — is an
+  # answer, never the outage that reaches the replica-wide degraded window.
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::tests::a_key_of_another_type_is_a_refused_record_and_not_an_outage",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::tests::a_reply_that_is_not_a_string_is_a_refused_record_and_not_an_outage",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_wrongtype_reply_is_an_answer_about_the_key_and_not_an_outage",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_value_of_another_type_is_unreadable_and_not_an_outage",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::nil_is_absent_and_a_bulk_string_is_its_bytes_whatever_they_are",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_dropped_connection_is_the_outage",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_server_that_can_answer_nothing_right_now_is_the_outage",
+  "//mcp-re-proxy:proxy_ext_unit_test#admission_source::answer::tests::stored_bytes_that_are_not_text_are_a_malformed_record_and_not_an_outage",
+  "//mcp-re-proxy:proxy_ext_unit_test#admission_source::answer::tests::a_reply_that_cannot_hold_a_record_is_a_malformed_record",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::an_unknown_workload_is_a_definitive_negative_not_an_outage",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::restoring_an_older_publication_after_a_revocation_is_refused",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::in_memory::tests::a_panic_under_the_record_lock_does_not_close_the_source",
@@ -8212,6 +8228,9 @@ evidence = [
 # Both controls are in `//mcp-re-proxy:integration_async_test`, the default-lane target.
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::tests::a_new_enforcer_has_a_window_nobody_earned",
+  # The gate's consequence of the store reply split: an answered key of another type is a
+  # store refusal, not the degraded route, with degraded mode opted in.
+  "//mcp-re-proxy:proxy_ext_unit_test#admission_enforcer::tests::a_key_of_another_type_is_refused_at_the_store_and_never_degraded",
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::enforcement::tests::the_two_postures_are_distinct",
   # WHY the gate refused, as a coordinate beside the facet. The wire code of an admission
   # refusal is frozen and nearly uniform, so a forged record, an absent one and a revoked

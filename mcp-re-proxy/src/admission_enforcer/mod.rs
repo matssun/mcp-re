@@ -182,4 +182,49 @@ mod tests {
             "a gate must not treat its own construction as a confirmation"
         );
     }
+
+    /// The serving-path consequence of the store's reply split: a key a store writer gave
+    /// another type is refused at the store and is never the outage that would reach the
+    /// degraded fork, even on a deployment that opted into degraded mode. The Redis source
+    /// exists only in the `redis_replay` build, so this selects in `proxy_ext_unit_test`.
+    #[cfg(feature = "redis_replay")]
+    #[tokio::test]
+    async fn a_key_of_another_type_is_refused_at_the_store_and_never_degraded() {
+        use crate::async_redis_store::retention_promise::scripted_server::{serve, Script};
+        use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal;
+        let (url, _) = serve(Script {
+            policy: Some("noeviction".to_string()),
+            recorded: vec!["GET".to_string()],
+            reply: "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"
+                .to_string(),
+        })
+        .await;
+        let verifier = crate::admission_source::test_support::verifier_for(
+            &mcp_re_core::SigningKey::from_seed_bytes(&[3u8; 32]),
+            60,
+            5,
+        );
+        let source = crate::redis_admission_source::RedisAdmissionSource::connect(&url, verifier)
+            .await
+            .expect("noeviction is the supported configuration");
+        let enforcer = AdmissionEnforcer::new(
+            Arc::new(source),
+            AdmissionPolicy {
+                max_assertion_age: 300,
+                max_clock_skew: 5,
+                degraded_propagation_bound: 60,
+                allow_degraded_mode: true,
+            },
+            AdmissionEnforcement::Required,
+            Arc::new(|_kid: &str| None),
+        );
+        let refusal = enforcer
+            .lookup("wl", 1_030)
+            .await
+            .expect_err("an answered key of another type is a refusal, not the degraded route");
+        assert_eq!(
+            refusal.class(),
+            AdmissionRefusalClass::RecordRefused(AdmissionRecordRefusal::Malformed)
+        );
+    }
 }
