@@ -994,8 +994,8 @@ reported is the one the certificate actually carries.
 This premise is NOT covered by the two assumptions already registered, and the distinction
 matters because their containments differ:
 
-  * ASM-0030 covers the identity-field reporting of Slice 1 — URI/DNS SANs and the Common
-    Name, and their presentation order. It says nothing about the public key.
+  * ASM-0030 covers the identity-field reporting of Slice 1 — URI and DNS SANs, and their
+    presentation order. It says nothing about the public key.
   * ASM-0031 covers the SubjectPublicKeyInfo parser used ONLY after canonical matching has
     already failed, and only to classify a refusal. It is contained to reporting by
     construction, and that containment is exactly what does not apply here: this premise
@@ -2582,13 +2582,14 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0071"
-description = "A read of the trust-epoch key over the delegated-signing plane's own connection, issued after an operator's `INCR` on that key was acknowledged, returns a value different from every value that plane read before the `INCR`."
+description = "A read of the trust-epoch key and its generation over the delegated-signing plane's own connection, issued after an operator's `mcp-re-proxy trust-epoch advance` on that key was acknowledged, returns a counter and generation different, as a pair, from every pair that plane read before the advance."
 justification = """
 The sibling of ASM-0044, for the consumer ASM-0044 excludes by name. `DelegatedEpochWatch` reads
 the same shared counter over its own connection and mints under `<base>#<counter>` for whatever
-the read returned (THM-0133), and the plane tells the operator at startup that an `INCR` moves
-every replica to the next label. That sentence is THM-0133 composed with this premise: the `INCR`
-is issued on a connection this replica does not hold, and what a later `GET` on the plane's
+the read returned (THM-0133), and the plane tells the operator at startup that
+`mcp-re-proxy trust-epoch advance` moves every replica to the next label. That sentence is
+THM-0133 composed with this premise: the advance — the incremented counter and a fresh generation,
+committed in one server-side step — is issued on a connection this replica does not hold, and what a later `GET` on the plane's
 connection returns is decided by the store's replication and routing, not by anything here.
 
 Narrow on purpose, exactly as ASM-0044 is: not "Redis is correct", not durability of the counter,

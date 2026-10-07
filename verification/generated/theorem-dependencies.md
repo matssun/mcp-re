@@ -458,7 +458,7 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0133["THM-0133<br/>The delegated-signing plane mints only under the trust-epoch label its own read names, and never under a regressed one"]
+    THM_0133["THM-0133<br/>With a shared trust-epoch counter configured, the delegated-signing plane mints only under the label its own read names, and never under a regressed one"]
 ```
 
 ## Component 24

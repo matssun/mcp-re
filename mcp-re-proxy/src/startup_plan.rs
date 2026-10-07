@@ -259,8 +259,8 @@ impl TrustEpochPlan {
                 "--trust-epoch-redis-url requires a build with the `redis_replay` feature. \
                  Without it the trust cache has no networked invalidation channel, and \
                  delegated credentials would be minted under the bare --delegated-trust-epoch \
-                 label — which the operator's INCR kill switch cannot revoke. Refusing to \
-                 start (fail closed, ADR-MCPRE-052 §7)"
+                 label — which the trust-epoch kill switch (`mcp-re-proxy trust-epoch \
+                 advance`) cannot revoke. Refusing to start (fail closed, ADR-MCPRE-052 §7)"
                     .to_string(),
             ),
         }

@@ -140,7 +140,7 @@ pub fn dispatch_request(
 
 /// Dispatch steps 2–3 — everything EXCEPT the one side-effecting replay admission
 /// (step 4): build the five-tuple [`HttpReplayKey`] from the verified evidence and
-/// verify any MRTR continuation against the caller-retained bases.
+/// verify any MRTR continuation against the caller-retained evidence handles.
 ///
 /// Split out so BOTH serving paths share this identical, security-critical key
 /// construction + continuation binding and differ ONLY in which tier performs the
@@ -159,7 +159,7 @@ pub fn dispatch_request(
 /// burns a legitimate nonce.
 // ADR-MCPRE-059 WP2 — continuation unbypassability. If a request carries a continuation
 // and this function returns Ok, the continuation WAS verified against the caller-retained
-// bases. The pair (continuation present, continuation_verified == false) is not a state
+// evidence handles. The pair (continuation present, continuation_verified == false) is not a state
 // any successful preparation can produce, which is the invariant ADR-MCPRE-056/057/058
 // eliminate dynamically, stated here over every input rather than over the fixtures.
 //
@@ -204,7 +204,7 @@ fn prepare_http_dispatch(
             .map_err(|e| DispatchError::Profile(e))?;
             true
         }
-        // A continuation to verify but no retained bases to verify against: we
+        // A continuation to verify but no retained handles to verify against: we
         // cannot prove the binding, so fail closed as a continuation-binding
         // failure rather than admit an unverifiable splice.
         (Some(_), None) => {
@@ -212,10 +212,10 @@ fn prepare_http_dispatch(
                 HttpProfileError::ContinuationBindingFailed,
             ))
         }
-        // Retained bases offered for a request whose block claims NO continuation. The
+        // Retained handles offered for a request whose block claims NO continuation. The
         // caller believes it is resuming a correlation and the signed request does not,
         // and this seam is not the authority that can pick between them — so it refuses
-        // rather than discard the bases and return an ordinary first-leg admission the
+        // rather than discard the handles and return an ordinary first-leg admission the
         // caller would read as a resumption. Free, like the refusal above: it precedes
         // the replay `check_and_insert`, so no nonce is burned, and it precedes the
         // caller's continuation consume and retention marker, both of which run after
@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn retained_bases_offered_for_a_request_that_claims_no_continuation_are_refused() {
-        // The R12-288/289 repair. `(None, _) => false` discarded the bases and returned an
+        // The R12-288/289 repair. `(None, _) => false` discarded the handles and returned an
         // ordinary first-leg admission, so a caller that believed it was resuming a
         // correlation received no signal at all that it was not.
         let (prev, irr) = handles();

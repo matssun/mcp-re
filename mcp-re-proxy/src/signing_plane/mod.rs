@@ -180,9 +180,10 @@ impl SigningPlane {
                     .to_string()
             })?;
             eprintln!(
-                "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {:?}. An \
-                 operator INCR moves every replica to the next label, and a restarted replica \
-                 resolves the SAME label as its peers.",
+                "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {:?}. \
+                 `mcp-re-proxy trust-epoch advance` moves every replica to the next label, and a \
+                 restarted replica resolves the SAME label as its peers; a raw INCR on the key is \
+                 not a supported advance.",
                 minting.custody.trust_epoch.label()
             );
         } else {
@@ -270,8 +271,9 @@ fn build_delegated_epoch_watch(
             Err(format!(
                 "delegated-signing: --trust-epoch-redis-url is not a usable Redis URL ({}); \
                  refusing to start rather than minting delegated credentials under the bare \
-                 --delegated-trust-epoch label, which the operator's INCR kill switch cannot \
-                 revoke (fail closed, ADR-MCPRE-052 §7).",
+                 --delegated-trust-epoch label, which the trust-epoch kill switch \
+                 (`mcp-re-proxy trust-epoch advance`) cannot revoke (fail closed, \
+                 ADR-MCPRE-052 §7).",
                 e.0
             ))
         }

@@ -1,0 +1,25 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "`SigningWindow` (in `mcp-re-http-profile`) keeps `expires` private and no constructor accepts\none: every window is derived as the earlier of the configured TTL from `now` and the\ncredential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap\npast it. A credential already past its bound, or a non-positive TTL, obtains no signing\nwindow at all, and with no window nothing is signed. The delegated signing key is\ncrate-private to its `ActiveDelegatedKey`, and the emitters that read it take a window, so a\nsignature under a delegated credential cannot advertise any other validity. The proxy opens\nwindows at two sites \u2014 the exchange's opener and a refusal that carries its exchange's\nsnapshot \u2014 and both go through `SigningWindow::over`; every window this deployment signs\nunder, reply and refusal alike, is opened at one of them, and a refusal signs under the\nsnapshot its own exchange took.\n",
+      "old": "`SigningWindow` (in `mcp-re-http-profile`) keeps `expires` private and no constructor accepts\none: every window is derived as the earlier of the configured TTL from `now` and the\ncredential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap\npast it. A credential already past its bound yields a window claiming no future validity\nrather than one running backwards. The delegated signing key is crate-private to its\n`ActiveDelegatedKey`, and the emitters that read it take a window, so a signature under a\ndelegated credential cannot advertise any other validity. The proxy's one opener opens every\nwindow this deployment signs under, reply and refusal alike, and a refusal signs under the\nsnapshot its own exchange took.\n",
+      "reason": "THM-0063 statement, replaced by the owner's Ruling 34 \u00a72 text."
+    }
+  ],
+  "from_fingerprint": "sha256:5a3e4c2086167188e07988443020b3bd2d9ea4db892ed5ef0d18788ff2541a87",
+  "packet": "docs/security/owner-approvals-2026-10-07.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "OWN-CLAIM CORRECTION, owner-ratified (Ruling 34 \u00a72). Sentence 2 said an expired credential yields a window claiming no future validity; SigningWindow::over returns no window at all, and with no window nothing is signed. Sentence 5 said the proxy has one opener; it opens windows at two sites, both through SigningWindow::over. Sentence 4 (the emitters that read the delegated key take a window) is unchanged and is now true of DelegatedSigningCustody::sign_response too, which signs through SigningWindow::over in the same change.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5. The authority covering this record is the owner's Ruling 34 \u00a72 (2026-10-07), recorded in docs/security/owner-approvals-2026-10-07.jsonl. A correction record is not an approval: it does not make the specification-review axis fresh.",
+  "severity_after": "high",
+  "severity_before": "high",
+  "subject": "THM-0063",
+  "to_fingerprint": "sha256:e67a0a5c9e5e2f3c7a3b864243ddb0a0c7a8812f9e9b3847f5a16839efc46666"
+}

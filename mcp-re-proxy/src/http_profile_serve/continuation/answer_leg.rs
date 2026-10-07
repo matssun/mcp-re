@@ -50,7 +50,7 @@ impl ContinuationPlane {
     /// * the store did not answer. Also a deployment fact, refused as one.
     /// * the store answered and there was no live entry — never opened, expired, already
     ///   answered — or the request carries no usable continuation state. Those leave no
-    ///   bases, and the binding then fails closed `continuation_binding_failed`, which is
+    ///   handles, and the binding then fails closed `continuation_binding_failed`, which is
     ///   a statement about the CALLER.
     ///
     /// Flattening the first two into the third reports a forged continuation every time
@@ -75,7 +75,7 @@ impl ContinuationPlane {
             (Some(store), Some(key)) => peeked_or_refusal(store.peek(key).await)?,
             // A key exists, so this leg NEEDS correlation, and this deployment holds no
             // capability to correlate with. Refused here rather than left to produce no
-            // bases: the binding downstream would report the caller's continuation as
+            // handles: the binding downstream would report the caller's continuation as
             // unbindable, which is a claim about the caller this deployment cannot make.
             (None, Some(_)) => return Err(capability_absent()),
             _ => None,
@@ -139,7 +139,7 @@ fn capability_absent() -> Refusal {
 /// [`ContinuationPrep::binding`] rather than stored.
 ///
 /// Private fields: the assembly reads named projections, so it cannot form its own opinion
-/// about what an absent base means.
+/// about what an absent handle means.
 pub(in crate::http_profile_serve) struct ContinuationPrep {
     answer_state: Option<String>,
     answer_key: Option<ContinuationKey>,
@@ -159,9 +159,9 @@ impl ContinuationPrep {
     /// stands for two kinds of fact at once.
     pub(in crate::http_profile_serve) fn binding(&self) -> Option<RetainedContinuation<'_>> {
         match (&self.retained, &self.answer_state) {
-            (Some(bases), Some(state)) => Some(RetainedContinuation::from_correlation(
-                &bases.previous_request_evidence,
-                &bases.input_required_response_evidence,
+            (Some(handles), Some(state)) => Some(RetainedContinuation::from_correlation(
+                &handles.previous_request_evidence,
+                &handles.input_required_response_evidence,
                 state.as_bytes(),
             )),
             _ => None,
@@ -172,7 +172,7 @@ impl ContinuationPrep {
     /// machine records as `Peeked`.
     ///
     /// Named rather than left as `retained.is_some()` at the call site: the assembly would
-    /// then be deciding what an absent base means, which is the one reading this owner
+    /// then be deciding what an absent handle means, which is the one reading this owner
     /// keeps for itself.
     pub(in crate::http_profile_serve) fn was_peeked(&self) -> bool {
         self.retained.is_some()
@@ -195,7 +195,7 @@ pub(in crate::http_profile_serve) mod tests {
     /// leg that needs one, as a fact about the deployment.
     ///
     /// The dangerous alternative is the one that was here: no store means no retained
-    /// bases, the binding downstream is absent, and the caller is told
+    /// handles, the binding downstream is absent, and the caller is told
     /// `continuation_binding_failed` — a statement that its continuation was forged. It
     /// fails closed either way; what it did not do is fail closed HONESTLY. Every
     /// legitimate answer leg reaching a deployment without the capability was reported as
@@ -444,7 +444,7 @@ pub(in crate::http_profile_serve) mod tests {
         fn create<'a>(
             &'a self,
             key: &'a ContinuationKey,
-            _bases: &'a RetainedHandles,
+            _handles: &'a RetainedHandles,
             _ttl_secs: i64,
         ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
         {
@@ -513,7 +513,7 @@ pub(in crate::http_profile_serve) mod tests {
 
     #[test]
     fn a_prep_with_no_retained_handles_offers_no_binding() {
-        // Every way the bases can be absent collapses to one answer, on purpose: the
+        // Every way the handles can be absent collapses to one answer, on purpose: the
         // dispatcher must fail closed on `continuation_binding_failed` in all of them, and
         // a continuation that was signed but cannot be bound is never admitted.
         let prep = ContinuationPrep {

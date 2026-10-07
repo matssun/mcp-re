@@ -264,7 +264,7 @@ async fn handle(
     };
 
     // Step 3a — MRTR continuation prep (ADR-MCPS-047). A verified request carrying a
-    // continuation is an ANSWER leg: recover the open leg's retained signature bases from
+    // continuation is an ANSWER leg: recover the open leg's retained evidence handles from
     // the correlation store, keyed by the opaque `requestState` the client re-presents,
     // so the dispatcher can bind this answer to the exact prior exchange. `peek` has no
     // side effect — a request that fails the binding must not destroy a live
@@ -285,9 +285,9 @@ async fn handle(
         None => None,
     };
     let continuation_ctx = match (&retained, &answer_state) {
-        (Some(bases), Some(request_state)) => Some(RetainedContinuation::from_correlation(
-            &bases.previous_request_evidence,
-            &bases.input_required_response_evidence,
+        (Some(handles), Some(request_state)) => Some(RetainedContinuation::from_correlation(
+            &handles.previous_request_evidence,
+            &handles.input_required_response_evidence,
             request_state.as_bytes(),
         )),
         // A continuation was signed but nothing was retained for it: pass None so the
@@ -299,7 +299,7 @@ async fn handle(
     // point the shipped serving path awaits: a shared Redis tier detects a replay across
     // ALL replicas; the fleet-strict gate refuses a sub-minimum/undeclared tier, and a
     // store that self-reports the single-process class, before the store is touched. A
-    // continuation, when present, is verified here against the retained bases before the
+    // continuation, when present, is verified here against the retained handles before the
     // nonce is burned, and the awaited atomic admission is the last step.
     if let Err(e) = dispatch_request_with_async_tier(
         &verified,
@@ -408,11 +408,11 @@ async fn handle(
     ) {
         Ok(response_base) => {
             // Step 6 — MRTR open-leg record (ADR-MCPS-047). When the signed reply is an
-            // `InputRequiredResult`, retain the two signature bases a later answer leg
-            // must bind to: THIS request's, and the reply's just produced. A reply that
-            // cannot be classified is refused rather than signed away as terminal
-            // (MCPRE-495); a continuation that cannot be recorded is refused rather than
-            // returned unanswerable.
+            // `InputRequiredResult`, retain evidence handles over the two signature bases a
+            // later answer leg must bind to: THIS request's, and the reply's just produced.
+            // A reply that cannot be classified is refused rather than signed away as
+            // terminal (MCPRE-495); a continuation that cannot be recorded is refused rather
+            // than returned unanswerable.
             let open_leg_state = match input_required_state(&response.body) {
                 Ok(state) => state,
                 Err(e) => {
@@ -425,7 +425,7 @@ async fn handle(
                 }
             };
             if let Some(request_state) = open_leg_state {
-                let bases =
+                let handles =
                     RetainedHandles::over(verified.request_signature_base(), &response_base);
                 let key = ContinuationKey::for_request(
                     &expected_audience.audience_id,
@@ -438,7 +438,7 @@ async fn handle(
                 if !matches!(
                     state
                         .continuations
-                        .create(&key, &bases, CONTINUATION_TTL_SECS)
+                        .create(&key, &handles, CONTINUATION_TTL_SECS)
                         .await,
                     Ok(Creation::Stored)
                 ) {

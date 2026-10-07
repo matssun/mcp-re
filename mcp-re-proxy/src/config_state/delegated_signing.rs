@@ -121,9 +121,10 @@ pub fn classify_and_validate(
              minted under and it has no default, so without it no credential names the \
              deployment whose keys a verifier is deciding about. The base alone is NOT the \
              cross-fleet kill switch: the comparable <base>#<counter> label, and with it the \
-             operator INCR that moves every replica to the next label, exist only where a \
-             shared counter is configured (--trust-epoch-redis-url). With the base alone the \
-             label never advances and a credential's exp is the only thing that ends it"
+             operator's trust-epoch advance that moves every replica to the next label, \
+             exist only where a shared counter is configured (--trust-epoch-redis-url). With \
+             the base alone the label never advances and a credential's exp is the only \
+             thing that ends it"
                 .to_string(),
         );
     }

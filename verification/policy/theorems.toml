@@ -567,7 +567,11 @@ Assumes only that the labeled digest IS A FUNCTION of (label, bytes) — ASM-002
 NOT establish collision-resistant separation between roles; that obligation stays at
 boundary.crypto_primitives and is not discharged here. That each retained handle was minted
 under its own role label is `RetainedHandles::over`'s, measured in the proxy's
-`proxy.continuation_correlation_store`, and not a clause of the proof.
+`proxy.continuation_correlation_store`, and not a clause of the proof. That the two handles
+`verify` is handed ARE the ones the correlation store retained is the serving path's: the
+answer leg hands the peeked handles over through `RetainedContinuation::from_correlation`, the
+only constructor of what `verify` consumes. That hand-off lies outside this unit and this
+proof; the proof establishes the clauses above for the handles it is given.
 """
 owner = "http_profile.continuation_binding"
 review_requirement = "Owner security-specification review"
@@ -1174,8 +1178,8 @@ security_consequence = """
 An issuer or peer cannot choose which identity the proxy binds to by controlling a field
 the deployment did not configure, and cannot choose it by making the authoritative value
 unusable: neither a present DNS SAN under a URI-SAN policy nor a valid second URI SAN
-behind a malformed first one is ever read. A deployment that configured URI SANs cannot be
-silently downgraded to a legacy Common Name.
+behind a malformed first one is ever read. Only URI and DNS SANs are identity fields: the
+subject Common Name is not one, no policy selects it, and the adapter does not read it.
 """
 direct_consequence_severity = "critical"
 scope = """
@@ -3264,11 +3268,13 @@ statement = """
 `SigningWindow` (in `mcp-re-http-profile`) keeps `expires` private and no constructor accepts
 one: every window is derived as the earlier of the configured TTL from `now` and the
 credential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap
-past it. A credential already past its bound yields a window claiming no future validity
-rather than one running backwards. The delegated signing key is crate-private to its
-`ActiveDelegatedKey`, and the emitters that read it take a window, so a signature under a
-delegated credential cannot advertise any other validity. The proxy's one opener opens every
-window this deployment signs under, reply and refusal alike, and a refusal signs under the
+past it. A credential already past its bound, or a non-positive TTL, obtains no signing
+window at all, and with no window nothing is signed. The delegated signing key is
+crate-private to its `ActiveDelegatedKey`, and the emitters that read it take a window, so a
+signature under a delegated credential cannot advertise any other validity. The proxy opens
+windows at two sites — the exchange's opener and a refusal that carries its exchange's
+snapshot — and both go through `SigningWindow::over`; every window this deployment signs
+under, reply and refusal alike, is opened at one of them, and a refusal signs under the
 snapshot its own exchange took.
 """
 security_consequence = """
@@ -4556,8 +4562,8 @@ depends_on = ["THM-0086", "THM-0106", "THM-0107"]
 id = "THM-0093"
 title = "An answer leg that needs a continuation does not proceed unbound"
 statement = """
-Where a request carries a continuation, the retained open-leg bases are read WITHOUT being
-spent, and no way they can be absent yields a binding: the dispatcher fails closed rather than
+Where a request carries a continuation, the retained open-leg evidence handles are read
+WITHOUT being spent, and no way they can be absent yields a binding: the dispatcher fails closed rather than
 admitting an unbound continuation.
 
 The absences are ATTRIBUTED, not merely detected. A store that does not ANSWER, and a
@@ -5821,8 +5827,9 @@ title = "Shutdown stops admission and bounds the wait on admitted work; what the
 statement = """
 For one core of the async serving path, from the moment a shutdown is signalled:
 
-ADMISSION STOPS. The accept loop exits before the drain begins, so no connection is accepted
-after the signal, and the drain signal puts every connection that exists into graceful
+ADMISSION STOPS. The accept loop observes the shutdown signal within one accept-poll interval
+and exits before the drain begins; a connection accepted inside that interval is counted and
+drained like any other. The drain signal puts every connection that exists into graceful
 shutdown: it finishes the requests it has, writes their responses, and admits no further
 request on it, keep-alive or multiplexed alike.
 
@@ -5854,7 +5861,8 @@ security_consequence = """
 An operator draining a replica — a rolling deploy, a scale-down, a node drain — gets two
 facts, and must not be sold a third.
 
-The two: nothing new is admitted after the signal, and no admitted request executes, or
+The two: nothing new is admitted once the accept loop has observed the signal, and no
+admitted request executes, or
 resumes executing, after `serve` returns, so the planes are dismantled behind work that has
 provably stopped rather than work assumed to have stopped. Within the grace, a reply a
 connection had started is delivered rather than cut off by the runtime drop.
@@ -7395,7 +7403,10 @@ statement = """
 A set of client CRLs is installable only when every one of them is inside its own
 `nextUpdate` window and states one at all. That is a property of the value, not of a call
 site: the evidence type has a single constructor and the constructor performs the
-classification, so startup and the reload worker run one gate rather than two that agree.
+classification, so startup and the reload worker run one gate rather than two that agree. The
+same constructor authenticates every CRL against the configured client CA keys, so a CRL no
+configured CA signed has no inhabitant; and a reload installs a set only when it succeeds the
+set in force — no issuer dropped, no crlNumber regressed or reused with other bytes.
 
 Each successful reload republishes the evidence it installed, so the posture names the CRLs
 in force rather than the ones read at boot. And a replica whose reload worker has died, or
@@ -7491,35 +7502,53 @@ depends_on = ["THM-0005"]
 
 [[theorem]]
 id = "THM-0133"
-title = "The delegated-signing plane mints only under the trust-epoch label its own read names, and never under a regressed one"
+title = "With a shared trust-epoch counter configured, the delegated-signing plane mints only under the label its own read names, and never under a regressed one"
 statement = """
-The label the delegated-signing plane hands its rotor is `<base>#<counter>`, where `counter` is
-the value this replica's most recent successful read of the shared trust-epoch counter returned.
-It is never the bare base label and never relative to a value this process read earlier, so every
-replica whose read returns the same value derives the same label, whenever it started.
+When a shared trust-epoch counter is configured (`--trust-epoch-redis-url`), the label the
+delegated-signing plane hands its rotor is `<base>#<counter>`, where `counter` is the value
+this replica's most recent successful read of the shared counter returned. It is then never
+the bare base label and never relative to a value this process read earlier, so every replica
+whose read returns the same value derives the same label, whenever it started. A legal
+deployment with no shared counter configured mints under the bare base label, which never
+advances.
 
-A read that fails yields no label. A read that returns a value below the highest this process has
-read also yields no label: the regression is refused, not adopted, and stays refused until a read
-at or above that high-water mark succeeds. No label means nothing is minted.
+A read that fails yields no label. A read that returns a counter below the highest this
+process has read, or no counter at all, also yields no label: the regression is refused, not
+adopted. The replica then repairs FORWARD: it moves the shared counter to one past its
+high-water mark in one atomic store step that writes only while the counter is absent or below
+that mark — so a second replica repairing from the same mark writes nothing and an advance
+above the mark is never overwritten — and mints again once a read is at or above the mark. A
+read whose counter is at the mark but whose advance generation this replica has not seen is a
+fresh advance landing on an acknowledged label: it is refused and repaired forward the same
+way, and the generation is recorded only once the counter is past the mark. No label means
+nothing is minted.
 """
 security_consequence = """
-An operator's `INCR` is a kill switch only if what the plane mints follows the counter. A label
-taken from a per-process baseline let a replica that restarted after an `INCR` adopt the advanced
-value as its own starting point and keep minting under an epoch the verifiers still accepted; a
-label adopted from a regressed read would re-mint under an epoch the verifiers have already
-stopped accepting, resurrecting the credentials the `INCR` retired. Both are excluded here, and a
-counter that cannot be read stops issuance rather than letting it continue under a label nobody
-checked.
+The operator's supported advance is `mcp-re-proxy trust-epoch advance`, which commits the
+incremented counter together with a fresh generation drawn from the OS in one server-side step.
+It is a kill switch only if what the plane mints follows the counter. A label taken from a
+per-process baseline let a replica that restarted after an advance adopt the advanced value as
+its own starting point and keep minting under an epoch the verifiers still accepted; a label
+adopted from a regressed read, or from a counter a rollback returned to a value already minted
+under, would re-mint under an epoch the verifiers have already stopped accepting, resurrecting
+the credentials the advance retired. Both are excluded here: every advance a replica reads ends
+strictly beyond that replica's mark, and a counter that cannot be read stops issuance rather
+than letting it continue under a label nobody checked. A raw `INCR` on the key moves only the
+number and is not a supported advance.
 """
 direct_consequence_severity = "high"
 scope = """
 LOCAL TO ONE REPLICA. This states what the plane does with the value its read returned. That the
-read returns the advanced value after an operator's `INCR` on another connection is ASM-0071, the
-store's fact and not MCP-RE's; "an `INCR` moves every replica to the next label" is this claim
-composed with that premise, and is no stronger than the premise.
+read returns the advanced value after an operator's advance on another connection is ASM-0071,
+the store's fact and not MCP-RE's; "an advance moves every replica to the next label" is this
+claim composed with that premise, and is no stronger than the premise. Across a restart the
+high-water mark is gone and the shared counter is the only authority: a replica that starts while
+the store is regressed mints under the regressed label until a live peer's repair raises the
+counter, and a fleet that restarts entirely while the store is regressed has no mark left to
+repair toward.
 
 It says nothing about credentials already issued under an earlier label: no verifier reads the
-counter, so a credential minted before the `INCR` stays verifiable until the verifiers' accepted
+counter, so a credential minted before the advance stays verifiable until the verifiers' accepted
 epochs are changed. Nothing about the startup refusal when the first read fails, which
 `proxy.signing_plane_epoch_read_refusal` measures, nor about when the rotation loop re-reads the
 counter. And no ordering between this plane's observation of an advance and the request-trust

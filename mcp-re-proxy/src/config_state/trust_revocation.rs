@@ -369,9 +369,9 @@ fn epoch_violations(config: &DeploymentRequest) -> Vec<String> {
         if !url.contains("://") {
             out.push(format!(
                 "--trust-epoch-redis-url {} is not a URL: the trust-epoch source is \
-                 what the operator's INCR kill switch reaches, so a value that cannot name \
-                 a store leaves delegated credentials unrevocable. Give a scheme-bearing \
-                 URL such as redis://host:6379",
+                 what the trust-epoch kill switch (`mcp-re-proxy trust-epoch advance`) \
+                 reaches, so a value that cannot name a store leaves delegated credentials \
+                 unrevocable. Give a scheme-bearing URL such as redis://host:6379",
                 RedactedLocator::of(url)
             ));
         }

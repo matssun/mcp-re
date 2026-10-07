@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "security_consequence",
+      "id": "C1",
+      "new": "An issuer or peer cannot choose which identity the proxy binds to by controlling a field\nthe deployment did not configure, and cannot choose it by making the authoritative value\nunusable: neither a present DNS SAN under a URI-SAN policy nor a valid second URI SAN\nbehind a malformed first one is ever read. Only URI and DNS SANs are identity fields: the\nsubject Common Name is not one, no policy selects it, and the adapter does not read it.\n",
+      "old": "An issuer or peer cannot choose which identity the proxy binds to by controlling a field\nthe deployment did not configure, and cannot choose it by making the authoritative value\nunusable: neither a present DNS SAN under a URI-SAN policy nor a valid second URI SAN\nbehind a malformed first one is ever read. A deployment that configured URI SANs cannot be\nsilently downgraded to a legacy Common Name.\n",
+      "reason": "THM-0024, in this theorem's dependency closure, field security_consequence, replaced by the owner's Ruling 34 text (Ruling 34 \u00a74)."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is unchanged. The dependency digest moved solely because the claim digest of THM-0024 moved.",
+  "from_fingerprint": "sha256:de55bffc2e8882253b2084343dddc4bcd9e95fa131d83a1254650193f5ba3be3",
+  "packet": "docs/security/owner-approvals-2026-10-07.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION from the owner-ratified Ruling 34 correction of THM-0024. THM-0080's own statement, security_consequence and scope are byte-identical to the previous link of its correction chain; only the dependency digest moved, and no wording of its own became false.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5. The authority covering this record is the owner's Ruling 34 (2026-10-07), recorded in docs/security/owner-approvals-2026-10-07.jsonl. A correction record is not an approval: it does not make the specification-review axis fresh.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0080",
+  "to_fingerprint": "sha256:10109c2397111f0a18796f1cc8eb983fc460bf8f5f7711dfbad2646a74ff7cbd"
+}

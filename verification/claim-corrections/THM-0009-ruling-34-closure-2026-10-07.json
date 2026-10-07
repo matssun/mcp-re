@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "Assumes only that the labeled digest IS A FUNCTION of (label, bytes) \u2014 ASM-0023. It does\nNOT establish collision-resistant separation between roles; that obligation stays at\nboundary.crypto_primitives and is not discharged here. That each retained handle was minted\nunder its own role label is `RetainedHandles::over`'s, measured in the proxy's\n`proxy.continuation_correlation_store`, and not a clause of the proof. That the two handles\n`verify` is handed ARE the ones the correlation store retained is the serving path's: the\nanswer leg hands the peeked handles over through `RetainedContinuation::from_correlation`, the\nonly constructor of what `verify` consumes. That hand-off lies outside this unit and this\nproof; the proof establishes the clauses above for the handles it is given.\n",
+      "old": "Assumes only that the labeled digest IS A FUNCTION of (label, bytes) \u2014 ASM-0023. It does\nNOT establish collision-resistant separation between roles; that obligation stays at\nboundary.crypto_primitives and is not discharged here. That each retained handle was minted\nunder its own role label is `RetainedHandles::over`'s, measured in the proxy's\n`proxy.continuation_correlation_store`, and not a clause of the proof.\n",
+      "reason": "THM-0010, in this theorem's dependency closure, field scope, replaced by the owner's Ruling 34 text (Ruling 34 \u00a73)."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is unchanged. The dependency digest moved solely because the claim digest of THM-0010 moved.",
+  "from_fingerprint": "sha256:f351cfa3c685af99ef1fe91829bf061d64466787aa29232c13f5cf4670776f2e",
+  "packet": "docs/security/owner-approvals-2026-10-07.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION from the owner-ratified Ruling 34 correction of THM-0010. THM-0009's own statement, security_consequence and scope are byte-identical to the previous link of its correction chain; only the dependency digest moved, and no wording of its own became false.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5. The authority covering this record is the owner's Ruling 34 (2026-10-07), recorded in docs/security/owner-approvals-2026-10-07.jsonl. A correction record is not an approval: it does not make the specification-review axis fresh.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0009",
+  "to_fingerprint": "sha256:f891aa87da728c7ffd2cd2e7ef98f0f60d8f8419c47a599616bbafa57ca4c171"
+}

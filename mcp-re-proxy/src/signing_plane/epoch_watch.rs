@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The shared trust-epoch counter, watched by the delegated-rotation owner so an
-//! operator's `INCR <trust-epoch-key>` invalidates the outstanding epoch of delegated
-//! response keys across the fleet (ADR-MCPRE-052 §7). The RESPONSE-side counterpart to
+//! operator's `mcp-re-proxy trust-epoch advance` invalidates the outstanding epoch of
+//! delegated response keys across the fleet (ADR-MCPRE-052 §7). The RESPONSE-side counterpart to
 //! the trust plane's epoch channel, which flushes the REQUEST-trust cache on the same
 //! advance. A read error leaves the epoch unchanged (never advance on a transient blip).
 //!
@@ -16,7 +16,7 @@
 //!
 //! The emitted label is ALWAYS `<base>#<counter>` — never the bare base label. The label
 //! is derived purely from shared state, so every replica at counter `N` mints `<base>#N`
-//! regardless of when it started, and an operator `INCR` survives a replica restart.
+//! regardless of when it started, and an operator's advance survives a replica restart.
 //!
 //! `high_water` makes the emitted epoch monotone WITHIN a process: a read that goes
 //! backwards (store reset, failover to a stale replica, a reconnect landing on the wrong
