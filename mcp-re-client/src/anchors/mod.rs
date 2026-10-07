@@ -142,7 +142,6 @@ impl AnchorLoader {
         let signed: SignedTrustAnchorManifest = serde_json::from_slice(&bytes).map_err(|e| {
             AnchorError::Unreadable(format!("{}: {e}", self.manifest_path.display()))
         })?;
-        let expires_at = signed.manifest.expires_at;
         let pins = &self.org_keys;
         let loaded = load_signed_manifest_with_floor(
             &signed,
@@ -159,7 +158,7 @@ impl AnchorLoader {
         Ok(LoadedAnchors {
             issuers: loaded.issuer_set,
             version: loaded.version,
-            expires_at,
+            expires_at: loaded.expires_at,
         })
     }
 }

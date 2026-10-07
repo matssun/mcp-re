@@ -12,9 +12,10 @@
 
 #![allow(dead_code)] // each test binary uses a subset
 
-use mcp_re_client_core::load_signed_manifest;
+use mcp_re_client_core::load_signed_manifest_with_floor;
 use mcp_re_client_core::sign_manifest;
 use mcp_re_client_core::DelegatedResponseTrust;
+use mcp_re_client_core::InMemoryVersionFloor;
 use mcp_re_client_core::ManifestIssuer;
 use mcp_re_client_core::RetiringIssuer;
 use mcp_re_client_core::RevocationSource;
@@ -203,11 +204,11 @@ fn verify_credential_under_manifest(
     min_version: u64,
     now: i64,
 ) -> Result<(), HttpProfileError> {
-    let loaded = load_signed_manifest(
+    let loaded = load_signed_manifest_with_floor(
         signed_manifest,
         org_resolver(ORG_KID, org_key.public_key()),
         PROFILE_TAG,
-        min_version,
+        &mut InMemoryVersionFloor::starting_at(min_version),
         now,
     )
     .expect("manifest loads");
@@ -328,11 +329,11 @@ pub fn run_rotation_scenario(root_a: &RootAuthority, root_b: &RootAuthority, org
 
     // Rollback protection: after accepting v3, a replayed v2 (which un-revokes A) is refused.
     assert_eq!(
-        load_signed_manifest(
+        load_signed_manifest_with_floor(
             &s2,
             org_resolver(ORG_KID, org_key.public_key()),
             PROFILE_TAG,
-            3,
+            &mut InMemoryVersionFloor::starting_at(3),
             now
         )
         .unwrap_err(),

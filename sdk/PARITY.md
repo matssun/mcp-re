@@ -122,6 +122,7 @@ binding and `fetch` both throw plain `Error` — so it matches the message again
 | wire rejection (`McpReError`) | its `wire_code` | its `wireCode` |
 | local SDK/device failure | `mcp-re-sdk: <detail>` | `mcp-re-sdk: <detail>` |
 | network / unexpected | `mcp-re-sdk: ConnectionResetError: …` | `mcp-re-sdk: Error: …` |
+| verified rejection with no wire code | `mcp-re-sdk: verified rejection carried no wire code` | `mcp-re-sdk: verified rejection carried no wire code` |
 
 Cancellation is deliberately **not** caught in either: Python re-raises `BaseException`,
 TypeScript re-throws `ConnectionClosed`. `close()` could not abort an in-flight exchange

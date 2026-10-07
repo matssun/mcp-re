@@ -29,10 +29,6 @@
 //! Each step earns the next proposition. A verifier that collapsed them would be unable to
 //! say which one failed, and every one of them is a different thing for an operator to do.
 
-use mcp_re_core::b64url_encode;
-use sha2::Digest;
-use sha2::Sha256;
-
 use crate::block::ArtifactBinding;
 use crate::block::ArtifactType;
 use crate::block::BindingType;
@@ -67,10 +63,8 @@ pub fn verify_pdp_decision_binding(
     {
         return Err(PdpBindingRefusal::NotTheEvidenceForm);
     }
-    if b64url_encode(&Sha256::digest(decision.as_bytes())) != binding.digest_value() {
-        return Err(PdpBindingRefusal::DigestMismatch);
-    }
-    Ok(())
+    crate::artifact::compare(binding, decision.as_bytes())
+        .map_err(|_| PdpBindingRefusal::DigestMismatch)
 }
 
 /// The inline decision this binding commits to, when the binding is the ADR-MCPRE-065

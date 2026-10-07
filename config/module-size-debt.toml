@@ -573,12 +573,10 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-client-core/src/trust_manifest/mod.rs"
-baseline_prod_loc = 413
-baseline_sha = "99ff012"
+baseline_prod_loc = 386
+baseline_sha = "3f46fe88"
 status = "reviewed-exception"
 review_ref = "EX-017 in docs/architecture/review-dispositions.md"
-growth_from_prod_loc = 411
-growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-core/src/replay.rs"

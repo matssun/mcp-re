@@ -4523,6 +4523,10 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::anchors::tests::a_current_unrevoked_issuer_resolves_for_the_response_slot_only",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_signer_kid_is_covered_by_the_signature",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::preimage::tests::the_signer_kid_manifest_boundary_cannot_be_moved",
+  "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::preimage::tests::the_preimage_carries_the_manifest_bytes_unaltered",
+  "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::a_manifest_respelled_after_signing_is_not_the_manifest_that_was_signed",
+  "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_envelope_layout_around_the_signed_bytes_is_free",
+  "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::signed_bytes_that_are_not_a_manifest_are_malformed_only_after_they_verify",
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::manifest_validity::tests::the_deadline_is_inclusive_of_the_instant_it_names",
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::manifest_validity::tests::a_hand_assembled_picture_has_no_deadline_to_miss",
 ]
@@ -4885,6 +4889,8 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::an_unrecognized_value_is_carried_and_never_read_as_a_known_one",
   "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::an_unrecognized_execution_status_alone_refuses_a_blind_retry",
   "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::the_wire_code_and_its_disposition_are_read_in_one_parse",
+  "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::a_stated_member_that_is_not_a_string_is_unrecognized_never_silent",
+  "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::a_contract_that_is_not_an_object_is_unrecognized_never_silent",
   "//mcp-re-client-core:mcp_re_client_core_test#result_classification::tests::an_absent_result_type_is_terminal_as_the_spec_requires_of_clients",
   "//mcp-re-client-core:mcp_re_client_core_test#result_classification::tests::an_unrecognized_result_type_is_never_terminal",
   "//mcp-re-client-core:mcp_re_client_core_test#result_classification::tests::the_live_seam_refuses_what_the_reporting_seam_merely_names",
@@ -5167,8 +5173,8 @@ tested_symbols = [
   # credential's whole validity window, so the caller must be able to tell "the boundary
   # rejected MY request" from "a generic rejection arrived".
   "pytest#tests/test_transport.py::test_an_unbound_rejection_receipt_is_reported_as_not_request_bound",
-  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_substituted[None]",
-  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_substituted[]",
+  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",
+  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[]",
 ]
 
 # C3. The leaf the whole root FAMILY exists for. A byte-level parity fixture pins what the
@@ -5702,7 +5708,7 @@ tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a preflight-unbound receipt as NOT request-bound",
   "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a request-bound receipt as request-bound",
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > still delivers an ordinary verified reply",
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > substitutes a wire code the receipt did not carry",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no peer wire code for a verified receipt that carried none",
 ]
 
 # The leaf the whole root FAMILY exists for, and the control that names the difference is

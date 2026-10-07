@@ -87,7 +87,6 @@ pub use response_expectation::ResponseExpectation;
 pub use result_classification::classify_result;
 pub use result_classification::continuation_state_of;
 pub use result_classification::ResultClass;
-pub use trust_manifest::load_signed_manifest;
 pub use trust_manifest::load_signed_manifest_with_floor;
 pub use trust_manifest::sign_manifest;
 pub use trust_manifest::InMemoryVersionFloor;

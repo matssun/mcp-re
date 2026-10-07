@@ -41,7 +41,7 @@ repository = "https://github.com/matssun/mcp-re"
 # (ADR-MCPS-011/012 purity rule). RustCrypto ecosystem — no custom crypto.
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["raw_value"] }
 # MCPS-076 (audit gap G-3): enable the `zeroize` feature so dalek's `SigningKey`
 # (the in-memory expanded private key) is `ZeroizeOnDrop` — its secret scalar is
 # scrubbed when the key drops. `zeroize` is already a transitive dep of dalek;

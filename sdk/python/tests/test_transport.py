@@ -1017,14 +1017,15 @@ async def test_an_unbound_rejection_receipt_is_reported_as_not_request_bound(mon
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("absent", [None, ""])
-async def test_a_wire_code_the_receipt_did_not_carry_is_substituted(monkeypatch, absent):
-    """`wire_code` is documented as a frozen `mcp-re.*` token a caller BRANCHES on.
+async def test_a_wire_code_the_receipt_did_not_carry_is_not_invented(monkeypatch, absent):
+    """A verified rejection receipt that carries no wire code is still a verified refusal.
 
-    A rejection that carries no peer reason — a signature that did not verify has no
-    trustworthy peer statement to report — leaves the member absent, and passing it
-    through would deliver an error whose `message` is empty. That is still an error and
-    still never a result, so the sibling conjunct holds; it is an error no caller can act
-    on, matching no documented token. The substituted value names what actually happened.
+    Its signature verified, so delivering it as `mcp-re.response_sig_invalid` would name a
+    signature failure that did not happen, in a token the peer never sent — and an
+    application branching on that token would read a provable server refusal as a local
+    verification fault. Passing the absence through would deliver an empty `message`. The
+    condition is the SDK's own, so it is delivered under the `mcp-re-sdk:` prefix and no
+    `mcp-re.*` token is invented for it.
     """
     import mcp_re_sdk.transport as t
 
@@ -1036,9 +1037,11 @@ async def test_a_wire_code_the_receipt_did_not_carry_is_substituted(monkeypatch,
 
     out = await _send(_config(), rejecting, _request())
 
-    assert out[0].message.error.message == "mcp-re.response_sig_invalid", (
-        f"a {absent!r} wire code reached the application unsubstituted"
+    error = out[0].message.error
+    assert error.message == "mcp-re-sdk: verified rejection carried no wire code", (
+        f"a {absent!r} wire code reached the application as {error.message!r}"
     )
+    assert error.data == {"requestBound": False}
 
 
 @pytest.mark.anyio

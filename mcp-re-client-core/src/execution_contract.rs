@@ -152,16 +152,43 @@ pub(crate) fn rejection_receipt(body: &[u8]) -> (Option<String>, ExecutionContra
     let Some(error) = value.pointer("/error/data/mcp_re_error") else {
         return (None, ExecutionContract::default());
     };
-    let field = |name: &str| error.get(name).and_then(Value::as_str).map(str::to_owned);
+    let Some(members) = error.as_object() else {
+        // A contract the server stated in a shape this client cannot read is a statement
+        // not understood, never silence.
+        let stated = Some(error.to_string());
+        return (
+            None,
+            ExecutionContract {
+                execution_status: stated.clone(),
+                retry_safety: stated.clone(),
+                continuation_status: stated.clone(),
+                retention_status: stated,
+            },
+        );
+    };
+    let member = |name: &str| members.get(name).map(statement_text);
     (
-        field("wire_code"),
+        members
+            .get("wire_code")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         ExecutionContract {
-            execution_status: field("execution_status"),
-            retry_safety: field("retry_safety"),
-            continuation_status: field("continuation_status"),
-            retention_status: field("retention_status"),
+            execution_status: member("execution_status"),
+            retry_safety: member("retry_safety"),
+            continuation_status: member("continuation_status"),
+            retention_status: member("retention_status"),
         },
     )
+}
+
+/// The text of one contract member the receipt carries: a string verbatim, any other JSON
+/// value as its JSON text. A non-string is never a known token, so it classifies as
+/// unrecognized — a statement made and not understood, not one withheld.
+fn statement_text(value: &Value) -> String {
+    match value {
+        Value::String(token) => token.clone(),
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -244,5 +271,46 @@ mod tests {
             rejection_receipt(br#"{"error":{}}"#).1,
             ExecutionContract::default()
         );
+    }
+
+    #[test]
+    fn a_stated_member_that_is_not_a_string_is_unrecognized_never_silent() {
+        // The server made a statement this client cannot read. Reading it as absent would
+        // turn a stated hazard into "the server said nothing", and permit the blind retry.
+        for value in ["7", "true", "null", r#"{"k":1}"#, "[1]"] {
+            for member in ["execution_status", "retry_safety"] {
+                let body =
+                    format!(r#"{{"error":{{"data":{{"mcp_re_error":{{"{member}":{value}}}}}}}}}"#);
+                let (_, contract) = rejection_receipt(body.as_bytes());
+                assert!(contract.is_stated(), "{member}={value}");
+                assert!(contract.retry_is_refused(), "{member}={value}");
+            }
+            let body = format!(
+                r#"{{"error":{{"data":{{"mcp_re_error":{{"execution_status":{value},"retry_safety":{value}}}}}}}}}"#
+            );
+            let (_, contract) = rejection_receipt(body.as_bytes());
+            assert_eq!(
+                contract.execution(),
+                ExecutionStatus::Unrecognized(value.to_owned())
+            );
+            assert_eq!(
+                contract.retry(),
+                RetrySafety::Unrecognized(value.to_owned())
+            );
+        }
+    }
+
+    #[test]
+    fn a_contract_that_is_not_an_object_is_unrecognized_never_silent() {
+        for value in [r#""possibly_executed""#, "3", "[]", "null"] {
+            let body = format!(r#"{{"error":{{"data":{{"mcp_re_error":{value}}}}}}}"#);
+            let (wire_code, contract) = rejection_receipt(body.as_bytes());
+            assert_eq!(wire_code, None);
+            assert_eq!(
+                contract.execution(),
+                ExecutionStatus::Unrecognized(value.to_owned())
+            );
+            assert!(contract.retry_is_refused(), "mcp_re_error={value}");
+        }
     }
 }

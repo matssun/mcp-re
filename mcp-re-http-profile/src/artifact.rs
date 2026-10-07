@@ -165,13 +165,19 @@ fn expect_type(binding: &ArtifactBinding, want: ArtifactType) -> Result<(), Http
 
 // Proved: `Ok` exactly when the binding's digest is, character for character, the thumbprint of
 // the presented credential. What that thumbprint means rests on ASM-0018 and ASM-0073.
+//
+// `pub(crate)`: the `pdp-decision` evidence verifier commits to the same relation over the
+// decision bytes, and stating it here once is what puts that commitment under this proof.
 #[cfg_attr(feature = "verify", verus_verify)]
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) <==> binding.spec_digest_value()
             == thumbprint::thumbprint_of(credential@),
 ))]
-fn compare(binding: &ArtifactBinding, credential: &[u8]) -> Result<(), HttpProfileError> {
+pub(crate) fn compare(
+    binding: &ArtifactBinding,
+    credential: &[u8],
+) -> Result<(), HttpProfileError> {
     if binding.digest_is(&sha256_b64url(credential)) {
         Ok(())
     } else {

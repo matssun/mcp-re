@@ -1117,23 +1117,23 @@ describe("McpReHttpTransport verified-reply shape", () => {
     });
   });
 
-  it("substitutes a wire code the receipt did not carry", async () => {
-    // `wireCode` is documented as a frozen `mcp-re.*` token an application BRANCHES on,
-    // and the core leaves it null or empty for a rejection that carries no peer reason --
-    // a signature that did not verify has no wire code to report, because there is no
-    // trustworthy peer statement to report. Passing that through would deliver an error
-    // whose `message` is the empty string: still an error and still never a result, but
-    // one no caller can act on, and one that matches no documented token. The substituted
-    // value names what actually happened.
+  it("invents no peer wire code for a verified receipt that carried none", async () => {
+    // The receipt's signature verified, so `mcp-re.response_sig_invalid` would name a
+    // signature failure that did not happen, in a token the peer never sent -- and an
+    // application branching on it would read a provable server refusal as a local
+    // verification fault. An empty `message` is an error no caller can act on. The
+    // condition is the SDK's own, delivered under its `mcp-re-sdk:` prefix.
     for (const wireCode of ["", null, undefined]) {
       const delivered = await deliver(
         { outcome: "rejection", wireCode, bound: false, requestState: null },
         "{}",
       );
+      const error = (delivered as { error: { message: string; data: unknown } }).error;
       expect(
-        (delivered as { error: { message: string } }).error.message,
-        `a ${JSON.stringify(wireCode)} wire code reached the application unsubstituted`,
-      ).toBe("mcp-re.response_sig_invalid");
+        error.message,
+        `a ${JSON.stringify(wireCode)} wire code reached the application as ${error.message}`,
+      ).toBe("mcp-re-sdk: verified rejection carried no wire code");
+      expect(error.data).toEqual({ requestBound: false });
     }
   });
 

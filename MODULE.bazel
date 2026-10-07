@@ -285,6 +285,7 @@ crate.spec(
 crate.spec(
     package = "serde_json",
     version = "1.0",
+    features = ["raw_value"],
     repositories = ["crates_mcp_re"],
 )
 crate.spec(

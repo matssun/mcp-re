@@ -1881,11 +1881,12 @@ conjunct = "verified ... against the decision document the block itself carried"
 # would fingerprint a second typed verifier whose only check nothing was shown to notice.
 path = "mcp-re-http-profile/src/pdp_decision/binding.rs"
 anchor = """
-    if b64url_encode(&Sha256::digest(decision.as_bytes())) != binding.digest_value() {
-        return Err(PdpBindingRefusal::DigestMismatch);
-    }
+    crate::artifact::compare(binding, decision.as_bytes())
+        .map_err(|_| PdpBindingRefusal::DigestMismatch)
 """
 weakening = """
+    let _ = decision;
+    Ok(())
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#pdp_decision::binding::tests::a_different_document_does_not",
@@ -5200,16 +5201,16 @@ The TypeScript instance of M186, at the same position in the same exchange.
 id = "M188-typescript-empty-wire-code-is-substituted"
 unit = "sdk_typescript.verdict_delivery"
 theorem = "THM-0095"
-conjunct = "an empty wire code is substituted rather than passed through as an error the application cannot act on"
+conjunct = "an empty wire code is delivered as the SDK's own named condition rather than passed through as an error the application cannot act on"
 path = "sdk/typescript/src/transport.ts"
 anchor = """
-            verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
+            verified.wireCode ? verified.wireCode : NO_PEER_WIRE_CODE,
 """
 weakening = """
             verified.wireCode as string,
 """
 expect_red = [
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > substitutes a wire code the receipt did not carry",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no peer wire code for a verified receipt that carried none",
 ]
 note = """
 THIS PROBE FAILED FIRST, and the control it names is what the failure bought. The unit
@@ -5229,17 +5230,17 @@ token at all.
 id = "M189-python-absent-wire-code-is-substituted"
 unit = "sdk_python.verdict_delivery"
 theorem = "THM-0094"
-conjunct = "a wire code the receipt did not carry is substituted rather than passed through as an error the application cannot act on"
+conjunct = "a wire code the receipt did not carry is delivered as the SDK's own named condition rather than passed through as an error the application cannot act on"
 path = "sdk/python/python/mcp_re_sdk/transport.py"
 anchor = """
-                    verified.wire_code or "mcp-re.response_sig_invalid",
+                    verified.wire_code or _NO_PEER_WIRE_CODE,
 """
 weakening = """
                     verified.wire_code,
 """
 expect_red = [
-  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_substituted[None]",
-  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_substituted[]",
+  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",
+  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[]",
 ]
 note = """
 The Python twin of M188, and it exposed a SECOND gap: the TypeScript unit declared the
@@ -6078,7 +6079,7 @@ theorem = "THM-0057"
 conjunct = "the manifest's expiry deadline outranks every root inside it — a stale trust picture is never used"
 path = "mcp-re-client-core/src/trust_manifest/mod.rs"
 anchor = """
-    if now > signed.manifest.expires_at {
+    if now > manifest.expires_at {
 """
 weakening = """
     if false {
@@ -6102,7 +6103,7 @@ theorem = "THM-0057"
 conjunct = "the manifest's monotone version floor — never accept a version below the highest already seen"
 path = "mcp-re-client-core/src/trust_manifest/mod.rs"
 anchor = """
-    if signed.manifest.manifest_version < min_version {
+    if manifest.manifest_version < min_version {
 """
 weakening = """
     if false {
@@ -13104,4 +13105,82 @@ expect_red = [
 ]
 note = """
 Refuse, never clamp: an entry the caller asked to be dead is not one the store invents a lifetime for.
+"""
+
+[[probe]]
+id = "M545-client-the-manifest-signature-is-checked-over-a-reserialization"
+unit = "client.trust_manifest_lifecycle"
+conjunct = "the manifest signature is verified over the manifest bytes as received, before they are parsed"
+path = "mcp-re-client-core/src/trust_manifest/mod.rs"
+anchor = """
+    let bytes = manifest_signing_preimage(signed.manifest.get().as_bytes(), &signed.signer_kid);
+"""
+weakening = """
+    let reparsed: TrustAnchorManifest = serde_json::from_str(signed.manifest.get())
+        .map_err(|_| TrustManifestError::Malformed("manifest"))?;
+    let rebuilt = manifest_body(&reparsed).map_err(|_| TrustManifestError::Malformed("manifest"))?;
+    let bytes = manifest_signing_preimage(rebuilt.as_bytes(), &signed.signer_kid);
+"""
+expect_red = [
+  "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::a_manifest_respelled_after_signing_is_not_the_manifest_that_was_signed",
+]
+note = """
+A verifier that rebuilds the signed bytes from what it parsed accepts every respelling of a signed manifest; the signature must cover the bytes received.
+"""
+
+[[probe]]
+id = "M546-client-a-non-string-contract-member-reads-as-silence"
+unit = "client.execution_contract"
+conjunct = "a contract member the receipt carries is never read as absent; a non-string value is unrecognized and refuses a blind retry"
+path = "mcp-re-client-core/src/execution_contract.rs"
+anchor = """
+    let member = |name: &str| members.get(name).map(statement_text);
+"""
+weakening = """
+    let member = |name: &str| members.get(name).and_then(Value::as_str).map(str::to_owned);
+"""
+expect_red = [
+  "//mcp-re-client-core:mcp_re_client_core_test#execution_contract::tests::a_stated_member_that_is_not_a_string_is_unrecognized_never_silent",
+]
+note = """
+A hazard the server stated must not reach the caller as one it declined to state.
+"""
+
+[[probe]]
+id = "M547-python-a-verified-receipt-without-a-wire-code-is-given-a-peer-token"
+unit = "sdk_python.verdict_delivery"
+theorem = "THM-0094"
+conjunct = "a member the receipt did not carry is not invented for it: no `mcp-re.*` token stands in for an absent wire code"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+                    verified.wire_code or _NO_PEER_WIRE_CODE,
+"""
+weakening = """
+                    verified.wire_code or "mcp-re.response_sig_invalid",
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[None]",
+  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_not_invented[]",
+]
+note = """
+The receipt verified; a peer token naming a signature failure would turn a provable server refusal into a local fault an application retries.
+"""
+
+[[probe]]
+id = "M548-typescript-a-verified-receipt-without-a-wire-code-is-given-a-peer-token"
+unit = "sdk_typescript.verdict_delivery"
+theorem = "THM-0095"
+conjunct = "a member the receipt did not carry is not invented for it: no `mcp-re.*` token stands in for an absent wire code"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+            verified.wireCode ? verified.wireCode : NO_PEER_WIRE_CODE,
+"""
+weakening = """
+            verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no peer wire code for a verified receipt that carried none",
+]
+note = """
+The TypeScript twin of M547.
 """
