@@ -1521,7 +1521,9 @@ trust; this is the auditor's, and the two are deliberately different pictures.
 
 ## NP-041 — a registration target is admissible before anything is submitted
 
-**Controls:** `mcp-re-proxy` `lib#transparency::auditor::registration::endpoint::flags::tests` (7) — `a_budget_that_is_not_a_number_names_its_flag`, `a_non_polling_contract_is_not_held_to_a_poll_interval`, `a_poll_interval_for_a_contract_that_does_not_poll_is_refused`, `a_term_without_a_service_is_refused_rather_than_ignored`, `an_invocation_that_names_no_service_registers_nothing`, `an_unknown_protocol_refuses_before_anything_is_submitted`, `each_named_protocol_produces_a_target_and_the_default_is_scrapi`; `mcp-re-proxy` `lib#transparency::auditor::registration::endpoint::tests` (5) — `a_budget_shape_the_protocol_does_not_use_is_not_a_target`, `a_scheme_the_network_policy_refuses_is_not_a_target`, `an_https_endpoint_is_a_target_and_loses_its_trailing_separator`, `an_unterminating_budget_is_not_a_target`, `plaintext_is_refused_off_the_loopback_interface`; `mcp-re-proxy` `lib#transparency::auditor::registration::policy::tests` (5) — `a_bounded_budget_is_a_policy`, `a_budget_that_cannot_poll_is_refused`, `a_single_exchange_budget_is_bounded_but_needs_no_interval`, `a_sub_second_interval_is_legal`, `an_unbounded_wait_is_refused`; `mcp-re-proxy` `lib#transparency::auditor::registration::protocol::tests` (2) — `each_token_names_its_mechanism_and_nothing_else_parses`, `the_default_is_the_protocol_that_was_the_only_one`.
+**Controls:** none remain in this registry — all nineteen, in `registration/endpoint/mod.rs`,
+`endpoint/flags.rs`, `registration/policy.rs` and `registration/protocol.rs`, are claimed by
+`proxy.registration_endpoint_admission`.
 **Statement.** *A registration target is an endpoint the network policy admits — plaintext
 only off no interface but loopback — carrying a bounded, pollable budget and a named
 protocol; an unknown protocol refuses BEFORE anything is submitted; a term without a
@@ -1532,8 +1534,13 @@ the one that was the only one.*
 forever on a service that never answers, or registers nowhere while reporting that it
 registered. The plaintext arm is the one with a peer: the same refusal the CLI makes about
 a KMS endpoint (NP-027), one product step out.
-**Likely owner:** none.
+**Likely owner:** `proxy.registration_endpoint_admission`.
 **Severity:** `critical`.
+**Resolved: `ratified_as = "proxy.registration_endpoint_admission"`, owner Ruling 31.2.** The
+unit's statement is this record's, unchanged, over exactly the four files whose tests are its
+battery, measured in `//mcp-re-proxy:proxy_unit_test`; no other unit's paths were widened. It
+is falsified by `M532-proxy-plaintext-is-admitted-off-the-loopback-interface`.
+
 
 ## NP-042 — a statement is registered only against a receipt about itself
 
@@ -1573,7 +1580,8 @@ whether an artifact takes the receipt is decided by `with_verified_receipt` in
 
 ## NP-043 — the auditor's artifact is its own schema and round-trips its verdicts
 
-**Controls:** `auditor/artifact/mod.rs` (3), `artifact/document.rs` (3), `artifact/verdict.rs` (1).
+**Controls:** none remain in this registry — the seven, in `auditor/artifact/mod.rs`,
+`artifact/document.rs` and `artifact/verdict.rs`, are claimed by `proxy.attestation_artifact`.
 **Statement.** *An artifact round-trips its verdicts; a foreign schema is refused; a
 statement that is not base64url is refused on the way IN; and every incomplete reason has
 its own token; and a read-back document carries a receipt and its registration protocol together or is refused.*
@@ -1581,8 +1589,14 @@ its own token; and a read-back document carries a receipt and its registration p
 incomplete audit reports a reason indistinguishable from a different one — which is the
 bare-boolean failure `http_profile.retained_chain_record` exists to prevent, arriving in the
 artifact instead of in the chain label.
-**Likely owner:** none.
+**Likely owner:** `proxy.attestation_artifact`.
 **Severity:** `high`.
+
+**Resolved: `ratified_as = "proxy.attestation_artifact"`, owner Ruling 31.2.** The unit's
+statement is this record's, unchanged, over the three files whose tests are its battery,
+measured in `//mcp-re-proxy:proxy_unit_test`. NP-042's two artifact-attachment controls in
+`artifact/mod.rs` stay with NP-042. It is falsified by
+`M533-proxy-a-foreign-artifact-schema-is-read-as-this-one`.
 
 ---
 
@@ -4397,14 +4411,22 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 
 ## NP-227 — an audit artifact is replaced whole, and a failure after registration never reads as no artifact
 
-**Controls:** `mcp-re-proxy/src/transparency/auditor/durable_file.rs` (2), `mcp-re-proxy/src/transparency/auditor/run.rs` (2).
+**Controls:** `mcp-re-proxy/src/transparency/auditor/durable_file.rs` (2). The two `run.rs`
+controls are registered, below.
 **Carrier:** `mcp-re-proxy/src/transparency/auditor/durable_file.rs` and `run.rs`.
 **Statement.** *The artifact path holds either its previous bytes or the new bytes, never a truncated mixture; and once a statement is registered, a failure to record its receipt is reported as `ReceiptNotRecorded` (artifact durable, statement registered, do not re-submit), not as an `Output` refusal that means no artifact exists.*
 **If false.** An operator whose receipt write failed is told no artifact exists, discards a durable attestation, and re-submits a statement that is already registered; or an in-place truncation destroys the only portable record.
-**Likely owner:** none; NP-043 states the artifact's schema, not its persistence.
+**Likely owner:** none for the replacement clause; NP-043 (`proxy.attestation_artifact`) states the artifact's schema, not its persistence.
 **Severity:** `high`.
 **Root relationship.** Beside NP-043: the artifact's persistence, which no unit states.
 **Recorded:** 2026-10-03, round-12 remediation of finding 9df9f206fdc2b8e0.
+**Registered in part, owner Ruling 31.2.** The receipt-recording clause is
+`unit://proxy.audit_run_receipt_recording`, its own unit over `run.rs`, with that clause as its
+statement unchanged and the two `run.rs` controls as its battery, measured in
+`//mcp-re-proxy:proxy_unit_test`; it is falsified by
+`M534-proxy-a-receipt-that-cannot-be-recorded-reads-as-no-artifact`. The artifact-replacement
+clause and its two `durable_file.rs` controls stay here.
+
 
 ## NP-228 — a binding refuses a time or skew input that is not a whole in-range number of seconds, and never saturates it
 

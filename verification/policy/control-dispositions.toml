@@ -3477,10 +3477,11 @@ record = "docs/architecture/control-dispositions.md#np-040"
 id = "NP-041"
 title = "A registration target is admissible before anything is submitted"
 carrier = "mcp-re-proxy/src/transparency/auditor/registration endpoint, policy and protocol"
-likely_owner = ""
+likely_owner = "proxy.registration_endpoint_admission"
 consequence = "critical"
 root_relationship = "the auditor product claim the graph does not hold" 
 record = "docs/architecture/control-dispositions.md#np-041"
+ratified_as = "proxy.registration_endpoint_admission"
 
 [[proposition]]
 id = "NP-042"
@@ -3495,10 +3496,11 @@ record = "docs/architecture/control-dispositions.md#np-042"
 id = "NP-043"
 title = "The auditor's artifact is its own schema and round-trips its verdicts"
 carrier = "mcp-re-proxy/src/transparency/auditor/artifact"
-likely_owner = ""
+likely_owner = "proxy.attestation_artifact"
 consequence = "high"
 root_relationship = "the auditor product claim the graph does not hold" 
 record = "docs/architecture/control-dispositions.md#np-043"
+ratified_as = "proxy.attestation_artifact"
 
 [[proposition]]
 id = "NP-044"
@@ -3535,38 +3537,6 @@ likely_owner = "proxy.retained_record_content says WHAT a record contains, not h
 consequence = "medium"
 root_relationship = "beside the retention propositions the proxy already states"
 record = "docs/architecture/control-dispositions.md#np-047"
-
-[[disposition]]
-id = "CD-7001"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::artifact::tests::a_foreign_schema_is_refused"
-decision = "new-proposition"
-proposition = "NP-043"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7002"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::artifact::tests::a_statement_that_is_not_base64url_is_refused_on_the_way_in"
-decision = "new-proposition"
-proposition = "NP-043"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7003"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::artifact::tests::an_artifact_round_trips_its_verdicts"
-decision = "new-proposition"
-proposition = "NP-043"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7004"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::artifact::verdict::tests::every_incomplete_reason_has_its_own_token"
-decision = "new-proposition"
-proposition = "NP-043"
-recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-7005"
@@ -3774,126 +3744,6 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#transparency::auditor::profile::tests::the_revoked_set_answers_for_the_keys_it_names"
 decision = "new-proposition"
 proposition = "NP-040"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7036"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::flags::tests::a_budget_that_is_not_a_number_names_its_flag"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7037"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::flags::tests::a_term_without_a_service_is_refused_rather_than_ignored"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7038"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::flags::tests::an_invocation_that_names_no_service_registers_nothing"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7039"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::flags::tests::an_unknown_protocol_refuses_before_anything_is_submitted"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7040"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::flags::tests::each_named_protocol_produces_a_target_and_the_default_is_scrapi"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7041"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::tests::a_scheme_the_network_policy_refuses_is_not_a_target"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7042"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::tests::an_https_endpoint_is_a_target_and_loses_its_trailing_separator"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7043"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::tests::an_unterminating_budget_is_not_a_target"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7044"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::tests::plaintext_is_refused_off_the_loopback_interface"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7046"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::policy::tests::a_bounded_budget_is_a_policy"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7047"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::policy::tests::a_budget_that_cannot_poll_is_refused"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7048"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::policy::tests::a_sub_second_interval_is_legal"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7049"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::policy::tests::an_unbounded_wait_is_refused"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7050"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::protocol::tests::each_token_names_its_mechanism_and_nothing_else_parses"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-7051"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::protocol::tests::the_default_is_the_protocol_that_was_the_only_one"
-decision = "new-proposition"
-proposition = "NP-041"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -13356,7 +13206,7 @@ record = "docs/architecture/control-dispositions.md#np-226"
 id = "NP-227"
 title = "An audit artifact is replaced whole, and a failure after registration never reads as no artifact"
 carrier = "mcp-re-proxy/src/transparency/auditor/durable_file.rs and run.rs"
-likely_owner = ""
+likely_owner = "registered in part as proxy.audit_run_receipt_recording (owner Ruling 31.2): the receipt-recording clause and its two run.rs controls; the artifact-replacement clause and its two durable_file.rs controls remain here"
 consequence = "high"
 root_relationship = "Beside NP-043: the artifact's persistence, which no unit states."
 record = "docs/architecture/control-dispositions.md#np-227"
@@ -13594,22 +13444,6 @@ recorded = "2026-10-03"
 id = "CD-20135"
 project = "mcp-re-proxy"
 control = "src/lib.rs#transparency::auditor::durable_file::tests::a_replace_leaves_no_staging_file"
-decision = "new-proposition"
-proposition = "NP-227"
-recorded = "2026-10-03"
-
-[[disposition]]
-id = "CD-20136"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::run::tests::a_receipt_that_cannot_be_recorded_reports_the_registration"
-decision = "new-proposition"
-proposition = "NP-227"
-recorded = "2026-10-03"
-
-[[disposition]]
-id = "CD-20137"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::run::tests::a_write_that_fails_before_registration_is_an_output_refusal"
 decision = "new-proposition"
 proposition = "NP-227"
 recorded = "2026-10-03"
@@ -14304,30 +14138,6 @@ proposition = "NP-003"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20277"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::artifact::document::tests::a_receipt_without_its_protocol_is_refused"
-decision = "new-proposition"
-proposition = "NP-043"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20278"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::artifact::document::tests::a_protocol_without_its_receipt_is_refused"
-decision = "new-proposition"
-proposition = "NP-043"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20279"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::artifact::document::tests::a_receipt_and_its_protocol_read_back_together"
-decision = "new-proposition"
-proposition = "NP-043"
-recorded = "2026-10-04"
-
-[[disposition]]
 id = "CD-20280"
 project = "mcp-re-client"
 control = "src/lib.rs#serve::render::tests::a_rejected_notification_is_rendered_as_an_http_error_with_no_id"
@@ -14512,14 +14322,6 @@ proposition = "NP-210"
 recorded = "2026-10-04"
 
 [[disposition]]
-id = "CD-20306"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::flags::tests::a_poll_interval_for_a_contract_that_does_not_poll_is_refused"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-10-04"
-
-[[disposition]]
 id = "CD-20307"
 project = "mcp-re-transport"
 control = "src/lib.rs#client::tests::the_host_header_is_derived_from_the_expected_server_name"
@@ -14613,30 +14415,6 @@ project = "mcp-re-proxy"
 control = "src/lib.rs#transparency::auditor::invocation::tests::a_flag_where_a_value_belongs_is_refused"
 decision = "new-proposition"
 proposition = "NP-039"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20322"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::policy::tests::a_single_exchange_budget_is_bounded_but_needs_no_interval"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20323"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::tests::a_budget_shape_the_protocol_does_not_use_is_not_a_target"
-decision = "new-proposition"
-proposition = "NP-041"
-recorded = "2026-10-04"
-
-[[disposition]]
-id = "CD-20324"
-project = "mcp-re-proxy"
-control = "src/lib.rs#transparency::auditor::registration::endpoint::flags::tests::a_non_polling_contract_is_not_held_to_a_poll_interval"
-decision = "new-proposition"
-proposition = "NP-041"
 recorded = "2026-10-04"
 
 [[disposition]]

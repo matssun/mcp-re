@@ -132,8 +132,10 @@ attestations this view cannot see.
 | unit://proxy.admission_record_retention | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_state_source | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://proxy.async_replay_retention | source, contracts or evidence | THM-0105 | _no consumer_ |
+| unit://proxy.attestation_artifact | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_authority_coordinates | source, contracts or evidence | THM-0069 | _no consumer_ |
 | unit://proxy.audit_delivery | source, contracts or evidence | THM-0070 | _no consumer_ |
+| unit://proxy.audit_run_receipt_recording | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.audit_text_rendering | source, contracts or evidence | THM-0130 | _no consumer_ |
 | unit://proxy.audit_vocabulary_import | source, contracts or evidence | THM-0071 | _no consumer_ |
 | unit://proxy.authenticated_channel_peer | source, contracts or evidence | _no theorem_ | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
@@ -240,6 +242,7 @@ attestations this view cannot see.
 | unit://proxy.refusal_audit_emission | source, contracts or evidence | THM-0085 | _no consumer_ |
 | unit://proxy.refusal_provenance | source, contracts or evidence | THM-0046, THM-0069, THM-0071, THM-0078 | _no consumer_ |
 | unit://proxy.refusal_site_totality | source, contracts or evidence | THM-0081 | _no consumer_ |
+| unit://proxy.registration_endpoint_admission | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.registration_receipt_acceptance | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.remote_signer_call_aws | source, contracts or evidence | THM-0115 | _no consumer_ |
 | unit://proxy.remote_signer_call_gcp | source, contracts or evidence | THM-0115 | _no consumer_ |

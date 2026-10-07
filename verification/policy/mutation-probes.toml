@@ -12862,3 +12862,60 @@ note = """
 An unreadable body would be treated as one with no method, so the refusal would depend on which
 header happened to disagree with nothing rather than on the body being evidence the contract cannot read.
 """
+
+[[probe]]
+id = "M532-proxy-plaintext-is-admitted-off-the-loopback-interface"
+unit = "proxy.registration_endpoint_admission"
+conjunct = "a registration target is an endpoint the network policy admits, plaintext only to the loopback interface"
+path = "mcp-re-proxy/src/transparency/auditor/registration/endpoint/mod.rs"
+anchor = """
+        if !base_url.starts_with("https://") && !is_loopback(base_url) {
+"""
+weakening = """
+        if !base_url.starts_with("https://") && !base_url.starts_with("http://") {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::tests::plaintext_is_refused_off_the_loopback_interface",
+]
+note = """
+Any `http://` locator would become a target, so a statement could be submitted to a remote
+service over plaintext while the operator believed registration was HTTPS.
+"""
+
+[[probe]]
+id = "M533-proxy-a-foreign-artifact-schema-is-read-as-this-one"
+unit = "proxy.attestation_artifact"
+conjunct = "a foreign schema is refused"
+path = "mcp-re-proxy/src/transparency/auditor/artifact/document.rs"
+anchor = """
+        if wire.schema != ATTESTATION_SCHEMA {
+"""
+weakening = """
+        if wire.schema.is_empty() && wire.schema != ATTESTATION_SCHEMA {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::artifact::tests::a_foreign_schema_is_refused",
+]
+note = """
+A document carrying another schema's token would be read as an attestation artifact, so its
+fields would be interpreted under this schema's meaning.
+"""
+
+[[probe]]
+id = "M534-proxy-a-receipt-that-cannot-be-recorded-reads-as-no-artifact"
+unit = "proxy.audit_run_receipt_recording"
+conjunct = "once a statement is registered, a failure to record its receipt is reported as ReceiptNotRecorded, not as an Output refusal"
+path = "mcp-re-proxy/src/transparency/auditor/run.rs"
+anchor = """
+    replace_atomically(path, &bytes).map_err(|e| AuditError::ReceiptNotRecorded(e.to_string()))
+"""
+weakening = """
+    replace_atomically(path, &bytes).map_err(AuditError::Output)
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::run::tests::a_receipt_that_cannot_be_recorded_reports_the_registration",
+]
+note = """
+An operator whose receipt write failed would be told no artifact exists, discard a durable
+attestation, and re-submit a statement that is already registered.
+"""

@@ -7391,6 +7391,106 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_auditor_unit_test#transparency::auditor::registration::ureq_exchange::tests::an_answer_over_the_bound_is_refused_not_buffered",
 ]
 
+# NP-041 (ADR-MCPRE-069), promoted by owner Ruling 31.2 as its own unit over the proposition's
+# carrier — the endpoint, its flags, the polling policy and the protocol token — rather than as
+# an addition to any registration mechanism leaf, whose paths are not widened. Its statement is
+# NP-041's, unchanged. Measured in `//mcp-re-proxy:proxy_unit_test`, which compiles all
+# nineteen controls.
+[[unit]]
+id = "proxy.registration_endpoint_admission"
+class = "V0"
+description = "A REGISTRATION TARGET IS ADMISSIBLE BEFORE ANYTHING IS SUBMITTED: a registration target is an endpoint the network policy admits — plaintext only off no interface but loopback — carrying a bounded, pollable budget and a named protocol; an unknown protocol refuses BEFORE anything is submitted; a term without a service, an unterminating budget, an unbounded wait and a budget that cannot poll are each refused; an invocation that names no service registers nothing; and the default protocol is the one that was the only one. It says nothing about what becomes a registered statement (`proxy.registration_receipt_acceptance`) or what a protocol's answers mean (the mechanism leaves)."
+paths = [
+  "mcp-re-proxy/src/transparency/auditor/registration/endpoint/mod.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/endpoint/flags.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/policy.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/protocol.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/transparency/registration_endpoint_admission",
+  "mutation://proxy/transparency/registration_endpoint_admission",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::flags::tests::a_budget_that_is_not_a_number_names_its_flag",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::flags::tests::a_non_polling_contract_is_not_held_to_a_poll_interval",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::flags::tests::a_poll_interval_for_a_contract_that_does_not_poll_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::flags::tests::a_term_without_a_service_is_refused_rather_than_ignored",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::flags::tests::an_invocation_that_names_no_service_registers_nothing",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::flags::tests::an_unknown_protocol_refuses_before_anything_is_submitted",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::flags::tests::each_named_protocol_produces_a_target_and_the_default_is_scrapi",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::tests::a_budget_shape_the_protocol_does_not_use_is_not_a_target",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::tests::a_scheme_the_network_policy_refuses_is_not_a_target",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::tests::an_https_endpoint_is_a_target_and_loses_its_trailing_separator",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::tests::an_unterminating_budget_is_not_a_target",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::tests::plaintext_is_refused_off_the_loopback_interface",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::policy::tests::a_bounded_budget_is_a_policy",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::policy::tests::a_budget_that_cannot_poll_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::policy::tests::a_single_exchange_budget_is_bounded_but_needs_no_interval",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::policy::tests::a_sub_second_interval_is_legal",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::policy::tests::an_unbounded_wait_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::protocol::tests::each_token_names_its_mechanism_and_nothing_else_parses",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::protocol::tests::the_default_is_the_protocol_that_was_the_only_one",
+]
+
+# NP-043 (ADR-MCPRE-069), promoted by owner Ruling 31.2 as its own unit over the artifact's
+# schema: the document reader, the verdict vocabulary and the artifact that round-trips them,
+# with the derivation `artifact/mod.rs` declares (the unit-closure rule measures a declared
+# module with its parent).
+# Its statement is NP-043's, unchanged. NP-042's two artifact-attachment controls in
+# `artifact/mod.rs` stay with NP-042.
+[[unit]]
+id = "proxy.attestation_artifact"
+class = "V0"
+description = "THE AUDITOR'S ARTIFACT IS ITS OWN SCHEMA AND ROUND-TRIPS ITS VERDICTS: an artifact round-trips its verdicts; a foreign schema is refused; a statement that is not base64url is refused on the way IN; and every incomplete reason has its own token; and a read-back document carries a receipt and its registration protocol together or is refused. It says nothing about how the artifact is persisted (NP-227) or how a receipt is attached to it (NP-042)."
+paths = [
+  "mcp-re-proxy/src/transparency/auditor/artifact/mod.rs",
+  "mcp-re-proxy/src/transparency/auditor/artifact/derivation.rs",
+  "mcp-re-proxy/src/transparency/auditor/artifact/document.rs",
+  "mcp-re-proxy/src/transparency/auditor/artifact/verdict.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/transparency/attestation_artifact",
+  "mutation://proxy/transparency/attestation_artifact",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::artifact::document::tests::a_protocol_without_its_receipt_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::artifact::document::tests::a_receipt_and_its_protocol_read_back_together",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::artifact::document::tests::a_receipt_without_its_protocol_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::artifact::tests::a_foreign_schema_is_refused",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::artifact::tests::a_statement_that_is_not_base64url_is_refused_on_the_way_in",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::artifact::tests::an_artifact_round_trips_its_verdicts",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::artifact::verdict::tests::every_incomplete_reason_has_its_own_token",
+]
+
+# NP-227's receipt-recording clause, promoted by owner Ruling 31.2 as its own unit over
+# `run.rs`, which decides how a failure after registration is reported. The clause is NP-227's,
+# unchanged. The artifact-replacement clause and its two `durable_file.rs` controls stay with
+# NP-227: `durable_file.rs` is not in these paths.
+[[unit]]
+id = "proxy.audit_run_receipt_recording"
+class = "V0"
+description = "A FAILURE AFTER REGISTRATION NEVER READS AS NO ARTIFACT: once a statement is registered, a failure to record its receipt is reported as `ReceiptNotRecorded` (artifact durable, statement registered, do not re-submit), not as an `Output` refusal that means no artifact exists. It says nothing about whether the artifact file is replaced whole (NP-227's other clause)."
+paths = [
+  "mcp-re-proxy/src/transparency/auditor/run.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/transparency/audit_run_receipt_recording",
+  "mutation://proxy/transparency/audit_run_receipt_recording",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::run::tests::a_receipt_that_cannot_be_recorded_reports_the_registration",
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::run::tests::a_write_that_fails_before_registration_is_an_output_refusal",
+]
+
 [[unit]]
 id = "proxy.outbound_destination"
 class = "V0"
