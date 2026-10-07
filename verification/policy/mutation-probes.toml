@@ -13251,3 +13251,142 @@ note = """
 The leaf-profile twin of M549: a pin that omits it folds the service's log the way nobody wrote down.
 """
 
+
+[[probe]]
+id = "M551-request-floor-asks-check-params"
+unit = "http_profile.request_floor_result"
+theorem = "THM-0014"
+conjunct = "the request's signature window is fresh at the verifying instant (check_params at `now`)"
+note = "r12 G1 GD-5. THM-0001's window property quantifies over every parameter set the verifier admits, and it holds for a verify path only while that path asks `check_params` at the real `now`. The weakening keeps the call and its returns but evaluates the window at the message's own `created`, so a stale message reads as fresh; the path's stale-window test must go red."
+path = "mcp-re-http-profile/src/verify/floor/request.rs"
+anchor = """
+    let (created, expires, nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, now, true)?;
+"""
+weakening = """
+    let (created, expires, nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, parsed.params.created.unwrap_or(now), true)?;
+"""
+expect_red = [
+  "//mcp-re-http-profile:proof_path_test#stale_window_fails_closed",
+]
+
+[[probe]]
+id = "M552-bound-floor-asks-check-params"
+unit = "http_profile.bound_response_shared_facts"
+theorem = "THM-0021"
+conjunct = "the bound response's signature window is fresh at the verifying instant (check_params at `now`)"
+note = "r12 G1 GD-5. THM-0001's window property quantifies over every parameter set the verifier admits, and it holds for a verify path only while that path asks `check_params` at the real `now`. The weakening keeps the call and its returns but evaluates the window at the message's own `created`, so a stale message reads as fresh; the path's stale-window test must go red."
+path = "mcp-re-http-profile/src/verify/floor/response.rs"
+anchor = """
+        &REQUIRED_RESPONSE_REQ_COMPONENTS,
+    )?;
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, now, false)?;
+"""
+weakening = """
+        &REQUIRED_RESPONSE_REQ_COMPONENTS,
+    )?;
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, parsed.params.created.unwrap_or(now), false)?;
+"""
+expect_red = [
+  "//mcp-re-http-profile:proof_path_test#a_bound_response_outside_its_signature_window_is_refused_on_the_floor",
+]
+
+[[probe]]
+id = "M553-unbound-floor-asks-check-params"
+unit = "http_profile.unbound_response_shared_facts"
+theorem = "THM-0022"
+conjunct = "the unbound receipt's signature window is fresh at the verifying instant (check_params at `now`)"
+note = "r12 G1 GD-5. THM-0001's window property quantifies over every parameter set the verifier admits, and it holds for a verify path only while that path asks `check_params` at the real `now`. The weakening keeps the call and its returns but evaluates the window at the message's own `created`, so a stale message reads as fresh; the path's stale-window test must go red."
+path = "mcp-re-http-profile/src/verify/floor/response.rs"
+anchor = """
+            "req component without request context",
+        ));
+    }
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, now, false)?;
+"""
+weakening = """
+            "req component without request context",
+        ));
+    }
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, parsed.params.created.unwrap_or(now), false)?;
+"""
+expect_red = [
+  "//mcp-re-http-profile:proof_path_test#an_unbound_receipt_outside_its_signature_window_is_refused_on_the_floor",
+]
+
+[[probe]]
+id = "M554-delegated-bound-asks-check-params"
+unit = "http_profile.bound_response_shared_facts"
+theorem = "THM-0021"
+conjunct = "the delegated bound response's signature window is fresh at the verifying instant (check_params at `now`)"
+note = "r12 G1 GD-5. THM-0001's window property quantifies over every parameter set the verifier admits, and it holds for a verify path only while that path asks `check_params` at the real `now`. The weakening keeps the call and its returns but evaluates the window at the message's own `created`, so a stale message reads as fresh; the path's stale-window test must go red."
+path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
+anchor = """
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, now, false)?;
+"""
+weakening = """
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, parsed.params.created.unwrap_or(now), false)?;
+"""
+expect_red = [
+  "//mcp-re-http-profile:delegation_e2e_test#a_delegated_bound_response_outside_its_signature_window_is_refused",
+]
+
+[[probe]]
+id = "M555-delegated-unbound-asks-check-params"
+unit = "http_profile.unbound_response_shared_facts"
+theorem = "THM-0022"
+conjunct = "the delegated unbound receipt's signature window is fresh at the verifying instant (check_params at `now`)"
+note = "r12 G1 GD-5. THM-0001's window property quantifies over every parameter set the verifier admits, and it holds for a verify path only while that path asks `check_params` at the real `now`. The weakening keeps the call and its returns but evaluates the window at the message's own `created`, so a stale message reads as fresh; the path's stale-window test must go red."
+path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
+anchor = """
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, now, false)?;
+"""
+weakening = """
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, parsed.params.created.unwrap_or(now), false)?;
+"""
+expect_red = [
+  "//mcp-re-http-profile:delegation_e2e_test#an_unbound_receipt_outside_its_signature_window_is_refused",
+]
+
+[[probe]]
+id = "M556-bodyless-request-asks-check-params"
+unit = "http_profile.bodyless_acknowledgement"
+conjunct = "a bodyless request's signature window is fresh at the verifying instant (check_params at `now`)"
+note = "r12 G1 GD-5. THM-0001's window property quantifies over every parameter set the verifier admits, and it holds for a verify path only while that path asks `check_params` at the real `now`. The weakening keeps the call and its returns but evaluates the window at the message's own `created`, so a stale message reads as fresh; the path's stale-window test must go red."
+path = "mcp-re-http-profile/src/bodyless/mod.rs"
+anchor = """
+    let (_c, _e, _n, key_id, algorithm) = check_params(&parsed.params, policy, now, true)?;
+"""
+weakening = """
+    let (_c, _e, _n, key_id, algorithm) =
+        check_params(&parsed.params, policy, parsed.params.created.unwrap_or(now), true)?;
+"""
+expect_red = [
+  "//mcp-re-http-profile:bodyless_202_test#a_bodyless_request_outside_its_signature_window_is_refused",
+]
+
+[[probe]]
+id = "M557-delegated-ack-asks-check-params"
+unit = "http_profile.bodyless_acknowledgement"
+conjunct = "a delegated acknowledgement's signature window is fresh at the verifying instant (check_params at `now`)"
+note = "r12 G1 GD-5. THM-0001's window property quantifies over every parameter set the verifier admits, and it holds for a verify path only while that path asks `check_params` at the real `now`. The weakening keeps the call and its returns but evaluates the window at the message's own `created`, so a stale message reads as fresh; the path's stale-window test must go red."
+path = "mcp-re-http-profile/src/bodyless/delegated_ack.rs"
+anchor = """
+    let (_c, _e, _n, key_id, algorithm) = check_params(&parsed.params, policy, now, false)?;
+"""
+weakening = """
+    let (_c, _e, _n, key_id, algorithm) =
+        check_params(&parsed.params, policy, parsed.params.created.unwrap_or(now), false)?;
+"""
+expect_red = [
+  "//mcp-re-http-profile:delegated_202_test#a_delegated_202_outside_its_signature_window_is_refused",
+]

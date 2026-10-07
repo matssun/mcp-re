@@ -725,3 +725,27 @@ fn the_unbound_floor_content_digest_check_is_load_bearing() {
         .unwrap_err();
     assert_eq!(err, HttpProfileError::ContentDigestMismatch);
 }
+
+/// The freshness conjunct on the BOUND floor. THM-0001 states the window property of every
+/// parameter set the verifier admits, and that holds only while each verify path asks
+/// `check_params`; this is the bound response path's witness that it does.
+#[test]
+fn a_bound_response_outside_its_signature_window_is_refused_on_the_floor() {
+    let (req, rsp) = signed_exchange();
+    let skew = VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp, &req, EXPIRES + skew + 1)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::StaleWindow);
+}
+
+/// The same conjunct on the UNBOUND floor.
+#[test]
+fn an_unbound_receipt_outside_its_signature_window_is_refused_on_the_floor() {
+    let rsp = unbound_signed_response();
+    let skew = VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_unbound_response_floor(&rsp, EXPIRES + skew + 1)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::StaleWindow);
+}

@@ -126,7 +126,7 @@ attestations this view cannot see.
 | unit://policy.authorization_taxonomy | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://proxy.admission_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_configuration_state_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
-| unit://proxy.admission_currency_gate | source, contracts or evidence | THM-0132 | _no consumer_ |
+| unit://proxy.admission_currency_gate | source, contracts or evidence | THM-0069, THM-0132 | _no consumer_ |
 | unit://proxy.admission_gate_unskippable | source, contracts or evidence | THM-0132 | _no consumer_ |
 | unit://proxy.admission_record_addressing | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://proxy.admission_record_retention | source, contracts or evidence | _no theorem_ | _no consumer_ |
@@ -168,7 +168,7 @@ attestations this view cannot see.
 | unit://proxy.client_revocation_index_verdict | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.client_revocation_snapshot | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.continuation_capacity | source, contracts or evidence | _no theorem_ | _no consumer_ |
-| unit://proxy.continuation_consume_contract | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.continuation_consume_contract | source, contracts or evidence | THM-0093 | _no consumer_ |
 | unit://proxy.continuation_control_subject_boundary | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.continuation_correlation_store | source, contracts or evidence | THM-0087 | _no consumer_ |
 | unit://proxy.continuation_installation | source, contracts or evidence | THM-0096 | _no consumer_ |
@@ -258,7 +258,7 @@ attestations this view cannot see.
 | unit://proxy.response_signing | source, contracts or evidence | THM-0063, THM-0075 | _no consumer_ |
 | unit://proxy.retained_record_at_the_store | source, contracts or evidence | THM-0112 | _no consumer_ |
 | unit://proxy.retained_record_content | source, contracts or evidence | THM-0112 | _no consumer_ |
-| unit://proxy.retention_commitment | source, contracts or evidence | THM-0088 | _no consumer_ |
+| unit://proxy.retention_commitment | source, contracts or evidence | THM-0045, THM-0088 | _no consumer_ |
 | unit://proxy.retired_plane_cadence_retraction | source, contracts or evidence | THM-0131 | _no consumer_ |
 | unit://proxy.root_issuer_call_bound | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
@@ -487,7 +487,7 @@ attestations this view cannot see.
 | ASM-0024 | description, justification, scope or mechanism | http_profile.continuation_binding, http_profile.continuation_unbypassability | assumption review |
 | ASM-0025 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0026 | description, justification, scope or mechanism | _no unit_ | assumption review |
-| ASM-0027 | description, justification, scope or mechanism | http_profile.bound_response_seam_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.delegated_credential_chain, http_profile.delegated_unbound_result, http_profile.request_floor_result, http_profile.unbound_response_seam_result, http_profile.unbound_response_shared_facts | assumption review |
+| ASM-0027 | description, justification, scope or mechanism | client.trust_manifest_lifecycle, http_profile.admission_assertion, http_profile.admission_state_provenance, http_profile.bound_response_seam_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.delegated_credential_chain, http_profile.delegated_unbound_result, http_profile.pdp_decision_authentication, http_profile.request_floor_result, http_profile.response_emission_binding, http_profile.scitt_algorithm_agreement, http_profile.scitt_derived_root, http_profile.scitt_statement_attribution, http_profile.unbound_response_seam_result, http_profile.unbound_response_shared_facts, proxy.admission_state_source, proxy.aws_kms_adapter, proxy.gcp_kms_adapter, proxy.kms_ed25519_seam, proxy.pkcs11_adapter | assumption review |
 | ASM-0028 | description, justification, scope or mechanism | http_profile.bound_response_full_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.request_floor_result, http_profile.request_full_result, http_profile.unbound_response_shared_facts | assumption review |
 | ASM-0029 | description, justification, scope or mechanism | http_profile.bound_response_seam_result, http_profile.delegated_credential_chain, http_profile.request_floor_result, http_profile.unbound_response_seam_result | assumption review |
 | ASM-0030 | description, justification, scope or mechanism | proxy.certificate_identity | assumption review |
@@ -497,7 +497,7 @@ attestations this view cannot see.
 | ASM-0034 | description, justification, scope or mechanism | proxy.channel_associated_identity | assumption review |
 | ASM-0035 | description, justification, scope or mechanism | proxy.mechanism_verified_credential | assumption review |
 | ASM-0036 | description, justification, scope or mechanism | proxy.authenticated_relationship_peer | assumption review |
-| ASM-0037 | description, justification, scope or mechanism | http_profile.keyid_selector | assumption review |
+| ASM-0037 | description, justification, scope or mechanism | http_profile.artifact_typing, http_profile.keyid_selector, http_profile.response_emission_binding, http_profile.scitt_derived_root, http_profile.scitt_inclusion_fold, http_profile.scitt_retained_correspondence, http_profile.submitted_hop_identity, proxy.evidence_attestation | assumption review |
 | ASM-0038 | description, justification, scope or mechanism | proxy.credential_currency | assumption review |
 | ASM-0039 | description, justification, scope or mechanism | proxy.delegated_resolver_materialization | assumption review |
 | ASM-0040 | description, justification, scope or mechanism | proxy.replay_admission_gate | assumption review |
@@ -508,7 +508,7 @@ attestations this view cannot see.
 | ASM-0045 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
 | ASM-0046 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
 | ASM-0047 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |
-| ASM-0048 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |
+| ASM-0048 | description, justification, scope or mechanism | proxy.continuation_correlation_store, proxy.continuation_leg_binding | assumption review |
 | ASM-0049 | description, justification, scope or mechanism | proxy.epoch_bound_session_store, proxy.listener_state_assembly | assumption review |
 | ASM-0050 | description, justification, scope or mechanism | http_profile.reserved_context_key_guard, http_profile.unauthenticated_context_claim, http_profile.verified_context_conclusion, proxy.verified_context_carrier_boundary | assumption review |
 | ASM-0051 | description, justification, scope or mechanism | http_profile.unauthenticated_context_claim, http_profile.verified_context_conclusion, proxy.verified_context_carrier_boundary | assumption review |
@@ -517,7 +517,7 @@ attestations this view cannot see.
 | ASM-0054 | description, justification, scope or mechanism | proxy.pkcs11_adapter | assumption review |
 | ASM-0055 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0056 | description, justification, scope or mechanism | proxy.admission_currency_gate | assumption review |
-| ASM-0057 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.freshness_window | assumption review |
+| ASM-0057 | description, justification, scope or mechanism | http_profile.admission_assertion, http_profile.admission_currency, http_profile.admission_state_provenance, http_profile.freshness_window, http_profile.pdp_decision_authentication, proxy.admission_state_source, proxy.response_signing | assumption review |
 | ASM-0058 | description, justification, scope or mechanism | proxy.etcd_replay_adapter, proxy.redis_replay_adapter, proxy.replay_admission_gate | assumption review |
 | ASM-0059 | description, justification, scope or mechanism | proxy.redis_replay_adapter | assumption review |
 | ASM-0060 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |
@@ -527,7 +527,7 @@ attestations this view cannot see.
 | ASM-0064 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0065 | description, justification, scope or mechanism | http_profile.scitt_algorithm_agreement, http_profile.scitt_derived_root | assumption review |
 | ASM-0066 | description, justification, scope or mechanism | client.trust_manifest_lifecycle | assumption review |
-| ASM-0067 | description, justification, scope or mechanism | _no unit_ | assumption review |
+| ASM-0067 | description, justification, scope or mechanism | http_profile.scitt_key_lifecycle, proxy.registration_receipt_acceptance | assumption review |
 | ASM-0068 | description, justification, scope or mechanism | host.request_freshness_inputs, proxy.delegated_epoch_label, proxy.delegated_signing_credential | assumption review |
 | ASM-0069 | description, justification, scope or mechanism | http_profile.delegated_credential_chain | assumption review |
 | ASM-0070 | description, justification, scope or mechanism | client.transport_server_identity | assumption review |
@@ -536,3 +536,11 @@ attestations this view cannot see.
 | ASM-0073 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
 | ASM-0074 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
 | ASM-0075 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
+| ASM-0076 | description, justification, scope or mechanism | proxy.aws_sts_credentials, proxy.aws_web_identity_credential_exchange, proxy.gcp_kms_adapter, proxy.gcp_metadata_token_lifetime | assumption review |
+| ASM-0077 | description, justification, scope or mechanism | client.anchor_refresh, client.serving_lifetime, client.trust_manifest_lifecycle | assumption review |
+| ASM-0078 | description, justification, scope or mechanism | proxy.retention_commitment | assumption review |
+| ASM-0079 | description, justification, scope or mechanism | proxy.trust_reload_cadence, proxy.trust_resolution_window | assumption review |
+| ASM-0080 | description, justification, scope or mechanism | proxy.client_revocation_currency, proxy.client_revocation_index_verdict | assumption review |
+| ASM-0081 | description, justification, scope or mechanism | proxy.delegated_epoch_label | assumption review |
+| ASM-0082 | description, justification, scope or mechanism | proxy.kms_endpoint_authority, proxy.outbound_destination | assumption review |
+| ASM-0083 | description, justification, scope or mechanism | http_profile.request_envelope | assumption review |

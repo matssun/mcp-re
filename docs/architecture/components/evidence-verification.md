@@ -231,7 +231,7 @@ The verifier's ten propositions are class **V0**: nothing above them may read as
 "a test battery passed". A passing battery is not, on its own, evidence that a production
 check is load-bearing — so every conjunct THM-0014 … THM-0022 names was probed by deleting or
 defanging exactly that check, re-running the declared battery, and observing which declared
-member goes red. **31 mutations, each turning at least one declared member red.** M69 and
+member goes red. **36 mutations, each turning at least one declared member red.** M69 and
 M70 are retired: each built the request handle out of the response block's own claim, which
 no longer compiles now that `RequestRoleEvidence` has one producer (structural probe S40).
 
@@ -241,7 +241,10 @@ proposition, and the probes were already labelled with the theorem each attacks,
 re-partitioned them rather than rewriting them. The thirty-first is **M71**, THM-0017's first
 falsifier: the wide unit carried thirty probes, not one of them named THM-0017, and N1 —
 which accounts per unit — read the proposition as falsified on the strength of its
-neighbours.
+neighbours. M551–M555 make the freshness conjunct of each verify path load-bearing: each
+evaluates `check_params` at the message's own `created` instead of the verifying instant, and
+the path's stale-window control goes red. THM-0001's window property holds for a path only
+while that path asks `check_params` at the real `now`.
 
 The probes are **registered and executable**, not remembered:
 [`verification/policy/mutation-probes.toml`](../../../verification/policy/mutation-probes.toml)

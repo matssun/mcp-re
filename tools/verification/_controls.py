@@ -221,7 +221,10 @@ def walk(suffix: str, root: Path | None = None) -> list[Path]:
 _MOD_DECL = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([a-z0-9_]+)\s*;")
 _MOD_INLINE = re.compile(r"^(\s*)(?:pub(?:\([^)]*\))?\s+)?mod\s+([a-z0-9_]+)\s*\{")
 _PATH_ATTR = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\]')
-_TEST_ATTR = re.compile(r"^(\s*)#\[(?:tokio::)?test\]")
+#: `#[tokio::test]` takes arguments (`flavor = "multi_thread"`, `start_paused = true`), and a
+#: test written with them is a test: an attribute matched only in its bare form would leave
+#: it outside the census, unclaimed and undispositioned without the gate noticing.
+_TEST_ATTR = re.compile(r"^(\s*)#\[(?:tokio::)?test(?:\s*\([^\]]*\))?\]")
 _FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)")
 _ATTR_LINE = re.compile(r"^\s*#\[")
 

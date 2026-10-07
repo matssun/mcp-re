@@ -394,3 +394,41 @@ paths = [
 ]
 beyond = "Who can write the channel. Every other boundary here is crossed by code — a library, a service, the kernel — and this one is crossed by a network topology nothing in the process can observe. The verified-context block carries no signature by design, so the inner server cannot distinguish a block this proxy wrote from one any other writer produced; the whole of the carrier's authentication weight rests on the listener being unreachable from anywhere but this proxy. ASM-0050 states it. The reserved-field guard bounds what a CALLER can seed and runs under every policy, which is a different question and is not evidence for this one."
 max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.filesystem"
+description = "Durable storage of the evidence-retention directory: what an acknowledged `rename` and `fsync` establish across a process or host crash."
+kind = "environment"
+# The two places a retention record is made durable: the writer that renames a committed record
+# into place and syncs it, and the store whose directory barrier makes the renames durable.
+paths = [
+  "mcp-re-proxy/src/transparency/durable_writer.rs",
+  "mcp-re-proxy/src/retained_evidence/store.rs",
+]
+beyond = "Whether an `fsync` that returned success leaves the renamed file and its directory entry on stable storage. A filesystem mounted without write barriers, or a device that acknowledges a flush it did not perform, returns success and loses the record."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.http_client"
+description = "The outbound HTTP client, as implemented by `url` and `ureq`: how a destination string is parsed to a host and port, and where a request built on it is sent."
+kind = "foreign-dependency"
+# The endpoint rule decides admission by what `url::Url::parse` will read; the outbound
+# capability builds the `ureq` agent and issues every credential-bearing request.
+paths = [
+  "mcp-re-proxy/src/kms_endpoint_policy/mod.rs",
+  "mcp-re-proxy/src/outbound_fetch/binding.rs",
+  "mcp-re-proxy/src/outbound_fetch/credential_egress.rs",
+  "mcp-re-proxy/src/outbound_fetch/url.rs",
+]
+beyond = "Whether the host and port the parser reports are the ones the client connects to, whether a request goes to exactly the URL it was built on, and whether an agent configured without redirects follows none."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.json_parser"
+description = "JSON parsing of a request body, as implemented by `serde_json`."
+kind = "foreign-dependency"
+paths = [
+  "mcp-re-http-profile/src/envelope/request.rs",
+]
+beyond = "Whether the parser accepts exactly the RFC 8259 JSON texts and, for a text without duplicate member names, reports the members and values the text writes."
+max_class_without_assumption = "V0"

@@ -57,6 +57,14 @@ impl SystemNonceSource {
     pub fn new() -> Self {
         SystemNonceSource
     }
+
+    /// One request nonce's worth of OS entropy: exactly `NONCE_BYTES`. The width is this
+    /// owner's, so a caller cannot draw a narrower nonce through it.
+    pub fn draw(&mut self) -> [u8; NONCE_BYTES] {
+        let mut bytes = [0u8; NONCE_BYTES];
+        self.fill(&mut bytes);
+        bytes
+    }
 }
 
 impl NonceSource for SystemNonceSource {
@@ -143,6 +151,17 @@ mod tests {
             NONCE_BYTES.saturating_mul(8) >= 128,
             "MCP_RE_SPEC §2/§5 requires at least 128 bits of nonce entropy"
         );
+    }
+
+    /// A drawn nonce is the spec width, and two draws differ: the probability that 128
+    /// bits of OS entropy repeat is 2^-128.
+    #[test]
+    fn a_drawn_nonce_is_the_spec_width_and_does_not_repeat() {
+        let mut source = SystemNonceSource::new();
+        let first = source.draw();
+        let second = source.draw();
+        assert_eq!(first.len(), NONCE_BYTES);
+        assert_ne!(first, second);
     }
 
     /// The production source fills the WHOLE buffer. A partial fill would leave the tail at

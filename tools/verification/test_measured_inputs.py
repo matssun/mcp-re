@@ -29,7 +29,7 @@ sys.path.insert(0, str(HERE))
 
 from _load_tool import load_tool  # noqa: E402
 
-from _fingerprint import fingerprint_unit, VERUS_LANE_INPUTS  # noqa: E402
+from _fingerprint import fingerprint_unit, MUTATION_LANE_INPUTS, VERUS_LANE_INPUTS  # noqa: E402
 from _manifest import (  # noqa: E402
     assumption_scope_defects,
     boundary_class_violations,
@@ -299,7 +299,8 @@ def test_the_probe_set_is_measured_so_the_suite_cannot_silently_shrink():
     assert set(probes) == registered and registered
     assert all(digest.startswith("sha256:") for digest in probes.values())
     lane = components("http_profile.request_floor_result")["mutation_lane_identity"]
-    assert set(lane) == {"tools/verification/verify-mutations"}
+    assert set(lane) == set(MUTATION_LANE_INPUTS)
+    assert "tools/verification/verify-mutations" in lane
 
 
 def test_the_extraction_lane_instruments_are_part_of_the_evidence_identity():
@@ -353,25 +354,39 @@ def test_a_unit_without_lean_evidence_carries_no_extraction_identity_key_at_all(
 
 
 def _while_perturbed(path: str, observe):
-    """`observe()` evaluated while `path` carries one extra line, restored afterwards.
+    """`observe()` evaluated while `path` READS as carrying one extra line.
 
-    A real edit to a real file, because the property under test is that the DIGEST of that
-    file reaches the fingerprint. Asserting a component's key set proves the intention; only
-    moving the bytes proves the wiring.
+    The property under test is that the DIGEST of that file reaches the fingerprint, so the
+    bytes the fingerprint reads must move; asserting a component's key set would prove only
+    the intention. They move in what `Path.read_bytes` and `Path.read_text` return for that
+    one file and nowhere else — never in the file itself. Writing the tracked file and
+    restoring it in a `finally` leaves the falsifier line in the tree whenever the process
+    dies inside the window, which is how `# falsifier` once reached a working copy.
 
     The observation happens INSIDE the window on purpose. Returning the file first and
     measuring second is how a falsifier ends up measuring the restored tree and passing
     whatever it was meant to catch — which is what the first draft of this helper did."""
     from _manifest import REPO_ROOT as ROOT
 
-    target = ROOT / path
+    target = (ROOT / path).resolve()
     original = target.read_bytes()
+    perturbed = original + b"\n# falsifier\n"
+    real_bytes, real_text = Path.read_bytes, Path.read_text
+
+    def read_bytes(self):
+        return perturbed if self.resolve() == target else real_bytes(self)
+
+    def read_text(self, encoding=None, errors=None, *args, **kwargs):
+        if self.resolve() == target:
+            return perturbed.decode(encoding or "utf-8", errors or "strict")
+        return real_text(self, encoding, errors, *args, **kwargs)
+
+    Path.read_bytes, Path.read_text = read_bytes, read_text
     try:
-        target.write_bytes(original + b"\n# falsifier\n")
         assert target.read_bytes() != original
         return observe()
     finally:
-        target.write_bytes(original)
+        Path.read_bytes, Path.read_text = real_bytes, real_text
         assert target.read_bytes() == original
 
 
@@ -1454,6 +1469,43 @@ def test_editing_the_verus_lane_moves_exactly_the_proved_units():
         after = _while_perturbed(instrument, observe)
         moved = {uid for uid in before if before[uid] != after[uid]}
         assert moved == claimants, (instrument, sorted(moved ^ claimants))
+
+
+def test_the_target_table_module_moves_every_lane_that_resolves_a_label_through_it():
+    """r12 Ruling 39 §8. The package a crate root is filed under selects the Verus target a
+    proved unit is verified by, and the build-graph row a probe's red control runs in. Both
+    lanes resolve through `_rust_targets`, so an edit there must move every unit whose
+    evidence either lane establishes — not only the test lane's."""
+    from _manifest import claims_mutation_evidence
+
+    watched = set(_verus_units()) | {
+        uid for uid, u in UNITS.items() if claims_mutation_evidence(u)
+    }
+    assert len(watched) > len(_verus_units()), "no mutation claimant: the population is empty"
+    before = {uid: fingerprint_unit(UNITS[uid], DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+              for uid in watched}
+
+    def observe():
+        return {uid: fingerprint_unit(UNITS[uid], DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+                for uid in watched}
+
+    after = _while_perturbed("tools/verification/_rust_targets.py", observe)
+    unmoved = sorted(uid for uid in watched if before[uid] == after[uid])
+    assert not unmoved, unmoved
+
+
+def test_the_nonvacuity_adjudicator_moves_exactly_the_proved_units():
+    claimants = set(_verus_units())
+    before = {uid: fingerprint_unit(u, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+              for uid, u in UNITS.items()}
+
+    def observe():
+        return {uid: fingerprint_unit(u, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+                for uid, u in UNITS.items()}
+
+    after = _while_perturbed("tools/verification/_verus_nonvacuity.py", observe)
+    moved = {uid for uid in before if before[uid] != after[uid]}
+    assert moved == claimants, sorted(moved ^ claimants)
 
 
 def test_a_verification_file_in_no_lane_does_not_move_the_proved_units():

@@ -149,6 +149,7 @@ from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 from _lean_sources import generated_model_paths, LAKEFILE, theorem_source_paths
 import _rust_targets
+from _premise import is_model_registration
 from _manifest import (
     claims_lean_evidence,
     claims_verus_evidence,
@@ -483,7 +484,14 @@ def _mutation_probes(unit_id: str) -> dict[str, str]:
 
 
 #: The lane that decides what "a declared control went red" means.
-MUTATION_LANE_INPUTS = ("tools/verification/verify-mutations",)
+MUTATION_LANE_INPUTS = (
+    "tools/verification/verify-mutations",
+    # What a probe's `expect_red` label RUNS: the label is resolved to its crate root and
+    # features through the build-graph table, and the ecosystem adapter builds the argv and
+    # reads the result. Either one changing changes what a recorded red means.
+    "tools/verification/_rust_targets.py",
+    "tools/verification/_ecosystems.py",
+)
 
 
 def _mutation_lane_identity(unit: dict) -> dict[str, str]:
@@ -535,6 +543,13 @@ VERUS_LANE_INPUTS = (
     # position `_structural.py` holds for the structural lane and `_measured.py` for the
     # measured one, and both of those are lane inputs already.
     "tools/verification/_verus_results.py",
+    # Which crate is verified for a unit: the `verus_verify` target is chosen by the PACKAGE
+    # the build-graph table files it under. A filing change re-points a unit at another
+    # target's run without touching the runner.
+    "tools/verification/_rust_targets.py",
+    # Whether the artifact verifiers' postconditions constrain at all: the lane refuses unless
+    # the probe's negatives fail, and that adjudication lives here.
+    "tools/verification/_verus_nonvacuity.py",
 )
 
 #: The lane that decides what "the compiler refused the hostile construction" means.
@@ -926,17 +941,39 @@ def theorem_premises(
 ) -> dict[str, dict[str, str] | None]:
     """Each theorem's premise closure: assumption id -> current `assumption_digest`.
 
-    A theorem rests on every assumption its supporting units trust — the same closure each
-    unit's `trusted_assumptions` component carries — and on every assumption scoped to a
-    trust boundary one of those units crosses (`governing_boundaries`), because a boundary
-    premise is what the unit's class cap is conditional on. A theorem with a supporting unit
-    that has no fingerprint maps to None: its closure is unknown, not empty.
+    A theorem rests on the premises its supporting units are scoped to. Two attachment
+    rules, by what the assumption's `scope` names (r12 defect D):
+
+      * an assumption that names UNITS attaches to exactly those units. Its `boundary://`
+        entries say which boundary it discharges for them (`boundary_class_violations`),
+        not that every other unit crossing the boundary rests on it too;
+      * an assumption that names ONLY boundaries attaches to every unit whose files cross
+        one of them (`governing_boundaries`), because nothing narrower was stated.
+
+    Spreading a unit-scoped premise to every crosser was over-inclusive — a theorem about a
+    window comparison carried the PKCS#11 and Redis premises of every other unit in the same
+    crate — and narrowing a scope changed no closure. The converse gap, a unit that CALLS
+    into a boundary from outside its files, is closed by DATA: the premise's scope names the
+    consuming unit.
+
+    A `model-registration` (r12 Ruling 39 §4) is dropped: its trust is attributed to the
+    premise that interprets it, which `registration_problems` requires to reach every unit
+    the registration does. A theorem with a supporting unit that has no fingerprint maps to
+    None: its closure is unknown, not empty.
     """
+    registrations = {
+        entry["id"]
+        for entry in assumptions.get("assumption", [])
+        if is_model_registration(entry)
+    }
     by_boundary: dict[str, dict[str, str]] = {}
     for entry in assumptions.get("assumption", []):
-        for scope in entry.get("scope", []):
-            if scope.startswith("boundary://"):
-                by_boundary.setdefault(scope.removeprefix("boundary://"), {})[
+        scope = [str(target) for target in entry.get("scope", [])]
+        if entry["id"] in registrations or any(t.startswith("unit://") for t in scope):
+            continue
+        for target in scope:
+            if target.startswith("boundary://"):
+                by_boundary.setdefault(target.removeprefix("boundary://"), {})[
                     entry["id"]
                 ] = assumption_digest(entry)
     out: dict[str, dict[str, str] | None] = {}
@@ -949,10 +986,14 @@ def theorem_premises(
                 closure = None
                 break
             components = fingerprint["components"]
-            closure.update(components["trusted_assumptions"])
+            closure.update(
+                (asm_id, digest)
+                for asm_id, digest in components["trusted_assumptions"].items()
+                if asm_id not in registrations
+            )
             for boundary in components["governing_boundaries"]:
                 closure.update(by_boundary.get(boundary, {}))
-        out[row["id"]] = closure
+        out[row["id"]] = dict(sorted(closure.items())) if closure is not None else None
     return out
 
 

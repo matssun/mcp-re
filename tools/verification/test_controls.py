@@ -663,6 +663,20 @@ def test_a_doctest_carries_its_fence_mode():
     assert any("compile-fail" in control.note for control in doctests)
 
 
+def test_a_test_attribute_with_arguments_is_a_test():
+    """`#[tokio::test(flavor = "multi_thread")]` declares a test as surely as the bare form.
+    A census that matched only `#[tokio::test]` saw none of them."""
+    tests = [
+        "    #[test]",
+        "    #[tokio::test]",
+        '    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]',
+        "    #[tokio::test(start_paused = true)]",
+    ]
+    not_tests = ["    #[testing]", "    #[test_case(1)]", "    #[cfg(test)]", "    // #[test]"]
+    assert all(_controls._TEST_ATTR.match(line) for line in tests)
+    assert not any(_controls._TEST_ATTR.match(line) for line in not_tests)
+
+
 # ---------------------------------------------------------------------------
 # Repository scope — the census may only see files a commit could contain
 # ---------------------------------------------------------------------------

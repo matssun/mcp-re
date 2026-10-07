@@ -2548,7 +2548,7 @@ nothing was transmitted.
 """
 owner = "proxy.dispatch_commitment"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.dispatch_commitment"]
+supported_by = ["unit://proxy.dispatch_commitment", "unit://proxy.retention_commitment"]
 depends_on = ["THM-0040"]
 
 [[theorem]]
@@ -3515,6 +3515,7 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://proxy.audit_authority_coordinates",
   "unit://proxy.refusal_provenance",
+  "unit://proxy.admission_currency_gate",
 ]
 depends_on = ["THM-0046"]
 
@@ -4618,7 +4619,7 @@ the other three.
 """
 owner = "proxy.continuation_leg_binding"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.continuation_leg_binding"]
+supported_by = ["unit://proxy.continuation_leg_binding", "unit://proxy.continuation_consume_contract"]
 depends_on = ["THM-0087"]
 
 # ADR-MCPRE-059 §28 / issue #746. TWO members, never one theorem.

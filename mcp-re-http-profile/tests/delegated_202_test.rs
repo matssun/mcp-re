@@ -544,3 +544,24 @@ fn no_acknowledgement_is_signed_over_a_notification_carrying_an_invalid_block() 
     .expect_err("refused");
     assert_eq!(err, HttpProfileError::UnknownProfileTag);
 }
+
+/// THM-0001's window property on the delegated acknowledgement path: the acknowledgement's
+/// own signature window is checked before the credential is, through `check_params`.
+#[test]
+fn a_delegated_202_outside_its_signature_window_is_refused() {
+    let note = notification("n-stale");
+    let ack = sign_ack(&note);
+    let stale = EXPIRES + VerifierPolicy::default().max_clock_skew() + 1;
+    assert_eq!(
+        verify_delegated_accepted_202(
+            &ack,
+            &note,
+            &Verifier::new(&VerifierPolicy::default(), &resolver()),
+            &expectations(&[EPOCH]),
+            &no_revocation(),
+            stale,
+        )
+        .unwrap_err(),
+        HttpProfileError::StaleWindow,
+    );
+}

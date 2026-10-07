@@ -356,6 +356,8 @@ paths = [
   "mcp-re-http-profile/src/mcp_transport/mod.rs",
   "mcp-re-http-profile/src/mcp_transport/agreement.rs",
   "mcp-re-http-profile/src/mcp_transport/request_headers.rs",
+  # The PDP binding compares through `artifact::compare`, which digests here.
+  "mcp-re-http-profile/src/artifact/thumbprint.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -455,6 +457,7 @@ tested_symbols = [
   "//mcp-re-http-profile:delegation_e2e_test#a_delegated_bound_response_outside_its_signature_window_is_refused",
   "//mcp-re-http-profile:delegation_e2e_test#a_delegated_bound_response_not_covering_a_req_component_is_refused",
   "//mcp-re-http-profile:delegation_e2e_test#a_delegated_bound_response_whose_req_binding_is_to_another_request_is_refused",
+  "//mcp-re-http-profile:proof_path_test#a_bound_response_outside_its_signature_window_is_refused_on_the_floor",
 ]
 
 # THM-0016's owner.
@@ -570,6 +573,7 @@ tested_symbols = [
   "//mcp-re-http-profile:delegation_e2e_test#an_unbound_receipt_with_a_content_encoding_is_refused",
   "//mcp-re-http-profile:delegation_e2e_test#an_unbound_receipt_that_is_not_json_is_refused",
   "//mcp-re-http-profile:delegation_e2e_test#an_unbound_receipt_outside_its_signature_window_is_refused",
+  "//mcp-re-http-profile:proof_path_test#an_unbound_receipt_outside_its_signature_window_is_refused_on_the_floor",
 ]
 
 # THE ONE LEAF THIS SPLIT LEAVES OWING, and making it visible is half the point of the
@@ -1159,6 +1163,8 @@ paths = [
   "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
   "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
   "mcp-re-proxy/src/tls.rs",
+  # The verifier the posture selects is chosen here.
+  "mcp-re-proxy/src/tls_listener_state/assembly.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -1809,6 +1815,8 @@ paths = [
   "mcp-re-http-profile/src/artifact.rs",
   "mcp-re-http-profile/src/pdp_decision/mod.rs",
   "mcp-re-http-profile/src/pdp_decision/binding.rs",
+  # `artifact::compare` digests here.
+  "mcp-re-http-profile/src/artifact/thumbprint.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -2409,6 +2417,8 @@ paths = [
   "mcp-re-proxy/src/communication_assurance/credential_public_key_evidence.rs",
   "mcp-re-proxy/src/communication_assurance/signing_key_evidence.rs",
   "mcp-re-proxy/src/tls.rs",
+  # The production call the consequence rests on.
+  "mcp-re-proxy/src/delegated_tls/resolver.rs",
 ]
 exported_contracts = []
 # `tls.rs` is in `paths` because the DER-level battery lives in its test module and the
@@ -3047,6 +3057,9 @@ description = "The authenticated peer of a relationship and the actor the reques
 paths = [
   "mcp-re-proxy/src/communication_assurance/request_peer_binding/mod.rs",
   "mcp-re-proxy/src/communication_assurance/request_peer_binding/http_profile_adapter.rs",
+  # The seal (`#[non_exhaustive]`) the subject operand rests on.
+  "mcp-re-http-profile/src/verified_request/mod.rs",
+  "mcp-re-http-profile/src/verified_request/floor.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -3054,6 +3067,7 @@ direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/request_peer_binding/same_principal",
   "mutation://proxy/request_peer_binding/same_principal",
+  "structural://proxy/request_peer_binding/verified_request_seal",
 ]
 # The channel operand is driven through a REAL mutual-TLS handshake in every control, because
 # the whole difference from the `TransportIdentity` it replaces is that it cannot be
@@ -4873,6 +4887,8 @@ description = "What a verified rejection receipt says about whether the work ran
 paths = [
   "mcp-re-client-core/src/execution_contract.rs",
   "mcp-re-client-core/src/result_classification.rs",
+  # The result classes the contract is read into.
+  "mcp-re-http-profile/src/result_class.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -6526,6 +6542,8 @@ description = "That the serving path decides what a request IS exactly once — 
 paths = [
   "mcp-re-proxy/src/http_profile_serve/request_admission.rs",
   "mcp-re-proxy/src/http_profile_serve/mod.rs",
+  # Pre-admission reads the outstanding id this unit establishes.
+  "mcp-re-proxy/src/http_profile_serve/pre_admission/mod.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -6863,6 +6881,8 @@ paths = [
   # `delegated_202_test` three measure the shipped one, is a disposition for the unit's
   # owner. See EX-015 in docs/architecture/review-dispositions.md.
   "mcp-re-http-profile/src/rejection/pre_052_direct_root.rs",
+  # The signing window the emission is bound under.
+  "mcp-re-http-profile/src/custody/window_emission.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -7099,6 +7119,9 @@ paths = [
   "mcp-re-http-profile/src/scitt/trust_pin/document.rs",
   "mcp-re-http-profile/src/scitt/trust_pin/mod.rs",
   "mcp-re-http-profile/src/scitt/service.rs",
+  # The two profile enums a pin document must state live here.
+  "mcp-re-http-profile/src/scitt/merkle.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -8936,6 +8959,8 @@ paths = [
   # about a person's approval. Both are this unit's, which is why the split moved a file
   # boundary and not an owner.
   "mcp-re-proxy/src/http_profile_serve/continuation/retirement.rs",
+  # The answering leg commits through this file.
+  "mcp-re-proxy/src/http_profile_serve/answering_commitment.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -9235,6 +9260,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#bodyless::delegated_credential::tests::the_credential_header_is_present_exactly_once_and_bounded",
   "//mcp-re-http-profile:mcp_re_http_profile_test#bodyless::delegated_credential::tests::a_scope_that_is_not_a_canonical_four_field_actor_id_is_refused",
   "//mcp-re-http-profile:delegated_202_test#a_credential_scoped_to_a_principal_its_root_is_not_is_refused",
+  "//mcp-re-http-profile:bodyless_202_test#a_bodyless_request_outside_its_signature_window_is_refused",
+  "//mcp-re-http-profile:delegated_202_test#a_delegated_202_outside_its_signature_window_is_refused",
 ]
 
 [[unit]]
@@ -10387,6 +10414,7 @@ tested_symbols = [
   "//mcp-re-host:mcp_re_host_test#fixture_boundary::tests::every_fixture_item_is_compiled_only_under_test_or_the_explicit_feature",
   "//mcp-re-host:mcp_re_host_test#fixture_boundary::tests::the_production_library_compiles_no_fixture_feature",
   "//mcp-re-host:mcp_re_host_test#fixture_boundary::tests::the_fixture_flavor_is_testonly",
+  "//mcp-re-host:mcp_re_host_test#nonce::tests::a_drawn_nonce_is_the_spec_width_and_does_not_repeat",
 ]
 
 # v0.17 assurance-closure mandate, priority 3: the transparency remainder. Five files were
@@ -11155,7 +11183,10 @@ tested_symbols = [
 id = "client.deployment_config"
 class = "V0"
 description = "What a client deployment may declare: an unknown field fails rather than defaulting, a binding on a header the client does not send is refused, a DPoP binding digests what the verifier digests and only on a bearer `authorization`, the clock-skew bound matches the profile's, a disabled or unbounded reload cadence is refused, route ids are unique, the org-key pin set is non-empty and the rollback floor must be named."
-paths = ["mcp-re-client/src/config/mod.rs"]
+paths = [
+  "mcp-re-client/src/config/mod.rs",
+  "mcp-re-client/src/config/validation.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"

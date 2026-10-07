@@ -36,6 +36,7 @@ from _fingerprint import (  # noqa: E402
     canonical_digest,
     fingerprint_theorem,
     fingerprint_unit,
+    theorem_premises,
     theorem_review_digests,
 )
 from _manifest import (  # noqa: E402
@@ -985,6 +986,109 @@ def test_the_assumption_axis_reads_the_live_registry_entry():
     entry["justification"] = entry["justification"] + " And another thing."
     assert assumption_digest(entry) != before
 
+
+
+# --- the premise-closure rule (r12 defect D) ------------------------------------------
+
+
+def _closure_fixture(*entries: dict) -> dict:
+    """THM-A on unit `a`, THM-B on unit `b`; both cross `boundary.k`, only `a` is named."""
+    theorems = {
+        "theorem": [
+            {"id": "THM-A", "supported_by": ["unit://a"]},
+            {"id": "THM-B", "supported_by": ["unit://b"]},
+        ]
+    }
+    registry = {"assumption": list(entries)}
+    fps = {}
+    for unit in ("a", "b"):
+        named = {
+            e["id"]: assumption_digest(e)
+            for e in entries
+            if f"unit://{unit}" in e.get("scope", [])
+        }
+        fps[unit] = {
+            "components": {
+                "trusted_assumptions": named,
+                "governing_boundaries": {"boundary.k": "sha256:k"},
+            }
+        }
+    return theorem_premises(theorems, fps, registry)
+
+
+def _premise_entry(asm_id: str, scope: list[str], **extra) -> dict:
+    return {"id": asm_id, "scope": scope, "premise_class": "assumed", **extra}
+
+
+def test_a_unit_scoped_premise_does_not_spread_to_every_unit_crossing_its_boundary():
+    """Over-inclusion. The `boundary://` entry of a unit-scoped premise says which boundary
+    it discharges FOR the units it names; a second unit crossing the same boundary does not
+    thereby rest on it. Spread, a narrowed scope changed no closure."""
+    named = _premise_entry("ASM-N", ["unit://a", "boundary://boundary.k"])
+    closure = _closure_fixture(named)
+    assert set(closure["THM-A"]) == {"ASM-N"}
+    assert closure["THM-B"] == {}, closure["THM-B"]
+
+
+def test_a_boundary_only_premise_attaches_to_every_unit_crossing_its_boundary():
+    """Nothing narrower was stated, so every crosser rests on it."""
+    wide = _premise_entry("ASM-W", ["boundary://boundary.k"])
+    closure = _closure_fixture(wide)
+    assert set(closure["THM-A"]) == {"ASM-W"}
+    assert set(closure["THM-B"]) == {"ASM-W"}
+
+
+def test_a_model_registration_is_in_no_closure_and_its_interpreter_is():
+    """Ruling 39 §4: trust is attributed to the premise that gives the symbol its meaning."""
+    giver = _premise_entry("ASM-G", ["unit://a", "boundary://boundary.k"])
+    registration = {
+        "id": "ASM-R",
+        "scope": ["unit://a", "boundary://boundary.k"],
+        "premise_class": "model-registration",
+        "interpreted_by": "ASM-G",
+    }
+    closure = _closure_fixture(giver, registration)
+    assert set(closure["THM-A"]) == {"ASM-G"}
+
+
+def test_the_live_closures_take_the_repaired_premises_and_drop_the_registrations():
+    """Under-inclusion is repaired by DATA: a premise names the unit that calls into its
+    boundary. Measured on the live registry so a reverted scope is seen here."""
+    from _theorems import load_theorems
+
+    verification = load_verification()
+    assumptions = load_assumptions()
+    theorems = load_theorems(
+        {unit["id"] for unit in verification.get("unit", [])},
+        [e for e in verification.get("edge", []) if e.get("kind") == "PROOF_DEPENDENCY"],
+    )
+    toolchains = load_toolchains()
+    wanted = {
+        "THM-0045": "ASM-0078",
+        "THM-0083": "ASM-0083",
+        "THM-0108": "ASM-0027",
+        "THM-0117": "ASM-0076",
+        "THM-0007": "ASM-0037",
+    }
+    units = {
+        str(target).removeprefix("unit://")
+        for row in theorems["theorem"]
+        if row["id"] in wanted
+        for target in row.get("supported_by", [])
+    }
+    fps = {
+        unit["id"]: fingerprint_unit(unit, verification, toolchains, assumptions)
+        for unit in verification["unit"]
+        if unit["id"] in units
+    }
+    closures = theorem_premises(
+        {"theorem": [r for r in theorems["theorem"] if r["id"] in wanted]}, fps, assumptions
+    )
+    for theorem_id, premise in wanted.items():
+        assert premise in (closures[theorem_id] or {}), (theorem_id, closures[theorem_id])
+    assert not any(
+        asm in (closure or {}) for closure in closures.values() for asm in ("ASM-0074", "ASM-0075")
+    )
 
 if __name__ == "__main__":
     failures = 0

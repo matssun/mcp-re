@@ -778,3 +778,29 @@ fn a_configured_transport_contract_is_refused_rather_than_ignored() {
         "a policy that names no versions still has a contract",
     );
 }
+
+/// THM-0001's window property on the bodyless REQUEST path: it holds for the parameter sets
+/// this path admits only because the path asks `check_params`, and this is the witness.
+#[test]
+fn a_bodyless_request_outside_its_signature_window_is_refused() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-stale",
+    )
+    .expect("a bodyless request signs");
+    let stale = EXPIRES + policy().max_clock_skew() + 1;
+    assert_eq!(
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), stale).unwrap_err(),
+        HttpProfileError::StaleWindow,
+    );
+}

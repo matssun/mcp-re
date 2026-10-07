@@ -33,9 +33,7 @@ use mcp_re_client_proxy::RouteRegistry;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
-use mcp_re_host::NonceSource;
 use mcp_re_host::SystemNonceSource;
-use mcp_re_host::NONCE_BYTES;
 use mcp_re_transport::remote::MtlsRemoteTransport;
 use mcp_re_transport::ClientTlsConfig;
 use mcp_re_transport::MtlsClient;
@@ -203,9 +201,7 @@ pub fn build(config: &ClientConfig, now: i64) -> Result<BuiltClient, StartupErro
 /// 16 bytes encode to 22 characters, which is exactly the emission floor the core
 /// enforces — the nonce carries 128 bits and nothing here can shorten it.
 pub fn next_nonce() -> String {
-    let mut bytes = [0u8; NONCE_BYTES];
-    SystemNonceSource::new().fill(&mut bytes);
-    b64url_encode(&bytes)
+    b64url_encode(&SystemNonceSource::new().draw())
 }
 
 fn build_transport(config: &ClientConfig) -> Result<MtlsRemoteTransport, StartupError> {
