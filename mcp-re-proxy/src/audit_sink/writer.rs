@@ -49,7 +49,7 @@ pub(super) static STDERR_AUDIT_WRITER: std::sync::OnceLock<
     std::sync::mpsc::SyncSender<AuditMessage>,
 > = std::sync::OnceLock::new();
 
-/// Records that never reached the writer because the queue was full.
+/// Records that never reached the writer: the queue was full, or past their class's ceiling.
 pub(super) static STDERR_AUDIT_DROPPED: AtomicU64 = AtomicU64::new(0);
 
 /// Lines on the queue and not yet dequeued by the writer: the channel's line occupancy,
@@ -181,9 +181,9 @@ fn report_drops(stderr: &mut impl std::io::Write, counter: &AtomicU64, failed: &
         return;
     }
     let report = format!(
-        "mcp-re-proxy: audit dropped={dropped}{run} (the audit hand-off queue was full; \
-         that many decisions are missing from this stream, and their seq numbers are \
-         the gaps in it)",
+        "mcp-re-proxy: audit dropped={dropped}{run} (the hand-off queue was full, or past \
+         the share unattributed records may take; that many decisions are missing from \
+         this stream, and their seq numbers are the gaps in it)",
         run = super::stream::run_suffix()
     );
     if !write_record(stderr, &report) {
@@ -323,6 +323,20 @@ mod tests {
         });
         assert_eq!(bytes, b"x\n");
         assert!(!failed.load(Ordering::Relaxed));
+    }
+
+    /// One counter carries both refusals `offer` makes — a full queue, and an unattributed
+    /// record past its ceiling while the queue still has room — so the report names both
+    /// rather than blaming a full queue for a drop made at three-quarters depth.
+    #[test]
+    fn a_drop_report_names_both_causes_the_counter_carries() {
+        let mut out = Vec::new();
+        report_drops(&mut out, &AtomicU64::new(1), &AtomicBool::new(false));
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("queue was full") && text.contains("unattributed records"),
+            "{text:?}"
+        );
     }
 
     #[test]

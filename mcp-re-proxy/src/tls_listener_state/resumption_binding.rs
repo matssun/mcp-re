@@ -28,10 +28,10 @@ use super::auth_epoch::TlsAuthEpoch;
 /// BUILDING is not, and cannot be cheaply: it is the ECDSA work that dominates a full
 /// handshake. So resumption is gated instead on
 /// [`TlsAuthEpoch`](TlsAuthEpoch), a digest of the trusted
-/// client-CA set and the client-auth policy — exactly the inputs chain building depends
-/// on. While that digest holds, a stored chain is still one the current trust would
-/// build; when an operator withdraws a CA it changes, every stored session stops being a
-/// shortcut, and the peer takes a full handshake against current trust.
+/// client-CA set — the input chain building depends on. While that digest holds, a
+/// stored chain is still one the current trust would build. Under ADR-MCPRE-062 model A
+/// it holds for the listener's life: withdrawing a CA is a restart, a new listener state
+/// with an empty cache, so no session stored under the old set is ever offered.
 ///
 /// A stale session is never an authorization failure — it is the absence of a shortcut.
 ///
@@ -68,9 +68,9 @@ pub(super) fn epoch_bound_resumption(
 ) -> ServerConfig {
     if let Some(previous) = resumption.republish(epoch) {
         eprintln!(
-            "mcp-re-proxy: TLS auth epoch advanced {} -> {} (trusted client CAs or the \
-             client-auth policy changed); every stored session stops being a shortcut and \
-             its peer takes a full handshake against current trust",
+            "mcp-re-proxy: TLS auth epoch advanced {} -> {} (the trusted client-CA set \
+             changed); every stored session stops being a shortcut and its peer takes a \
+             full handshake against current trust",
             previous.short(),
             epoch.short()
         );

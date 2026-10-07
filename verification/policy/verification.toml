@@ -8949,6 +8949,7 @@ tested_symbols = [
   # Moved with its subject: `report_drops` is the writer's, so the control over it lives
   # beside the writer. The proposition is unchanged.
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::the_drop_count_is_reported_without_a_following_record",
+  "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_drop_report_names_both_causes_the_counter_carries",
   # The converse, which held nowhere. "Never reported twice" was asserted against a `Vec<u8>`
   # that cannot fail; "reported at LEAST once" was false, because the count was taken out of
   # the counter before a write whose failure was discarded — erasing exactly the gaps a full

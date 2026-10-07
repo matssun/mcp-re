@@ -11,9 +11,9 @@
 //! an issuer and serial already extracted from the leaf). CHAIN BUILDING is not, and
 //! cannot be cheaply — it is the ECDSA work that dominates a full handshake.
 //!
-//! So resumption is gated on a digest of the inputs chain building depends on. Resume
-//! only while that digest is unchanged; on any change, the stored session stops being a
-//! shortcut and the peer takes a full handshake against the current trust.
+//! So resumption is gated on a digest of the inputs chain building depends on: a session
+//! resumes only when its tag equals the listener's epoch. Under ADR-MCPRE-062 model A the
+//! epoch is fixed for the life of the listener state — the client-CA set is read once.
 //!
 //! # What the epoch covers, and what it deliberately does not
 //!
@@ -26,13 +26,12 @@
 //! refused on its next request whether or not the session resumed — invalidating
 //! sessions would buy nothing. Meanwhile a CRL is routinely re-signed on the
 //! `--client-crl-reload-secs` cadence with an unchanged revoked set: hashing its bytes
-//! would move the epoch on every reload, and because TLS 1.3 has no renegotiation an
-//! epoch change is connection-fatal. That is a fleet-wide teardown every reload
-//! interval — strictly worse than refusing resumption outright.
+//! would give every reload's rebuild a different epoch, and every stored session would
+//! stop resuming each reload interval — strictly worse than refusing resumption outright.
 //!
-//! With CRL data excluded the epoch moves only when an operator changes trusted CAs:
-//! rare, deliberate, and exactly the event on which an old authentication result must
-//! stop being honoured.
+//! With CRL data excluded, a different epoch means a different trusted-CA set, which under
+//! model A is a different listener state: a restart with its own empty session cache, so
+//! no session stored under a withdrawn CA can reach it.
 //!
 //! # Why a digest and not a counter
 //!
@@ -175,9 +174,9 @@ impl SharedTlsAuthEpoch {
 ///
 /// The store OUTLIVES any one `ServerConfig`. A rebuild — the `--client-crl-reload-secs`
 /// cadence is the one that happens in a running process — installs THIS store again and
-/// republishes the epoch computed from that rebuild's trust inputs, so the cache the
-/// fleet filled survives the reload. Under model A that epoch is the same value every
-/// time; the tag comparison is defence in depth beneath cache non-continuity.
+/// republishes the epoch the store already holds (`TlsListenerState::bind_resumption`),
+/// so the cache the fleet filled survives the reload. Under model A no rebuild changes
+/// the epoch; the tag comparison is defence in depth beneath cache non-continuity.
 #[derive(Debug)]
 pub(super) struct EpochBoundSessionStore {
     epoch: Arc<SharedTlsAuthEpoch>,
