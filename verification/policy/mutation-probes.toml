@@ -6789,6 +6789,7 @@ weakening = """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::signing_window::tests::an_expired_credential_opens_no_window",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_signature_expiry_never_outlives_the_credential",
 ]
 note = """
 TWO BOUNDS, AND THE OTHER ONE IS THE OPERATOR'S. The configured TTL is what the deployment

@@ -46,7 +46,6 @@ use crate::delegation::KEY_USE_RESPONSE_SIGNING;
 use crate::error::HttpProfileError;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
-use crate::sign::sign_delegated_response_full_with_owned_key;
 
 mod active_key;
 mod issuance_refusal;
@@ -75,6 +74,10 @@ pub enum CustodyError {
     Sign(HttpProfileError),
     /// An epoch advance named a counter below the held one; nothing changed.
     EpochBehind,
+    /// No [`SigningWindow`] opens over the current snapshot at this instant — the
+    /// configured TTL is not positive or the credential is past its `exp` — so there is no
+    /// validity to advertise and nothing is signed.
+    NoSigningWindow,
 }
 
 /// One audited key-lifecycle event (ADR-MCPRE-052 §7). Carries no key material and
@@ -365,12 +368,11 @@ where
     /// Sign `response` with the current delegated key, issuing/rotating as needed.
     /// The root is NOT touched here unless a rotation is due.
     ///
-    /// The RFC 9421 `expires` is clamped to the credential's own `exp`. `exp` is the
-    /// fail-closed bound — a signer MUST stop signing off this snapshot once
-    /// `now >= exp` — so a signature whose stated validity outlives it would advertise
-    /// a freshness window longer than the credential authorizing the key that made it.
-    /// Near the end of a credential's life `now + ttl` crosses that bound, which is
-    /// exactly when it matters.
+    /// Signs through a [`SigningWindow`] opened over the current snapshot, like every other
+    /// delegated emitter, so the advertised validity is the window's: `now + ttl` clamped
+    /// to the credential's own `exp`. When no window can be opened there is nothing to
+    /// advertise and the call is refused with [`CustodyError::NoSigningWindow`] rather than
+    /// signing under a window that is already closed.
     pub fn sign_response(
         &mut self,
         now: i64,
@@ -384,18 +386,11 @@ where
         let Some(a) = self.active.as_ref() else {
             return Err(CustodyError::FailClosedIssuance);
         };
-        sign_delegated_response_full_with_owned_key(
-            response,
-            request,
-            a.server_signer(),
-            a.credential(),
-            a.key(),
-            a.delegated_kid(),
-            now,
-            issuance_terms::signature_valid_until(now, self.cfg.window.ttl(), a.exp()),
-        )
-        .map(|_base| ())
-        .map_err(CustodyError::Sign)
+        let window = SigningWindow::over(Arc::new(a.clone()), now, self.cfg.window.ttl())
+            .ok_or(CustodyError::NoSigningWindow)?;
+        sign_delegated_response_full(response, request, &window)
+            .map(|_base| ())
+            .map_err(CustodyError::Sign)
     }
 
     /// An owned snapshot of the current delegated key + credential (`None` before
@@ -951,6 +946,65 @@ mod tests {
             emitted, exp,
             "the window must stop at the credential's exp, not at now + ttl ({input})"
         );
+    }
+
+    /// The public signer advertises exactly the [`SigningWindow`] it opens over the current
+    /// snapshot — the same value every other delegated emitter signs under — and no window
+    /// means no signature. A non-positive TTL never reaches it: no [`DelegatedKeyWindow`]
+    /// holds one, and no window opens over one.
+    #[test]
+    fn the_public_signer_signs_under_the_window_and_refuses_without_one() {
+        assert!(DelegatedKeyWindow::of(0, 0).is_err());
+        assert!(DelegatedKeyWindow::of(-1, -2).is_err());
+
+        let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
+        c.ensure_active(1_000).expect("issue");
+        let snapshot = Arc::new(c.active_snapshot().expect("active"));
+        assert!(SigningWindow::over(Arc::clone(&snapshot), 1_050, 0).is_none());
+        assert!(SigningWindow::over(Arc::clone(&snapshot), 1_050, -1).is_none());
+
+        let now = 1_050;
+        let window = SigningWindow::over(snapshot, now, T).expect("a live credential");
+        let mut request = HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers: vec![("Content-Type".into(), "application/json".into())],
+            body: crate::sign::with_valid_block(
+                br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#,
+            ),
+        };
+        crate::sign::sign_request(
+            &mut request,
+            &SigningKey::from_seed_bytes(&[77u8; 32]),
+            "client-key-1",
+            now,
+            now + 60,
+            "n-window",
+        )
+        .expect("request signs");
+        let mut response = crate::message::HttpResponse {
+            status: 200,
+            headers: vec![("Content-Type".into(), "application/json".into())],
+            body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
+        };
+        c.sign_response(now, &mut response, &request)
+            .expect("response signs");
+        let input = response
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("signature-input"))
+            .map(|(_, v)| v.clone())
+            .expect("the signer emitted signature-input");
+        let field = |name: &str| -> i64 {
+            input
+                .split(&format!(";{name}="))
+                .nth(1)
+                .and_then(|rest| rest.split(';').next())
+                .and_then(|n| n.parse().ok())
+                .expect("the parameter is present and an integer")
+        };
+        assert_eq!(field("created"), window.created(), "{input}");
+        assert_eq!(field("expires"), window.expires(), "{input}");
     }
 
     /// A root issuer that succeeds `successes` times and declines forever after —

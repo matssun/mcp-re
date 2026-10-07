@@ -8461,6 +8461,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::fail_closed_when_issuance_fails_after_expiry",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::an_expired_predecessor_displaced_by_a_recovered_root_is_retired_first",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_signature_expiry_never_outlives_the_credential",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_public_signer_signs_under_the_window_and_refuses_without_one",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_failing_root_is_retried_on_a_bounded_interval_not_once_per_request",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_declined_reissue_leaves_the_predecessor_untouched",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_minted_credential_carries_the_configured_scope_and_trust_epoch",
