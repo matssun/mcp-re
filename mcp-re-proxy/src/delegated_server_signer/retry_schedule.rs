@@ -27,12 +27,13 @@ const ROTATION_BACKOFF_MIN_MS: u64 = 50;
 ///   before the key expires. Once expired (`None`/`<= 0`), only the 30s ceiling applies
 ///   — serving is already failing closed and resumes as soon as issuance recovers.
 /// - "Equal jitter": the final sleep is uniformly in `[cap/2, cap]`, decorrelating a
-///   fleet of rotors so they do not stampede the root issuer in lockstep. `jitter` is a
-///   caller-supplied random u64 (OS CSPRNG in production).
+///   fleet of rotors so they do not stampede the root issuer in lockstep. `draw` yields
+///   random u64s (OS CSPRNG in production), `None` when the source fails; the sample is
+///   taken by [`uniform_below`], which is unbiased.
 pub fn rotation_backoff(
     consecutive_failures: u32,
     seconds_to_expiry: Option<i64>,
-    jitter: u64,
+    draw: impl FnMut() -> Option<u64>,
 ) -> Duration {
     // Exponential term, shift-capped at 2^20 to avoid overflow on a pathological streak.
     let shift = consecutive_failures.saturating_sub(1).min(20);
@@ -55,6 +56,54 @@ pub fn rotation_backoff(
     // most `half`, so the sum is at most `cap_ms` and neither saturation is reachable —
     // both are named because a wrapped interval would retry against a failing root at once.
     let span = std::num::NonZeroU64::new(half.saturating_add(1)).unwrap_or(NonZeroU64::MIN);
-    let jittered = half.saturating_add(jitter % span);
+    let jittered = half.saturating_add(uniform_below(span, draw));
     Duration::from_millis(jittered)
+}
+
+/// Draws [`uniform_below`] makes before it gives up and samples no jitter. A real source
+/// is rejected with probability below `span / 2^64` per draw, so this bounds only a source
+/// that repeats a rejected value.
+const MAX_JITTER_DRAWS: u32 = 8;
+
+/// A uniform sample of `0..span`, by rejection. `2^64` is not a multiple of `span`, so the
+/// `2^64 mod span` lowest draws would land on some residues once more than the rest; those
+/// are redrawn. A failed source, or [`MAX_JITTER_DRAWS`] rejections, yields 0: no jitter,
+/// the bounded schedule unchanged.
+fn uniform_below(span: NonZeroU64, mut draw: impl FnMut() -> Option<u64>) -> u64 {
+    let rejected_below = 0u64.wrapping_sub(span.get()) % span;
+    for _ in 0..MAX_JITTER_DRAWS {
+        match draw() {
+            Some(x) if x >= rejected_below => return x % span,
+            Some(_) => {}
+            None => return 0,
+        }
+    }
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 1d4ad626: a draw in the biased low band is redrawn, not reduced. For a 250ms cap
+    /// the span is 126 and `2^64 mod 126 = 16`, so 3 is rejected and 131 gives 131 % 126.
+    #[test]
+    fn a_draw_in_the_biased_band_is_redrawn() {
+        let mut draws = [Some(3), Some(131)].into_iter();
+        let d = rotation_backoff(1, Some(300), || draws.next().flatten());
+        assert_eq!(d, Duration::from_millis(125 + 5));
+    }
+
+    /// A failed source samples no jitter rather than panicking or spinning.
+    #[test]
+    fn a_failed_source_samples_no_jitter() {
+        assert_eq!(
+            rotation_backoff(1, Some(300), || None),
+            Duration::from_millis(125)
+        );
+        assert_eq!(
+            rotation_backoff(1, Some(300), || Some(0)),
+            Duration::from_millis(125)
+        );
+    }
 }

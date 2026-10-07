@@ -6,9 +6,11 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 /// Cold-path rotation observability (ADR-MCPRE-052 §6, MCPRE-122). Plain atomic
-/// counters the single rotor owner writes and any observer (a logging line today, a
-/// metrics exporter later) reads without locking. NONE of these touch the hot signing
-/// path — they describe the rotor's health, not per-request work.
+/// counters the single rotor owner writes and reads without locking. The proxy has no
+/// health or metrics endpoint: its operator surface for rotor health is stderr, where
+/// each rotation success line carries `rotations_ok` and each issuance failure line the
+/// other three, so nothing reports a failing rotor as healthy. NONE of these touch the
+/// hot signing path — they describe the rotor's health, not per-request work.
 ///
 /// `time-to-expiry` is intentionally NOT stored here: it is a function of the live
 /// snapshot and `now`, so it is computed on demand from

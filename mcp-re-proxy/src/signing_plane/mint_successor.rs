@@ -110,29 +110,34 @@ fn back_off_after_failure(
     current_still_valid: bool,
 ) -> RotationStep {
     use crate::delegated_server_signer::rotation_backoff;
-    let consecutive_failures = signer.metrics().record_failure();
+    let metrics = signer.metrics();
+    let consecutive_failures = metrics.record_failure();
     let ttl = signer.seconds_to_expiry(now_unix());
-    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter);
     if current_still_valid {
         eprintln!(
             "mcp-re-proxy: WARNING: delegated successor issuance FAILED ({}) but the \
-         current key is still valid; consecutive_failures {}, \
-         time-to-expiry {}s. Serving continues on the current key until its exp, \
-         then FAILS CLOSED (ADR-MCPRE-052 §6). Retrying in {}ms.",
+         current key is still valid; consecutive_failures {} (of {} total), last success \
+         at unix {} (0 = never), time-to-expiry {}s. Serving continues on the current key \
+         until its exp, then FAILS CLOSED (ADR-MCPRE-052 §6). Retrying in {}ms.",
             cause,
             consecutive_failures,
+            metrics.rotation_failures(),
+            metrics.last_success_unix(),
             ttl.unwrap_or(0),
             backoff.as_millis(),
         );
     } else {
         eprintln!(
             "mcp-re-proxy: WARNING: delegated key issuance FAILED ({}); \
-         consecutive_failures {}, time-to-expiry {}s. Serving \
-         continues only until the current delegated key expires, then FAILS CLOSED \
-         (ADR-MCPRE-052 §6) — no stale-key extension, no direct-root fallback. \
-         Retrying in {}ms.",
+         consecutive_failures {} (of {} total), last success at unix {} (0 = never), \
+         time-to-expiry {}s. Serving continues only until the current delegated key \
+         expires, then FAILS CLOSED (ADR-MCPRE-052 §6) — no stale-key extension, no \
+         direct-root fallback. Retrying in {}ms.",
             cause,
             consecutive_failures,
+            metrics.rotation_failures(),
+            metrics.last_success_unix(),
             ttl.unwrap_or(0),
             backoff.as_millis(),
         );

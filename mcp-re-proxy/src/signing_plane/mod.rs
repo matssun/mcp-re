@@ -225,15 +225,13 @@ impl SigningPlane {
     }
 }
 
-/// A fresh random u64 from the OS CSPRNG for backoff jitter. On the (astronomically
-/// unlikely) CSPRNG failure, fall back to 0 (no jitter) rather than panicking the
-/// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
-fn rotation_jitter() -> u64 {
+/// A fresh random u64 from the OS CSPRNG for backoff jitter. `None` on the (astronomically
+/// unlikely) CSPRNG failure, which the schedule takes as no jitter rather than panicking
+/// the rotation thread — the backoff still bounds the retry rate, only its dither is lost.
+fn rotation_jitter() -> Option<u64> {
     let mut b = [0u8; 8];
-    match getrandom::fill(&mut b) {
-        Ok(()) => u64::from_le_bytes(b),
-        Err(_) => 0,
-    }
+    getrandom::fill(&mut b).ok()?;
+    Some(u64::from_le_bytes(b))
 }
 /// Build the delegated-signing trust-epoch watcher from the SHARED epoch plan (CF-09).
 ///

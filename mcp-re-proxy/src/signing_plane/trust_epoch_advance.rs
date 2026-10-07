@@ -105,7 +105,7 @@ fn refuse_to_mint_without_a_comparable_epoch(
     use crate::delegated_server_signer::rotation_backoff;
     let consecutive_failures = signer.metrics().record_failure();
     let ttl = signer.seconds_to_expiry(now_unix());
-    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter);
     eprintln!(
         "mcp-re-proxy: WARNING: {refusal}; \
          NOT minting (a credential without a comparable epoch is unrevokable). \
@@ -123,7 +123,7 @@ fn refuse_to_mint_without_a_comparable_epoch(
 
 /// Ask the root to re-issue under the new epoch, and read its answer.
 ///
-/// Three outcomes and only one advances this replica. On a DECLINE, `last` is
+/// Only `Advanced` advances this replica. On a DECLINE, `last` is
 /// deliberately left where it was so the next pass re-enters and retries; advancing it
 /// here would report a revocation that never happened and never look at it again.
 fn apply_epoch_advance(
@@ -157,7 +157,7 @@ fn apply_epoch_advance(
         Ok(TrustEpochAdvance::Declined) => {
             let consecutive_failures = signer.metrics().record_failure();
             let ttl = signer.seconds_to_expiry(now_unix());
-            let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+            let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter);
             eprintln!(
                 "mcp-re-proxy: WARNING: trust epoch advance to {label} NOT APPLIED (root issuer \
                  declined); this replica is STILL SIGNING with its prior-epoch key until that \
@@ -173,6 +173,9 @@ fn apply_epoch_advance(
             }
             EpochStep::Retry(consecutive_failures)
         }
+        // Signing is withdrawn for good (teardown or a dead rotor): nothing serves, nothing
+        // to retry, and the loop ends.
+        Ok(TrustEpochAdvance::Retired) => EpochStep::Halt,
         // The custody refused a counter below its epoch; nothing moved, so nothing to retry.
         Err(CustodyError::EpochBehind) => {
             eprintln!("mcp-re-proxy: WARNING: trust epoch {label} is BEHIND {last}; refused.");
@@ -181,7 +184,7 @@ fn apply_epoch_advance(
         Err(_) => {
             let consecutive_failures = signer.metrics().record_failure();
             let ttl = signer.seconds_to_expiry(now_unix());
-            let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+            let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter);
             eprintln!(
                 "mcp-re-proxy: WARNING: re-issue on trust-epoch advance FAILED (root issuer \
                  unavailable); consecutive_failures {}. Retrying in {}ms.",

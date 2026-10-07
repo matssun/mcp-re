@@ -58,13 +58,9 @@ pub(super) fn spawn_delegated_rotation_task(
 
 /// The `catch_unwind` and the fail-closed action it converts a panic into, AS A VALUE.
 ///
-/// Taking the body rather than writing it inline is what makes the supervisor reachable. It
-/// was written inline, and the only way to inject a panic was to spawn through `WorkerSet`
-/// directly — which measures `WorkerSet` and not this. `SigningPlane::for_teardown_test`
-/// advertises "one that panics" and does exactly that, which is why deleting this
-/// supervisor left every test green.
-///
-/// A pure extraction: it moves no decision, adds no type, and stays private to this module.
+/// Taking the body as a value is what makes the supervisor reachable from a test: a panic
+/// injected through `WorkerSet` directly measures `WorkerSet`, not this. It decides nothing
+/// and stays private to this module.
 ///
 /// SUPERVISION (C040). This thread is the ONLY thing that mints delegated keys, and nothing
 /// observes it while it runs — `WorkerSet` reclaims it at shutdown, far too late to matter.
@@ -118,8 +114,11 @@ pub(super) fn rotation_loop(
     // label from the startup issuance). An advance of the shared counter moves it;
     // verifiers pinned to the old label then reject across replicas.
     let mut last_epoch = rotor.trust_epoch().clone();
+    // A permanently retired signer ends the loop like a halt: nothing it mints is
+    // published, so every later attempt would only count a failure against a dead signer.
+    let stopped = || halt.requested() || signer.is_retired_permanently();
     loop {
-        if halt.requested() {
+        if stopped() {
             return;
         }
         // Skipped while retrying after a failure: the backoff below is the wait then, and
@@ -129,7 +128,7 @@ pub(super) fn rotation_loop(
         {
             return;
         }
-        if halt.requested() {
+        if stopped() {
             return;
         }
         match observe_trust_epoch(rotor, signer, epoch_watch, &mut last_epoch, halt) {
@@ -345,5 +344,35 @@ mod tests {
         );
         assert_eq!(signer.metrics().consecutive_failures(), 1);
         assert_eq!(signer.metrics().rotation_failures(), 1);
+    }
+
+    /// ed248f11: a permanently retired signer ends the loop on its own, with no halt
+    /// raised, and records no failure against it. Without the check the loop reads every
+    /// pass as "no progress", backs off, and counts on until the halt.
+    #[test]
+    fn a_permanently_retired_signer_ends_the_loop_without_counting_failures() {
+        let mut rotor = crate::delegated_wiring::test_support::published(now_unix() + 3600, 9);
+        let signer = rotor.signer();
+        rotor.retirement().retire_permanently();
+        let deployment = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let workers = crate::managed_worker::WorkerSet::new(Arc::clone(&deployment));
+        let halt = workers.halt();
+        let (ended_tx, ended) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn({
+            let signer = Arc::clone(&signer);
+            move || {
+                rotation_loop(&mut rotor, &signer, 60, None, &halt);
+                let _ = ended_tx.send(());
+            }
+        });
+        let ended_alone = ended.recv_timeout(Duration::from_secs(5)).is_ok();
+        deployment.store(true, std::sync::atomic::Ordering::SeqCst);
+        worker.join().expect("rotation loop thread");
+
+        assert!(
+            ended_alone,
+            "a retired signer must end the loop without a halt"
+        );
+        assert_eq!(signer.metrics().rotation_failures(), 0);
     }
 }

@@ -164,6 +164,16 @@ impl DelegatedServerSigner {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Snapshot::Terminal;
     }
 
+    /// Whether signing has been withdrawn for good. Absorbing: once `true`, always `true`,
+    /// so a `false` read is the only answer a later read can overturn.
+    pub(crate) fn is_retired_permanently(&self) -> bool {
+        let guard = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        matches!(*guard, Snapshot::Terminal)
+    }
+
     /// The current delegated key snapshot IFF it is still valid at `now`. Returns
     /// `None` before the first issuance, after retirement, before the credential's `nbf`,
     /// or once `now >= exp` — the window is `[nbf, exp)` as the credential states it, and
@@ -206,6 +216,9 @@ pub enum TrustEpochAdvance {
     /// still valid, so it keeps serving until its own `exp`. The advance has not
     /// happened: the caller must retry, and must not report the epoch as applied.
     Declined,
+    /// The signer is retired permanently, so no key serves and no advance can take
+    /// effect here, whatever the root answered. There is nothing to retry.
+    Retired,
 }
 
 /// The cold-path rotation driver: owns the custody state machine and republishes
@@ -294,7 +307,7 @@ where
         counter: i64,
         now: i64,
     ) -> Result<TrustEpochAdvance, CustodyError> {
-        match self.custody.advance_trust_epoch(counter, now) {
+        let advance = match self.custody.advance_trust_epoch(counter, now) {
             Ok(Some(successor)) => self
                 .publish(successor)
                 .map(|()| TrustEpochAdvance::Advanced),
@@ -307,6 +320,12 @@ where
                 self.signer.retire();
                 Err(e)
             }
+        };
+        // Retirement is absorbing, so a terminal read AFTER the step is decisive: a publish
+        // it raced was ignored, and a predecessor the root's decline left in place is gone.
+        match advance {
+            Ok(_) if self.signer.is_retired_permanently() => Ok(TrustEpochAdvance::Retired),
+            other => other,
         }
     }
 
@@ -492,6 +511,35 @@ mod tests {
             "no fresh key was minted, so the replica is still signing under the epoch \
              the operator just revoked"
         );
+
+        // 39d03ae2: the same decline once signing is withdrawn for good serves nothing.
+        rotor.retirement().retire_permanently();
+        assert_eq!(
+            rotor
+                .advance_trust_epoch(2, NOW + 6)
+                .expect("a retired signer is not an error"),
+            TrustEpochAdvance::Retired,
+            "a decline after retirement must not claim the predecessor still serves"
+        );
+    }
+
+    /// 39d03ae2: an advance landing after permanent retirement — the plane's teardown, or
+    /// a dead rotor — reports `Retired`, never `Declined`'s "the predecessor still serves"
+    /// nor an `Advanced` whose publish was ignored.
+    #[test]
+    fn an_advance_after_permanent_retirement_reports_retired() {
+        let (mut rotor, signer) = rotor();
+        rotor.rotate(NOW).expect("K1 issues");
+        rotor.retirement().retire_permanently();
+        assert_eq!(
+            rotor
+                .advance_trust_epoch(2, NOW + 5)
+                .expect("a retired signer is not an error"),
+            TrustEpochAdvance::Retired,
+            "the root minted, but nothing was published: no key serves under any epoch"
+        );
+        assert!(signer.current(NOW + 5).is_none(), "nothing serves");
+        assert!(signer.is_retired_permanently());
     }
 
     #[test]
@@ -620,7 +668,7 @@ mod tests {
     /// The jittered result must always land in the equal-jitter band `[cap/2, cap]`.
     fn assert_in_band(consecutive: u32, ttl: Option<i64>, expected_cap_ms: u64) {
         for jitter in [0u64, 1, 7, 12_345, u64::MAX / 2, u64::MAX] {
-            let d = rotation_backoff(consecutive, ttl, jitter).as_millis() as u64;
+            let d = rotation_backoff(consecutive, ttl, || Some(jitter)).as_millis() as u64;
             assert!(
                 d >= expected_cap_ms / 2 && d <= expected_cap_ms,
                 "consec={consecutive} ttl={ttl:?} jitter={jitter}: {d}ms not in [{}, {}]",

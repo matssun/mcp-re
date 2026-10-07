@@ -12658,3 +12658,60 @@ note = """
 The tier line names T only symbolically, and a deployment with reload OFF prints its value nowhere
 at startup.
 """
+
+[[probe]]
+id = "M521-proxy-the-rotation-loop-ignores-a-permanent-retirement"
+unit = "proxy.delegated_signing_credential"
+conjunct = "a permanently retired signer ends the rotation loop, and no failure is counted against it"
+path = "mcp-re-proxy/src/signing_plane/rotation.rs"
+anchor = """
+    let stopped = || halt.requested() || signer.is_retired_permanently();
+"""
+weakening = """
+    let stopped = || halt.requested();
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#signing_plane::rotation::tests::a_permanently_retired_signer_ends_the_loop_without_counting_failures",
+]
+note = """
+The loop reads every pass over a retired signer as no progress, backs off and counts a failure
+against a signer nothing can revive, until the halt arrives.
+"""
+
+[[probe]]
+id = "M522-proxy-an-advance-after-retirement-claims-a-serving-key"
+unit = "proxy.delegated_signing_credential"
+conjunct = "an advance after permanent retirement reports Retired, never Declined or Advanced"
+path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
+anchor = """
+            Ok(_) if self.signer.is_retired_permanently() => Ok(TrustEpochAdvance::Retired),
+"""
+weakening = """
+            Ok(_) if false => Ok(TrustEpochAdvance::Retired),
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#delegated_server_signer::tests::an_advance_after_permanent_retirement_reports_retired",
+  "//mcp-re-proxy:proxy_unit_test#delegated_server_signer::tests::a_declined_advance_is_reported_as_declined_and_keeps_the_prior_key",
+]
+note = """
+During teardown a declined advance tells the operator the predecessor still serves, and a minted
+one reports Advanced although its publish was ignored; nothing serves in either case.
+"""
+
+[[probe]]
+id = "M523-proxy-the-backoff-jitter-is-reduced-by-modulo"
+unit = "proxy.delegated_signing_credential"
+conjunct = "the backoff jitter is a uniform sample: draws in the biased low band are redrawn"
+path = "mcp-re-proxy/src/delegated_server_signer/retry_schedule.rs"
+anchor = """
+            Some(x) if x >= rejected_below => return x % span,
+"""
+weakening = """
+            Some(x) => return x % span,
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#delegated_server_signer::retry_schedule::tests::a_draw_in_the_biased_band_is_redrawn",
+]
+note = """
+The lowest 2^64 mod span draws land on some residues once more often than the rest.
+"""
