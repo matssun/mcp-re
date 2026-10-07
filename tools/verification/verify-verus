@@ -74,6 +74,7 @@ from _unit_selection import (  # noqa: E402
     selection_error,
 )
 from _verus_results import evaluate_unit, parse_reports  # noqa: E402
+import _verus_nonvacuity  # noqa: E402
 from _ecosystems import unit_projects  # noqa: E402
 import _rust_targets  # noqa: E402
 
@@ -128,6 +129,32 @@ def build_and_read(label: str) -> tuple[str | None, str, str, int | None]:
     except (KeyError, OSError, ValueError) as exc:
         return f"{label} left no readable report, log and status ({exc})", "", "", None
     return None, report, log, status
+
+
+#: The units whose proved contracts the non-vacuity probe answers for. Selecting one runs it.
+NONVACUITY_UNITS = {"http_profile.artifact_typing"}
+
+
+def nonvacuity_probe() -> int:
+    """Run the artifact verifiers' non-vacuity probe; 1 when it does not refuse as it must.
+
+    r12 Ruling 38 §7. The units' own runs establish that the verifiers' postconditions hold;
+    this establishes that the postconditions over the uninterpreted thumbprint functions
+    CONSTRAIN — see `_verus_nonvacuity`.
+    """
+    label = _verus_nonvacuity.LABEL
+    print(f"verify-verus: non-vacuity probe -> bazel build {label}")
+    problem, output, log, status = build_and_read(label)
+    if problem is not None:
+        print(f"  FAIL: {problem}", file=sys.stderr)
+        return 1
+    source = (REPO_ROOT / _verus_nonvacuity.SOURCE).read_text(encoding="utf-8")
+    ok, detail = _verus_nonvacuity.evaluate(parse_reports(output), log, status, source)
+    if not ok:
+        print(f"  FAIL: {detail}", file=sys.stderr)
+        return 1
+    print(f"  PASS: {detail}")
+    return 0
 
 
 def _pinned_files(toolchains: dict) -> dict[str, str]:
@@ -422,6 +449,9 @@ def main() -> int:
         else:
             print(f"  PASS: {detail}")
             record("pass", detail, prover)
+
+    if any(unit["id"] in NONVACUITY_UNITS for unit in verus_units):
+        failures += nonvacuity_probe()
 
     if failures:
         print(

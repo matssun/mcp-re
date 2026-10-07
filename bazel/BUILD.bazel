@@ -58,6 +58,7 @@ rust_lint_config(
             "scitt_registration",
             "test-fixtures",
             "verify",
+            "verus_nonvacuity_probe",
         ],
         "test": [],
         "verus_keep_ghost": [],

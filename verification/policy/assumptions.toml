@@ -246,7 +246,7 @@ Discharged: `VerifierPolicy` is a verified datatype and `max_clock_skew` is prov
 scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
-review_requirement = "None — discharged by proof, r12 Ruling 36."
+review_requirement = "None — discharged by proof in e3a56fd1 (r12 Ruling 36)."
 affected_contracts = []
 tool_specific_mechanism = "none"
 
@@ -261,7 +261,7 @@ Discharged: As ASM-0007: `max_signature_validity` is proved to return `spec_max_
 scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
-review_requirement = "None — discharged by proof, r12 Ruling 36."
+review_requirement = "None — discharged by proof in e3a56fd1 (r12 Ruling 36)."
 affected_contracts = []
 tool_specific_mechanism = "none"
 
@@ -445,30 +445,33 @@ tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0018"
-description = "`sha256_b64url` returns `sha256_b64url_of` of its input bytes: the thumbprint primitive, trusted to compute the function it names and nothing more."
+description = "`Sha256::digest` from the `sha2` crate returns the FIPS 180-4 SHA-256 digest of its input bytes."
 justification = """
-Below `boundary.crypto_primitives`. `sha256_b64url` is SHA-256 over the presented bytes,
-base64url-encoded, computed by the `sha2` crate; the prover cannot check that, so its
-`external_body` states only that the result is `sha256_b64url_of(bytes)`, an uninterpreted
-function of the bytes (ASM-0073). No collision or preimage property is claimed.
+Below `boundary.crypto_primitives`. `sha256_digest` (artifact/thumbprint.rs) is the one place the
+artifact verifiers call the `sha2` crate, and its `external_body` states only that the result
+is `sha256_of(bytes)` — the uninterpreted name for SHA-256 (ASM-0074). The prover cannot check
+that the crate implements FIPS 180-4; that conformance is the whole of this premise. No
+collision or preimage property is claimed here: what makes a matching thumbprint mean the
+credential bytes agree is SHA-256's own hardness, a separate premise.
 
-The digest COMPARISON is not here. `compare` is proved: it returns `Ok` exactly when the
-binding's digest is, character for character, `sha256_b64url_of` of the presented
-credential. What remains trusted is that this function is SHA-256's thumbprint, and what
-makes a matching thumbprint mean the credential is the one bound is SHA-256's
-second-preimage resistance (ASM-0028), which this entry does not assume.
+What is NOT here, by r12 Ruling 38. The composition `base64url(SHA-256(bytes))` is this
+project's and is proved (`sha256_b64url` against the definition `thumbprint_of`). The comparison is
+proved (`compare`: `Ok` exactly when the binding's digest is the thumbprint of the presented
+credential), and each public verifier's contract carries that relation — the compare half
+this entry once held was discharged by proof in e3a56fd1. The base64url encoding is the
+`base64` crate's and is ASM-0073.
 """
 scope = ["unit://http_profile.artifact_typing", "boundary://boundary.crypto_primitives"]
 owner = "mats@sundvall.name"
-introduced_by = "ADR-MCPRE-059 WP2"
-review_requirement = "Owner review; any change to what `sha256_b64url` computes or to its specification."
+introduced_by = "ADR-MCPRE-059 WP2; narrowed by r12 Ruling 38"
+review_requirement = "Owner review; any change to which crate computes the digest, or to the digest leaf's specification."
 premise_class = "external-boundary"
 boundary_owner = """
-The `sha2` crate's SHA-256 and the base64url encoding, across `sha256_b64url`: the result is the unpadded base64url SHA-256 digest of the input bytes.
+The `sha2` crate, across `Sha256::digest` as called by `sha256_digest`: the 32-byte result is the FIPS 180-4 SHA-256 digest of the input bytes.
 """
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
-  "mcp-re-http-profile/src/artifact.rs#sha256_b64url",
+  "mcp-re-http-profile/src/artifact/thumbprint.rs#sha256_digest",
 ]
 tool_specific_mechanism = "verus:external_body"
 
@@ -483,7 +486,7 @@ Discharged: `ArtifactBinding` is a verified datatype with its representation sti
 scope = []
 owner = "mats@sundvall.name"
 introduced_by = "r12 ruling 12 item 12"
-review_requirement = "None — discharged by proof, r12 Ruling 36."
+review_requirement = "None — discharged by proof in e3a56fd1 (r12 Ruling 36)."
 affected_contracts = []
 tool_specific_mechanism = "none"
 
@@ -498,7 +501,7 @@ Discharged: Both are open specifications over the binding's closed `spec_artifac
 scope = []
 owner = "mats@sundvall.name"
 introduced_by = "r12 ruling 12 item 12"
-review_requirement = "None — discharged by proof, r12 Ruling 36."
+review_requirement = "None — discharged by proof in e3a56fd1 (r12 Ruling 36)."
 affected_contracts = []
 tool_specific_mechanism = "none"
 
@@ -647,7 +650,7 @@ Discharged: `same_handle` has a verified body whose postcondition is that it ret
 scope = []
 owner = "mats@sundvall.name"
 introduced_by = "r12 ruling 12 item 16"
-review_requirement = "None — discharged by proof, r12 Ruling 36."
+review_requirement = "None — discharged by proof in e3a56fd1 (r12 Ruling 36)."
 affected_contracts = []
 tool_specific_mechanism = "none"
 
@@ -692,24 +695,78 @@ tool_specific_mechanism = "verus:uninterp"
 
 [[assumption]]
 id = "ASM-0073"
-description = "`sha256_b64url_of(bytes)` is a function of its argument and nothing more."
+description = "`b64url_encode` (`mcp-re-core/src/encoding.rs:20`, using the `base64` crate's `URL_SAFE_NO_PAD` engine) returns the RFC 4648 §5 base64url encoding of its input without padding, and that encoding is injective over input byte strings."
 justification = """
-The declaration behind ASM-0018, stated where the checker can see it. Uninterpreted is the
-entire content: nothing about SHA-256 is claimed — not collision resistance, not preimage
-resistance. Only that the same bytes give the same thumbprint, which is what lets
-`compare`'s proved postcondition name the thumbprint of the presented credential.
+`b64url_digest` (artifact/thumbprint.rs) is the one place the artifact verifiers encode a digest, and its
+`external_body` states only that the result is `b64url_of(digest)` — the uninterpreted name
+for the encoding (ASM-0075). Two facts are trusted together, and they are different kinds of
+fact. That the crate implements RFC 4648 §5 without padding is a property of the `base64`
+crate's implementation. That the encoding is injective is a property of the specified encoding
+itself; it is carried here rather than proved because modelling RFC 4648's six-bit grouping in
+the prover is not cheap, and r12 Ruling 38 accepts the combined external statement for this
+freeze. The keyid unit TESTS injectivity over the 32-byte digest width
+(`keyid::tests::the_keyid_encoding_is_injective_over_the_digest_width`), which is evidence for
+the second fact, not a proof of it.
+
+Injectivity is load-bearing: `compare` decides on the ENCODED strings, so two distinct digests
+sharing an encoding would make a binding verify against a credential whose digest differs. It
+stops being acceptable if the encoding engine, its padding mode or its alphabet changes.
 """
-scope = [
-  "unit://http_profile.artifact_typing",
-  "boundary://boundary.unmodelled_own_behaviour",
-]
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.base64_encoding"]
 owner = "mats@sundvall.name"
-introduced_by = "r12 Ruling 36 (ASM-0018 split: the compare half discharged by proof)"
-review_requirement = "Owner review; discharge requires crossing boundary.crypto_primitives with a proof about the digest."
+introduced_by = "r12 Ruling 38 (ASM-0018 split)"
+review_requirement = "Owner review; any change to the encoding engine, its padding mode or alphabet, or the encode leaf's specification. Discharge of the injectivity half requires a proof over a modelled RFC 4648 encoding."
+premise_class = "external-boundary"
+boundary_owner = """
+The `base64` crate, across `mcp_re_core::b64url_encode` as called by `b64url_digest`: the `URL_SAFE_NO_PAD` engine's output is the RFC 4648 §5 encoding of the input without padding.
+"""
+affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+sites = [
+  "mcp-re-http-profile/src/artifact/thumbprint.rs#b64url_digest",
+]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0074"
+description = "`sha256_of` is declared uninterpreted: the prover's name for the SHA-256 digest, adding no axiom. What it denotes is ASM-0018's."
+justification = """
+Vocabulary, registered because the mechanism census counts every `uninterp` declaration. An
+uninterpreted function is a function of its argument and nothing more, so every theorem that
+mentions it holds for ALL interpretations; the declaration states nothing about SHA-256. Its
+meaning comes only from ASM-0018, the external premise that the digest leaf returns
+`sha256_of(bytes)` for the `sha2` crate's FIPS 180-4 digest. The artifact verifiers'
+non-vacuity probe (verify-verus) shows the relation written over it constrains: a body that
+does not compare, or a claim about another credential, fails to verify.
+"""
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.crypto_primitives"]
+owner = "mats@sundvall.name"
+introduced_by = "r12 Ruling 38 §7"
+review_requirement = "Owner review; any change to the declaration or to which premise interprets it."
 premise_class = "assumed"
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
-  "mcp-re-http-profile/src/verus_std_specs.rs#sha256_b64url_of",
+  "mcp-re-http-profile/src/artifact/thumbprint.rs#sha256_of",
+]
+tool_specific_mechanism = "verus:uninterp"
+
+[[assumption]]
+id = "ASM-0075"
+description = "`b64url_of` is declared uninterpreted: the prover's name for the base64url-no-pad encoding, adding no axiom. What it denotes, and that it is injective, is ASM-0073's."
+justification = """
+Vocabulary, registered because the mechanism census counts every `uninterp` declaration. The
+declaration states nothing about base64url; its meaning comes only from ASM-0073, the external
+premise that the encode leaf returns `b64url_of(digest)` for the `base64` crate's RFC 4648 §5
+encoding. The artifact verifiers' non-vacuity probe shows the relation written over it
+constrains.
+"""
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.base64_encoding"]
+owner = "mats@sundvall.name"
+introduced_by = "r12 Ruling 38 §7"
+review_requirement = "Owner review; any change to the declaration or to which premise interprets it."
+premise_class = "assumed"
+affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+sites = [
+  "mcp-re-http-profile/src/artifact/thumbprint.rs#b64url_of",
 ]
 tool_specific_mechanism = "verus:uninterp"
 
@@ -724,7 +781,7 @@ Discharged: `skew_of` is an open specification over `VerifierPolicy::spec_max_cl
 scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
-review_requirement = "None — discharged by proof, r12 Ruling 36."
+review_requirement = "None — discharged by proof in e3a56fd1; withdrawal approved by r12 Ruling 37."
 affected_contracts = []
 tool_specific_mechanism = "none"
 
@@ -739,7 +796,7 @@ Discharged: As ASM-0025, over `spec_max_signature_validity` (ASM-0008's discharg
 scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
-review_requirement = "None — discharged by proof, r12 Ruling 36."
+review_requirement = "None — discharged by proof in e3a56fd1; withdrawal approved by r12 Ruling 37."
 affected_contracts = []
 tool_specific_mechanism = "none"
 

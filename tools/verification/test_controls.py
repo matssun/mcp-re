@@ -741,5 +741,30 @@ def run() -> int:
     return 1 if failures else 0
 
 
+
+def test_a_crate_root_is_named_under_the_package_that_holds_it():
+    """A target in another package compiling the same root must not re-home the crate.
+
+    The Verus non-vacuity probe lives in `//mcp-re-http-profile/verus_probe` and compiles
+    `mcp-re-http-profile/src/lib.rs`. Its label sorts before `//mcp-re-http-profile:…`, and
+    when label order picked the package every http-profile test selector stopped resolving.
+    """
+    import _rust_targets
+
+    rows = {
+        "//pkg/probe:p": {"root": "pkg/src/lib.rs", "package": "pkg/probe", "kind": "verus_verify"},
+        "//pkg:lib": {"root": "pkg/src/lib.rs", "package": "pkg", "kind": "rust_library"},
+        "//pkg:test": {"root": "pkg/src/lib.rs", "package": "pkg", "kind": "rust_test"},
+    }
+    real = _rust_targets.table
+    _rust_targets.table = lambda: rows
+    try:
+        assert _rust_targets.crate_roots()["pkg/src/lib.rs"]["package"] == "pkg"
+    finally:
+        _rust_targets.table = real
+    live = _rust_targets.crate_roots()
+    misplaced = sorted(root for root, entry in live.items() if not _rust_targets._holds(entry["package"], root))
+    assert not misplaced, misplaced
+
 if __name__ == "__main__":
     raise SystemExit(run())

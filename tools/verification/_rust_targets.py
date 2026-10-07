@@ -213,9 +213,22 @@ def crate_roots() -> dict[str, dict]:
     out: dict[str, dict] = {}
     for label, row in sorted(table().items()):
         entry = out.setdefault(row["root"], {"package": row["package"], "labels": [], "kinds": set()})
+        # The root's package is the one whose directory HOLDS the root file. A target in
+        # another package may compile the same root — the Verus non-vacuity probe does — and
+        # label order must not decide whose package the crate's controls are named under:
+        # `//pkg/sub:x` sorts before `//pkg:y`, which re-homed every test of the crate.
+        if _holds(row["package"], row["root"]) and (
+            not _holds(entry["package"], row["root"]) or len(row["package"]) > len(entry["package"])
+        ):
+            entry["package"] = row["package"]
         entry["labels"].append(label)
         entry["kinds"].add(row["kind"])
     return out
+
+
+def _holds(package: str, path: str) -> bool:
+    """Whether `path` lies in `package`'s directory (the root package holds everything)."""
+    return not package or path.startswith(f"{package}/")
 
 
 def root_identity(root: str, package: str) -> str:

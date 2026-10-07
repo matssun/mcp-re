@@ -63,6 +63,11 @@ verify = [
   "mcp-re-core/verify",
 ]
 
+# The artifact verifiers' non-vacuity probe (r12 Ruling 38 §7). Set ONLY by the
+# `//mcp-re-http-profile/verus_probe:nonvacuity_probe` prover run, never by a library build: its
+# module holds two functions that must FAIL to verify.
+verus_nonvacuity_probe = ["verify"]
+
 [package.metadata.verus]
 verify = true
 

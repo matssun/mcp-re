@@ -193,8 +193,4 @@ pub open spec fn validity_of(policy: &VerifierPolicy) -> i64 {
     policy.spec_max_signature_validity()
 }
 
-/// `base64url-no-pad(SHA-256(bytes))`, UNINTERPRETED (ASM-0018): a function of the bytes and
-/// nothing more. No collision or preimage property is assumed here.
-pub uninterp spec fn sha256_b64url_of(bytes: Seq<u8>) -> Seq<char>;
-
 }

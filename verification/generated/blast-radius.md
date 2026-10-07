@@ -534,3 +534,5 @@ attestations this view cannot see.
 | ASM-0071 | description, justification, scope or mechanism | proxy.delegated_epoch_label | assumption review |
 | ASM-0072 | description, justification, scope or mechanism | client.response_binding_disposition | assumption review |
 | ASM-0073 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
+| ASM-0074 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
+| ASM-0075 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |

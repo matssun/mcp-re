@@ -32,7 +32,7 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0013 | review-obligation | `mcp_re_core::VerificationKey` is an opaque datatype; no theorem reads it. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005, THM-0006 |
 | ASM-0014 | external-boundary | `#[derive(PartialEq)]` on the fieldless enum `AdmissionStatus` is structural equality. | http_profile.admission_currency | THM-0003, THM-0004, THM-0005, THM-0006 |
 | ASM-0015 | _withdrawn_ | RESERVED — withdrawn before use. | _no unit_ | _no theorem_ |
-| ASM-0018 | external-boundary | `sha256_b64url` returns `sha256_b64url_of` of its input bytes: the thumbprint primitive, trusted to compute the function it names and nothing more. | http_profile.artifact_typing | THM-0007 |
+| ASM-0018 | external-boundary | `Sha256::digest` from the `sha2` crate returns the FIPS 180-4 SHA-256 digest of its input bytes. | http_profile.artifact_typing | THM-0007 |
 | ASM-0020 | external-boundary | `#[derive(PartialEq)]` on the fieldless enums `ArtifactType` and `BindingType` is structural equality. | http_profile.artifact_typing | THM-0007 |
 | ASM-0021 | review-obligation | `ActorIdentity::actor_id` / `ResolvedActor::actor_id` are opaque; NO ensures. | http_profile.continuation_unbypassability | THM-0009 |
 | ASM-0022 | _withdrawn_ | WITHDRAWN — discharged by unit://http_profile.continuation_binding. | _no unit_ | _no theorem_ |
@@ -86,6 +86,8 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0070 | external-boundary | rustls' `WebPkiServerVerifier`, built over only the configured server-CA roots, completes a client handshake only for a server certificate that chains to one of those roots, names the server identity the connection was opened for, and is inside its validity window at the handshake, presented by a server that proved possession of that certificate's private key. | client.transport_server_identity | THM-0109 |
 | ASM-0071 | external-boundary | A read of the trust-epoch key and its generation over the delegated-signing plane's own connection, issued after an operator's `mcp-re-proxy trust-epoch advance` on that key was acknowledged, returns a counter and generation different, as a pair, from every pair that plane read before the advance. | proxy.delegated_epoch_label | THM-0133 |
 | ASM-0072 | assumed | For any two distinct request bodies a preflight receipt can be about, `content_digest_sha256` produces distinct SHA-256 digest values. | client.response_binding_disposition | THM-0059, THM-0076 |
-| ASM-0073 | assumed | `sha256_b64url_of(bytes)` is a function of its argument and nothing more. | http_profile.artifact_typing | THM-0007 |
+| ASM-0073 | external-boundary | `b64url_encode` (`mcp-re-core/src/encoding.rs:20`, using the `base64` crate's `URL_SAFE_NO_PAD` engine) returns the RFC 4648 §5 base64url encoding of its input without padding, and that encoding is injective over input byte strings. | http_profile.artifact_typing | THM-0007 |
+| ASM-0074 | assumed | `sha256_of` is declared uninterpreted: the prover's name for the SHA-256 digest, adding no axiom. What it denotes is ASM-0018's. | http_profile.artifact_typing | THM-0007 |
+| ASM-0075 | assumed | `b64url_of` is declared uninterpreted: the prover's name for the base64url-no-pad encoding, adding no axiom. What it denotes, and that it is injective, is ASM-0073's. | http_profile.artifact_typing | THM-0007 |
 
 22 assumption(s) are reached by more than one theorem.

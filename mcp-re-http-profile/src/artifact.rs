@@ -20,14 +20,16 @@
 //! A mismatch is [`HttpProfileError::ArtifactBindingFailed`]
 //! (`mcp-re.artifact_binding_failed`).
 
-use mcp_re_core::b64url_encode;
-use sha2::Digest;
-use sha2::Sha256;
-
 use crate::block::ArtifactBinding;
 use crate::block::ArtifactType;
 use crate::block::BindingType;
 use crate::error::HttpProfileError;
+#[cfg(all(feature = "verify", feature = "verus_nonvacuity_probe"))]
+mod nonvacuity_probe;
+mod thumbprint;
+
+use thumbprint::sha256_b64url;
+
 #[cfg(feature = "verify")]
 use verus_builtin_macros::{verus_spec, verus_verify};
 #[cfg(feature = "verify")]
@@ -51,17 +53,6 @@ pub fn bearer_token(authorization_header: &str) -> Option<&str> {
     }
 }
 
-/// `base64url-no-pad(SHA-256(bytes))` — the shared thumbprint primitive.
-// ADR-MCPRE-059 ASM-0018: below `boundary.crypto_primitives`. Trusted only to return the
-// thumbprint of its input; nothing is claimed about the digest.
-#[cfg_attr(feature = "verify", verus_verify(external_body))]
-#[cfg_attr(feature = "verify", verus_spec(out =>
-    ensures out@ == crate::verus_std_specs::sha256_b64url_of(bytes@),
-))]
-fn sha256_b64url(bytes: &[u8]) -> String {
-    b64url_encode(&Sha256::digest(bytes))
-}
-
 /// Verify a DPoP `ath` binding (RFC 9449): the binding digest must equal the
 /// SHA-256 thumbprint of `access_token`.
 #[cfg_attr(feature = "verify", verus_spec(out =>
@@ -69,6 +60,7 @@ fn sha256_b64url(bytes: &[u8]) -> String {
         out matches Ok(()) ==> {
             &&& crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthDpop
             &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
+            &&& binding.spec_digest_value() == thumbprint::thumbprint_of(access_token@)
         },
 ))]
 pub fn verify_dpop_ath(
@@ -86,6 +78,7 @@ pub fn verify_dpop_ath(
         out matches Ok(()) ==> {
             &&& crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthMtls
             &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
+            &&& binding.spec_digest_value() == thumbprint::thumbprint_of(cert_der@)
         },
 ))]
 pub fn verify_mtls_x5t_s256(
@@ -104,6 +97,7 @@ pub fn verify_mtls_x5t_s256(
         out matches Ok(()) ==> {
             &&& crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthRar
             &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
+            &&& binding.spec_digest_value() == thumbprint::thumbprint_of(authorization_details_canonical@)
         },
 ))]
 pub fn verify_rar_details(
@@ -133,6 +127,7 @@ pub fn verify_rar_details(
                 ||| crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthMtls
                 ||| crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthRar
             }
+            &&& binding.spec_digest_value() == thumbprint::thumbprint_of(credential@)
         },
 ))]
 pub fn verify_artifact_binding(
@@ -168,13 +163,13 @@ fn expect_type(binding: &ArtifactBinding, want: ArtifactType) -> Result<(), Http
     Ok(())
 }
 
-// Proved: `Ok` exactly when the binding's digest is, byte for byte, the thumbprint of the
-// presented credential. What that thumbprint means is SHA-256's, and stays at ASM-0018.
+// Proved: `Ok` exactly when the binding's digest is, character for character, the thumbprint of
+// the presented credential. What that thumbprint means rests on ASM-0018 and ASM-0073.
 #[cfg_attr(feature = "verify", verus_verify)]
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) <==> binding.spec_digest_value()
-            == crate::verus_std_specs::sha256_b64url_of(credential@),
+            == thumbprint::thumbprint_of(credential@),
 ))]
 fn compare(binding: &ArtifactBinding, credential: &[u8]) -> Result<(), HttpProfileError> {
     if binding.digest_is(&sha256_b64url(credential)) {

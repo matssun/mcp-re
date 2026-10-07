@@ -1691,9 +1691,13 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.artifact_typing"
 class = "V1"
-description = "MCPRE-95 typed artifact bindings: each typed OAuth verifier admits only its own artifact type, in the opaque-digest form."
+description = "MCPRE-95 typed artifact bindings: each typed OAuth verifier admits only its own artifact type, in the opaque-digest form, and its Ok carries the binding's digest as the thumbprint of the credential it was given."
 paths = [
   "mcp-re-http-profile/src/artifact.rs",
+  # The non-vacuity probe (r12 Ruling 38 §7): compiled only by the probe target, and part of
+  # this unit because what it establishes is that this unit's contract constrains.
+  "mcp-re-http-profile/src/artifact/nonvacuity_probe.rs",
+  "mcp-re-http-profile/src/artifact/thumbprint.rs",
   "mcp-re-http-profile/src/block.rs",
   # The artifact-binding vocabulary and its fallible construction moved here
   # under ADR-MCPRE-065 Slice 2, which split it from the evidence block that carries it.
@@ -1713,10 +1717,9 @@ evidence = [
   "test://http_profile/artifact/typed_binding_battery",
   "verus://http_profile/artifact/typed_verifier_admits_only_its_own_type",
 ]
-# ASM-0024/25/26 are the uninterpreted verus declarations this unit's proof is stated over
-# — the labelled digest as a function of its arguments, and the two policy getters. They
-# are premises of this unit and are named here for the same reason they are scoped to it:
-# one relation, declared in both manifests, and the two must agree.
+# The thumbprint relation the verifiers ensure is stated over two uninterpreted functions
+# (ASM-0074/0075) whose meaning is the two library leaves' premises, ASM-0018 (`sha2`) and
+# ASM-0073 (`base64`); the composition, the comparison and the public contracts are proved.
 # The seven typed cases the section above says the theorem generalises past, plus the
 # block-level rule that a binding carries a digest and never token bytes, plus the wire-
 # level mismatch cases. The theorem's value is that it covers the inputs these do not.
@@ -1743,6 +1746,7 @@ proved_symbols = [
   "mcp_re_http_profile::artifact::verify_mtls_x5t_s256",
   "mcp_re_http_profile::artifact::verify_rar_details",
   "mcp_re_http_profile::artifact::compare",
+  "mcp_re_http_profile::artifact::thumbprint::sha256_b64url",
   "mcp_re_http_profile::block::artifact_binding::ArtifactBinding::artifact_type",
   "mcp_re_http_profile::block::artifact_binding::ArtifactBinding::binding_type",
   "mcp_re_http_profile::block::artifact_binding::ArtifactBinding::digest_is",

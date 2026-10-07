@@ -312,6 +312,68 @@ def test_every_formal_unit_resolves_to_a_target_that_turns_on_its_features():
         assert set(unit.get("features", [])) <= set(row["features"]), (unit["id"], row)
 
 
+# --- r12 Ruling 38 §7: the artifact verifiers' non-vacuity probe ---------------------------
+
+import _verus_nonvacuity as NV  # noqa: E402
+
+_PROBE_SOURCE = """
+#[verus_spec(out => ensures r)]
+pub fn probe_the_contract_carries_the_relation(b: &B) -> R {
+}
+#[verus_spec(out => ensures r)]
+pub fn probe_negative_relation_removed(b: &B) -> R {
+}
+#[verus_spec(out => ensures r)]
+pub fn probe_negative_relation_contradicted(b: &B) -> R {
+}
+"""
+_ALL = [NV.MODULE + n for n in sorted(NV.POSITIVE | NV.NEGATIVE)]
+
+
+def _error_at(line: int, path: str = NV.SOURCE) -> str:
+    return f"error: postcondition not satisfied\n  --> {path}:{line}:25\n"
+
+
+def test_the_probe_passes_only_when_exactly_the_two_negatives_fail():
+    log = _error_at(5) + _error_at(8) + "error: aborting due to 2 previous errors\n"
+    ok, detail = NV.evaluate(parse_reports(report(_ALL, 28, errors=2)), log, 1, _PROBE_SOURCE)
+    assert ok, detail
+
+
+def test_a_negative_that_verifies_means_the_relation_constrains_nothing():
+    log = _error_at(5)
+    ok, _ = NV.evaluate(parse_reports(report(_ALL, 29, errors=1)), log, 1, _PROBE_SOURCE)
+    assert not ok
+
+
+def test_a_probe_run_that_succeeds_is_never_a_pass():
+    ok, _ = NV.evaluate(parse_reports(report(_ALL, 30)), "", 0, _PROBE_SOURCE)
+    assert not ok
+
+
+def test_a_failing_positive_control_is_never_a_pass():
+    log = _error_at(2) + _error_at(5) + _error_at(8)
+    ok, _ = NV.evaluate(parse_reports(report(_ALL, 27, errors=3)), log, 1, _PROBE_SOURCE)
+    assert not ok
+
+
+def test_an_error_outside_the_probe_module_is_not_absorbed():
+    log = _error_at(5) + _error_at(40, "mcp-re-http-profile/src/artifact.rs")
+    ok, _ = NV.evaluate(parse_reports(report(_ALL, 28, errors=2)), log, 1, _PROBE_SOURCE)
+    assert not ok
+
+
+def test_an_uncompiled_probe_module_asked_nothing():
+    ok, _ = NV.evaluate(parse_reports(report(_ALL[:1], 27, errors=2)), _error_at(5) + _error_at(8), 1, _PROBE_SOURCE)
+    assert not ok
+
+
+def test_the_probe_names_the_real_probe_functions():
+    source = (Path(__file__).resolve().parents[2] / NV.SOURCE).read_text()
+    declared = {m["name"] for m in NV._FN.finditer(source)}
+    assert declared == set(NV.POSITIVE | NV.NEGATIVE), declared
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

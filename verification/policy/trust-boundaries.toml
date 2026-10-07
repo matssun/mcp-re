@@ -262,6 +262,16 @@ beyond = "Whether the parser faithfully reports what the certificate bytes actua
 max_class_without_assumption = "V0"
 
 [[boundary]]
+id = "boundary.base64_encoding"
+description = "Base64url encoding, as implemented by the `base64` dependency's `URL_SAFE_NO_PAD` engine."
+kind = "foreign-dependency"
+paths = [
+  "mcp-re-core/src/encoding.rs",
+]
+beyond = "Whether the engine's output is the RFC 4648 §5 encoding of its input without padding — and so, because that encoding is injective, whether two equal encodings came from equal bytes."
+max_class_without_assumption = "V0"
+
+[[boundary]]
 id = "boundary.tls_mechanism"
 description = "The TLS establishment mechanism, as implemented by rustls: what it accepts, what it reports about a relationship, and the trait contracts it imposes on a signer."
 kind = "foreign-dependency"
