@@ -8287,8 +8287,8 @@ unit = "proxy.replay_configuration_state"
 theorem = "THM-0077"
 conjunct = "a wait-quorum tier that waits for no acknowledgement names NO state — the parameters are checked before the tier is allowed to name one"
 path = "mcp-re-proxy/src/config_state/replay.rs"
-anchor = "    if quorum == 0 {\n"
-weakening = "    if false {\n"
+anchor = "    let refusal = if quorum == 0 {\n"
+weakening = "    let refusal = if false {\n"
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::a_wait_quorum_tier_that_waits_for_no_acknowledgement_names_no_state",
 ]
@@ -12756,4 +12756,43 @@ expect_red = [
 note = """
 A request signer's actor_id stops sharing the deployment's coordinate with the server actor, so the
 request and response slots partition the replay namespace between them.
+"""
+
+[[probe]]
+id = "M526-proxy-a-wait-quorum-timeout-past-the-ceiling-names-a-state"
+unit = "proxy.replay_configuration_state"
+conjunct = "a REDIS_WAIT_QUORUM timeout past MAX_WAIT_QUORUM_TIMEOUT_MS is refused, not clamped"
+path = "mcp-re-proxy/src/config_state/replay.rs"
+anchor = """
+    } else if timeout_ms > MAX_WAIT_QUORUM_TIMEOUT_MS {
+"""
+weakening = """
+    } else if timeout_ms > u64::MAX - 1 {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::a_wait_quorum_timeout_past_the_ceiling_names_no_state_and_the_ceiling_does",
+]
+note = """
+Admission awaits the WAIT, so an unbounded declared timeout parks every request for as long as it says.
+"""
+
+[[probe]]
+id = "M527-proxy-the-store-key-drops-the-nonce"
+unit = "proxy.replay_store_key"
+conjunct = "requests differing only in nonce compose distinct store keys"
+path = "mcp-re-proxy/src/shared_replay.rs"
+anchor = """
+        nonce.len(),
+        nonce,
+"""
+weakening = """
+        0,
+        "",
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#async_replay::tests::distinct_prepared_requests_compose_distinct_store_keys",
+]
+note = """
+Two requests under one signer and audience share one store key, so the second is refused as a replay
+of the first, and the first's nonce no longer identifies anything.
 """

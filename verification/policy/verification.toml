@@ -8563,6 +8563,23 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#shared_replay::tests::skew_folded_into_retain_until_matches_in_memory_semantics",
 ]
 
+# The serving tier's store key: distinct prepared requests never share one.
+[[unit]]
+id = "proxy.replay_store_key"
+class = "V0"
+description = "The store key the async serving tier writes, `composite_replay_key` over a prepared dispatch's `to_replay_key`, is distinct for requests differing in subject, keyid or nonce, including splits that move bytes across a field boundary, and identical for the same request."
+paths = ["mcp-re-proxy/src/shared_replay.rs", "mcp-re-proxy/src/async_replay/mod.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/replay_store_key",
+  "mutation://proxy/replay_store_key",
+]
+tested_symbols = [
+  "//mcp-re-proxy:proxy_unit_test#async_replay::tests::distinct_prepared_requests_compose_distinct_store_keys",
+]
+
 # Owner Ruling 19 B4d: what `consume` answers, and that every tier answers alike.
 [[unit]]
 id = "proxy.continuation_consume_contract"
@@ -11130,6 +11147,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::the_old_alias_names_its_replacement_rather_than_being_reinterpreted",
   "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::the_planned_store_is_the_validated_locator",
   "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::the_smallest_acknowledging_wait_quorum_parameters_are_accepted",
+  "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::a_wait_quorum_timeout_past_the_ceiling_names_no_state_and_the_ceiling_does",
   "//mcp-re-proxy:proxy_unit_test#config_state::replay::tests::the_tier_is_derived_from_the_state_not_stored_beside_it",
 ]
 

@@ -244,11 +244,11 @@ impl HttpProfileProxy {
         self
     }
 
-    /// Construct the serving PEP (ADR-MCPRE-052 delegated-signing — the only response-
-    /// signing mode). `resolve_actor` is the trust seam; `expected_audience` the
-    /// verifier audience; `dispatch_cfg`/`inner_async` the replay/inner planes. No server
-    /// key is held directly, only the shared [`DelegatedServerSigner`]. Every response and
-    /// rejection is signed by the active delegated key + inline credential, failing closed.
+    /// Construct the serving PEP (ADR-MCPRE-052 delegated signing, the only response-signing
+    /// mode), signing every response and rejection with the shared [`DelegatedServerSigner`].
+    /// `dispatch_cfg.fleet_strict` IS the replay claim: set, every request refuses unless
+    /// both the declared tier and `replay_async`'s own durability class are durable; unset,
+    /// the tier refuses replays within this process only, the single-process posture.
     // Public embedder constructor: seven required inputs, no default; optional postures are `with_*`.
     #[allow(clippy::too_many_arguments)]
     pub fn new_delegated(

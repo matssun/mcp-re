@@ -248,6 +248,7 @@ attestations this view cannot see.
 | unit://proxy.replay_configuration_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.replay_materialization | source, contracts or evidence | THM-0086 | _no consumer_ |
 | unit://proxy.replay_materialization_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.replay_store_key | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.replay_tier_production_minimum | source, contracts or evidence | THM-0092 | _no consumer_ |
 | unit://proxy.request_header_block_boundary | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.request_peer_binding | source, contracts or evidence | THM-0034 | _no consumer_ |

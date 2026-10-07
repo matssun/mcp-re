@@ -244,6 +244,7 @@ not an omission to hide.
 | proxy.replay_configuration_state | V0 | _none_ | 0 |
 | proxy.replay_materialization | V0 | THM-0086 | 0 |
 | proxy.replay_materialization_sole_producer | V0 | _none_ | 0 |
+| proxy.replay_store_key | V0 | _none_ | 0 |
 | proxy.replay_tier_production_minimum | V0 | _none_ | 0 |
 | proxy.request_header_block_boundary | V0 | _none_ | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |

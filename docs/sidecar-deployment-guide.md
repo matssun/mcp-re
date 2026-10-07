@@ -168,7 +168,7 @@ not start — absence is a refusal, not a fall back to something weaker.
 
 | Flag | Meaning |
 | --- | --- |
-| `--replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>` | Redis `SET NX` + `WAIT`. Requires `--replay-redis-url`. |
+| `--replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>` | Redis `SET NX` + `WAIT`. Requires `--replay-redis-url`. `quorum` ≥ 1; `timeout_ms` in 1..=30000 — a larger value is refused, not clamped, since admission awaits the `WAIT`. |
 | `--replay-durability-tier linearizable` | A CP / linearizable store. Requires `--cpstore-etcd-endpoint`. |
 | `--replay-redis-url <url>` | Where admitted nonces live, for a Redis tier. Refused beside a linearizable tier. |
 | `--cpstore-etcd-endpoint <url>` | The CP store's endpoint. Refused without a linearizable tier. |

@@ -323,6 +323,39 @@ mod tests {
         .to_replay_key(expires_at_unix)
     }
 
+    /// The store key the serving tier actually writes, derived from prepared dispatches:
+    /// requests differing in subject, keyid or nonce — including splits that move bytes
+    /// across a field boundary — compose distinct store keys, and the same request composes
+    /// the same one. Measured on `composite_replay_key` over `to_replay_key`, the path
+    /// `check_and_insert` takes, not on a cache's raw tuple.
+    #[test]
+    fn distinct_prepared_requests_compose_distinct_store_keys() {
+        let store_key = |subject: &str, keyid: &str, nonce: &str| {
+            let key = keyed(subject, keyid, nonce, 9_000);
+            composite_replay_key(key.signer(), key.audience(), key.nonce())
+        };
+        let base = store_key("alice", "key-1", "n-1");
+        assert_eq!(
+            base,
+            store_key("alice", "key-1", "n-1"),
+            "one request, one store key"
+        );
+        let variants = [
+            store_key("bob", "key-1", "n-1"),
+            store_key("alice", "key-2", "n-1"),
+            store_key("alice", "key-1", "n-2"),
+            store_key("alice", "key-1n", "-1"),
+            store_key("alicek", "ey-1", "n-1"),
+        ];
+        let mut seen = std::collections::HashSet::from([base]);
+        for key in variants {
+            assert!(
+                seen.insert(key),
+                "two distinct requests composed one store key"
+            );
+        }
+    }
+
     /// The bound has to hold for the backends a shipped proxy can actually select.
     /// `app.rs` refuses any tier whose store declares `SingleProcessReference`, so a
     /// budget implemented only inside the in-memory store governs no deployment: the

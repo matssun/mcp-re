@@ -223,26 +223,26 @@ enum RequestedState {
 /// `REDIS_WAIT_QUORUM` with a fail-closed guarantee. The guard belongs beside the other
 /// column checks rather than only in [`ReplayDurabilityTier::parse`], which a request built
 /// in process never passes through, and which `meets_strict_production_minimum` cannot stand
-/// in for because it reads the variant and not its parameters.
+/// in for because it reads the variant and not its parameters. A timeout past
+/// [`MAX_WAIT_QUORUM_TIMEOUT_MS`] is refused, never clamped.
 fn wait_quorum_guards(quorum: u32, timeout_ms: u64) -> Result<(), String> {
-    if quorum == 0 {
-        return Err(
-            "--replay-durability-tier redis-wait-quorum requires a quorum of at least 1: \
-             WAIT 0 asks no replica to acknowledge the nonce, which is the REDIS_ASYNC \
-             replay window carrying the REDIS_WAIT_QUORUM claim"
-                .to_string(),
-        );
-    }
-    if timeout_ms == 0 {
-        return Err(
-            "--replay-durability-tier redis-wait-quorum requires a timeout_ms of at least 1: \
-             WAIT with a zero timeout returns before any replica can acknowledge the nonce, \
-             which is the REDIS_ASYNC replay window carrying the REDIS_WAIT_QUORUM claim"
-                .to_string(),
-        );
-    }
-    Ok(())
+    let window = "which is the REDIS_ASYNC replay window carrying the REDIS_WAIT_QUORUM claim";
+    let refusal = if quorum == 0 {
+        format!("--replay-durability-tier redis-wait-quorum requires a quorum of at least 1: WAIT 0 asks no replica to acknowledge the nonce, {window}")
+    } else if timeout_ms == 0 {
+        format!("--replay-durability-tier redis-wait-quorum requires a timeout_ms of at least 1: WAIT with a zero timeout returns before any replica can acknowledge the nonce, {window}")
+    } else if timeout_ms > MAX_WAIT_QUORUM_TIMEOUT_MS {
+        format!("--replay-durability-tier redis-wait-quorum requires a timeout_ms of at most {MAX_WAIT_QUORUM_TIMEOUT_MS} (got {timeout_ms}): admission awaits the WAIT, so a longer one parks the request for as long as it says")
+    } else {
+        return Ok(());
+    };
+    Err(refusal)
 }
+
+/// The longest `WAIT` a `REDIS_WAIT_QUORUM` tier may declare: the replay plane's
+/// per-operation ceiling, the same thirty seconds `MAX_ETCD_OP_TIMEOUT` gives the
+/// linearizable store, so neither shared state lets admission wait longer than the other.
+pub(crate) const MAX_WAIT_QUORUM_TIMEOUT_MS: u64 = 30_000;
 
 /// Recognise which shared state the declared tier names, or why it names none.
 ///
@@ -680,6 +680,40 @@ mod tests {
                 "redis-wait-quorum:{quorum}:{timeout_ms}: {violations:?}"
             );
         }
+    }
+
+    /// The ceiling is a refusal at one past it and an acceptance at it: the declared
+    /// timeout reaches the state unchanged or not at all, never clamped to the ceiling.
+    #[test]
+    fn a_wait_quorum_timeout_past_the_ceiling_names_no_state_and_the_ceiling_does() {
+        let at = |timeout_ms| {
+            run(move |c| {
+                redis(c);
+                c.replay.durability = Some(ReplayDurabilityTier::QuorumAcknowledged {
+                    quorum: 1,
+                    timeout_ms,
+                });
+            })
+        };
+        let (state, violations) = at(MAX_WAIT_QUORUM_TIMEOUT_MS + 1);
+        assert!(state.is_none(), "a timeout past the ceiling became a state");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("a timeout_ms of at most 30000")),
+            "{violations:?}"
+        );
+        let (state, violations) = at(MAX_WAIT_QUORUM_TIMEOUT_MS);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(
+            state
+                .expect("the ceiling itself is legal")
+                .durability_tier(),
+            ReplayDurabilityTier::QuorumAcknowledged {
+                quorum: 1,
+                timeout_ms: MAX_WAIT_QUORUM_TIMEOUT_MS,
+            }
+        );
     }
 
     /// The positive half: the smallest parameters that still ask a replica to acknowledge
