@@ -201,13 +201,29 @@ mod tests {
     use super::interpret_authorization_action;
     use super::AuthorizationActionRefusal;
     use super::AuthorizationTarget;
+    use super::VerifiedAuthorizationAction;
+    use crate::authorization::action_harness::covering_unverifiable;
     use crate::authorization::action_harness::verified_over;
+
+    /// The action read from `body` as signed: the body the authority is handed is the one
+    /// the signature covers.
+    fn read_signed(body: &[u8]) -> Result<VerifiedAuthorizationAction, AuthorizationActionRefusal> {
+        let signed = verified_over(body);
+        interpret_authorization_action(&signed.verified, &signed.body)
+    }
+
+    /// The action read from a body the verifier refuses to cover, through a product
+    /// re-pointed at it: this authority's own refusal, which nothing upstream lets reach it.
+    fn read_unverifiable(
+        body: &[u8],
+    ) -> Result<VerifiedAuthorizationAction, AuthorizationActionRefusal> {
+        interpret_authorization_action(&covering_unverifiable(body), body)
+    }
 
     #[test]
     fn the_coordinate_is_read_from_the_signed_body() {
         let body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#;
-        let verified = verified_over(body);
-        let action = interpret_authorization_action(&verified, body).expect("reads");
+        let action = read_signed(body).expect("reads");
         assert_eq!(action.operation(), "tools/call");
         assert_eq!(action.target().named(), Some("read"));
     }
@@ -218,16 +234,12 @@ mod tests {
         // match neither, and must be able to tell them apart when it wants to.
         let listing = br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
         assert_eq!(
-            interpret_authorization_action(&verified_over(listing), listing)
-                .expect("reads")
-                .target(),
+            read_signed(listing).expect("reads").target(),
             &AuthorizationTarget::NotApplicable
         );
         let nameless = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}"#;
         assert_eq!(
-            interpret_authorization_action(&verified_over(nameless), nameless)
-                .expect("reads")
-                .target(),
+            read_unverifiable(nameless).expect("reads").target(),
             &AuthorizationTarget::Absent
         );
     }
@@ -238,7 +250,7 @@ mod tests {
             &br#"{"jsonrpc":"2.0","id":1,"method":"completion/complete","params":{"name":"x"}}"#[..],
             &br#"{"jsonrpc":"2.0","id":1,"method":"x-vendor/deploy"}"#[..],
         ] {
-            let action = interpret_authorization_action(&verified_over(body), body).expect("reads");
+            let action = read_signed(body).expect("reads");
             assert_eq!(action.target(), &AuthorizationTarget::Unknown);
             assert_eq!(action.target().named(), None);
         }
@@ -250,7 +262,7 @@ mod tests {
         // question. Refusing it here would make an unauthorized deployment start rejecting
         // requests because of authorization.
         let nameless = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}"#;
-        assert!(interpret_authorization_action(&verified_over(nameless), nameless).is_ok());
+        assert!(read_unverifiable(nameless).is_ok());
     }
 
     #[test]
@@ -260,7 +272,7 @@ mod tests {
         let signed = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#;
         let other = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete"}}"#;
         assert_eq!(
-            interpret_authorization_action(&verified_over(signed), other),
+            interpret_authorization_action(&verified_over(signed).verified, other),
             Err(AuthorizationActionRefusal::BodyIsNotTheSignedBody)
         );
     }
@@ -269,7 +281,7 @@ mod tests {
     fn resources_read_names_its_target_under_a_different_key() {
         let body =
             br#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"f://x"}}"#;
-        let action = interpret_authorization_action(&verified_over(body), body).expect("reads");
+        let action = read_signed(body).expect("reads");
         assert_eq!(action.target().named(), Some("f://x"));
     }
 
@@ -277,12 +289,12 @@ mod tests {
     fn a_signed_body_that_is_not_json_and_one_with_no_method_are_different_facts() {
         let junk = b"not json at all";
         assert_eq!(
-            interpret_authorization_action(&verified_over(junk), junk),
+            read_unverifiable(junk),
             Err(AuthorizationActionRefusal::BodyIsNotJson)
         );
         let no_method = br#"{"jsonrpc":"2.0","id":1}"#;
         assert_eq!(
-            interpret_authorization_action(&verified_over(no_method), no_method),
+            read_unverifiable(no_method),
             Err(AuthorizationActionRefusal::NoOperation)
         );
     }

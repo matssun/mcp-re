@@ -75,8 +75,9 @@ mod tests {
 
     #[test]
     fn a_deployment_that_installs_nothing_still_decides_and_claims_nothing() {
+        let signed = verified_over(CALL);
         let posture = AuthorizationStage::default()
-            .decide(&verified_over(CALL), CALL, None)
+            .decide(&signed.verified, &signed.body, None)
             .expect("a deployment with no policy is entitled to serve");
         assert!(
             posture.authorized().is_none(),

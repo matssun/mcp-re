@@ -1844,3 +1844,90 @@ new = """
 pub struct HandshakeSignCapacity {
     pub(crate) rate_per_sec: u32,
     pub(crate) burst: u32,"""
+
+# --- proxy.request_peer_binding: the request operand's provenance ------------------------
+#
+# THM-0034: "a caller cannot assert a subject any more than it can assert a peer". The
+# subject is projected from a `VerifiedMcpRequest`, so the claim needs every product a
+# consumer crate holds to be one the verifier returned. Both request products keep `pub`
+# fields for Verus (`verus_std_specs.rs` `ExVerifiedMcpRequest`/`ExFloorVerifiedRequest`)
+# and are `#[non_exhaustive]`, which binds every crate but the owner's.
+
+[[probe]]
+id = "S52"
+unit = "proxy.request_peer_binding"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "no crate but mcp-re-http-profile can write a VerifiedMcpRequest, so the subject a consumer projects from one is the subject the verifier resolved"
+doc_path = "mcp-re-http-profile/src/verified_request/mod.rs"
+doc_item = "doc#verified_request::VerifiedMcpRequest"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s52.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0639"
+construction = """
+// ADR-MCPRE-068 structural probe S52. Injected into a scratch copy by verify-structural;
+// this file never exists in the working tree.
+use mcp_re_http_profile::{AudienceTuple, CryptographicFloorVerifiedRequest, HttpRequestEvidenceBlock, VerifiedMcpRequest};
+
+pub fn hostile(floor: CryptographicFloorVerifiedRequest, audience: AudienceTuple, request_block: HttpRequestEvidenceBlock) -> VerifiedMcpRequest {
+    VerifiedMcpRequest { floor, audience, audience_hash: String::new(), request_block } // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Every field is supplied, so the refusal is `#[non_exhaustive]` and nothing else: the
+relaxation removes the attribute and the same construction compiles.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the fields are `pub` (Verus `external_type_specification` refuses non-public fields), so module privacy closes nothing; `#[non_exhaustive]` refuses a struct expression in every crate but `mcp-re-http-profile`, which is the boundary this probe attacks"
+alternate-constructors = "`verify::full_request` is the one producer, reached through `Verifier::verify_request`; there is no `new`, builder, `From` or `Default`"
+generated-or-deserialization = "derives Debug and Clone only; no Deserialize. `Clone` copies a value the verifier returned and so produces no new subject"
+test-only-construction = "struct expressions remain only in `#[cfg(test)]` modules of `mcp-re-http-profile`; `mcp-re-proxy` and the integration tests sign a request and call `verify_request` (`authorization::action_harness`, `redis_continuation_e2e_test`). A holder of a real value can still assign its `pub` fields; THM-0051's provenance gate covers that on the serving path"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/verified_request/mod.rs"
+old = """
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct VerifiedMcpRequest {"""
+new = """
+#[derive(Debug, Clone)]
+pub struct VerifiedMcpRequest {"""
+
+[[probe]]
+id = "S53"
+unit = "proxy.request_peer_binding"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "no crate but mcp-re-http-profile can write a CryptographicFloorVerifiedRequest, the product that carries the resolved actor"
+doc_path = "mcp-re-http-profile/src/verified_request/floor.rs"
+doc_item = "doc#verified_request::floor::CryptographicFloorVerifiedRequest"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s53.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0639"
+construction = """
+// ADR-MCPRE-068 structural probe S53. Injected into a scratch copy by verify-structural;
+// this file never exists in the working tree.
+use mcp_re_http_profile::{CryptographicFloorVerifiedRequest, RequestRoleEvidence, ResolvedActor};
+
+pub fn hostile(resolved_actor: ResolvedActor, evidence: RequestRoleEvidence) -> CryptographicFloorVerifiedRequest {
+    CryptographicFloorVerifiedRequest { profile_id: String::new(), signature_label: String::new(), resolved_actor, evidence, request_signature_base: Vec::new(), content_digest: String::new(), created: 0, expires: 0, nonce: String::new(), key_id: String::new() } // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+The floor product is where the resolved actor lives; S52 alone would leave a forged floor
+inside a full product built by a crate that could write the floor. Every field is supplied,
+so the refusal is the attribute: the relaxation removes it and the construction compiles.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the fields are `pub` for Verus (`ExFloorVerifiedRequest`); `#[non_exhaustive]` refuses a struct expression in every crate but `mcp-re-http-profile`"
+alternate-constructors = "`verify::floor_request` is the one producer, reached through `Verifier::verify_request_floor` and, inside the full product, through `verify_request`; no `new`, builder, `From` or `Default`"
+generated-or-deserialization = "derives Clone only, with a hand-written redacting Debug; no Deserialize"
+test-only-construction = "struct expressions remain only in `#[cfg(test)]` modules of `mcp-re-http-profile`; other crates obtain one from the verifier"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/verified_request/floor.rs"
+old = """
+#[derive(Clone)]
+#[non_exhaustive]
+pub struct CryptographicFloorVerifiedRequest {"""
+new = """
+#[derive(Clone)]
+pub struct CryptographicFloorVerifiedRequest {"""

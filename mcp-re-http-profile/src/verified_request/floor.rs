@@ -7,16 +7,18 @@
 //! was checked. Those belong to [`VerifiedMcpRequest`](super::VerifiedMcpRequest), which is
 //! a different type for exactly that reason.
 //!
-//! # Why this is not sealed
+//! # What is sealed, and against whom
 //!
-//! It carries `pub` fields, so it does not seal against forgery. That is the documented
-//! trade this project already made for [`crate::admission::VerifiedAdmission`], for the
-//! same reason: Verus rejects private fields on a transparent datatype, and the only way to
-//! seal is `external_body`, which makes the type OPAQUE and its postconditions unstatable.
-//! **A Verus-proved postcondition outranks a seal** (`docs/dev/sealed-owners.md`).
+//! The fields are `pub`, because Verus rejects private fields on a transparent datatype and
+//! the only way around that is `external_body`, which makes the type OPAQUE and its
+//! postconditions unstatable. **A Verus-proved postcondition outranks a seal**
+//! (`docs/dev/sealed-owners.md`). The same trade was made for
+//! [`crate::admission::VerifiedAdmission`].
 //!
-//! So every sentence below is phrased over what a SUCCESSFUL VERIFIER RETURN establishes,
-//! never over what holding a value means.
+//! The type is `#[non_exhaustive]`, which Verus accepts, so no crate but this one can write
+//! one as a struct expression: outside this crate the verifier is the only producer. A
+//! holder of a real value can still assign its fields, so every sentence below is phrased
+//! over what a SUCCESSFUL VERIFIER RETURN establishes, never over what holding a value means.
 
 use crate::block::ResolvedActor;
 use crate::RequestRoleEvidence;
@@ -30,7 +32,17 @@ use crate::RequestRoleEvidence;
 ///
 /// It does **not** mean the request is addressed to this deployment, and it does not mean
 /// any artifact binding was checked. Those are [`VerifiedMcpRequest`].
+///
+/// Another crate cannot write one, every field supplied:
+///
+/// ```compile_fail
+/// use mcp_re_http_profile::{CryptographicFloorVerifiedRequest, RequestRoleEvidence, ResolvedActor};
+/// fn forge(resolved_actor: ResolvedActor, evidence: RequestRoleEvidence) -> CryptographicFloorVerifiedRequest {
+///     CryptographicFloorVerifiedRequest { profile_id: String::new(), signature_label: String::new(), resolved_actor, evidence, request_signature_base: Vec::new(), content_digest: String::new(), created: 0, expires: 0, nonce: String::new(), key_id: String::new() }
+/// }
+/// ```
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct CryptographicFloorVerifiedRequest {
     pub profile_id: String,
     pub signature_label: String,

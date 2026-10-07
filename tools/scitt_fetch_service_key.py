@@ -28,7 +28,7 @@ Supported discovery:
     pip install cbor2 requests
     python tools/scitt_fetch_service_key.py \
         --service-uri https://transparency.example --kid <kid> \
-        --position-profile bound --out service-key-pin.json
+        --leaf-profile statement-bytes --position-profile bound --out service-key-pin.json
 
 The `kid` should be the one the receipt names; pass `--any-single-key` for a service
 whose key set holds exactly one key and whose receipts carry no `kid`.
@@ -37,10 +37,11 @@ whose key set holds exactly one key and whose receipts carry no `kid`.
 SERVICE that no receipt can be asked for, because the receipt is the value under attack:
 which bytes the log hashes as its Merkle entry (`--leaf-profile`), and whether its
 receipts commit to their own `(tree_size, leaf_index)` (`--position-profile`). The Rust
-verifier refuses a pin that omits either. `--position-profile` is required rather than
-defaulted: under `unbound` a relayer may restate a small log's receipt as a position in
-a larger one and it still verifies, so it is a thing an operator has to have
-established about the service and written down.
+verifier refuses a pin that omits either, and both are required rather than defaulted:
+each is a thing an operator has to have established about the service and written down.
+Under `unbound` a relayer may restate a small log's receipt as a position in a larger
+one and it still verifies; a wrong leaf profile makes every receipt from the service
+fail to verify, or verify over bytes the log did not hash.
 
 **Re-running against an existing pin.** The tool refuses to overwrite a pin whose key,
 leaf profile or position profile differs from the one it would write, unless
@@ -324,16 +325,20 @@ def selftest() -> int:
         "--any-single-key",
         "--out", "/dev/null",
     ]
-    try:
-        # argparse prints its usage to stderr on the way out; the case under test is the
-        # refusal, not the message.
-        with contextlib.redirect_stderr(io.StringIO()):
-            parser.parse_args(base)
-        print("SELFTEST FAIL: a pin was cut with no --position-profile; the verifier's "
-              "default is the weaker contract, so it must be stated")
-        failures += 1
-    except SystemExit:
-        pass
+    for omitted, stated in (
+        ("--position-profile", ["--leaf-profile", "statement-bytes"]),
+        ("--leaf-profile", ["--position-profile", "bound"]),
+    ):
+        try:
+            # argparse prints its usage to stderr on the way out; the case under test is
+            # the refusal, not the message.
+            with contextlib.redirect_stderr(io.StringIO()):
+                parser.parse_args(base + stated)
+            print(f"SELFTEST FAIL: a pin was cut with no {omitted}; the profile is the "
+                  "operator's statement about the service, so it must be stated")
+            failures += 1
+        except SystemExit:
+            pass
     # `did-web` reads a DID document as a key set — and reads NOTHING else out of it.
     did_document = json.dumps({
         "@context": ["https://www.w3.org/ns/did/v1"],
@@ -404,7 +409,7 @@ def selftest() -> int:
     if failures:
         print(f"{failures} case(s) failed — the https-only guard is not trustworthy.")
         return 1
-    print("selftest ok: 22 cases (redirect scheme guard, first-hop scheme guard, opener "
+    print("selftest ok: 23 cases (redirect scheme guard, first-hop scheme guard, opener "
           "wiring, did-web key-set reading, pin profile fields, pin replacement guard)")
     return 0
 
@@ -433,10 +438,11 @@ def _parser() -> argparse.ArgumentParser:
                          "are unauthenticated hints a relayer may restate. Required "
                          "because the verifier refuses a pin that does not state it, "
                          "and the choice is the operator's to make.")
-    ap.add_argument("--leaf-profile", choices=LEAF_PROFILES, default="statement-bytes",
+    ap.add_argument("--leaf-profile", choices=LEAF_PROFILES, required=True,
                     help="which bytes this service's log hashes as the Merkle entry: the "
-                         "Signed Statement's own octets (the default) or a digest of "
-                         "them. It cannot be inferred from a receipt.")
+                         "Signed Statement's own octets or a digest of them. Required "
+                         "because it cannot be inferred from a receipt and the verifier "
+                         "refuses a pin that does not state it.")
     return ap
 
 

@@ -12,10 +12,10 @@
 //! - [`VerifiedMcpRequest`] — all of the above, **and** audience equality and artifact
 //!   binding under the full profile.
 //!
-//! Neither is sealed, and [`floor`] carries the argument for why. What the types DO
-//! establish is the assurance split, which is not a seal question: the two propositions are
-//! different types, so no consumer requiring the full one can be handed the floor one, by
-//! the compiler.
+//! Both keep `pub` fields for Verus and are `#[non_exhaustive]`, so outside this crate the
+//! verifier is their only producer; [`floor`] carries the argument. The assurance split is a
+//! separate fact: the two propositions are different types, so no consumer requiring the
+//! full one can be handed the floor one, by the compiler.
 
 pub mod floor;
 
@@ -44,7 +44,18 @@ use crate::RequestRoleEvidence;
 ///     needs_full(floor);
 /// }
 /// ```
+///
+/// Nor can another crate write one, every field supplied, so the subject a consumer reads
+/// from it is the one the verifier resolved:
+///
+/// ```compile_fail
+/// use mcp_re_http_profile::{AudienceTuple, CryptographicFloorVerifiedRequest, HttpRequestEvidenceBlock, VerifiedMcpRequest};
+/// fn forge(floor: CryptographicFloorVerifiedRequest, audience: AudienceTuple, request_block: HttpRequestEvidenceBlock) -> VerifiedMcpRequest {
+///     VerifiedMcpRequest { floor, audience, audience_hash: String::new(), request_block }
+/// }
+/// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct VerifiedMcpRequest {
     /// The floor proposition this product also establishes.
     ///

@@ -131,7 +131,7 @@ mod tests {
     const DECISION: &str = "aGVhZGVy.Y2xhaW1z.c2ln";
 
     fn with(bindings: Vec<ArtifactBinding>, decision: Option<&str>) -> VerifiedMcpRequest {
-        let mut v = verified_over(BODY);
+        let mut v = verified_over(BODY).verified;
         v.request_block.artifact_bindings = bindings;
         v.request_block.authorization_decision = decision.map(str::to_owned);
         v

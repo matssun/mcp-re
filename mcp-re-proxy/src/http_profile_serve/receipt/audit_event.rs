@@ -191,46 +191,12 @@ mod tests {
     use mcp_re_core::McpReError;
 
     fn verified() -> mcp_re_http_profile::VerifiedMcpRequest {
-        let audience = mcp_re_http_profile::AudienceTuple {
-            audience_id: "aud".into(),
-            target_uri: "https://example.test/mcp".into(),
-            route: None,
-        };
-        mcp_re_http_profile::VerifiedMcpRequest {
-            floor: mcp_re_http_profile::CryptographicFloorVerifiedRequest {
-                profile_id: "p".into(),
-                signature_label: "mcpre".into(),
-                resolved_actor: mcp_re_http_profile::ResolvedActor {
-                    identity: mcp_re_http_profile::ActorIdentity {
-                        role: "client".into(),
-                        trust_domain: "example.com".into(),
-                        subject: "did:example:host-a".into(),
-                        keyid: "key-1".into(),
-                    },
-                    verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32])
-                        .public_key(),
-                    slot: mcp_re_http_profile::SignerSlot::Request,
-                },
-                evidence: mcp_re_http_profile::RequestRoleEvidence::from_signature_base(b"base"),
-                request_signature_base: b"base".to_vec(),
-                content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
-                created: 1,
-                expires: 2,
-                nonce: "n".into(),
-                key_id: "key-1".into(),
-            },
-            audience: audience.clone(),
-            audience_hash: audience.audience_hash(),
-            request_block: mcp_re_http_profile::HttpRequestEvidenceBlock {
-                profile: "p".into(),
-                audience,
-                artifact_bindings: Vec::new(),
-                continuation: None,
-                admission: None,
-                admission_assertion: None,
-                authorization_decision: None,
-            },
-        }
+        crate::authorization::action_harness::verified_over_as(
+            crate::authorization::action_harness::LIST,
+            "did:example:host-a",
+            "key-1",
+        )
+        .verified
     }
 
     fn event_names(sink: &crate::audit_sink::CollectingAuditSink) -> Vec<String> {

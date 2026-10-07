@@ -263,68 +263,43 @@ pub(in crate::http_profile_serve) mod tests {
         );
     }
 
+    /// A handle shaped as a derived one — 32 bytes, base64url — and distinct per `of`.
     fn digest(of: &str) -> mcp_re_http_profile::RequestEvidenceDigest {
+        let mut bytes = [0u8; 32];
+        for (slot, b) in bytes.iter_mut().zip(of.bytes()) {
+            *slot = b;
+        }
         mcp_re_http_profile::RequestEvidenceDigest {
-            digest_alg: "sha-256".into(),
-            digest_value: mcp_re_core::b64url_encode(of.as_bytes()),
+            digest_alg: mcp_re_http_profile::ids::EVIDENCE_DIGEST_ALG.into(),
+            digest_value: mcp_re_core::b64url_encode(&bytes),
         }
     }
 
     /// A verified request whose resolved actor is `subject`/`keyid`, carrying a
     /// continuation so the answer leg computes a key at all.
     ///
-    /// The value stands in for a verification product because what is under test is the
-    /// hop AFTER verification. That the product the serving path holds is the one THIS
+    /// The verifier produced it, over a request this harness signed; what is under test is
+    /// the hop AFTER verification. That the product the serving path holds is the one THIS
     /// exchange's verification returned is THM-0051's, and is not re-derived here.
     pub(in crate::http_profile_serve) fn verified_as(
         subject: &str,
         keyid: &str,
     ) -> mcp_re_http_profile::VerifiedMcpRequest {
-        let audience = mcp_re_http_profile::AudienceTuple {
-            audience_id: "aud".into(),
-            target_uri: "https://example.test/mcp".into(),
-            route: None,
-        };
-        mcp_re_http_profile::VerifiedMcpRequest {
-            floor: mcp_re_http_profile::CryptographicFloorVerifiedRequest {
-                profile_id: "p".into(),
-                signature_label: "mcpre".into(),
-                resolved_actor: mcp_re_http_profile::ResolvedActor {
-                    identity: mcp_re_http_profile::ActorIdentity {
-                        role: "client".into(),
-                        trust_domain: "example.com".into(),
-                        subject: subject.into(),
-                        keyid: keyid.into(),
-                    },
-                    verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32])
-                        .public_key(),
-                    slot: mcp_re_http_profile::SignerSlot::Request,
-                },
-                evidence: mcp_re_http_profile::RequestRoleEvidence::from_signature_base(b"base"),
-                request_signature_base: b"base".to_vec(),
-                content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
-                created: 1,
-                expires: 2,
-                nonce: "n".into(),
-                key_id: keyid.into(),
-            },
-            audience: audience.clone(),
-            audience_hash: audience.audience_hash(),
-            request_block: mcp_re_http_profile::HttpRequestEvidenceBlock {
-                profile: "p".into(),
-                audience,
-                artifact_bindings: Vec::new(),
+        crate::authorization::action_harness::sign_and_verify(
+            crate::authorization::action_harness::RequestSpec {
+                body: crate::authorization::action_harness::LIST,
+                subject,
+                keyid,
+                audience_id: "aud",
                 continuation: Some(mcp_re_http_profile::HttpContinuation {
                     continuation_type: "mcp-mrt".into(),
                     previous_request_evidence: digest("prev"),
                     input_required_response_evidence: digest("irr"),
                     request_state_digest: digest("s-1"),
                 }),
-                admission: None,
-                admission_assertion: None,
-                authorization_decision: None,
             },
-        }
+        )
+        .verified
     }
 
     /// A body that names a second identity in the members a leg reading the request would

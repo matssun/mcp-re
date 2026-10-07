@@ -41,46 +41,71 @@ const AUD: &str = "did:example:server-1";
 
 /// A verification product whose resolved actor is `subject`/`keyid`: a continuation key
 /// exists only for the actor a verification resolved.
+///
+/// Produced by the request verifier over a request signed here, through a resolver that
+/// trusts `keyid` for `subject` alone.
 fn verified_as(subject: &str, keyid: &str) -> mcp_re_http_profile::VerifiedMcpRequest {
-    let audience = mcp_re_http_profile::AudienceTuple {
-        audience_id: AUD.into(),
-        target_uri: "https://example.test/mcp".into(),
-        route: None,
+    use mcp_re_http_profile::{ArtifactBinding, ArtifactType, ResolvedActor, SignerSlot};
+    const TARGET: &str = "https://example.test/mcp";
+    const TOKEN: &str = "e2e-access-token";
+    let key = mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]);
+    let block = mcp_re_http_profile::HttpRequestEvidenceBlock {
+        profile: mcp_re_http_profile::PROFILE_TAG.into(),
+        audience: mcp_re_http_profile::AudienceTuple {
+            audience_id: AUD.into(),
+            target_uri: TARGET.into(),
+            route: None,
+        },
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            TOKEN.as_bytes(),
+        )],
+        continuation: None,
+        admission: None,
+        admission_assertion: None,
+        authorization_decision: None,
     };
-    mcp_re_http_profile::VerifiedMcpRequest {
-        floor: mcp_re_http_profile::CryptographicFloorVerifiedRequest {
-            profile_id: "p".into(),
-            signature_label: "mcpre".into(),
-            resolved_actor: mcp_re_http_profile::ResolvedActor {
-                identity: mcp_re_http_profile::ActorIdentity {
-                    role: "client".into(),
-                    trust_domain: "example.com".into(),
-                    subject: subject.into(),
-                    keyid: keyid.into(),
-                },
-                verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
-                slot: mcp_re_http_profile::SignerSlot::Request,
+    let mut request = mcp_re_http_profile::HttpRequest {
+        method: "POST".into(),
+        target_uri: TARGET.into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Authorization".into(), format!("Bearer {TOKEN}")),
+        ],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_vec(),
+    };
+    mcp_re_http_profile::sign_request_full(
+        &mut request,
+        &block,
+        &key,
+        keyid,
+        1_700_000_000,
+        1_700_000_300,
+        "n",
+    )
+    .expect("the e2e request signs");
+    let public = key.public_key();
+    let resolve = |presented: &str, slot: SignerSlot| {
+        (presented == keyid && slot == SignerSlot::Request).then(|| ResolvedActor {
+            identity: mcp_re_http_profile::ActorIdentity {
+                role: "client".into(),
+                trust_domain: "example.com".into(),
+                subject: subject.into(),
+                keyid: keyid.into(),
             },
-            evidence: mcp_re_http_profile::RequestRoleEvidence::from_signature_base(b"base"),
-            request_signature_base: b"base".to_vec(),
-            content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
-            created: 1,
-            expires: 2,
-            nonce: "n".into(),
-            key_id: keyid.into(),
-        },
-        audience: audience.clone(),
-        audience_hash: audience.audience_hash(),
-        request_block: mcp_re_http_profile::HttpRequestEvidenceBlock {
-            profile: "p".into(),
-            audience,
-            artifact_bindings: Vec::new(),
-            continuation: None,
-            admission: None,
-            admission_assertion: None,
-            authorization_decision: None,
-        },
-    }
+            verification_key: public.clone(),
+            slot,
+        })
+    };
+    let policy = mcp_re_http_profile::VerifierPolicy::default();
+    mcp_re_http_profile::Verifier::new(&policy, &resolve)
+        .verify_request(
+            &request,
+            &block.audience,
+            &|_: &ArtifactBinding| None,
+            1_700_000_100,
+        )
+        .expect("the e2e request verifies")
 }
 
 fn actor_a() -> mcp_re_http_profile::VerifiedMcpRequest {

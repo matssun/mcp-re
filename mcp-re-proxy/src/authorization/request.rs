@@ -126,6 +126,7 @@ pub fn authorization_request(
 mod tests {
     use super::authorization_request;
     use crate::authorization::action_harness::verified_over_as;
+    use crate::authorization::action_harness::Signed;
     use crate::authorization::verified_action::AuthorizationActionRefusal;
 
     const CALL: &[u8] =
@@ -133,8 +134,8 @@ mod tests {
 
     #[test]
     fn the_actor_and_the_action_come_from_one_request() {
-        let verified = verified_over_as(CALL, "did:example:agent-1", "key-a");
-        let req = authorization_request(&verified, CALL, None).expect("composes");
+        let Signed { verified, body } = verified_over_as(CALL, "did:example:agent-1", "key-a");
+        let req = authorization_request(&verified, &body, None).expect("composes");
         assert_eq!(req.actor().subject(), "did:example:agent-1");
         assert_eq!(req.actor().keyid(), "key-a");
         assert_eq!(req.action().operation(), "tools/call");
@@ -146,7 +147,7 @@ mod tests {
     fn a_body_from_another_request_cannot_be_paired_with_this_actor() {
         // The composition inherits the action authority's L-5 guard rather than restating
         // it: an input built from actor A and a body signed by B is unconstructible.
-        let verified = verified_over_as(CALL, "did:example:agent-1", "key-a");
+        let verified = verified_over_as(CALL, "did:example:agent-1", "key-a").verified;
         let other = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete"}}"#;
         assert_eq!(
             authorization_request(&verified, other, None).map(|_| ()),
@@ -184,7 +185,7 @@ mod tests {
             0,
         )
         .expect("no currency control is configured, so nothing can refuse");
-        let verified = verified_over_as(CALL, PRINCIPAL, "key-a");
+        let Signed { verified, body } = verified_over_as(CALL, PRINCIPAL, "key-a");
         let bound = TransportBinding::exact_match()
             .bind(
                 Some(&peer),
@@ -194,7 +195,7 @@ mod tests {
             )
             .expect("one principal");
 
-        let req = authorization_request(&verified, CALL, Some(&bound)).expect("composes");
+        let req = authorization_request(&verified, &body, Some(&bound)).expect("composes");
         let carried = req
             .channel_binding()
             .expect("the binding is offered to the policy");
@@ -204,8 +205,8 @@ mod tests {
 
     #[test]
     fn an_unbound_deployment_says_not_claimed_rather_than_asserting_a_binding() {
-        let verified = verified_over_as(CALL, "did:example:agent-1", "key-a");
-        let req = authorization_request(&verified, CALL, None).expect("composes");
+        let Signed { verified, body } = verified_over_as(CALL, "did:example:agent-1", "key-a");
+        let req = authorization_request(&verified, &body, None).expect("composes");
         assert!(req.channel_binding().is_none());
     }
 }

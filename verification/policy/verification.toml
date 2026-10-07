@@ -13432,7 +13432,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::body_boundary::tests::prepare_strips_the_reserved_key_under_every_policy",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::body_boundary::tests::prepare_writes_the_peps_block_only_under_trusted",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::body_boundary::tests::prepare_refuses_a_body_the_verified_request_does_not_cover",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::body_boundary::tests::prepare_fails_closed_under_trusted_when_the_block_cannot_be_written",
+  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::body_boundary::tests::the_write_fails_closed_under_trusted_when_the_block_cannot_be_written",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::body_boundary::tests::the_seeding_report_names_positions_escapes_the_actor_and_is_bounded",
 ]
 

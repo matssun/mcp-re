@@ -310,8 +310,12 @@ mod tests {
     /// The key a prepared dispatch hands the tier — the only public way to one — for a
     /// request by `subject` under `keyid`.
     fn keyed(subject: &str, keyid: &str, nonce: &str, expires_at_unix: i64) -> ReplayKey {
-        let mut verified =
-            crate::authorization::action_harness::verified_over_as(b"{}", subject, keyid);
+        let mut verified = crate::authorization::action_harness::verified_over_as(
+            crate::authorization::action_harness::LIST,
+            subject,
+            keyid,
+        )
+        .verified;
         verified.floor.nonce = nonce.to_string();
         mcp_re_http_profile::DispatchConfig {
             fleet_strict: false,
