@@ -107,13 +107,13 @@ impl AsyncContinuationStore for RedisContinuationStore {
         let value = encode_handles(bases);
         let max = self.capacity.max_live_entries();
         let mut conn = self.conn.clone();
-        // A non-positive TTL would ask Redis for a <=0 PX; clamp to a 1s floor so a
-        // degenerate window still records a briefly-live entry rather than erroring. A TTL
-        // whose millisecond count does not fit i64 is refused, as the in-memory tier does.
-        let ttl_ms = ttl_secs.max(1).checked_mul(1000);
+        // A non-positive TTL is refused, not raised to a floor: an entry the caller asked to
+        // be dead already is not one this tier invents a lifetime for. A TTL whose
+        // millisecond count does not fit i64 is refused too. Both as the in-memory tier does.
+        let ttl_ms = (ttl_secs > 0).then(|| ttl_secs.checked_mul(1000)).flatten();
         Box::pin(async move {
             let ttl_ms = ttl_ms.ok_or_else(|| ContinuationStoreError::Unavailable {
-                details: "continuation ttl is not representable in milliseconds".to_string(),
+                details: "continuation ttl is not a positive number of milliseconds".to_string(),
             })?;
             // One script, so the prune, the occupancy test, the capacity test and the
             // write cannot be interleaved with another replica's: a read-then-write would
@@ -334,17 +334,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_non_positive_ttl_still_asks_for_an_expiring_entry() {
-        // Redis rejects `PX 0` outright, and a store that errored there would fail the
-        // open leg closed on a merely degenerate window.
+    async fn a_non_positive_ttl_is_refused_before_any_command() {
+        // Refused, never raised to a floor: the caller asked for no lifetime, and inventing
+        // one would store an entry nobody asked to be live.
         for ttl_secs in [0, -5] {
             let (store, seen) = store_against(":1\r\n").await;
-            store
-                .create(&key(), &bases(), ttl_secs)
-                .await
-                .expect("EVAL");
-            let commands = recorded(&seen);
-            assert_eq!(commands[0][6], "1000", "ttl_secs {ttl_secs} must clamp up");
+            let refused = store.create(&key(), &bases(), ttl_secs).await;
+            assert!(
+                matches!(&refused, Err(ContinuationStoreError::Unavailable { details }) if details.contains("ttl")),
+                "ttl_secs {ttl_secs}: got {refused:?}"
+            );
+            assert!(
+                recorded(&seen).is_empty(),
+                "ttl_secs {ttl_secs}: no command"
+            );
         }
     }
 

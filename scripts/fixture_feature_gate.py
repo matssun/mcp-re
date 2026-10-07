@@ -3,8 +3,9 @@
 """A test-only crate feature is compiled only into test-only targets.
 
 A test-only feature — `mcp-re-host`'s `test-fixtures`, `mcp-re-http-profile`'s
-`pre_052_fixtures` — puts something on a crate's surface that no deployment may be given: a
-nonce source with no entropy and a frozen clock, or a removed direct-root response signer.
+`pre_052_fixtures`, the proxy's and the transport's `fault_accept_any_*` — puts something on a
+crate's surface that no deployment may be given: a nonce source with no entropy and a frozen
+clock, a removed direct-root response signer, or a certificate verifier that accepts any peer.
 Bazel compiles a crate's features per TARGET, so the feature reaches a build exactly through
 a target that names it in `crate_features` and whatever depends on that target.
 
@@ -40,6 +41,11 @@ TEST_ONLY_FEATURES: dict[str, str] = {
     # ADR-MCPRE-052: the pre-052 direct-root response emitters. A production target
     # compiling them would put a removed signing mode back into the build.
     "mcp-re-http-profile": "pre_052_fixtures",
+    # MCPS-079 fault injection: a client-certificate verifier that accepts any client. A
+    # production target compiling it would ship mTLS with client authentication switched off.
+    "mcp-re-proxy": "fault_accept_any_client",
+    # The transport's mirror: a server-certificate verifier that accepts any server.
+    "mcp-re-transport": "fault_accept_any_server",
 }
 
 
@@ -89,9 +95,21 @@ def selftest() -> int:
     flavor = _row("mcp-re-host/src/lib.rs", "rust_library", ["test-fixtures"], True)
     pre = _row("mcp-re-http-profile/src/lib.rs", "rust_library", [], False)
     pre_flavor = _row("mcp-re-http-profile/src/lib.rs", "rust_library", ["pre_052_fixtures"], True)
-    green = {"//h:lib": lib, "//h:fx": flavor, "//p:lib": pre, "//p:fx": pre_flavor}
+    proxy = _row("mcp-re-proxy/src/lib.rs", "rust_library", [], False)
+    proxy_fault = _row("mcp-re-proxy/src/lib.rs", "rust_library", ["fault_accept_any_client"], True)
+    transport = _row("mcp-re-transport/src/lib.rs", "rust_library", [], False)
+    transport_fault = _row(
+        "mcp-re-transport/src/lib.rs", "rust_library", ["fault_accept_any_server"], True
+    )
+    green = {
+        "//h:lib": lib, "//h:fx": flavor, "//p:lib": pre, "//p:fx": pre_flavor,
+        "//x:lib": proxy, "//x:fault": proxy_fault, "//t:lib": transport, "//t:fault": transport_fault,
+    }
     cases = {
         "a flavor that is not testonly": {**green, "//h:fx": {**flavor, "testonly": False}},
+        "a fault flavor that is not testonly": {
+            **green, "//x:fault": {**proxy_fault, "testonly": False},
+        },
         "the production library carrying the feature": {
             **green, "//h:lib": {**lib, "features": ["test-fixtures"]},
         },

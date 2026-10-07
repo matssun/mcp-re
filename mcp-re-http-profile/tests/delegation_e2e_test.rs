@@ -292,27 +292,81 @@ fn direct_root_signed_response_is_rejected_credential_missing() {
 
 // --- step 8: keyid / cnf binding --------------------------------------------
 
+/// What only a hand-built emitter can produce: a bound delegated response whose block names
+/// `signer` while the signature is made under `wire_kid`. The library's delegated signers
+/// refuse that pair, so the verifier's refusal is exercised over a forged message.
+fn forge_bound(
+    rsp: &mut HttpResponse,
+    request: &HttpRequest,
+    verified: &VerifiedMcpRequest,
+    signer: &ActorIdentity,
+    credential: &str,
+    wire_kid: &str,
+) {
+    let block = HttpResponseEvidenceBlock {
+        profile: PROFILE_TAG.to_owned(),
+        server_signer: signer.clone(),
+        server_delegation: Some(credential.to_owned()),
+        request_evidence: verified.evidence().to_digest(),
+    };
+    rsp.body = insert_meta_block(&rsp.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block).expect("insert");
+    sign_response_with_signer(
+        rsp,
+        request,
+        |b| {
+            mcp_re_core::b64url_decode(&delegated_key().sign(b))
+                .map_err(|_| HttpProfileError::InvalidSignature)
+        },
+        wire_kid,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign");
+}
+
+/// The unbound analogue of [`forge_bound`].
+fn forge_unbound(
+    rsp: &mut HttpResponse,
+    request: &HttpRequest,
+    signer: &ActorIdentity,
+    credential: &str,
+    wire_kid: &str,
+) {
+    let block = HttpResponseEvidenceBlock {
+        profile: PROFILE_TAG.to_owned(),
+        server_signer: signer.clone(),
+        server_delegation: Some(credential.to_owned()),
+        request_evidence: UnboundRequestDiagnostic::received(&request.body).to_digest(),
+    };
+    rsp.body = insert_meta_block(&rsp.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block).expect("insert");
+    mcp_re_http_profile::sign::sign_response_unbound(
+        rsp,
+        &delegated_key(),
+        wire_kid,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign");
+}
+
 #[test]
 fn response_keyid_not_delegated_kid_is_key_mismatch() {
     // The credential authorizes DELEGATED_KID, but the response signature is made
     // under a different RFC 9421 keyid.
-    let (req, _, _verified_req) = signed_request();
+    let (req, _, verified_req) = signed_request();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full_with_owned_key(
+    forge_bound(
         &mut rsp,
         &req,
+        &verified_req,
         &server_signer(), // block server_signer.keyid == DELEGATED_KID
         &valid_credential(),
-        &delegated_key(),
         "some-other-kid", // RFC 9421 keyid ≠ delegated_kid
-        CREATED,
-        EXPIRES,
-    )
-    .expect("sign");
+    );
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
         .unwrap_err();
@@ -863,24 +917,21 @@ fn credential_scoped_to_another_keyid() -> (String, ActorIdentity) {
 
 #[test]
 fn a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch() {
-    let (req, _, _verified_req) = signed_request();
+    let (req, _, verified_req) = signed_request();
     let (credential, disowned) = credential_scoped_to_another_keyid();
     let mut rsp = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full_with_owned_key(
+    forge_bound(
         &mut rsp,
         &req,
+        &verified_req,
         &disowned, // block keyid == the credential's subject binding, not its cnf kid
         &credential,
-        &delegated_key(),
         DELEGATED_KID, // wire keyid == the credential's delegated kid
-        CREATED,
-        EXPIRES,
-    )
-    .expect("sign");
+    );
 
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
@@ -899,17 +950,7 @@ fn an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_misma
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound_with_owned_key(
-        &mut rsp,
-        &disowned,
-        &credential,
-        &UnboundRequestDiagnostic::received(&req.body),
-        &delegated_key(),
-        DELEGATED_KID,
-        CREATED,
-        EXPIRES,
-    )
-    .expect("sign");
+    forge_unbound(&mut rsp, &req, &disowned, &credential, DELEGATED_KID);
 
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
@@ -933,17 +974,15 @@ fn an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_unbound_with_owned_key(
+    // Block keyid == the credential's delegated kid, signed by the confirmed key, but
+    // advertised on the wire under a keyid the credential never confirmed.
+    forge_unbound(
         &mut rsp,
-        &server_signer(), // block keyid == the credential's delegated kid
+        &req,
+        &server_signer(),
         &valid_credential(),
-        &UnboundRequestDiagnostic::received(&req.body),
-        &delegated_key(), // signed by the confirmed key
-        "some-other-kid", // but advertised under a keyid the credential never confirmed
-        CREATED,
-        EXPIRES,
-    )
-    .expect("sign");
+        "some-other-kid",
+    );
 
     let err = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)

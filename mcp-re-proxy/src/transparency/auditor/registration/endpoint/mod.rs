@@ -53,14 +53,14 @@ pub struct RegistrationTarget {
     protocol: RegistrationProtocol,
 }
 
-/// Whether `url` names the loopback interface, the one host plaintext is admitted to:
-/// the authority is exactly a loopback host and an optional numeric port, no userinfo.
+/// Whether `url` names the loopback interface by ADDRESS (a name is the resolver's answer),
+/// the one host plaintext is admitted to: that address, an optional numeric port, no userinfo.
 fn is_loopback(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("http://") else {
         return false;
     };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-    ["127.0.0.1", "[::1]", "localhost"]
+    ["127.0.0.1", "[::1]"]
         .iter()
         .filter_map(|host| authority.strip_prefix(host))
         .any(is_port_suffix)
@@ -99,8 +99,8 @@ impl RegistrationTarget {
         }
         if !base_url.starts_with("https://") && !is_loopback(base_url) {
             return Err(format!(
-                "--register-to {locator}: registration is HTTPS. Plaintext is admitted \
-                 only to the loopback interface, where there is no network to observe it",
+                "--register-to {locator}: registration is HTTPS. Plaintext is admitted only \
+                 to http://127.0.0.1 or http://[::1], where no network can observe it",
             ));
         }
         let policy = match (protocol, interval) {
@@ -251,6 +251,9 @@ mod tests {
             "http://http://localhost:1/",
             "http://localhost:8600\\@evil.test/",
             "http://127.0.0.1:86x0",
+            // A loopback NAME is refused: the resolver, not this rule, decides what it is.
+            "http://localhost:8600",
+            "http://localhost/scitt",
         ] {
             let refused = target(url).expect_err("plaintext off loopback");
             assert!(refused.contains("HTTPS"), "{url}: {refused}");
@@ -258,9 +261,7 @@ mod tests {
         for url in [
             "http://127.0.0.1:8600",
             "http://[::1]:8600/scitt",
-            "http://localhost:8600",
             "http://127.0.0.1",
-            "http://localhost/scitt",
         ] {
             assert!(target(url).is_ok(), "{url}");
         }

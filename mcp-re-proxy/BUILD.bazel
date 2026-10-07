@@ -941,8 +941,11 @@ nt_rust_library(
 # feature, so the faulted CLIENT verifier is compiled into the fault-injection
 # test. The default `:mcp_re_proxy` above is never built with this feature;
 # production and the default `bazel test //...` link only the verifying instance.
+# `testonly` makes Bazel refuse any non-test consumer, so the accept-any verifier cannot
+# link into a shippable target (scripts/fixture_feature_gate.py holds this).
 nt_rust_library(
     name = "mcp_re_proxy_fault",
+    testonly = True,
     srcs = _PROXY_LIB_SRCS,
     crate_features = ["fault_accept_any_client"],
     crate_name = "mcp_re_proxy",

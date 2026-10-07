@@ -30,17 +30,32 @@
 //! before this adapter runs, and they remain facts owned by those authorities.
 
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::VerifiedMcpRequest;
 
 use super::VerifiedRequestSubject;
 
-/// The subject the request verifier resolved for this request's signer.
+/// The subject the request verifier resolved for this verified request's signer.
 ///
 /// `pub(crate)`: the serving path lives outside this module tree and needs to turn its
-/// verified request into the semantic value. The widening buys exactly one capability —
-/// projecting the resolved actor's subject — and the CONSTRUCTOR it calls stays private to
-/// the owner, so widening this entrance does not widen production.
-pub(crate) fn verified_request_subject(actor: &ResolvedActor) -> VerifiedRequestSubject {
+/// verified request into the semantic value. It takes the VERIFIED REQUEST, not a resolved
+/// actor: a `ResolvedActor` is a plain value any caller can write as a literal, so an
+/// entrance over it would let a caller name any subject it liked. The constructor it calls
+/// stays private to the owner.
+pub(crate) fn verified_request_subject(request: &VerifiedMcpRequest) -> VerifiedRequestSubject {
+    subject_of(request.resolved_actor())
+}
+
+/// The projection itself: the resolved actor's subject, and no other coordinate. Visible
+/// to the binding authority, whose own controls exercise it over constructed actors.
+pub(super) fn subject_of(actor: &ResolvedActor) -> VerifiedRequestSubject {
     VerifiedRequestSubject::resolved(actor.identity.subject.clone())
+}
+
+/// A subject for the controls of modules outside the binding authority that need an
+/// operand and have no verified request in hand. Test builds only.
+#[cfg(test)]
+pub(crate) fn subject_for_test(actor: &ResolvedActor) -> VerifiedRequestSubject {
+    subject_of(actor)
 }
 
 #[cfg(test)]
@@ -74,7 +89,7 @@ mod tests {
             "spiffe://example.org/agent-1",
             "key-a",
         );
-        let subject = verified_request_subject(&resolved);
+        let subject = subject_of(&resolved);
 
         assert_eq!(subject.as_str(), "spiffe://example.org/agent-1");
         assert_ne!(
@@ -89,13 +104,13 @@ mod tests {
         // The control that pins WHY the subject is the operand. Requiring `keyid` would
         // couple certificate issuance to every signing-key rotation: the same principal,
         // one new key, and every certificate in the fleet would have to be reissued.
-        let before = verified_request_subject(&actor(
+        let before = subject_of(&actor(
             "client",
             "example.org",
             "spiffe://example.org/agent-1",
             "key-a",
         ));
-        let after = verified_request_subject(&actor(
+        let after = subject_of(&actor(
             "client",
             "example.org",
             "spiffe://example.org/agent-1",
@@ -111,13 +126,13 @@ mod tests {
     fn a_different_subject_is_a_different_coordinate_under_the_same_role_and_domain() {
         // The negative that keeps the projection from being vacuous: role and trust domain
         // are held fixed, so only the subject can account for the difference.
-        let a = verified_request_subject(&actor(
+        let a = subject_of(&actor(
             "client",
             "example.org",
             "spiffe://example.org/agent-1",
             "key-a",
         ));
-        let b = verified_request_subject(&actor(
+        let b = subject_of(&actor(
             "client",
             "example.org",
             "spiffe://example.org/agent-2",

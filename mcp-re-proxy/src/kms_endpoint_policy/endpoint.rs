@@ -134,10 +134,10 @@ mod tests {
     /// too — it is the rule's decision, and nothing here re-takes it.
     #[test]
     fn the_loopback_plaintext_exception_reaches_egress() {
-        let endpoint = KmsEndpoint::parse("http://localhost:4566")
+        let endpoint = KmsEndpoint::parse("http://127.0.0.1:4566")
             .expect("plaintext loopback is the emulator exception the rule grants");
         #[cfg(feature = "aws_kms_keysource")]
-        assert_eq!(endpoint.authority(), "localhost:4566");
+        assert_eq!(endpoint.authority(), "127.0.0.1:4566");
         let _egress = endpoint.egress(Duration::from_secs(5));
     }
 }

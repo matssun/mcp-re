@@ -13031,3 +13031,77 @@ expect_red = [
 note = """
 The idle bound closes connections gracefully; counting a serving connection as idle would close it under a long request.
 """
+
+[[probe]]
+id = "M541-http-profile-a-delegated-signer-signs-under-a-key-its-block-does-not-name"
+unit = "http_profile.response_emission_binding"
+conjunct = "a delegated response is signed only under the keyid its block names as the server signer"
+path = "mcp-re-http-profile/src/sign.rs"
+anchor = """
+    if server_signer.keyid == delegated_kid {
+"""
+weakening = """
+    if true {
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_delegated_response_is_refused_when_the_signer_names_another_key",
+]
+note = """
+A signer that told a verifier one key in the block and signed under another would leave only the verifier to notice.
+"""
+
+[[probe]]
+id = "M542-proxy-a-kms-endpoint-named-localhost-is-plaintext-loopback"
+unit = "proxy.kms_endpoint_authority"
+conjunct = "plaintext is admitted only to a loopback address, never to a name"
+path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+anchor = """
+    std::net::Ipv4Addr::from_str(host).is_ok_and(|address| address.is_loopback())
+"""
+weakening = """
+    std::net::Ipv4Addr::from_str(host).is_ok_and(|address| address.is_loopback())
+        || host.eq_ignore_ascii_case("localhost")
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::the_plaintext_exception_follows_the_address_not_the_spelling",
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::a_plaintext_name_is_refused_with_the_address_form_named",
+]
+note = """
+`localhost` is whatever the host resolver answers; admitting it by name would let a resolver send the KMS credential off the machine in plaintext.
+"""
+
+[[probe]]
+id = "M543-proxy-a-registration-endpoint-named-localhost-is-plaintext-loopback"
+unit = "proxy.registration_endpoint_admission"
+conjunct = "plaintext registration is admitted only to 127.0.0.1 or [::1]"
+path = "mcp-re-proxy/src/transparency/auditor/registration/endpoint/mod.rs"
+anchor = """
+    ["127.0.0.1", "[::1]"]
+"""
+weakening = """
+    ["127.0.0.1", "[::1]", "localhost"]
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#transparency::auditor::registration::endpoint::tests::plaintext_is_refused_off_the_loopback_interface",
+]
+note = """
+The registration plaintext exception follows the address, not a name the resolver decides.
+"""
+
+[[probe]]
+id = "M544-proxy-a-non-positive-continuation-ttl-is-given-a-lifetime"
+unit = "proxy.continuation_correlation_store"
+conjunct = "a non-positive continuation TTL is refused, never given a lifetime"
+path = "mcp-re-proxy/src/continuation_store/in_memory.rs"
+anchor = """
+        let secs = u64::try_from(ttl_secs).ok().filter(|secs| *secs > 0)?;
+"""
+weakening = """
+        let secs = u64::try_from(ttl_secs).unwrap_or(0);
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::in_memory::tests::a_non_positive_ttl_is_refused_not_stored",
+]
+note = """
+Refuse, never clamp: an entry the caller asked to be dead is not one the store invents a lifetime for.
+"""

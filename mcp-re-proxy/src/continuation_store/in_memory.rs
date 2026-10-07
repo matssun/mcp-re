@@ -69,10 +69,10 @@ impl InMemoryContinuationStore {
     /// The expiry instant for a TTL taken at `now`. The store owns its own clock because
     /// the trait's `create` takes a DURATION, not an instant, so there is no
     /// caller-supplied `now` to anchor expiry to; a monotonic instant cannot be unreadable
-    /// or stepped backwards. A negative TTL is a zero lifetime; `None` is a TTL no instant
-    /// can represent.
+    /// or stepped backwards. `None` is a TTL that is not positive, or that no instant can
+    /// represent: neither is given a lifetime.
     fn expiry(now: std::time::Instant, ttl_secs: i64) -> Option<std::time::Instant> {
-        let secs = u64::try_from(ttl_secs).unwrap_or(0);
+        let secs = u64::try_from(ttl_secs).ok().filter(|secs| *secs > 0)?;
         now.checked_add(std::time::Duration::from_secs(secs))
     }
 }
@@ -101,7 +101,7 @@ impl InMemoryContinuationStore {
         let now = std::time::Instant::now();
         let expires_at =
             Self::expiry(now, ttl_secs).ok_or_else(|| ContinuationStoreError::Unavailable {
-                details: "continuation ttl is not representable".to_owned(),
+                details: "continuation ttl is not positive or not representable".to_owned(),
             })?;
         let mut entries = self.entries.lock().map_err(poisoned)?;
         // Drop everything already expired on the way past, so an abandoned chain does not
@@ -117,6 +117,21 @@ impl InMemoryContinuationStore {
         }
         entries.insert(key, (bases, expires_at));
         Ok(Creation::Stored)
+    }
+}
+
+#[cfg(test)]
+impl InMemoryContinuationStore {
+    /// An entry whose lifetime has already ended, for the controls of expiry. `create`
+    /// refuses a non-positive TTL, so an expired entry is written here directly.
+    pub(super) fn insert_expired(&self, key: &ContinuationKey, bases: &RetainedHandles) {
+        let past = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("the monotonic clock is past its first second");
+        self.entries
+            .lock()
+            .expect("not poisoned")
+            .insert(key.as_str().to_string(), (bases.clone(), past));
     }
 }
 
@@ -258,6 +273,22 @@ mod tests {
         );
     }
 
+    /// A non-positive TTL is refused, not stored as an already-dead entry.
+    #[test]
+    fn a_non_positive_ttl_is_refused_not_stored() {
+        let store = InMemoryContinuationStore::new();
+        for ttl_secs in [0, -5] {
+            assert!(matches!(
+                block_on(store.create(
+                    &ContinuationKey::of_parts("aud", "actor", b"k"),
+                    &bases(),
+                    ttl_secs
+                )),
+                Err(ContinuationStoreError::Unavailable { .. })
+            ));
+        }
+    }
+
     /// A TTL no instant can represent is refused, not stored as an immortal entry.
     #[test]
     fn an_unrepresentable_ttl_is_refused_not_stored() {
@@ -281,12 +312,10 @@ mod tests {
     #[test]
     fn consuming_an_expired_entry_removes_it_but_reports_not_live() {
         let store = InMemoryContinuationStore::new();
-        block_on(store.create(
+        store.insert_expired(
             &ContinuationKey::of_parts("aud", "actor", b"expired"),
             &bases(),
-            -1,
-        ))
-        .expect("stored");
+        );
         assert!(matches!(
             block_on(store.consume(&ContinuationKey::of_parts("aud", "actor", b"expired"))),
             Ok(Consumption::NoLiveEntry)
@@ -321,10 +350,7 @@ mod tests {
             block_on(store.create(&key(b"a"), &bases(), 300)).ok(),
             Some(Creation::Stored)
         );
-        assert_eq!(
-            block_on(store.create(&key(b"b"), &bases(), -1)).ok(),
-            Some(Creation::Stored)
-        );
+        store.insert_expired(&key(b"b"), &bases());
         // `b` has already expired, so the map holds one live entry and `c` fits.
         assert_eq!(
             block_on(store.create(&key(b"c"), &bases(), 300)).ok(),

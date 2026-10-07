@@ -71,7 +71,10 @@ use crate::communication_assurance::peer_identity_value::PeerIdentityValue;
 /// Sealed: the representation and the constructor are private to this module, so the only
 /// inhabitants are the ones [`http_profile_adapter`] — a CHILD of this module, and
 /// therefore the one descendant that reaches the constructor — produced from a
-/// `ResolvedActor` the verifier built. A caller cannot assert a subject.
+/// `VerifiedMcpRequest`. That type's fields are public in its own crate (a one-way
+/// nominal separation, THM-0047), so a caller that writes a whole verified request as a
+/// literal can still name a subject; the serving path's one production call hands it the
+/// request the verifier returned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedRequestSubject {
     subject: String,
@@ -188,7 +191,7 @@ mod tests {
     use mcp_re_http_profile::SignerSlot;
 
     use super::bind_request_to_peer;
-    use super::http_profile_adapter::verified_request_subject;
+    use super::http_profile_adapter::subject_of;
     use super::RequestPeerBindingRefusal;
     use crate::communication_assurance::authenticate_relationship_peer;
     use crate::communication_assurance::certificate_identity_policy::CertificateIdentityPolicy;
@@ -240,7 +243,7 @@ mod tests {
         // implementation could not accept because it compared against the composite.
         let bound = bind_request_to_peer(
             peer_authenticated_as(PRINCIPAL),
-            verified_request_subject(&resolved("client", "example.org", PRINCIPAL, "key-a")),
+            subject_of(&resolved("client", "example.org", PRINCIPAL, "key-a")),
         )
         .expect("the peer and the resolved actor are one principal");
         assert_eq!(bound.principal().as_str(), PRINCIPAL);
@@ -256,7 +259,7 @@ mod tests {
         assert_eq!(
             bind_request_to_peer(
                 peer_authenticated_as(PRINCIPAL),
-                verified_request_subject(&resolved(
+                subject_of(&resolved(
                     "client",
                     "example.org",
                     "spiffe://example.org/agent-2",
@@ -284,7 +287,7 @@ mod tests {
             assert!(
                 bind_request_to_peer(
                     peer.clone(),
-                    verified_request_subject(&resolved("client", "example.org", PRINCIPAL, keyid)),
+                    subject_of(&resolved("client", "example.org", PRINCIPAL, keyid)),
                 )
                 .is_ok(),
                 "{keyid}: rotating a signing credential is not a change of principal"
@@ -301,12 +304,12 @@ mod tests {
         let peer = peer_authenticated_as(PRINCIPAL);
         assert!(bind_request_to_peer(
             peer.clone(),
-            verified_request_subject(&resolved("client", "other.example", PRINCIPAL, "key-a")),
+            subject_of(&resolved("client", "other.example", PRINCIPAL, "key-a")),
         )
         .is_ok());
         assert!(bind_request_to_peer(
             peer,
-            verified_request_subject(&resolved(
+            subject_of(&resolved(
                 "client",
                 "other.example",
                 "spiffe://example.org/agent-2",
@@ -328,7 +331,7 @@ mod tests {
         );
         assert!(bind_request_to_peer(
             peer_authenticated_as(&composite),
-            verified_request_subject(&resolved("client", "example.org", PRINCIPAL, "key-a")),
+            subject_of(&resolved("client", "example.org", PRINCIPAL, "key-a")),
         )
         .is_err());
     }

@@ -7765,7 +7765,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-17064"
 project = "mcp-re-proxy"
-control = "src/lib.rs#redis_continuation_store::tests::a_non_positive_ttl_still_asks_for_an_expiring_entry"
+control = "src/lib.rs#redis_continuation_store::tests::a_non_positive_ttl_is_refused_before_any_command"
 decision = "new-proposition"
 proposition = "NP-119"
 recorded = "2026-09-19"

@@ -1032,9 +1032,8 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
         "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
         "https://kms.emulator.svc.cluster.local:8443",
         "http://127.0.0.1:4566/",
-        "http://localhost:4566",
         "http://[::1]:4566",
-        "http://localhost",
+        "http://127.0.0.1",
     ] {
         for select in [
             aws_endpoint as fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest, String),

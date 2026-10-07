@@ -84,15 +84,15 @@ impl AdmissionEnforcer {
     /// COSTS the client is a fact about the whole exchange, and the serving path's machine
     /// owns it.
     ///
-    /// It takes the verified request and the verifier-resolved actor id, and nothing the
-    /// request asserts about itself.
+    /// It takes the verified request, derives the actor from the verifier's resolution of
+    /// it, and reads nothing the request asserts about itself.
     pub(crate) async fn decide(
         &self,
         verified: &VerifiedMcpRequest,
-        actor_id: &str,
         audience_id: &str,
         now: i64,
     ) -> Result<AdmissionFacet, AdmissionRefusal> {
+        let actor_id = verified.resolved_actor().actor_id();
         let block = verified.request_block();
         let (binding, assertion) = match (
             block.admission.as_ref(),
@@ -126,7 +126,7 @@ impl AdmissionEnforcer {
         let authenticated = authenticate_admission(
             binding,
             assertion,
-            actor_id,
+            &actor_id,
             mcp_re_http_profile::PROFILE_TAG,
             &[audience_id],
             &self.policy,

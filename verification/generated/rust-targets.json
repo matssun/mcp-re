@@ -6420,7 +6420,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
-   "testonly": false,
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_pre052": {

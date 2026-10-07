@@ -344,11 +344,7 @@ mod tests {
     /// cannot carry a credential off the machine.
     #[test]
     fn a_loopback_http_kms_endpoint_is_accepted_for_emulators() {
-        for endpoint in [
-            "http://localhost:4566",
-            "http://127.0.0.1:4566/",
-            "http://[::1]:4566",
-        ] {
+        for endpoint in ["http://127.0.0.1:4566/", "http://[::1]:4566"] {
             assert!(
                 with_kms_endpoint("--aws-kms-endpoint", endpoint).is_ok(),
                 "{endpoint} is a loopback emulator and must be accepted"
@@ -3558,12 +3554,9 @@ mod tests {
             "https://kms.emulator.svc.cluster.local:8443",
             "https://10.0.0.5:8443",
             // The LocalStack / KMS-emulator lane, in every spelling.
-            "http://localhost:4566",
-            "http://localhost:4566/",
             "http://127.0.0.1:4566",
             "http://127.0.0.1:4566/",
             "http://[::1]:4566",
-            "http://localhost",
             "http://127.0.0.1",
             "http://[::1]",
         ];

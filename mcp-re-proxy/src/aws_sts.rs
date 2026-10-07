@@ -1083,7 +1083,6 @@ mod tests {
             "https://sts.emulator.svc.cluster.local:8443",
             // The loopback emulator lane the IRSA tests themselves run against.
             "http://127.0.0.1:4566/",
-            "http://localhost:4566",
             "http://[::1]:4566",
         ] {
             if let Err(err) = WebIdentityConfig::from_env("eu-north-1", Some(endpoint.to_string()))
@@ -1398,7 +1397,6 @@ mod tests {
             "https://sts.amazonaws.com",
             "https://sts.emulator.svc.cluster.local:8443",
             "http://127.0.0.1:4566/",
-            "http://localhost:4566",
         ] {
             assert!(
                 WebIdentityCredentialSource::new(WebIdentityConfig {

@@ -1021,7 +1021,7 @@ mod tests {
     /// A verified request subject, through the one producer. The composition root's own
     /// controls need an operand, not a relation.
     fn binding_subject() -> crate::communication_assurance::VerifiedRequestSubject {
-        crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject(
+        crate::communication_assurance::request_peer_binding::http_profile_adapter::subject_for_test(
             &mcp_re_http_profile::ResolvedActor {
                 identity: mcp_re_http_profile::ActorIdentity {
                     role: "client".into(),

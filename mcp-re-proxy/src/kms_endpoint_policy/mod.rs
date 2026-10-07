@@ -120,9 +120,11 @@ pub(crate) fn kms_endpoint_authority(value: &str) -> Result<String, String> {
     let (host, port) = split_host_port(authority, &locator)?;
     if plaintext && !names_this_machine(host) {
         return Err(format!(
-            "may only use http:// for a loopback emulator (localhost, 127.0.0.0/8, [::1]); \
-             got host {host:?}. A plaintext endpoint exfiltrates the KMS credential and lets a \
-             substituted host supply the root verify key"
+            "may only use http:// for a loopback emulator named by address (127.0.0.0/8 or \
+             [::1], e.g. http://127.0.0.1:4566); got host {host:?}. A name such as `localhost` \
+             is answered by the host's resolver, not by this rule. A plaintext endpoint \
+             exfiltrates the KMS credential and lets a substituted host supply the root verify \
+             key"
         ));
     }
     if let Some(port) = port {
@@ -136,9 +138,12 @@ pub(crate) fn kms_endpoint_authority(value: &str) -> Result<String, String> {
 /// leave it?
 ///
 /// Decided from the parsed address, not from a spelling, so the canonicalisations a URL
-/// parser performs do not change the answer: `url` reads `[0:0:0:0:0:0:0:1]` as `[::1]` and
-/// lowercases `LOCALHOST`, and every address in 127.0.0.0/8 is loopback under RFC 1122, not
-/// just `127.0.0.1`.
+/// parser performs do not change the answer: `url` reads `[0:0:0:0:0:0:0:1]` as `[::1]`,
+/// and every address in 127.0.0.0/8 is loopback under RFC 1122, not just `127.0.0.1`.
+///
+/// Only an ADDRESS answers. A name — `localhost` included — is whatever the host's resolver
+/// returns for it, and this rule cannot see that, so a plaintext endpoint named by a name is
+/// refused.
 ///
 /// The IPv4 shorthands a URL parser also accepts — `127.1`, `0x7f.1` — are NOT recognised
 /// here, so they are refused rather than admitted as loopback. That is the safe direction
@@ -147,10 +152,7 @@ fn names_this_machine(host: &str) -> bool {
     if let Some(literal) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
         return std::net::Ipv6Addr::from_str(literal).is_ok_and(|address| address.is_loopback());
     }
-    if let Ok(address) = std::net::Ipv4Addr::from_str(host) {
-        return address.is_loopback();
-    }
-    host.eq_ignore_ascii_case("localhost")
+    std::net::Ipv4Addr::from_str(host).is_ok_and(|address| address.is_loopback())
 }
 
 /// Split a `host[:port]` authority, refusing anything that is not a literal host.
@@ -501,7 +503,6 @@ mod tests {
             "http://127.0.0.1:4566",
             "http://127.0.0.2:4566",
             "http://127.255.255.254",
-            "http://LOCALHOST:4566",
             "http://[0:0:0:0:0:0:0:1]",
         ] {
             assert!(
@@ -516,6 +517,11 @@ mod tests {
             "http://[fe80::1]",
             "http://[2001:db8::1]",
             "http://localhost.attacker.example",
+            // A NAME is refused even when it is conventionally loopback: what `localhost`
+            // reaches is the host resolver's answer, which this rule cannot see.
+            "http://localhost",
+            "http://localhost:4566",
+            "http://LOCALHOST:4566",
             // The IPv4 shorthands url reads as 127.0.0.1 are refused, not admitted: a
             // refusal is the safe direction and no operator writes an emulator this way.
             "http://127.1",
@@ -526,6 +532,14 @@ mod tests {
                 "{off_machine} does not provably name this machine and must be refused"
             );
         }
+    }
+
+    /// The refusal of a loopback NAME tells the operator the address form that works.
+    #[test]
+    fn a_plaintext_name_is_refused_with_the_address_form_named() {
+        let err = super::kms_endpoint_authority("http://localhost:4566")
+            .expect_err("a plaintext endpoint named by a name must be refused");
+        assert!(err.contains("http://127.0.0.1:4566"), "{err}");
     }
 
     /// The authority the AWS SigV4 `Host` header is built from is the one a URL parser will
@@ -541,7 +555,7 @@ mod tests {
                 "https://kms.us-east-1.amazonaws.com/",
                 "kms.us-east-1.amazonaws.com",
             ),
-            ("http://localhost:4566/", "localhost:4566"),
+            ("http://127.0.0.1:4566/", "127.0.0.1:4566"),
             ("http://[::1]:4566", "[::1]:4566"),
             ("http://[::1]", "[::1]"),
         ] {

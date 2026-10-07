@@ -605,8 +605,8 @@ mod tests {
             "kms.us-east-1.amazonaws.com"
         );
         assert_eq!(
-            endpoint_of("http://localhost:4566/").unwrap().authority(),
-            "localhost:4566"
+            endpoint_of("http://127.0.0.1:4566/").unwrap().authority(),
+            "127.0.0.1:4566"
         );
         assert!(endpoint_of("not-a-url").is_err());
     }
@@ -660,7 +660,6 @@ mod tests {
                 "https://kms.emulator.internal:8443",
                 "kms.emulator.internal:8443",
             ),
-            ("http://localhost:4566", "localhost:4566"),
             ("http://127.0.0.1:4566/", "127.0.0.1:4566"),
             ("http://[::1]:4566", "[::1]:4566"),
         ] {
@@ -724,7 +723,7 @@ mod tests {
                 &AwsKmsConfig {
                     region: hostile.to_string(),
                     key_id: "k1".to_string(),
-                    endpoint: Some("http://localhost:4566".to_string()),
+                    endpoint: Some("http://127.0.0.1:4566".to_string()),
                 },
             ) else {
                 panic!("{hostile:?}: a region that reaches the signature must fail closed");
@@ -741,7 +740,7 @@ mod tests {
             &AwsKmsConfig {
                 region: "us-east-1".to_string(),
                 key_id: "k1".to_string(),
-                endpoint: Some("http://localhost:4566".to_string()),
+                endpoint: Some("http://127.0.0.1:4566".to_string()),
             },
         )
         .err();

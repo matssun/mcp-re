@@ -163,27 +163,33 @@ impl SigV4Signer {
         hmac_sha256(&k_service, TERMINATOR.as_bytes())
     }
 
-    /// Build the canonical request (POST, path `/`, no query) for the given signed
-    /// headers and payload, returning `(canonical_request, signed_headers_list)`.
-    /// `headers` are the headers to sign; they are lowercased, trimmed, and sorted.
-    fn canonical_request(headers: &[Header], payload: &[u8]) -> (String, String) {
-        let mut sorted: Vec<(String, String)> = headers
+    /// The canonical request (POST, `/`, no query) over borrowed `(name, value)` pairs, and
+    /// the signed-headers list. The one string holding values is `Zeroizing` and sized up
+    /// front, so no reallocation frees a copy of the session token it may carry.
+    fn canonical_request(headers: &[(&str, &str)], payload: &[u8]) -> (Zeroizing<String>, String) {
+        let mut sorted: Vec<(String, &str)> = headers
             .iter()
-            .map(|h| (h.name.to_ascii_lowercase(), h.value.trim().to_string()))
+            .map(|(n, v)| (n.to_ascii_lowercase(), v.trim()))
             .collect();
         sorted.sort_by(|a, b| a.0.cmp(&b.0));
-
-        let canonical_headers: String = sorted.iter().map(|(n, v)| format!("{n}:{v}\n")).collect();
-        let signed_headers: String = sorted
+        let signed = sorted
             .iter()
             .map(|(n, _)| n.as_str())
             .collect::<Vec<_>>()
             .join(";");
-
         let payload_hash = sha256_hex(payload);
-        let canonical_request =
-            format!("POST\n/\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}");
-        (canonical_request, signed_headers)
+        let mut pieces = vec!["POST\n/\n\n"];
+        sorted
+            .iter()
+            .for_each(|(n, v)| pieces.extend([n.as_str(), ":", v, "\n"]));
+        pieces.extend(["\n", signed.as_str(), "\n", payload_hash.as_str()]);
+        // A capacity hint: saturation only costs a reallocation, never a wrong request.
+        let capacity = pieces
+            .iter()
+            .fold(0_usize, |acc, p| acc.saturating_add(p.len()));
+        let mut canonical = Zeroizing::new(String::with_capacity(capacity));
+        pieces.iter().for_each(|p| canonical.push_str(p));
+        (canonical, signed)
     }
 
     /// Sign a request: given the headers to sign (must include `host`; for KMS also
@@ -191,21 +197,17 @@ impl SigV4Signer {
     /// `Authorization` header. `amz_date` is the signing instant; the caller is
     /// responsible for also sending `host`, `content-type`, `x-amz-target`,
     /// `x-amz-date`, and (if returned) `x-amz-security-token`.
-    pub fn sign(&self, mut headers: Vec<Header>, payload: &[u8], amz_date: &AmzDate) -> SignedAuth {
-        // x-amz-date is always signed.
-        headers.push(Header {
-            name: "x-amz-date".to_string(),
-            value: amz_date.as_str().to_string(),
-        });
-        // Temporary-credential session token is signed when present.
-        if let Some(token) = &self.credentials.session_token {
-            headers.push(Header {
-                name: "x-amz-security-token".to_string(),
-                value: token.to_string(),
-            });
-        }
-
-        let (canonical_request, signed_headers) = Self::canonical_request(&headers, payload);
+    pub fn sign(&self, headers: Vec<Header>, payload: &[u8], amz_date: &AmzDate) -> SignedAuth {
+        // x-amz-date is always signed, and the session token when present, borrowed from
+        // the credential rather than copied into a header value.
+        let token = self.credentials.session_token.as_ref();
+        let to_sign: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|h| (h.name.as_str(), h.value.as_str()))
+            .chain([("x-amz-date", amz_date.as_str())])
+            .chain(token.map(|t| ("x-amz-security-token", t.as_str())))
+            .collect();
+        let (canonical_request, signed_headers) = Self::canonical_request(&to_sign, payload);
         let scope = self.scope(amz_date);
         let string_to_sign = format!(
             "{ALGORITHM}\n{}\n{scope}\n{}",
@@ -231,6 +233,13 @@ impl SigV4Signer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pairs(headers: &[Header]) -> Vec<(&str, &str)> {
+        headers
+            .iter()
+            .map(|h| (h.name.as_str(), h.value.as_str()))
+            .collect()
+    }
 
     fn vanilla_signer() -> SigV4Signer {
         // AWS-published example credentials (the `aws-sig-v4-test-suite` defaults).
@@ -307,9 +316,9 @@ mod tests {
                 value: amz_date.as_str().to_string(),
             },
         ];
-        let (canonical_request, _) = SigV4Signer::canonical_request(&with_date, b"");
+        let (canonical_request, _) = SigV4Signer::canonical_request(&pairs(&with_date), b"");
         assert_eq!(
-            canonical_request,
+            canonical_request.as_str(),
             "POST\n/\n\nhost:example.amazonaws.com\nx-amz-date:20150830T123600Z\n\nhost;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
         let auth = vanilla_signer().sign(vec![host()], b"", &amz_date);
@@ -357,7 +366,8 @@ mod tests {
             name: "x-amz-date".to_string(),
             value: amz_date.as_str().to_string(),
         });
-        let (canonical_request, signed_headers) = SigV4Signer::canonical_request(&to_sign, body);
+        let (canonical_request, signed_headers) =
+            SigV4Signer::canonical_request(&pairs(&to_sign), body);
 
         assert_eq!(signed_headers, "content-type;host;x-amz-date;x-amz-target");
         assert!(canonical_request.starts_with("POST\n/\n\n"));

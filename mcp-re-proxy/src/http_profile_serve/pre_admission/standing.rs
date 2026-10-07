@@ -82,7 +82,7 @@ impl HttpProfileProxy {
         let Some(binding) = &self.transport_binding else {
             return Ok(Established::new(None, checked)); // NOT CLAIMED to be bound
         };
-        let subject = verified_request_subject(ex.verified.resolved_actor());
+        let subject = verified_request_subject(ex.verified);
         let Ok(bound) = binding.bind(peer, subject) else {
             return Err(Refusal::new(McpReError::TransportBindingFailed, 403));
         };
@@ -138,12 +138,7 @@ impl HttpProfileProxy {
             return Ok((admitted(), AdmissionFacet::NotConfigured));
         };
         match enforcer
-            .decide(
-                ex.verified,
-                ex.actor_id,
-                self.requests.audience_id(),
-                ex.now,
-            )
+            .decide(ex.verified, self.requests.audience_id(), ex.now)
             .await
         {
             // The gate's own verdict travels with the stage's product, so nothing

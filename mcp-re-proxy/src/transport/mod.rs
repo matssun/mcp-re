@@ -340,7 +340,7 @@ mod tests {
         use mcp_re_http_profile::ResolvedActor;
         use mcp_re_http_profile::SignerSlot;
 
-        crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject(
+        crate::communication_assurance::request_peer_binding::http_profile_adapter::subject_for_test(
             &ResolvedActor {
                 identity: ActorIdentity {
                     role: "client".into(),

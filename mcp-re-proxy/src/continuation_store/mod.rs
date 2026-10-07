@@ -333,8 +333,8 @@ mod tests {
     async fn an_expired_key_may_be_established_again() {
         let store = InMemoryContinuationStore::new();
         let key = ContinuationKey::of_parts(AUD, ACTOR_A, b"state-1");
-        // A TTL already in the past: the entry is written and is immediately not live.
-        store.create(&key, &bases(), -1).await.unwrap();
+        // An entry whose lifetime has already ended.
+        store.insert_expired(&key, &bases());
         assert_eq!(store.peek(&key).await.unwrap(), None, "already expired");
 
         let next = RetainedHandles::over(b"later-prev", b"later-irr");

@@ -6881,6 +6881,7 @@ tested_symbols = [
   # The emitted signature covers a digest and signature headers the emitter computed, never ones
   # the caller supplied, and the delegated evidence block is inside the digested body.
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::caller_supplied_digest_and_signature_headers_do_not_survive_emission",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_delegated_response_is_refused_when_the_signer_names_another_key",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::the_delegated_response_block_is_inside_the_digested_body",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::a_bound_response_advertises_the_handle_of_the_request_it_answers",
   "//mcp-re-http-profile:mcp_re_http_profile_test#sign::tests::an_unsigned_request_cannot_be_answered_with_a_bound_response",
@@ -7698,6 +7699,7 @@ tested_symbols = [
   # The exception follows the ADDRESS, not the spelling — the same rule as the rest, and
   # the one place a reader might expect the text to decide.
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::the_plaintext_exception_follows_the_address_not_the_spelling",
+  "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::a_plaintext_name_is_refused_with_the_address_form_named",
   # THE RULE IS NOT A CALL A CONSTRUCTOR MAY OMIT. A refused endpoint yields no egress
   # capability at all, so there is nothing for a key source to perform a request through.
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::endpoint::tests::an_endpoint_the_rule_refuses_yields_no_egress",
@@ -8648,6 +8650,7 @@ tested_symbols = [
   # `Unavailable` fails the answer leg CLOSED, whereas a poisoned map reading as an ABSENT
   # entry would complete an answer leg against bytes nobody retained.
   "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::in_memory::tests::a_poisoned_correlation_map_is_unavailable_on_every_operation",
+  "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::in_memory::tests::a_non_positive_ttl_is_refused_not_stored",
   "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::in_memory::tests::an_unrepresentable_ttl_is_refused_not_stored",
   "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::in_memory::tests::consuming_an_expired_entry_removes_it_but_reports_not_live",
 ]

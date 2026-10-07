@@ -2077,11 +2077,10 @@ mod tests {
             // A regional Cloud KMS endpoint, and an in-cluster emulator with a port.
             Some("https://us-east1-cloudkms.googleapis.com"),
             Some("https://cloudkms.emulator.svc.cluster.local:8443"),
-            // The loopback emulator lane, in all three spellings, with and without a port.
-            Some("http://localhost:8443"),
+            // The loopback emulator lane, in both address families, with and without a port.
             Some("http://127.0.0.1:8443/"),
             Some("http://[::1]:8443"),
-            Some("http://localhost"),
+            Some("http://127.0.0.1"),
         ] {
             let client = UreqGcpClient::new(Box::new(EnvAccessTokenSource), &gcp_config(endpoint));
             assert!(
@@ -2120,7 +2119,7 @@ mod tests {
         for spelling in [
             "https://cloudkms.googleapis.com/",
             "https://cloudkms.googleapis.com//",
-            "http://localhost:8443/kms/",
+            "http://127.0.0.1:8443/kms/",
         ] {
             let other =
                 UreqGcpClient::new(Box::new(EnvAccessTokenSource), &gcp_config(Some(spelling)))

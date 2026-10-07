@@ -34,6 +34,7 @@ use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
 use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
 use mcp_re_http_profile::sign_request_full;
+use mcp_re_http_profile::sign_response_with_signer;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -44,6 +45,7 @@ use mcp_re_http_profile::DelegatedJwk;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::DelegationHeader;
+use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
@@ -398,6 +400,12 @@ fn from_wire_response(w: &WireMessage) -> HttpResponse {
 /// Sign a fresh delegated response embedding `credential`, signed by
 /// `delegated_signing_key` under RFC 9421 `keyid`, with the block's
 /// `server_signer.keyid == block_signer_kid`.
+///
+/// The library's delegated signer refuses a block naming another key than the one it
+/// signs under, so a vector where the two differ is forged: the block is emitted by the
+/// signer under `block_signer_kid`, then the signature is re-made under `keyid` over the
+/// same body. Ed25519 is deterministic, so the bytes are those a single emission under the
+/// two kids would have produced.
 fn delegated_response(
     req: &HttpRequest,
     credential: &str,
@@ -416,11 +424,25 @@ fn delegated_response(
         &server_signer_for(block_signer_kid),
         credential,
         delegated_signing_key,
-        keyid,
+        block_signer_kid,
         CREATED,
         EXPIRES,
     )
     .expect("sign delegated response");
+    if keyid != block_signer_kid {
+        sign_response_with_signer(
+            &mut rsp,
+            req,
+            |base| {
+                mcp_re_core::b64url_decode(&delegated_signing_key.sign(base))
+                    .map_err(|_| HttpProfileError::InvalidSignature)
+            },
+            keyid,
+            CREATED,
+            EXPIRES,
+        )
+        .expect("re-sign under the wire keyid");
+    }
     rsp
 }
 

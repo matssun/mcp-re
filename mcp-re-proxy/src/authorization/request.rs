@@ -189,7 +189,7 @@ mod tests {
             .bind(
                 Some(&peer),
                 crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject(
-                    verified.resolved_actor(),
+                    &verified,
                 ),
             )
             .expect("one principal");

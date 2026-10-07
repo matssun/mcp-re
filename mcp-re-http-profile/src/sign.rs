@@ -89,6 +89,20 @@ pub(crate) fn local_sig(key: &SigningKey, base: &[u8]) -> Result<Vec<u8>, HttpPr
     mcp_re_core::b64url_decode(&key.sign(base)).map_err(|_| HttpProfileError::InvalidSignature)
 }
 
+/// A delegated response names its signer in the block and signs under `delegated_kid`;
+/// the two must be the same key, or a verifier would be told one signer and shown
+/// another's signature. Checked before the body is touched.
+fn require_signer_is_delegated_key(
+    server_signer: &ActorIdentity,
+    delegated_kid: &str,
+) -> Result<(), HttpProfileError> {
+    if server_signer.keyid == delegated_kid {
+        Ok(())
+    } else {
+        Err(HttpProfileError::DelegationKeyMismatch)
+    }
+}
+
 /// Full-profile response signing for the DELEGATED-key path (ADR-MCPRE-052 §2,
 /// MCPRE-122). The response evidence block
 /// carries the inline `server_delegation` credential (protected by
@@ -97,7 +111,8 @@ pub(crate) fn local_sig(key: &SigningKey, base: &[u8]) -> Result<Vec<u8>, HttpPr
 /// path: it signed only the credential, off the hot path at issuance/rotation.
 ///
 /// Refuses before signing unless `request` carries a request evidence block that
-/// validates: a full-profile response binds to that block's request.
+/// validates: a full-profile response binds to that block's request, and unless
+/// `delegated_kid` is the block's `server_signer.keyid`.
 #[allow(clippy::too_many_arguments)]
 pub fn sign_delegated_response_full_with_owned_key(
     response: &mut HttpResponse,
@@ -109,6 +124,7 @@ pub fn sign_delegated_response_full_with_owned_key(
     created: i64,
     expires: i64,
 ) -> Result<Vec<u8>, HttpProfileError> {
+    require_signer_is_delegated_key(server_signer, delegated_kid)?;
     request_block::require_valid(request)?;
     let request_evidence = crate::verify::bound_request::request_evidence_of(request)?;
     let block = HttpResponseEvidenceBlock {
@@ -141,6 +157,7 @@ pub fn sign_delegated_response_full_with_owned_key(
 /// `content-digest`, `content-type`) — no `;req`. `request_evidence_diagnostic` is
 /// recorded in the block for diagnostics ONLY; an unbound response is verified
 /// response-only and this handle is never treated as a trusted request binding.
+/// Refuses unless `delegated_kid` is the block's `server_signer.keyid`.
 #[allow(clippy::too_many_arguments)]
 pub fn sign_delegated_response_unbound_with_owned_key(
     response: &mut HttpResponse,
@@ -152,6 +169,7 @@ pub fn sign_delegated_response_unbound_with_owned_key(
     created: i64,
     expires: i64,
 ) -> Result<(), HttpProfileError> {
+    require_signer_is_delegated_key(server_signer, delegated_kid)?;
     let block = HttpResponseEvidenceBlock {
         profile: PROFILE_TAG.to_owned(),
         server_signer: server_signer.clone(),
@@ -438,6 +456,49 @@ mod tests {
         );
         assert_eq!(response.body, before.body);
         assert_eq!(response.headers, before.headers);
+    }
+
+    #[test]
+    fn a_delegated_response_is_refused_when_the_signer_names_another_key() {
+        let (mut request, mut response, mut signer, key) = bound_signer_inputs();
+        sign_request(
+            &mut request,
+            &SigningKey::from_seed_bytes(&[0x22; 32]),
+            "client-key-1",
+            1_700_000_000,
+            1_700_000_300,
+            "nonce-1",
+        )
+        .expect("request signs");
+        signer.keyid = "another-kid".to_owned();
+        let before = response.clone();
+        let bound = sign_delegated_response_full_with_owned_key(
+            &mut response,
+            &request,
+            &signer,
+            "credential",
+            &key,
+            KID,
+            1_700_000_000,
+            1_700_000_300,
+        );
+        assert_eq!(bound, Err(HttpProfileError::DelegationKeyMismatch));
+        let unbound = sign_delegated_response_unbound_with_owned_key(
+            &mut response,
+            &signer,
+            "credential",
+            &UnboundRequestDiagnostic::absent(),
+            &key,
+            KID,
+            1_700_000_000,
+            1_700_000_300,
+        );
+        assert_eq!(unbound, Err(HttpProfileError::DelegationKeyMismatch));
+        assert_eq!(
+            response.body, before.body,
+            "nothing is written before the refusal"
+        );
+        assert!(!has_signature(&response.headers));
     }
 
     fn has_signature(headers: &[(String, String)]) -> bool {
