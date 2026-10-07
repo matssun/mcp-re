@@ -9,7 +9,7 @@
 //! caller's mark, it sets the counter to a target the caller computes strictly above that
 //! mark, and reports what the counter holds afterwards.
 //!
-//! A counter at or above the mark is left untouched, so an operator's `INCR` beyond the mark
+//! A counter at or above the mark is left untouched, so an advance beyond the mark
 //! is never overwritten, and a second replica repairing from the same mark finds the first
 //! one's write and writes nothing. It is one atomic step in the store.
 
@@ -152,7 +152,7 @@ pub(crate) mod live {
         assert_eq!(get(&mut operator, &key).as_deref(), Some("10"));
         assert_eq!(replica.read_epoch().expect("read"), 10);
 
-        // An operator's INCR on the rolled-back store, at or below the mark, still ends past it.
+        // A raw INCR on the rolled-back store, at or below the mark, still ends past it.
         set(&mut operator, &key, "2");
         redis::cmd("INCR")
             .arg(&key)

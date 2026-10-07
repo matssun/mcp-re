@@ -86,8 +86,8 @@ fn x6(config: &DeploymentRequest) -> Vec<String> {
 ///
 /// `TrustRevocation` owns whether the epoch configuration is LEGAL — that is X8, and it is
 /// checked inside that machine. What belongs here is the relation to delegated signing,
-/// which every deployment performs: the credential label the operator's INCR kill switch
-/// reaches exists only where a networked epoch source does. On one node the kill switch
+/// which every deployment performs: the credential label the trust-epoch kill switch
+/// (`mcp-re-proxy trust-epoch advance`) reaches exists only where a networked epoch source does. On one node the kill switch
 /// is a restart; across replicas without a source there is none, and each replica mints
 /// under the bare base for as long as it lives.
 ///

@@ -66,7 +66,7 @@ pub struct DelegatedSigningFacts {
 impl DelegatedSigningFacts {
     /// The base label delegated credentials are minted under: the whole label without a
     /// shared counter, else the signing plane extends it to `<base>#<counter>`, which an
-    /// operator `INCR` moves and which is not this owner's to promise.
+    /// operator's `mcp-re-proxy trust-epoch advance` moves and which is not this owner's to promise.
     pub fn trust_epoch(&self) -> &TrustEpoch {
         &self.trust_epoch
     }
@@ -326,7 +326,7 @@ mod tests {
     /// A refusal may not promise an effect the flag it asks for does not produce.
     ///
     /// `--delegated-trust-epoch` supplies a base label and nothing else. The counter that
-    /// makes the label globally comparable, and the operator `INCR` that moves every replica
+    /// makes the label globally comparable, and the operator's advance that moves every replica
     /// to the next one, come from a shared source this owner neither requires nor can
     /// observe — so a deployment naming the epoch and no source mints the bare base, which is
     /// a supported posture and not the one this refusal is describing. Any sentence here that

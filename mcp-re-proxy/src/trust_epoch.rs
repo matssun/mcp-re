@@ -120,7 +120,7 @@ impl<R: EpochReader> TrustEpochSource<R> {
     /// running — a panic, a thread that never started, a wedged read — leaves it at
     /// whatever it last said, which is `true` for every replica that was working when
     /// it stopped. That replica would keep asserting a one-poll-interval revocation
-    /// window it no longer provides, and an operator's `INCR` would never reach its
+    /// window it no longer provides, and an operator's advance would never reach its
     /// trust cache. Silence past the bound is therefore unhealthy on its own.
     fn polled_recently(&self) -> bool {
         let Some(bound) = *recover(self.liveness_bound.lock()) else {
@@ -636,7 +636,7 @@ mod tests {
 
     /// A poisoned queue used to swallow the FlushAll silently — `poll_once` skipped
     /// the push, `drain_pending` returned an empty vec forever, and neither touched
-    /// `healthy`. The operator's `INCR` then never reached this node's trust cache.
+    /// `healthy`. The operator's advance then never reached this node's trust cache.
     #[test]
     fn a_poisoned_queue_still_delivers_the_flush() {
         let src = std::sync::Arc::new(TrustEpochSource::new(FakeReader::new(1)));
@@ -754,7 +754,7 @@ mod tests {
     /// The source has no notion of rollback to represent: it compares the read against the
     /// last value it saw and flushes on any difference. That is the only safe reading of a
     /// regression — a store restored from a snapshot, a failover to a replica that never
-    /// saw the `INCR`, a reconnect landing on the wrong instance — because a flush can only
+    /// saw the advance, a reconnect landing on the wrong instance — because a flush can only
     /// tighten trust. Adopting the lower value silently would be the one thing the
     /// request-side reader must never do: skip the flush the operator's advance had earned
     /// and wait for the counter to climb back past it.

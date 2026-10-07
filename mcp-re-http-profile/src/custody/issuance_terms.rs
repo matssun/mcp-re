@@ -4,11 +4,11 @@
 //!
 //! One authority — every number the custody state machine decides a lifecycle step ON —
 //! and it is separated because none of these terms is safe to compute in the obvious way.
-//! [`CustodyConfig`](super::CustodyConfig) carries `ttl` and `overlap` as bare `i64`
-//! fields; the `0 < overlap < ttl <= MAX_DELEGATED_TTL_SECS` guard that bounds them belongs
-//! to the proxy's configuration owner and does not reach this type, so any other
-//! construction site — an embedder, a test, a future caller — can present values these
-//! operations cannot take.
+//! [`CustodyConfig`](super::CustodyConfig) carries the TTL and overlap as a
+//! [`DelegatedKeyWindow`](super::DelegatedKeyWindow), which holds `0 < overlap < ttl`; the
+//! `ttl <= MAX_DELEGATED_TTL_SECS` ceiling belongs to the proxy's configuration owner and
+//! does not reach this type. These terms take bare `i64`s, so any caller — an embedder, a
+//! test, a future caller — can present values these operations cannot take.
 //!
 //! Every one of them therefore fails in the RESTRICTIVE direction. A rotation threshold
 //! that cannot be computed reads as reached, not as far away. An expiry or an ordinal that

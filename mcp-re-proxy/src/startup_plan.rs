@@ -147,7 +147,7 @@ pub use crate::trust_plan::TrustReloadPlan;
 /// The shared trust-epoch mechanism, interpreted ONCE (CF-09).
 ///
 /// Two planes act on this fact: trust flushes its cache when the epoch advances, and
-/// delegated signing mints under the resulting label so an operator's `INCR` revokes
+/// delegated signing mints under the resulting label so an operator's `mcp-re-proxy trust-epoch advance` revokes
 /// fleet-wide. They are consumers. Before this type they were two authorities — each
 /// reading `--trust-epoch-redis-url`, each defaulting `--trust-epoch-key`, each with its
 /// own build refusal — and the only reason they agreed was that they read the same fields

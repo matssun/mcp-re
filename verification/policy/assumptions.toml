@@ -2279,7 +2279,7 @@ id = "ASM-0060"
 description = "For any two distinct (audience, resolved actor, `requestState`) triples this deployment handles, the continuation key derivation produces distinct SHA-256 digest values."
 justification = """
 `continuation_key` digests a domain tag, the length-prefixed audience and actor, and the opaque
-state bytes, and both legs recompute it and use the result as the address of the retained bases.
+state bytes, and both legs recompute it and use the result as the address of the retained evidence handles.
 So THM-0087's *an entry is reachable only by the actor the verifier resolved* is conditional on
 two distinct triples not addressing the same entry, and `proxy.continuation_correlation_store`
 registered no premise saying so. The length prefixes make the ENCODING injective; what they

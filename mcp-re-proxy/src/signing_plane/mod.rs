@@ -20,7 +20,7 @@
 //! The rotation worker is the ONLY thing that mints successors, and it is also the only
 //! thing that polls the shared trust epoch — the operator's cross-fleet kill switch
 //! (ADR-MCPRE-052 §7). A signer whose worker has stopped would go on signing off the last
-//! delegated key until its `exp`, with nobody left to observe an `INCR` — a frozen signing
+//! delegated key until its `exp`, with nobody left to observe an advance — a frozen signing
 //! authority whose revocation channel is dead. So the invariant is: **once maintenance of a
 //! signing key has stopped, no new signature is made under it.** Two things hold it:
 //!
@@ -252,7 +252,7 @@ fn rotation_jitter() -> Option<u64> {
 /// caller resolves the initial label and fails closed if it cannot. But a URL that cannot
 /// be parsed at all yields no watcher, and a `None` here is indistinguishable from "no
 /// source configured": minting would proceed under the bare `--delegated-trust-epoch`
-/// label with the `INCR` kill switch wired to nothing, which is the one thing an operator
+/// label with the trust-epoch kill switch wired to nothing, which is the one thing an operator
 /// who configured a URL has asked not to happen. So a malformed URL is a startup refusal
 /// on this plane's own terms, not a warning line and a silent downgrade.
 #[cfg(feature = "redis_replay")]
@@ -397,7 +397,7 @@ mod trust_epoch_watch_tests {
         assert_eq!(b.current_label(), a.current_label());
     }
 
-    /// THE INVARIANT (C007). An operator INCR must stay effective across a restart: the
+    /// THE INVARIANT (C007). An advance of the shared counter must stay effective across a restart: the
     /// restarted replica must NOT reinterpret the current counter as a fresh local
     /// baseline and resume minting a label verifiers treat as unrevoked.
     #[test]
@@ -411,19 +411,22 @@ mod trust_epoch_watch_tests {
         counter.incr();
         let after_incr = long_lived.current_label().expect("readable");
         assert_eq!(after_incr, "epoch-min#8");
-        assert_ne!(after_incr, before, "the INCR must change the minted label");
+        assert_ne!(
+            after_incr, before,
+            "the advance must change the minted label"
+        );
 
-        // A replica restarts: brand-new watch, no memory of the pre-INCR value.
+        // A replica restarts: brand-new watch, no memory of the pre-advance value.
         let restarted = replica(&counter);
         let after_restart = restarted.current_label().expect("readable");
 
         assert_eq!(
             after_restart, after_incr,
-            "a restarted replica must resolve the SAME post-INCR label as its peers"
+            "a restarted replica must resolve the SAME post-advance label as its peers"
         );
         assert_ne!(
             after_restart, before,
-            "a restart must NOT resurrect the pre-INCR epoch — that is the revocation \
+            "a restart must NOT resurrect the pre-advance epoch — that is the revocation \
              being defeated by a restart"
         );
     }
@@ -443,7 +446,7 @@ mod trust_epoch_watch_tests {
     }
 
     /// Reconnect after an outage resumes at the CURRENT shared value — including an
-    /// INCR that happened while this replica could not read.
+    /// advance that happened while this replica could not read.
     #[test]
     fn reconnect_after_an_outage_resumes_and_sees_missed_increments() {
         let counter = SharedCounter::new(1);
@@ -494,7 +497,7 @@ mod trust_epoch_watch_tests {
     }
 
     /// Issuance continues normally across the whole sequence the operator cares about:
-    /// steady state -> INCR -> outage -> reconnect -> restart.
+    /// steady state -> advance -> outage -> reconnect -> restart.
     #[test]
     fn full_sequence_increment_outage_restart_reconnect_continued_issuance() {
         let counter = SharedCounter::new(0);
@@ -558,7 +561,7 @@ mod epoch_watch_wiring_tests {
     /// one. A URL that cannot be turned into a reader previously became `None`, which is
     /// indistinguishable from "no source configured": the plane skipped its own
     /// fail-closed block and issued under the bare `--delegated-trust-epoch` label, which
-    /// no `INCR` can revoke, behind a single warning line. The only thing that refused was
+    /// no advance can revoke, behind a single warning line. The only thing that refused was
     /// the TRUST plane, in another file, and only because it happens to be materialized
     /// first.
     ///
@@ -817,7 +820,7 @@ mod rotation_owner_tests {
             rotor.root_invocations(),
             1,
             "the shared epoch was unreadable for the whole run, so nothing may be minted \
-             — a credential carrying no comparable epoch is one the operator's INCR \
+             — a credential carrying no comparable epoch is one the operator's advance \
              cannot revoke"
         );
         assert!(
@@ -916,7 +919,7 @@ mod rotation_owner_tests {
             calls.load(Ordering::SeqCst),
             0,
             "the refusal must precede minting: a key issued here carries an epoch the \
-             operator's INCR cannot revoke"
+             operator's advance cannot revoke"
         );
     }
 }
@@ -982,7 +985,7 @@ mod handle_lifetime_tests {
     /// A signer that outlives its plane must STOP signing.
     ///
     /// Nothing is rotating that key any more, and nothing is polling the shared trust
-    /// epoch — so an operator `INCR` could not revoke it. Serving on until `exp` would be
+    /// epoch — so an operator's advance could not revoke it. Serving on until `exp` would be
     /// a signing authority whose kill switch is disconnected.
     ///
     /// Before v0.16 this could not arise: the rotation thread stopped only with the

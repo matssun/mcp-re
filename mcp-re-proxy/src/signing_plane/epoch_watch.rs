@@ -303,7 +303,7 @@ mod tests {
         }
     }
 
-    /// An operator's INCR on the rolled-back store, below the mark, does not pull the fleet
+    /// A raw INCR on the rolled-back store, below the mark, does not pull the fleet
     /// back to the pre-rollback label: the repair still ends past the mark.
     #[test]
     fn a_rollback_followed_by_an_operator_incr_below_the_mark_still_ends_past_it() {
@@ -311,7 +311,7 @@ mod tests {
         let w = watch(&store);
         assert!(w.current_label().is_some());
         store.set(Some(2));
-        store.set(Some(3)); // the operator's INCR, against the regressed store
+        store.set(Some(3)); // a raw INCR, against the regressed store
         assert!(w.current_label().is_none());
         assert_eq!(store.get(), Some(10));
         assert_eq!(w.current_label().as_deref(), Some("epoch-min#10"));
@@ -490,7 +490,7 @@ mod tests {
         let w = watch(&store);
         assert!(w.current_label().is_some());
         store.set(Some(1));
-        store.set(Some(6)); // the operator's INCR lands above the mark before the next read
+        store.set(Some(6)); // a raw INCR lands above the mark before the next read
         assert_eq!(w.current_label().as_deref(), Some("epoch-min#6"));
         assert_eq!(store.get(), Some(6));
     }
