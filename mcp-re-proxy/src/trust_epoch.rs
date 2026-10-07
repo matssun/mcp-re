@@ -245,8 +245,8 @@ const TRUST_EPOCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
     TRUST_EPOCH_READ_BUDGET.as_secs() / TRUST_EPOCH_OPS_PER_READ as u64,
 );
 
-/// A [`EpochReader`] that reads the trust epoch from a Redis key via `GET`, with a
-/// bounded connection and ONE reconnect-and-retry on a broken connection.
+/// A [`EpochReader`] that reads the trust epoch and its generation from Redis in one `MGET`,
+/// with a bounded connection and ONE reconnect-and-retry on a broken connection.
 #[cfg(feature = "redis_replay")]
 pub struct RedisEpochReader {
     client: redis::Client,
@@ -265,7 +265,7 @@ impl RedisEpochReader {
     /// A nil is indistinguishable from a live counter at 0, and treating it as
     /// epoch 0 would hide two failures:
     ///
-    ///   * a `--trust-epoch-key` naming a key nobody INCRs, in the wrong database, or
+    ///   * a `--trust-epoch-key` naming a key nobody advances, in the wrong database, or
     ///     since deleted would leave the Tier-3 kill switch inert while the startup
     ///     line advertised a pushed revocation window;
     ///   * a counter lost to a snapshot restore, FLUSHDB, LRU eviction or a failover

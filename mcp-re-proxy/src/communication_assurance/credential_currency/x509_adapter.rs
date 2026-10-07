@@ -48,7 +48,7 @@ impl CertificateCurrencyFacts<'_> {
     /// never had one. Reported separately rather than folded into the parse, because the
     /// production semantics apply it to a peer's own leaf and to an issuer whose
     /// revocation standing is being read, and NOT to an issuer's validity check — where a
-    /// self-issued certificate is exempt from the window entirely.
+    /// self-signed certificate is exempt from the window entirely.
     pub(super) fn window_is_orderable(&self) -> bool {
         self.not_after > self.not_before
     }

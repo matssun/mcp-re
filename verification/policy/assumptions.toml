@@ -203,7 +203,7 @@ compare against `now` at the extremes, and a wrapping implementation would let a
 `created` near i64::MIN wrap past the comparison. Stated as the exact clamp rather than as
 an opaque result so a wrong specification would be visible rather than convenient.
 """
-scope = ["unit://http_profile.freshness_window", "boundary://boundary.rust_std"]
+scope = ["unit://http_profile.freshness_window", "unit://http_profile.admission_currency", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
@@ -221,7 +221,7 @@ tool_specific_mechanism = "verus:assume_specification"
 id = "ASM-0006"
 description = "`i64::saturating_add` clamps at i64::MAX rather than wrapping."
 justification = "As ASM-0005, for the upper end of the window."
-scope = ["unit://http_profile.freshness_window", "boundary://boundary.rust_std"]
+scope = ["unit://http_profile.freshness_window", "unit://http_profile.admission_currency", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
@@ -700,11 +700,8 @@ domain-separation property of the construction and it stays at
 `boundary.crypto_primitives`.
 """
 scope = [
-    "unit://http_profile.admission_currency",
-    "unit://http_profile.artifact_typing",
-    "unit://http_profile.continuation_binding",
-    "unit://http_profile.continuation_unbypassability",
-    "unit://http_profile.freshness_window",
+  "unit://http_profile.continuation_binding",
+  "unit://http_profile.continuation_unbypassability",
   "boundary://boundary.unmodelled_own_behaviour",
 ]
 owner = "mats@sundvall.name"
@@ -730,11 +727,7 @@ The paired `external_body` getter is ASM-0007; this is the specification-level d
 that getter is presented through.
 """
 scope = [
-    "unit://http_profile.admission_currency",
-    "unit://http_profile.artifact_typing",
-    "unit://http_profile.continuation_binding",
-    "unit://http_profile.continuation_unbypassability",
-    "unit://http_profile.freshness_window",
+  "unit://http_profile.freshness_window",
   "boundary://boundary.unmodelled_own_behaviour",
 ]
 owner = "mats@sundvall.name"
@@ -752,11 +745,7 @@ id = "ASM-0026"
 description = "`validity_of(policy)` is the widest accepted `expires - created`, as a function of the policy object."
 justification = "As ASM-0025, for the window-width bound. Paired with the `external_body` getter ASM-0008."
 scope = [
-    "unit://http_profile.admission_currency",
-    "unit://http_profile.artifact_typing",
-    "unit://http_profile.continuation_binding",
-    "unit://http_profile.continuation_unbypassability",
-    "unit://http_profile.freshness_window",
+  "unit://http_profile.freshness_window",
   "boundary://boundary.unmodelled_own_behaviour",
 ]
 owner = "mats@sundvall.name"
@@ -1547,23 +1536,25 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0044"
-description = "A read of the trust-epoch key over a replica's own connection, issued after an operator's `INCR` on that key was acknowledged, returns a value different from every value that replica read before the `INCR`."
+description = "A read of the trust-epoch key and its generation in one `MGET` over a replica's own connection, issued after an operator's `mcp-re-proxy trust-epoch advance` on that key was acknowledged, returns a counter and generation different, as a pair, from every pair that replica read before the advance."
 justification = """
-`TrustEpochSource` compares each read against the last value THIS process saw and flushes
-its cache on any difference, and the startup line derives a fleet-wide bound — one poll
-interval — from that comparison. MCP-RE cannot establish the premise the derivation rests
-on: the counter lives in a remote process, the `INCR` is issued on a connection this
-replica does not hold, and what a later `GET` on this replica's connection returns is
-decided by the store's replication and routing, not by anything here.
+`TrustEpochSource` compares each read — the counter and its generation, taken together in
+one `MGET` — against the last pair THIS process saw and flushes its cache on any difference,
+and the startup line derives a fleet-wide bound — one poll interval — from that comparison.
+MCP-RE cannot establish the premise the derivation rests on: the pair lives in a remote
+process, the advance — the incremented counter and a fresh generation, committed in one
+server-side step — is issued on a connection this replica does not hold, and what a later
+`MGET` on this replica's connection returns is decided by the store's replication and
+routing, not by anything here.
 
 So the premise is narrow on purpose. It is NOT "Redis is correct", not durability of the
 counter, not ordering between replicas, and not that every replica observes the advance at
 the same time. It is only that an acknowledged write becomes visible to a subsequent read
 on another connection — read-your-writes across connections against one primary. A read
-that returns the OLD value satisfies nothing here and is exactly the case this premise
-excludes; a read that FAILS, or returns a LOWER value, is outside the premise and is handled
-locally (an unhealthy source with the baseline held, and a flush, respectively — measured
-by the unit).
+that returns the OLD pair satisfies nothing here and is exactly the case this premise
+excludes; a read that FAILS, or returns any OTHER pair — a lower counter included — is
+outside the premise and is handled locally (an unhealthy source with the baseline held, and
+a flush, respectively — measured by the unit).
 
 It stops being acceptable if the epoch key is served from a read replica that can lag the
 primary, if the deployment routes a replica's connection to a different primary than the
@@ -1688,10 +1679,10 @@ justification = """
 The weakest premise in this registry, and it is here because the mechanism list is right to
 count it. `external_body` on a type specification REMOVES the ability to reason about the
 representation; it does not add a claim about one. No theorem reads a field of any of these
-three, and none may — the policy accessors (ASM-0007, ASM-0008, ASM-0009) are the only way
+five, and none may — the policy accessors (ASM-0007, ASM-0008, ASM-0009) are the only way
 in, and each is registered on its own.
 
-Opacity is the correct choice for exactly these three and not for the mirrors beside them.
+Opacity is the correct choice for exactly these five and not for the mirrors beside them.
 `VerifierPolicy` carries a deployment's construction, algorithm registry and transport
 policy, none of which any claim here reasons about; `ProfileAlgorithm` is a resolved
 algorithm the freshness theorem deliberately says nothing about; `VerificationKey` is a
@@ -1794,25 +1785,31 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0048"
-description = "A Redis `DEL key` reply of 1 means THIS call removed a key that existed, and a `SET key v PX t` keeps the key readable for `t` milliseconds and then not — so the delete count is a one-shot verdict across replicas and the entry's lifetime is bounded."
+description = "Each of the correlation tier's create and consume `EVAL` scripts executes atomically at the primary and its reply truthfully reports what it did: a consume reply of 1 means THIS call's `DEL` removed a key that existed, and the create script's `SET key v NX PX t` keeps the key readable for `t` milliseconds and then not — so the delete count is a one-shot verdict across replicas and the entry's lifetime is bounded."
 justification = """
 Both of the correlation tier's cross-replica properties are read directly off these replies.
-One-shot is the `DEL` count and nothing else: of two concurrent answer legs that both peeked
-the same entry and both bound, exactly one is told it removed it, and the other is failed
-closed. The bounded lifetime is the `PX` expiry and nothing else: an approval that is never
-answered stops being answerable, which is what keeps a continuation from being a permanent
-credential.
+The open leg runs the create script (prune expired live-set members, refuse a taken key,
+refuse a full live set, then `SET ... NX PX` and `ZADD` the key scored by the same expiry);
+the answer leg runs the consume script (`DEL` the key, `ZREM` it from the live set, reply
+with the `DEL` count). One-shot is that count and nothing else: of two concurrent answer
+legs that both peeked the same entry and both bound, exactly one is told it removed it, and
+the other is failed closed. The bounded lifetime is the `PX` expiry and nothing else: an
+approval that is never answered stops being answerable, which is what keeps a continuation
+from being a permanent credential. Both rest on Redis running each script as one atomic
+step at the primary — no other client's command interleaves between its calls — and on the
+script's reply being what its calls returned.
 
 Narrow on purpose, and not ASM-0040. That premise is about what a `WAIT` acknowledgement
-establishes under replication; this one is about the atomicity of a single command at the
+establishes under replication; this one is about the atomicity of one script at the
 primary and the honesty of its reply. A correlation entry is never `WAIT`ed on, so the
 quorum question does not arise, and an umbrella over both would state something true of
 neither.
 
 It stops being acceptable under a topology where the two legs can reach different primaries
 for the same key — a client-side-sharded or multi-primary cluster without hash-tag affinity
-for `mcp-re:cont:` — because then two `DEL`s can both return 1 and the one-shot rule is
-gone, or a proxy layer that answers `DEL` optimistically.
+for `mcp-re:cont:` — because then two consume scripts can both return 1 and the one-shot
+rule is gone, or a proxy layer that answers a script optimistically, or a server that does
+not run scripts atomically.
 """
 scope = [
   "unit://proxy.continuation_correlation_store",
@@ -1823,7 +1820,7 @@ introduced_by = "r11 R11-518 (security funnel round 11, tracker #879)"
 review_requirement = "Owner review; any change to the commands the tier issues, and any Redis topology in which the two legs of one continuation can reach different primaries."
 premise_class = "external-boundary"
 boundary_owner = """
-The Redis server, across the `DEL` and `SET ... PX` commands: a `DEL` reply of 1 means this call removed an existing key, and a `PX` expiry keeps the key readable for exactly that window and then not at all.
+The Redis server, across the correlation tier's create and consume `EVAL` scripts: each runs atomically at the primary and replies truthfully, a consume reply of 1 means this call's `DEL` removed an existing key, and the create script's `PX` expiry keeps the key readable for exactly that window and then not at all.
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"

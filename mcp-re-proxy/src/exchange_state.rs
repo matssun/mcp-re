@@ -87,7 +87,7 @@ pub(crate) enum ExchangeState {
     TransportBound,
     /// Admission currency holds (ADR-MCPRE-053 §7).
     AdmissionChecked,
-    /// Any retained continuation bases have been recovered. `peek` only — see
+    /// Any retained continuation evidence handles have been recovered. `peek` only — see
     /// [`ContinuationState::Peeked`].
     ContinuationPrepared,
     /// Replay admission won and continuation binding checked; the nonce is burned.
@@ -196,7 +196,7 @@ pub(crate) enum ExchangeEvent {
     /// The MCP lifecycle class is decided.
     ResponseClassified,
     ResponseSigned,
-    /// This reply opens a continuation leg, and the bases are durably recorded.
+    /// This reply opens a continuation leg, and the evidence handles are durably recorded.
     OpenLegRecorded,
     /// This reply opens no continuation leg, so there is nothing to record.
     ContinuationNotRequired,
@@ -226,7 +226,7 @@ pub(crate) enum ExchangeEvent {
 pub(crate) enum ContinuationState {
     /// This exchange carries no continuation, so no approval is at stake.
     NotInvolved,
-    /// Retained bases were read WITHOUT side effect. A refusal from here destroys nothing,
+    /// Retained evidence handles were read WITHOUT side effect. A refusal from here destroys nothing,
     /// which is why the read is a `peek` and not a `consume`.
     Peeked,
     /// The live entry was removed by this exchange. **A human's approval is spent.** It
@@ -282,7 +282,7 @@ pub(crate) enum OpenLeg {
     /// The reply is an `InputRequiredResult`: an answer leg must be able to bind to it.
     /// **An obligation, not an achievement.**
     Required,
-    /// The bases are durably in the shared tier, so an answer leg on any replica can bind.
+    /// The evidence handles are durably in the shared tier, so an answer leg on any replica can bind.
     Recorded,
 }
 

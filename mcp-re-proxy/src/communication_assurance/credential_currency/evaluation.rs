@@ -2,9 +2,10 @@
 //! The per-request currency evaluation — the conjunction production already computes, with
 //! the refusal it already reaches, and the reason it reached it.
 //!
-//! **The admitted set is unchanged.** Every request production admits, this admits, and
-//! every one it refuses, this refuses. What is new is that the refusal names which of the
-//! five facts failed, and that *nobody asked* is a state rather than a silent `None`.
+//! The refusal names which of the five facts failed, and *nobody asked* is a state rather
+//! than a silent `None`. An issuer is exempt from its own validity window only when it is
+//! self-signed (same name, and its signature verifies under its own key); a self-issued
+//! issuer signed by another key is held to its window, as path building holds it.
 //!
 //! # Why the evaluation takes the acceptance and not the authenticated peer
 //!

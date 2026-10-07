@@ -468,8 +468,8 @@ attestations this view cannot see.
 | ASM-0002 | description, justification, scope or mechanism | core.time_rfc3339 | assumption review |
 | ASM-0003 | description, justification, scope or mechanism | core.time_rfc3339 | assumption review |
 | ASM-0004 | description, justification, scope or mechanism | core.time_rfc3339 | assumption review |
-| ASM-0005 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
-| ASM-0006 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
+| ASM-0005 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.freshness_window | assumption review |
+| ASM-0006 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.freshness_window | assumption review |
 | ASM-0007 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
 | ASM-0008 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
 | ASM-0009 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
@@ -484,9 +484,9 @@ attestations this view cannot see.
 | ASM-0021 | description, justification, scope or mechanism | http_profile.continuation_unbypassability | assumption review |
 | ASM-0022 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0023 | description, justification, scope or mechanism | http_profile.continuation_binding | assumption review |
-| ASM-0024 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
-| ASM-0025 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
-| ASM-0026 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
+| ASM-0024 | description, justification, scope or mechanism | http_profile.continuation_binding, http_profile.continuation_unbypassability | assumption review |
+| ASM-0025 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
+| ASM-0026 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
 | ASM-0027 | description, justification, scope or mechanism | http_profile.bound_response_seam_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.delegated_credential_chain, http_profile.delegated_unbound_result, http_profile.request_floor_result, http_profile.unbound_response_seam_result, http_profile.unbound_response_shared_facts | assumption review |
 | ASM-0028 | description, justification, scope or mechanism | http_profile.bound_response_full_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.request_floor_result, http_profile.request_full_result, http_profile.unbound_response_shared_facts | assumption review |
 | ASM-0029 | description, justification, scope or mechanism | http_profile.bound_response_seam_result, http_profile.delegated_credential_chain, http_profile.request_floor_result, http_profile.unbound_response_seam_result | assumption review |

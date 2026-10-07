@@ -32,9 +32,9 @@ use crate::tls::TlsError;
 /// honored — revocation checking silently failed OPEN on staleness. Enforcing it
 /// means a stale CRL causes new handshakes to fail CLOSED. Because a stale CRL
 /// then rejects everything, this ships together with the startup freshness gate
-/// ([`crl_freshness`]) and the "restart before `nextUpdate`" operator contract;
-/// the in-process hot-reloader is tracked as a v0.10 follow-up. The call is a
-/// no-op when no CRLs are configured (revocation checks are not performed).
+/// ([`crl_freshness`]) and the CRL reload worker (`--client-crl-reload-secs`), which
+/// rebuilds the verifier from the re-read CRLs. The call is a no-op when no CRLs are
+/// configured (revocation checks are not performed).
 /// Build the client-certificate verifier every serving path shares.
 ///
 /// `allow_unknown_revocation_status()` is NOT called, and there is no parameter that

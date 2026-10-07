@@ -354,10 +354,8 @@ fn authenticated_peer(
 /// bound to the request id — the reason is typed, and rendering it on the wire is a
 /// separate decision this migration does not take.
 ///
-/// NOTE: online-OCSP revocation (`#[cfg(feature = "online_ocsp")]`) needs the full peer
-/// chain and is NOT yet wired on the async path — combining `async_serve` with
-/// `online_ocsp` is a tracked follow-up; the default and shared-replay tier builds have
-/// full parity.
+/// Online-OCSP revocation is refused at the legality boundary in every build, so no
+/// validated deployment reaches this path with an OCSP checker.
 pub(crate) fn served_channel_peer(
     accepted: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
