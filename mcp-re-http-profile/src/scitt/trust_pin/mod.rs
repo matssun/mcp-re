@@ -235,4 +235,26 @@ mod tests {
             "an EdDSA pin carrying an ec2 y must not deserialize",
         );
     }
+
+    /// Both profiles are part of what an operator writes down. A document that omits
+    /// either is refused rather than read as the statement-bytes, unbound contract that
+    /// nobody chose.
+    #[test]
+    fn a_pin_document_missing_a_profile_is_refused() {
+        let x = b64url_encode(&ts().public_key().to_bytes());
+        let complete = serde_json::to_value(pin_document("EdDSA", &x, None)).expect("json");
+        for field in ["position_profile", "leaf_profile"] {
+            let mut partial = complete.clone();
+            partial
+                .as_object_mut()
+                .expect("a pin document is an object")
+                .remove(field);
+            let refusal = serde_json::from_value::<ScittServiceTrustPin>(partial)
+                .expect_err("a pin document missing a profile must not deserialize");
+            assert!(
+                refusal.to_string().contains(field),
+                "{field}: the refusal names the missing field, got {refusal}",
+            );
+        }
+    }
 }

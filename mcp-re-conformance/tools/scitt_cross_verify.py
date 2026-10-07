@@ -340,6 +340,10 @@ def emit_external_kat() -> int:
         "public_key": {"x": b64u(ed_ts_public)},
         "public_key_thumbprint": b64u(hashlib.sha256(ed_ts_public).digest()),
         "discovery_document_digest": b64u(hashlib.sha256(b"external-discovery").digest()),
+        # Both profiles are written: a pin that omits either is refused. These receipts
+        # carry no position commitment and log the statement's own octets.
+        "leaf_profile": "statement-bytes",
+        "position_profile": "unbound",
     }
     es_pin = {
         **ed_pin,

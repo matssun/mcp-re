@@ -479,7 +479,7 @@ fn the_wrong_leaf_profile_refuses_rather_than_falling_back() {
             |_| Some(issuer.clone().into()),
             |kid| pin.resolve(kid)
         )
-        .expect_err("the default profile must not verify this service's receipt"),
+        .expect_err("the statement-bytes profile must not verify this service's receipt"),
         HttpProfileError::ReceiptInvalid,
     );
 }

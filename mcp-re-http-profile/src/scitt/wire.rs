@@ -121,7 +121,7 @@ pub(super) fn position_commitment(
 /// understand it must refuse rather than verify the receipt while ignoring the
 /// commitment. [`Receipt::from_cose`] refuses every critical label it does not know.
 ///
-/// # How a deployment selects one (#841 item 2)
+/// # How a deployment selects one
 ///
 /// Through the PIN ARTIFACT, and only there. `tools/scitt_fetch_service_key.py` requires
 /// `--position-profile {bound,unbound}` when cutting a new pin, so choosing is an act an
@@ -132,21 +132,21 @@ pub(super) fn position_commitment(
 ///
 /// Three things follow, and each is a decision rather than an omission:
 ///
-/// * **No default-to-`Bound`.** A service that does not emit MCP-RE's profile extension
-///   issues receipts with no commitment, so defaulting would refuse every real external
-///   service's receipts on the strength of a value nobody wrote down.
+/// * **No default in either direction.** A pin document that omits the profile is
+///   refused. Defaulting to `Bound` would refuse every receipt from a service that does
+///   not emit MCP-RE's profile extension on the strength of a value nobody wrote down;
+///   defaulting to `Unbound` would verify under the weaker contract on the same basis.
 /// * **No duplicate serving-proxy switch.** The profile is a property of the SERVICE, and
 ///   the [`super::ScittServiceTrustPin`] the auditor loads owns the receipt-position
 ///   contract for the service it selects. A second CLI flag would be a second authority
 ///   over one fact, and the two could disagree.
 /// * **Both variants stay.** `Unbound` is the pre-v2 contract real services are on today;
 ///   `Bound` is what a service emitting the extension is pinned as.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ReceiptPositionProfile {
     /// Receipts carry no position commitment. `tree_size` and `leaf_index` remain
     /// unauthenticated transport hints, and a relayer may restate them.
-    #[default]
     Unbound,
     /// Receipts MUST carry a valid position commitment. A receipt without one is refused
     /// rather than verified under the weaker contract — otherwise pinning the stronger

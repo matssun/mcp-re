@@ -52,15 +52,14 @@ pub(super) fn leaf_hash(statement: &SignedStatement, profile: StatementLeafProfi
 /// fold, and it destroys the property the proof is for — that the receipt pins WHICH
 /// entry was logged. So the profile comes from the pinned service artifact, which an
 /// operator wrote down and reviewed, and never from the receipt being checked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StatementLeafProfile {
     /// The entry is the Signed Statement's own COSE octets: `SHA-256(0x00 ‖ statement)`.
     ///
-    /// The default, and the more direct reading of RFC 9162 §2.1 composed with RFC 9943:
-    /// what the service registers is the statement, so the statement is the entry. The
-    /// RFC 9942 editor's own implementation (`@transmute/cose`) hashes this way.
-    #[default]
+    /// The more direct reading of RFC 9162 §2.1 composed with RFC 9943: what the service
+    /// registers is the statement, so the statement is the entry. The RFC 9942 editor's
+    /// own implementation (`@transmute/cose`) hashes this way.
     StatementBytes,
     /// The entry is a digest of the statement: `SHA-256(0x00 ‖ SHA-256(statement))`.
     ///

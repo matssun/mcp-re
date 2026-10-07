@@ -360,7 +360,7 @@ mod fixtures {
         }
     }
 
-    /// A resolver for a FOREIGN service using `key`, with the default leaf profile.
+    /// A resolver for a FOREIGN service using `key`, logging the statement's own octets.
     ///
     /// `Unbound`: the receipts these tests build by hand are the shape a real external
     /// SCITT service emits, and no such service carries MCP-RE's position parameter.

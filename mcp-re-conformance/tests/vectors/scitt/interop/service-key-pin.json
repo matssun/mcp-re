@@ -10,5 +10,7 @@
     "x": "DXVQdU4IAKXSN-71gmA1dmubPloVhoqUCrKJlYeI47A"
   },
   "public_key_thumbprint": "eQkBuCqJ_lBbX5jit78o46dPmkDxpWHJ01P4X2HMNqI",
-  "discovery_document_digest": "AmQJMu9n8U3BN853WMnzTXZzptknzXqYwsMHYo2O4HY"
+  "discovery_document_digest": "AmQJMu9n8U3BN853WMnzTXZzptknzXqYwsMHYo2O4HY",
+  "leaf_profile": "statement-bytes",
+  "position_profile": "unbound"
 }

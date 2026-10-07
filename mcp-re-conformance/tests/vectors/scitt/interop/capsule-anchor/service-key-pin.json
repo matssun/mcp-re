@@ -11,5 +11,6 @@
   },
   "public_key_thumbprint": "G-jgp3efyQlWlYuoTrnSbjNkxs8RPADsdHQTlX00Eik",
   "schema": "mcp-re-scitt-service-trust-pin/v1",
-  "service_identifier": "capsule-anchor (local, in-memory)"
+  "service_identifier": "capsule-anchor (local, in-memory)",
+  "position_profile": "unbound"
 }

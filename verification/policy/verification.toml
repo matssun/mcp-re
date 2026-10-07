@@ -7114,6 +7114,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::trust_pin::tests::a_pinned_es256_key_verifies_a_receipt",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::trust_pin::tests::a_malformed_pin_document_never_becomes_a_pin",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::trust_pin::tests::an_illegal_pin_document_is_refused_at_deserialization",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::trust_pin::tests::a_pin_document_missing_a_profile_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::service::tests::a_pinned_service_carries_every_part_the_pin_states",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::service::tests::a_stated_service_carries_exactly_what_the_caller_said",
 ]

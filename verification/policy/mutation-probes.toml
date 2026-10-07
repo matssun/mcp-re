@@ -13184,3 +13184,70 @@ expect_red = [
 note = """
 The TypeScript twin of M547.
 """
+
+[[probe]]
+id = "M549-scitt-a-pin-document-missing-its-position-profile-is-read-as-unbound"
+unit = "http_profile.scitt_service_pin"
+theorem = "THM-0068"
+conjunct = "all three came from one document an operator wrote: a pin document that omits a profile is refused, never read as a default"
+path = "mcp-re-http-profile/src/scitt/trust_pin/document.rs"
+anchor = """
+    pub(super) position_profile: ReceiptPositionProfile,
+}
+"""
+weakening = """
+    #[serde(default = "unbound")]
+    pub(super) position_profile: ReceiptPositionProfile,
+}
+fn unbound() -> ReceiptPositionProfile {
+    ReceiptPositionProfile::Unbound
+}
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::trust_pin::tests::a_pin_document_missing_a_profile_is_refused",
+]
+note = """
+A pin that omits its position profile verifies under the weaker contract on the strength of a value nobody wrote down.
+"""
+
+[[probe]]
+id = "M550-scitt-a-pin-document-missing-its-leaf-profile-is-read-as-statement-bytes"
+unit = "http_profile.scitt_service_pin"
+theorem = "THM-0068"
+conjunct = "all three came from one document an operator wrote: a pin document that omits a profile is refused, never read as a default"
+path = "mcp-re-http-profile/src/scitt/trust_pin/document.rs"
+anchor = """
+    pub(super) leaf_profile: StatementLeafProfile,
+    /// Whether this service's receipts must carry a position commitment. Required: a
+    /// document that omits it is refused at deserialization rather than read as `unbound`.
+    ///
+    /// In the PIN for the same reason as `leaf_profile`: it is a property of the service
+    /// that cannot be inferred from the receipt under attack, so whichever contract a pin
+    /// verifies under is one an operator wrote down. `tools/scitt_fetch_service_key.py`
+    /// writes both profiles into every pin it cuts.
+    pub(super) position_profile: ReceiptPositionProfile,
+}
+"""
+weakening = """
+    #[serde(default = "statement_bytes")]
+    pub(super) leaf_profile: StatementLeafProfile,
+    /// Whether this service's receipts must carry a position commitment. Required: a
+    /// document that omits it is refused at deserialization rather than read as `unbound`.
+    ///
+    /// In the PIN for the same reason as `leaf_profile`: it is a property of the service
+    /// that cannot be inferred from the receipt under attack, so whichever contract a pin
+    /// verifies under is one an operator wrote down. `tools/scitt_fetch_service_key.py`
+    /// writes both profiles into every pin it cuts.
+    pub(super) position_profile: ReceiptPositionProfile,
+}
+fn statement_bytes() -> StatementLeafProfile {
+    StatementLeafProfile::StatementBytes
+}
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::trust_pin::tests::a_pin_document_missing_a_profile_is_refused",
+]
+note = """
+The leaf-profile twin of M549: a pin that omits it folds the service's log the way nobody wrote down.
+"""
+

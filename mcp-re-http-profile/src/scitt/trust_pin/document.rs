@@ -73,28 +73,17 @@ pub(super) struct PinDocument {
     /// SHA-256 over the discovery document's exact bytes, base64url — so a later reader
     /// can tell whether the document it fetches is the one the pin was cut from.
     pub(super) discovery_document_digest: String,
-    /// Which bytes this service's log hashes as the Merkle entry. Absent means the
-    /// default: the statement's own octets. Recorded in the PIN because it cannot be
-    /// inferred from a receipt, and because an operator should have to write it down
-    /// before MCP-RE will fold a service's log any other way.
-    #[serde(default)]
+    /// Which bytes this service's log hashes as the Merkle entry. Required: a document
+    /// that omits it is refused at deserialization. Recorded in the PIN because it cannot
+    /// be inferred from a receipt, so the operator writes it down for every service.
     pub(super) leaf_profile: StatementLeafProfile,
-    /// Whether this service's receipts must carry a position commitment. Absent means
-    /// the default, `unbound` — the pre-v2 contract, where `tree_size` and `leaf_index`
-    /// are unauthenticated hints.
+    /// Whether this service's receipts must carry a position commitment. Required: a
+    /// document that omits it is refused at deserialization rather than read as `unbound`.
     ///
     /// In the PIN for the same reason as `leaf_profile`: it is a property of the service
-    /// that cannot be inferred from the receipt under attack, and requiring it must be a
-    /// thing an operator wrote down.
-    ///
-    /// The `default` is a LEGACY-DESERIALIZATION allowance, deliberately kept (#841 item
-    /// 2): pins cut before the field existed — the two in
-    /// `mcp-re-conformance/tests/vectors/scitt/interop/` among them — must keep reading as
-    /// the pre-v2 contract they were cut under, because retroactively strengthening them
-    /// would invalidate an archived interoperability run rather than improve it. The WRITE
-    /// side has no such allowance: `tools/scitt_fetch_service_key.py` requires
-    /// `--position-profile`, so a NEW pin always records the operator's choice explicitly.
-    #[serde(default)]
+    /// that cannot be inferred from the receipt under attack, so whichever contract a pin
+    /// verifies under is one an operator wrote down. `tools/scitt_fetch_service_key.py`
+    /// writes both profiles into every pin it cuts.
     pub(super) position_profile: ReceiptPositionProfile,
 }
 /// The verification key a pin document names, or a refusal.

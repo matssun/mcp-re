@@ -37,11 +37,15 @@ whose key set holds exactly one key and whose receipts carry no `kid`.
 SERVICE that no receipt can be asked for, because the receipt is the value under attack:
 which bytes the log hashes as its Merkle entry (`--leaf-profile`), and whether its
 receipts commit to their own `(tree_size, leaf_index)` (`--position-profile`). The Rust
-verifier defaults both to the weaker reading when the field is absent, so a pin that
-omits them silently pins the pre-v2 contract — under which a relayer may restate a small
-log's receipt as a position in a larger one and it still verifies. `--position-profile`
-is therefore required rather than defaulted: it is a thing an operator has to have
+verifier refuses a pin that omits either. `--position-profile` is required rather than
+defaulted: under `unbound` a relayer may restate a small log's receipt as a position in
+a larger one and it still verifies, so it is a thing an operator has to have
 established about the service and written down.
+
+**Re-running against an existing pin.** The tool refuses to overwrite a pin whose key,
+leaf profile or position profile differs from the one it would write, unless
+`--replace-pin` is given. A same-key run that would downgrade `bound` to `unbound` is a
+replacement like any other.
 """
 
 from __future__ import annotations
@@ -312,9 +316,8 @@ def selftest() -> int:
         print(f"SELFTEST FAIL: fetch()'s opener consults {installed!r}, not the https-only handler")
         failures += 1
 
-    # The PIN's own contents. `position_profile` and `leaf_profile` default to the
-    # weaker reading on the Rust side, so a pin that omits them pins the pre-v2
-    # contract — and nothing downstream can tell that from a deliberate choice.
+    # The PIN's own contents. The verifier refuses a pin that omits `position_profile`
+    # or `leaf_profile`, so the tool must never cut one without the operator's choice.
     parser = _parser()
     base = [
         "--service-uri", "https://service.example",
@@ -378,11 +381,31 @@ def selftest() -> int:
             print(f"SELFTEST FAIL: pin recorded {pin.get('position_profile')!r}/"
                   f"{pin.get('leaf_profile')!r}, not {position!r}/{leaf!r}")
             failures += 1
+
+    # Overwriting an existing pin: each commitment it holds is replaced only with
+    # --replace-pin, including a profile downgrade for the same key.
+    current = {"public_key_thumbprint": "TTTT", "leaf_profile": "statement-bytes",
+               "position_profile": "bound"}
+    for change, expected in (
+        ({}, []),
+        ({"public_key_thumbprint": "UUUU"}, ["key"]),
+        ({"position_profile": "unbound"}, ["position profile"]),
+        ({"leaf_profile": "statement-digest"}, ["leaf profile"]),
+    ):
+        changed = replaced_pin_fields(current, {**current, **change})
+        if changed != expected:
+            print(f"SELFTEST FAIL: overwriting with {change!r} reported {changed!r}, "
+                  f"not {expected!r}")
+            failures += 1
+    legacy = {"public_key_thumbprint": "TTTT"}
+    if replaced_pin_fields(legacy, current) != ["leaf profile", "position profile"]:
+        print("SELFTEST FAIL: a pin that states no profiles was overwritten as unchanged")
+        failures += 1
     if failures:
         print(f"{failures} case(s) failed — the https-only guard is not trustworthy.")
         return 1
-    print("selftest ok: 17 cases (redirect scheme guard, first-hop scheme guard, opener "
-          "wiring, did-web key-set reading, pin profile fields)")
+    print("selftest ok: 22 cases (redirect scheme guard, first-hop scheme guard, opener "
+          "wiring, did-web key-set reading, pin profile fields, pin replacement guard)")
     return 0
 
 
@@ -401,14 +424,15 @@ def _parser() -> argparse.ArgumentParser:
                          "is refused unless it matches. Without it the pin is trust-on-first-use "
                          "and the network chose the key.")
     ap.add_argument("--replace-pin", action="store_true",
-                    help="allow overwriting an existing pin that names a different key")
+                    help="allow overwriting an existing pin that differs in key, leaf "
+                         "profile or position profile")
     ap.add_argument("--position-profile", choices=POSITION_PROFILES, required=True,
                     help="whether this service's receipts MUST carry a position "
                          "commitment. 'bound' refuses a receipt without one; 'unbound' "
                          "is the pre-v2 contract, under which tree_size and leaf_index "
                          "are unauthenticated hints a relayer may restate. Required "
-                         "because the verifier's own default is the weaker of the two, "
-                         "so an omitted field silently pins it.")
+                         "because the verifier refuses a pin that does not state it, "
+                         "and the choice is the operator's to make.")
     ap.add_argument("--leaf-profile", choices=LEAF_PROFILES, default="statement-bytes",
                     help="which bytes this service's log hashes as the Merkle entry: the "
                          "Signed Statement's own octets (the default) or a digest of "
@@ -416,13 +440,27 @@ def _parser() -> argparse.ArgumentParser:
     return ap
 
 
+# What a pin commits a verifier to: the key, and the two profiles it verifies under.
+# Changing any of them changes which receipts verify — a weaker position profile lets a
+# relayer restate a receipt's position — so each one is replaced only with --replace-pin.
+PIN_COMMITMENTS = (
+    ("public_key_thumbprint", "key"),
+    ("leaf_profile", "leaf profile"),
+    ("position_profile", "position profile"),
+)
+
+
+def replaced_pin_fields(existing: dict, pin: dict) -> list[str]:
+    """The commitments `pin` would change in `existing`, by name; empty if none."""
+    return [name for field, name in PIN_COMMITMENTS if existing.get(field) != pin[field]]
+
+
 def build_pin(args, kid, fields: dict, uri: str, document_digest: str) -> dict:
     """The pin artifact, exactly as it is written.
 
     Separated from the fetch so the fields it must carry are assertable without a
-    network: a pin that omits `position_profile` or `leaf_profile` deserializes to the
-    weaker contract on the Rust side, which is not a difference any later reader of the
-    file can see.
+    network: a pin that omits `position_profile` or `leaf_profile` is refused when the
+    verifier loads it.
     """
     return {
         "schema": SCHEMA,
@@ -442,10 +480,7 @@ def build_pin(args, kid, fields: dict, uri: str, document_digest: str) -> dict:
         "public_key": fields["public_key"],
         "public_key_thumbprint": fields["thumbprint"],
         "discovery_document_digest": document_digest,
-        # Written ALWAYS, including for the values that match the verifier's defaults.
-        # An absent field and a field set to the default read identically to the
-        # verifier and completely differently to a reviewer: one says the operator
-        # decided, the other says the tool never asked.
+        # Written ALWAYS: the verifier refuses a pin that omits either profile.
         "leaf_profile": args.leaf_profile,
         "position_profile": args.position_profile,
     }
@@ -492,19 +527,14 @@ def main() -> int:
         fields = key_from_jwk(entry)
 
     pin = build_pin(args, kid, fields, uri, document_digest)
-    # Never SILENTLY replace an existing pin. Re-running the tool is how a pin gets
-    # rotated, and it was also how a pin got swapped: the file was truncated
-    # unconditionally, so a second run under an attacker's network chose the trust
-    # anchor with no trace. An existing pin must be removed deliberately, or its
-    # replacement acknowledged with --replace-pin.
     if os.path.exists(args.out) and not args.replace_pin:
         existing = json.load(open(args.out, encoding="utf-8"))
-        if existing.get("public_key_thumbprint") != fields["thumbprint"]:
+        changed = replaced_pin_fields(existing, pin)
+        if changed:
             raise SystemExit(
-                f"{args.out} already pins a DIFFERENT key "
-                f"(thumbprint {existing.get('public_key_thumbprint')!r}); refusing to "
-                "overwrite it. Pass --replace-pin to rotate deliberately, having "
-                "confirmed the new thumbprint out of band."
+                f"{args.out} already pins a different {', '.join(changed)}; refusing to "
+                "overwrite it. Pass --replace-pin to replace it deliberately, having "
+                "confirmed the new values out of band."
             )
     if args.expect_thumbprint and args.expect_thumbprint != fields["thumbprint"]:
         raise SystemExit(
