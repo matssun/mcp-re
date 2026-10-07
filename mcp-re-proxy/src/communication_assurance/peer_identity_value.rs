@@ -30,24 +30,10 @@ pub const MAX_PEER_IDENTITY_LEN: usize = 8192;
 
 /// True for a character a well-formed identity never carries: a Cc control, any whitespace
 /// other than U+0020 (interior spaces are legitimate in RFC 2253 DNs), or an invisible or
-/// display-reordering format control.
+/// display-reordering format control — exactly the codepoints an audit record must escape
+/// ([`crate::audit_record::scalar::is_render_hazard`]), so the two rules cannot disagree.
 fn is_refused_char(c: char) -> bool {
-    c.is_control()
-        || (c.is_whitespace() && c != ' ')
-        || matches!(
-            c as u32,
-            0x00AD
-                | 0x061C
-                | 0x180E
-                | 0x200B..=0x200F
-                | 0x202A..=0x202E
-                | 0x2060..=0x2064
-                | 0x2066..=0x206F
-                | 0xFEFF
-                | 0xFFF9..=0xFFFB
-                | 0xE0001
-                | 0xE0020..=0xE007F
-        )
+    crate::audit_record::scalar::is_render_hazard(c)
 }
 
 /// Why a candidate value is not a peer identity value.

@@ -4304,7 +4304,7 @@ evidence = [
 # lose — recording after the mint leaves a window in which a refusal has been served and no
 # record of it exists.
 tested_symbols = [
-  "//mcp-re-proxy:integration_test#refusal_audit_emission_test::every_exchange_owned_refusal_passes_through_one_funnel",
+  "//mcp-re-proxy:integration_test#refusal_audit_emission_test::every_exchange_owned_refusal_is_minted_by_one_of_two_emitters",
   "//mcp-re-proxy:integration_test#refusal_audit_emission_test::each_emitter_records_the_typed_projections",
   "//mcp-re-proxy:integration_test#refusal_audit_emission_test::the_record_is_emitted_before_the_refusal_is_minted",
   "//mcp-re-proxy:integration_test#refusal_audit_emission_test::the_emission_rules_would_catch_each_regression",
@@ -7269,6 +7269,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_record::text::tests::no_field_name_contains_a_separator",
   "//mcp-re-proxy:proxy_unit_test#audit_record::text::tests::a_rendered_record_parses_back_to_the_fields_that_were_written",
   "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::is_separator_free_is_exactly_the_escapes_fixed_point",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::unicode_whitespace_and_format_controls_are_escaped",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::a_value_cannot_forge_a_field_for_a_unicode_whitespace_reader",
   "//mcp-re-proxy:proxy_unit_test#audit_record::text::tests::a_token_carrying_a_newline_still_renders_one_physical_record",
   "//mcp-re-proxy:proxy_unit_test#audit_record::text::tests::a_field_name_carrying_a_separator_cannot_add_a_field",
   "//mcp-re-proxy:proxy_unit_test#audit_record::text::tests::a_token_that_is_the_bare_absent_marker_is_not_the_absent_marker",
@@ -8470,6 +8472,7 @@ paths = [
   "mcp-re-http-profile/src/custody/mod.rs",
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
   "mcp-re-http-profile/src/custody/key_window.rs",
+  "mcp-re-http-profile/src/custody/lifecycle_event.rs",
   "mcp-re-http-profile/src/custody/active_key.rs",
   "mcp-re-http-profile/src/custody/issuance_refusal.rs",
   "mcp-re-http-profile/src/custody/signing_window.rs",
@@ -8502,6 +8505,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::an_expired_predecessor_displaced_by_a_recovered_root_is_retired_first",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_signature_expiry_never_outlives_the_credential",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_public_signer_signs_under_the_window_and_refuses_without_one",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#custody::lifecycle_event::tests::the_transitions_name_exactly_the_frozen_lifecycle_tokens",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_failing_root_is_retried_on_a_bounded_interval_not_once_per_request",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::a_declined_reissue_leaves_the_predecessor_untouched",
   "//mcp-re-http-profile:mcp_re_http_profile_test#custody::tests::the_minted_credential_carries_the_configured_scope_and_trust_epoch",
@@ -10294,6 +10298,8 @@ exported_contracts = []
 #                                                         emitting `MEASURED:` lines the lane
 #                                                         preserves and digests
 #   the_scanned_crate_set_is_the_workspace              -> scope identity, run BY the protocol
+#   the_scanned_corpus_includes_the_compiled_examples   -> scope identity for the example
+#                                                         trees, run BY the protocol
 #   the_measurement_moves_when_the_scanned_set_shrinks  -> the sensitivity control (new)
 #   guard_inputs_are_non_empty                          -> the walk's own positive control,
 #                                                         asserted inside the measurement

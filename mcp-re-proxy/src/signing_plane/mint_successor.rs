@@ -91,7 +91,9 @@ pub(super) fn announce_lifecycle(rotor: &crate::delegated_wiring::ProdDelegatedR
     for ev in rotor.step_events() {
         eprintln!(
             "mcp-re-proxy: delegated key {} (kid {}, exp {})",
-            ev.event_type, ev.delegated_kid, ev.exp
+            ev.event_type(),
+            ev.delegated_kid(),
+            ev.exp()
         );
     }
 }

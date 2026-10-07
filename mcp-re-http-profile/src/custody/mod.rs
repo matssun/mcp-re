@@ -26,7 +26,6 @@
 
 use std::sync::Arc;
 
-use mcp_re_core::audit::event_type;
 use mcp_re_core::SigningKey;
 use mcp_re_core::VerificationKey;
 
@@ -51,12 +50,14 @@ mod active_key;
 mod issuance_refusal;
 mod issuance_terms;
 mod key_window;
+mod lifecycle_event;
 mod signing_window;
 mod trust_epoch;
 mod window_emission;
 pub use active_key::ActiveDelegatedKey;
 pub use issuance_refusal::IssuanceRefusal;
 pub use key_window::{DelegatedKeyWindow, KeyWindowError};
+pub use lifecycle_event::{KeyLifecycle, KeyLifecycleEvent};
 pub use signing_window::SigningWindow;
 pub use trust_epoch::{TrustEpoch, TrustEpochRefusal};
 pub use window_emission::{
@@ -78,21 +79,6 @@ pub enum CustodyError {
     /// configured TTL is not positive or the credential is past its `exp` — so there is no
     /// validity to advertise and nothing is signed.
     NoSigningWindow,
-}
-
-/// One audited key-lifecycle event (ADR-MCPRE-052 §7). Carries no key material and
-/// no nonce/correlation data (ADR-MCPS-020 startup-line discipline).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyLifecycleEvent {
-    /// One of the frozen `mcp-re.delegated_key.*` tokens.
-    pub event_type: &'static str,
-    pub delegated_kid: String,
-    pub issuer_kid: String,
-    pub nbf: i64,
-    pub exp: i64,
-    pub jti: String,
-    /// Event timestamp (the injected `now`).
-    pub at: i64,
 }
 
 /// Static custody policy (the parts of the credential that do not change per key).
@@ -232,15 +218,7 @@ where
 
     /// The retire event for `a`: its own credential id and window.
     fn retired(&self, a: &ActiveDelegatedKey, now: i64) -> KeyLifecycleEvent {
-        KeyLifecycleEvent {
-            event_type: event_type::DELEGATED_KEY_RETIRED,
-            delegated_kid: a.delegated_kid().to_owned(),
-            issuer_kid: self.cfg.issuer_kid.clone(),
-            nbf: a.nbf(),
-            exp: a.exp(),
-            jti: a.jti().to_owned(),
-            at: now,
-        }
+        KeyLifecycleEvent::of(KeyLifecycle::Retired, a, &self.cfg.issuer_kid, now)
     }
 
     /// Ensure a usable delegated key exists at `now`, issuing or rotating as
@@ -330,19 +308,17 @@ where
             let event = self.retired(&expired, now);
             self.step_events.push(event);
         }
-        self.step_events.push(KeyLifecycleEvent {
-            event_type: if is_rotation {
-                event_type::DELEGATED_KEY_ROTATED
-            } else {
-                event_type::DELEGATED_KEY_ISSUED
-            },
-            delegated_kid: active.delegated_kid().to_owned(),
-            issuer_kid: self.cfg.issuer_kid.clone(),
-            nbf: active.nbf(),
-            exp: active.exp(),
-            jti: active.jti().to_owned(),
-            at: now,
-        });
+        let kind = if is_rotation {
+            KeyLifecycle::Rotated
+        } else {
+            KeyLifecycle::Issued
+        };
+        self.step_events.push(KeyLifecycleEvent::of(
+            kind,
+            &active,
+            &self.cfg.issuer_kid,
+            now,
+        ));
         self.active = Some(active);
     }
 
@@ -480,6 +456,7 @@ mod tests {
     use crate::delegation::verify_delegation_credential;
     use crate::delegation::DelegationVerifyParams;
     use crate::delegation::VerifiedDelegation;
+    use mcp_re_core::audit::event_type;
     use mcp_re_core::VerificationKey;
 
     const ROOT_KID: &str = "root-kid";
@@ -531,7 +508,10 @@ mod tests {
         c.ensure_active(1_000).expect("issue");
         assert_eq!(c.root_invocations(), 1);
         assert_eq!(c.step_events().len(), 1);
-        assert_eq!(c.step_events()[0].event_type, "mcp-re.delegated_key.issued");
+        assert_eq!(
+            c.step_events()[0].event_type(),
+            "mcp-re.delegated_key.issued"
+        );
         // 50 signs well within [1_000, 1_000 + T - O) — no rotation.
         for i in 0..50 {
             c.ensure_active(1_000 + i).expect("still active");
@@ -604,7 +584,7 @@ mod tests {
         c.ensure_active(1_000).expect("a clamp is legitimate");
         let snapshot = c.active_snapshot().expect("published");
         assert_eq!(snapshot.exp(), 1_000 + T - 100);
-        assert_eq!(c.step_events()[0].exp, snapshot.exp());
+        assert_eq!(c.step_events()[0].exp(), snapshot.exp());
     }
 
     /// A root whose clock is ahead stamps a `nbf` in the future. That issuance fails, and the
@@ -643,11 +623,11 @@ mod tests {
     fn rotation_mints_successor_in_the_overlap_window() {
         let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
-        let mut kinds: Vec<_> = c.step_events().iter().map(|e| e.event_type).collect();
+        let mut kinds: Vec<_> = c.step_events().iter().map(|e| e.event_type()).collect();
         let first = c.active_kid().unwrap().to_string();
         // Predecessor exp = 1_300; overlap opens at 1_240.
         c.ensure_active(1_250).expect("rotate");
-        kinds.extend(c.step_events().iter().map(|e| e.event_type));
+        kinds.extend(c.step_events().iter().map(|e| e.event_type()));
         let second = c.active_kid().unwrap().to_string();
         assert_ne!(first, second, "a successor key is active");
         assert_eq!(c.root_invocations(), 2);
@@ -681,8 +661,8 @@ mod tests {
         replica_a.ensure_active(1_000).expect("A issues");
         replica_b.ensure_active(1_000).expect("B issues");
 
-        let jti_a = &replica_a.step_events()[0].jti;
-        let jti_b = &replica_b.step_events()[0].jti;
+        let jti_a = &replica_a.step_events()[0].jti();
+        let jti_b = &replica_b.step_events()[0].jti();
         assert_ne!(
             jti_a, jti_b,
             "two replicas must not name their first credential identically, or revoking \
@@ -706,13 +686,13 @@ mod tests {
         let retired = c
             .step_events()
             .iter()
-            .find(|e| e.event_type == event_type::DELEGATED_KEY_RETIRED)
+            .find(|e| e.event_type() == event_type::DELEGATED_KEY_RETIRED)
             .expect("the predecessor is retired");
-        assert!(!retired.jti.is_empty());
-        assert_eq!(retired.jti, issued.jti);
-        assert_eq!(retired.nbf, issued.nbf);
-        assert_eq!(retired.exp, issued.exp);
-        assert_eq!(retired.delegated_kid, issued.delegated_kid);
+        assert!(!retired.jti().is_empty());
+        assert_eq!(retired.jti(), issued.jti());
+        assert_eq!(retired.nbf(), issued.nbf());
+        assert_eq!(retired.exp(), issued.exp());
+        assert_eq!(retired.delegated_kid(), issued.delegated_kid());
     }
 
     /// Successive issuances within ONE process must also stay distinct — including a
@@ -733,7 +713,7 @@ mod tests {
         // issued, ROTATED (the successor is minted while the predecessor is still
         // valid — that is what keeps a root blip from leaving the node with no key at
         // all), then RETIRED for the key the advance superseded.
-        let events: Vec<&'static str> = trail.iter().map(|e| e.event_type).collect();
+        let events: Vec<&'static str> = trail.iter().map(|e| e.event_type()).collect();
         assert_eq!(
             events,
             vec![
@@ -743,10 +723,10 @@ mod tests {
             ],
             "every issue / rotate / retire is an event — including the displaced key"
         );
-        let ids: Vec<&String> = trail
+        let ids: Vec<&str> = trail
             .iter()
-            .filter(|e| e.event_type != event_type::DELEGATED_KEY_RETIRED)
-            .map(|e| &e.jti)
+            .filter(|e| e.event_type() != event_type::DELEGATED_KEY_RETIRED)
+            .map(|e| e.jti())
             .collect();
         assert_eq!(ids.len(), 2);
         assert_ne!(
@@ -828,7 +808,7 @@ mod tests {
         };
         let mut c = DelegatedSigningCustody::new(cfg(), root_key(), issuer, factory());
         c.ensure_active(1_000).expect("first issue ok");
-        let issued_jti = c.step_events()[0].jti.clone();
+        let issued_jti = c.step_events()[0].jti().to_owned();
         // Before expiry, a failed successor is tolerated (current key still valid).
         assert!(c.ensure_active(1_250).is_ok());
         // Past the current key's exp (1_300) with issuance failing ⇒ fail-closed.
@@ -840,10 +820,11 @@ mod tests {
         let retired = c
             .step_events()
             .iter()
-            .find(|e| e.event_type == "mcp-re.delegated_key.retired")
+            .find(|e| e.event_type() == "mcp-re.delegated_key.retired")
             .expect("the expired key is retired in the step that found it expired");
         assert_eq!(
-            retired.jti, issued_jti,
+            retired.jti(),
+            issued_jti,
             "the retire names the credential it retires"
         );
     }
@@ -859,14 +840,14 @@ mod tests {
         };
         let mut c = DelegatedSigningCustody::new(cfg(), root_key(), issuer, factory());
         c.ensure_active(1_000).expect("first issue ok");
-        let first_jti = c.step_events()[0].jti.clone();
+        let first_jti = c.step_events()[0].jti().to_owned();
         assert!(
             c.ensure_active(1_250).is_ok(),
             "declined, predecessor still valid"
         );
         assert!(c.step_events().is_empty(), "a decline surfaces no event");
         c.ensure_active(1_400).expect("the root recovered");
-        let kinds: Vec<_> = c.step_events().iter().map(|e| e.event_type).collect();
+        let kinds: Vec<_> = c.step_events().iter().map(|e| e.event_type()).collect();
         assert_eq!(
             kinds,
             [
@@ -875,11 +856,11 @@ mod tests {
             ]
         );
         assert_eq!(
-            c.step_events()[0].jti,
+            c.step_events()[0].jti(),
             first_jti,
             "the retire names the displaced key"
         );
-        assert_eq!(c.step_events()[0].at, 1_400);
+        assert_eq!(c.step_events()[0].at(), 1_400);
     }
 
     /// The signature `expires` is clamped to the credential's own `exp`.
@@ -1283,17 +1264,17 @@ mod tests {
     fn an_advance_over_an_expired_predecessor_retires_it_once() {
         let mut c = DelegatedSigningCustody::new(cfg(), root_key(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
-        let first_jti = c.step_events()[0].jti.clone();
+        let first_jti = c.step_events()[0].jti().to_owned();
         c.advance_trust_epoch(2, 1_000 + T + 5)
             .expect("the root answers")
             .expect("a successor was minted");
         let retirements: Vec<_> = c
             .step_events()
             .iter()
-            .filter(|e| e.event_type == event_type::DELEGATED_KEY_RETIRED)
+            .filter(|e| e.event_type() == event_type::DELEGATED_KEY_RETIRED)
             .collect();
         assert_eq!(retirements.len(), 1, "{:?}", c.step_events());
-        assert_eq!(retirements[0].jti, first_jti);
+        assert_eq!(retirements[0].jti(), first_jti);
     }
 
     /// A declined advance leaves the advanced epoch installed: the predecessor keeps serving

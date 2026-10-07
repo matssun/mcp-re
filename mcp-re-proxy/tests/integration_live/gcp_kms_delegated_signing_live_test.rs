@@ -386,11 +386,11 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
     // --- Audited lifecycle: issue then rotate ---------------------------------
     let audit = &lifecycle;
     assert_eq!(audit.len(), 2, "one issuance + one rotation audited");
-    assert_eq!(audit[0].event_type, "mcp-re.delegated_key.issued");
-    assert_eq!(audit[0].delegated_kid, first_kid);
-    assert_eq!(audit[0].issuer_kid, ROOT_KID);
-    assert_eq!(audit[1].event_type, "mcp-re.delegated_key.rotated");
-    assert_eq!(audit[1].delegated_kid, second_kid);
+    assert_eq!(audit[0].event_type(), "mcp-re.delegated_key.issued");
+    assert_eq!(audit[0].delegated_kid(), first_kid);
+    assert_eq!(audit[0].issuer_kid(), ROOT_KID);
+    assert_eq!(audit[1].event_type(), "mcp-re.delegated_key.rotated");
+    assert_eq!(audit[1].delegated_kid(), second_kid);
 
     // --- Negative: a body tamper on a delegated response fails closed ---------
     let mut tampered = fresh_response();

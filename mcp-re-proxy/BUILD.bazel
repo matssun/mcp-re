@@ -12,7 +12,10 @@ package(default_visibility = ["//visibility:public"])
 # hand-maintained list of producers. The sentinel names the tree; the guard walks it.
 filegroup(
     name = "guard_src_files",
-    srcs = glob(["src/**/*.rs"]),
+    srcs = glob([
+        "src/**/*.rs",
+        "examples/**/*.rs",
+    ]),
 )
 
 # Read from disk by the ADR-MCPS-035 audit-vocabulary drift guard: the replay-tier

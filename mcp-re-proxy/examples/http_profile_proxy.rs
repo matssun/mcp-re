@@ -46,6 +46,7 @@ use hyper::Response;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
+use mcp_re_core::McpReError;
 use mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key;
 use mcp_re_http_profile::rejection::build_delegated_rejection_preflight_with_owned_key;
 use mcp_re_http_profile::rejection::build_delegated_rejection_with_owned_key;
@@ -222,7 +223,7 @@ async fn handle(
             return Ok(to_hyper(rejection(
                 None,
                 None,
-                "mcp-re.serialization_failed",
+                McpReError::SerializationFailed.wire_code(),
                 400,
             )))
         }
@@ -334,7 +335,7 @@ async fn handle(
             return Ok(to_hyper(rejection(
                 Some(&http_req),
                 Some(verified.evidence()),
-                "mcp-re.continuation_binding_failed",
+                McpReError::ContinuationBindingFailed.wire_code(),
                 409,
             )));
         }
@@ -445,7 +446,7 @@ async fn handle(
                     return Ok(to_hyper(rejection(
                         Some(&http_req),
                         Some(verified.evidence()),
-                        "mcp-re.replay_cache_unavailable",
+                        McpReError::ReplayCacheUnavailable.wire_code(),
                         503,
                     )));
                 }

@@ -22,6 +22,7 @@ use std::io::Read;
 use serde_json::json;
 use serde_json::Value;
 
+use mcp_re_core::McpReError;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -181,7 +182,7 @@ fn main() {
                 "leg 2  REJECTED  delegated rejection verified  status={}  wire_code={}",
                 resp2.status, wire_code
             );
-            if wire_code != "mcp-re.replay_detected" {
+            if wire_code != McpReError::ReplayDetected.wire_code() {
                 println!("leg 2  WARNING: expected mcp-re.replay_detected");
                 std::process::exit(1);
             }

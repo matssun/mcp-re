@@ -42,6 +42,16 @@ const AUTHORIZATION_PROJECTION: &str = "cause.authorization_facet(authorization)
 /// What must come AFTER the record, never before.
 const MINT: &str = "self.signed_rejection(";
 
+/// The signed-refusal constructor's call and its declared visibility: private to the
+/// receipt module, whose two emitters are its only callers.
+const MINT_CALL: &str = "self.signed_rejection(";
+const MINT_VISIBILITY: &str = "pub(super) fn signed_rejection(";
+
+/// The production sites that call an emitter, by method name whatever the receiver: the
+/// response owner's funnel (two), pre-admission, the accepted-reply assembly and the
+/// notification path.
+const EMITTER_ROUTES: usize = 5;
+
 fn collect_rust_files(dir: &Path, into: &mut Vec<PathBuf>) {
     let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read dir {dir:?}: {e}"));
     for entry in entries.flatten() {
@@ -162,31 +172,67 @@ fn calls(source: &str, name: &str) -> usize {
         .saturating_sub(code.matches(&format!("fn {name}(")).count())
 }
 
-/// One funnel, dispatching to exactly the two emitters.
+/// How many times the method `name` is CALLED through any receiver (`.name(`), ignoring
+/// its definition and whole-line comments.
+fn method_calls(source: &str, name: &str) -> usize {
+    let code: String = source
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    code.matches(&format!(".{name}(")).count()
+}
+
+/// Every exchange-owned refusal is minted by one of exactly two emitters.
+///
+/// The structural fact is the mint's confinement, not a funnel: the signed-refusal
+/// constructor is private to the receipt module, and the two emitters are its only callers.
+/// Whatever route reaches a refusal — the response owner's `refuse`, a pre-admission stage, a
+/// notification — reaches it through an emitter, and the tests below hold each emitter to
+/// recording before it mints.
 #[test]
-fn every_exchange_owned_refusal_passes_through_one_funnel() {
+fn every_exchange_owned_refusal_is_minted_by_one_of_two_emitters() {
     let source = serving_source();
-    // The RESPONSE OWNER's `refuse`, not the assembly's — named by what it contains rather
-    // than by which comes first in the walk.
+    assert!(
+        source.contains(MINT_VISIBILITY),
+        "the signed-refusal constructor is no longer `{MINT_VISIBILITY}`. Wider visibility lets \
+         a route outside the receipt module mint a refusal no emitter recorded."
+    );
+    let in_emitters: usize = EMITTERS
+        .iter()
+        .map(|emitter| body_of(&source, emitter).matches(MINT_CALL).count())
+        .sum();
+    assert_eq!(
+        in_emitters,
+        EMITTERS.len(),
+        "each emitter mints exactly once"
+    );
+    assert_eq!(
+        calls(&source, MINT_CALL.trim_end_matches('(')),
+        in_emitters,
+        "`{MINT_CALL}` is called outside the two emitters — a refusal minted there is one \
+         nothing records"
+    );
+    // The response owner's `refuse` still dispatches to both emitters.
     let funnel = body_of_with(&source, FUNNEL, "self.rejection(");
     for emitter in EMITTERS {
         assert!(
             funnel.contains(&format!("self.{emitter}(")),
-            "`{FUNNEL}` no longer dispatches to `{emitter}`. A refusal reaching a third \
-             emitter is a refusal whose record nothing here measures."
+            "`{FUNNEL}` no longer dispatches to `{emitter}`."
         );
     }
-    // Every production call of either emitter is the funnel's own. More means a refusal
-    // route that bypasses the funnel, and the funnel is what this claim is about.
-    for emitter in EMITTERS {
-        assert_eq!(
-            calls(&source, &format!("self.{emitter}")),
-            1,
-            "`self.{emitter}` is called {} time(s) in the serving subtree. Exactly one — the \
-             funnel's — is what makes the funnel a funnel.",
-            calls(&source, &format!("self.{emitter}"))
-        );
-    }
+    // Every call of an emitter, whatever its receiver — `self.rejection(` and
+    // `self.responses.rejection(` alike. The count is pinned so a new refusal route is a
+    // reviewed change rather than an unseen one.
+    let routes: usize = EMITTERS
+        .iter()
+        .map(|emitter| method_calls(&source, emitter))
+        .sum();
+    assert_eq!(
+        routes, EMITTER_ROUTES,
+        "the serving subtree calls an emitter from {routes} site(s), not {EMITTER_ROUTES}. A new \
+         refusal route must be adjudicated against THM-0085 and this pin moved with it."
+    );
 }
 
 /// Each emitter records, and records the TYPED projections rather than a rendering.
@@ -255,6 +301,19 @@ fn the_emission_rules_would_catch_each_regression() {
     );
 
     assert_eq!(calls("let a = self.rejection(x);", "self.rejection"), 1);
+    assert_eq!(
+        method_calls(
+            "a(self.rejection(x)); b(self.responses.rejection(y));",
+            "rejection"
+        ),
+        2,
+        "an emitter called through a field receiver must be counted"
+    );
+    assert_eq!(
+        method_calls("fn rejection(&self) {}\n// self.rejection(x);", "rejection"),
+        0,
+        "neither the definition nor a comment is a call"
+    );
     assert_eq!(calls("// self.rejection(x);", "self.rejection"), 0);
     assert_eq!(
         calls(

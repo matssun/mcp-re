@@ -419,28 +419,61 @@ fn minting_files(trees: &[(&str, &str)]) -> (BTreeSet<String>, usize) {
     let mut found: BTreeSet<String> = BTreeSet::new();
     let mut files_scanned = 0usize;
     for (crate_dir, env_key) in trees {
-        // The sentinel is `<crate>/src/lib.rs`; its parent is the tree to walk.
+        // The sentinel is `<crate>/src/lib.rs`; its grandparent is the crate. The corpus is
+        // every Rust source a compiled target of the crate is built from: the library under
+        // `src/`, and the example binaries under `examples/` the build graph also compiles.
         let sentinel = locate(env_key);
-        let src_root = sentinel
+        let crate_root = sentinel
             .parent()
-            .unwrap_or_else(|| panic!("{env_key} resolved to a path with no parent"))
+            .and_then(|src| src.parent())
+            .unwrap_or_else(|| panic!("{env_key} resolved to a path with no crate root"))
             .to_path_buf();
-        for file in rust_sources_under(&src_root) {
-            files_scanned += 1;
-            let text =
-                std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("read {file:?}: {e}"));
-            let production = mcp_re_test_paths::rust_source::production_half(&text);
-            if !verdict_tokens(&production).is_empty() {
-                let rel = file
-                    .strip_prefix(&src_root)
-                    .unwrap_or(&file)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                found.insert(format!("{crate_dir}/src/{rel}"));
+        for tree in COMPILED_SOURCE_DIRS {
+            let root = crate_root.join(tree);
+            if !root.is_dir() {
+                continue;
+            }
+            for file in rust_sources_under(&root) {
+                files_scanned += 1;
+                let text =
+                    std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("read {file:?}: {e}"));
+                let production = mcp_re_test_paths::rust_source::production_half(&text);
+                if !verdict_tokens(&production).is_empty() {
+                    let rel = file
+                        .strip_prefix(&crate_root)
+                        .unwrap_or(&file)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    found.insert(format!("{crate_dir}/{rel}"));
+                }
             }
         }
     }
     (found, files_scanned)
+}
+
+/// The corpus reaches the example binaries, not only the libraries.
+///
+/// The walk skips a crate directory that is absent, which is right for the crates with no
+/// examples and wrong if the runfiles stopped carrying them: then the proof-front proxy,
+/// which the build graph compiles and the live proofs run, would be scanned by nobody while
+/// the measurement still read 2. So the one example tree that exists is required to be
+/// present where the walk looks.
+#[test]
+fn the_scanned_corpus_includes_the_compiled_examples() {
+    let crate_root = locate("MCP_RE_SRC_TREE_PROXY")
+        .parent()
+        .and_then(|src| src.parent())
+        .expect("the proxy sentinel names a crate")
+        .to_path_buf();
+    assert!(
+        crate_root
+            .join("examples")
+            .join("http_profile_proxy.rs")
+            .is_file(),
+        "mcp-re-proxy/examples is not in the scanned corpus — the guard_src_files runfiles \
+         wiring no longer carries the example binaries the build graph compiles"
+    );
 }
 
 #[test]
@@ -569,6 +602,11 @@ const CRATE_KINDS: &[&str] = &[
     "rust_static_library",
     "rust_proc_macro",
 ];
+
+/// The directories of a crate package whose Rust sources a compiled target is built from:
+/// the library, and the example binaries the build graph also compiles. `tests/` is not
+/// here — a test source is not a producer.
+const COMPILED_SOURCE_DIRS: &[&str] = &["src", "examples"];
 
 /// The two files that may hold a verdict-token literal, and the only two.
 const SOLE_MINTING_FILES: &[&str] = &["mcp-re-core/src/error.rs", "mcp-re-policy/src/error.rs"];

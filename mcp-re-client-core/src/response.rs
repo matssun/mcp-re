@@ -1299,8 +1299,8 @@ mod delegated_tests {
             .step_events()
             .last()
             .expect("an issued key-lifecycle event carrying the credential jti")
-            .jti
-            .clone();
+            .jti()
+            .to_owned();
         assert!(!jti.is_empty(), "the credential carries a jti to revoke by");
         let revoked = StaticRevocationList::new().revoke(jti);
         let err = verify_delegated_response(

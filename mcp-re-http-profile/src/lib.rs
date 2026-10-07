@@ -137,7 +137,7 @@ pub use custody::ActiveDelegatedKey;
 pub use custody::CustodyConfig;
 pub use custody::CustodyError;
 pub use custody::DelegatedSigningCustody;
-pub use custody::KeyLifecycleEvent;
+pub use custody::{KeyLifecycle, KeyLifecycleEvent};
 pub use delegation::issue_delegation_credential;
 pub use delegation::issue_delegation_credential_with_signer;
 pub use delegation::verify_delegation_credential;
