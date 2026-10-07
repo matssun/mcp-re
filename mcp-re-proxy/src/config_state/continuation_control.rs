@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `ContinuationControl` configuration machine — `work/CONFIG-STATE-ATLAS.md` §C.7.
+//! The `ContinuationControl` configuration machine — unit `proxy.continuation_materialization`.
 //!
 //! Whether multi-round-trip flows resolve across replicas (ADR-MCPS-047). Two states:
 //!

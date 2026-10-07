@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `Custody` configuration machine — `work/CONFIG-STATE-ATLAS.md` §C.3.
+//! The `Custody` configuration machine — unit `proxy.custody_exposure`.
 //!
 //! Where the Ed25519 response-signing key lives, and therefore what an operator is
 //! entitled to believe about it. Four states:

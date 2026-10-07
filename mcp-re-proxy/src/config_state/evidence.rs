@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `Audit`, `Retention` and `VerifiedContext` machines —
-//! `work/CONFIG-STATE-ATLAS.md` §C.6.
+//! The `Audit`, `Retention` and `VerifiedContext` machines — unit
+//! `proxy.evidence_retention_state`.
 //!
 //! Three two-state machines over what a deployment records and what it asserts. They share
 //! a file because each is a single selector with no guards; giving each its own file would

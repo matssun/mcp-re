@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `Admission` configuration machine — `work/CONFIG-STATE-ATLAS.md` §C.4.
+//! The `Admission` configuration machine — unit `proxy.admission_configuration_state`.
 //!
 //! What a call carrying no admission evidence means here (MCPRE-493). Three states, and a
 //! sub-state on the two that enforce:

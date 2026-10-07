@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Pass 2 — compatibility BETWEEN machines (`work/CONFIG-STATE-ATLAS.md` Part D).
+//! Pass 2 — compatibility BETWEEN machines (unit `proxy.cross_machine_legality`, THM-0049).
 //!
 //! A rule belongs here only if it joins two machines. A rule between two selectors of one
 //! machine is that machine's own column and lives with it; applying that test is what took

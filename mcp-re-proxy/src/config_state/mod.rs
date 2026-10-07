@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The classified legal deployment state — layer A of `work/CONFIG-STATE-ATLAS.md`.
+//! The classified legal deployment state — layer A.
 //!
 //! `DeploymentRequest` describes a *requested* deployment. Not every combination of its fields
-//! describes a deployment that could exist, and the atlas is the closed model of the ones
+//! describes a deployment that could exist, and layer A is the closed model of the ones
 //! that can: twelve machines, each with its own states, a set of guard-only owners that
 //! have invariants without a mode choice, and a small set of relations between them. This
 //! module is that model as code — one classifier/validator per owner, and one value
@@ -30,7 +30,7 @@
 //! say `None`.
 //!
 //! So a semantic owner retains the facts that constitute its invariant. Two shapes, because
-//! the atlas has two kinds of owner:
+//! layer A has two kinds of owner:
 //!
 //! - A **state-owning machine** carries its classified state together with the witnesses
 //!   intrinsic to inhabiting it. A `Reloading` CRL state without its cadence does not
@@ -110,7 +110,7 @@ pub use trust_revocation::TrustRevocationState;
 /// every owner here was checked against its own required/optional/forbidden/guard columns
 /// and that the cross-machine relations hold between them.
 ///
-/// It grows one field per owner as the atlas is implemented; an owner that is not here yet
+/// It holds one field per owner; an owner that is not here yet
 /// is one whose legality still lives in the residual clause list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeploymentConfigState {
@@ -788,7 +788,7 @@ mod tests {
             crate::replay_tier::ReplayDurabilityTier::Linearizable
         );
         assert!(state.continuation_control().is_shared());
-        // Every machine the atlas names is represented exactly once, including the ones
+        // Every machine layer A names is represented exactly once, including the ones
         // that cannot be misconfigured: the value states the whole posture, not the part
         // that needed checking.
         assert!(state.admission().is_enforced());

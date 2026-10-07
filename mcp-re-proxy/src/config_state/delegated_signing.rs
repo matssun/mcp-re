@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `DelegatedSigning` semantic owner — `work/CONFIG-STATE-ATLAS.md`, "Delegated
-//! signing".
+//! The `DelegatedSigning` semantic owner — unit `proxy.delegated_signing_configuration_state`.
 //!
 //! **A guard-only owner: no modes, and still facts of its own.** Delegated response
 //! signing is unconditional — ADR-MCPRE-052 is the only response-signing mode, so there is

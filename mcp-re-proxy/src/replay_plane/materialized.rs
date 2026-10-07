@@ -273,7 +273,7 @@ mod tests {
         }
     }
 
-    /// **BF-01** (atlas §D.2): with neither backend linked, EVERY plan refuses — so the
+    /// **BF-01**: with neither backend linked, EVERY plan refuses — so the
     /// build can reach no replay state at all.
     ///
     /// The test above says each arm names the feature it wants. This says what those

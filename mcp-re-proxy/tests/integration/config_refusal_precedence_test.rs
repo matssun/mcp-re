@@ -2,7 +2,7 @@
 //! The ORDER in which a multiply-illegal configuration is refused.
 //!
 //! The boundary answers a different question from the state model. The model
-//! (`work/CONFIG-STATE-ATLAS.md`) says whether a requested deployment state is legal; it
+//! (`config_state`, layer A) says whether a requested deployment state is legal; it
 //! deliberately says nothing about which refusal an operator meets first when several
 //! things are wrong at once. That ordering is a property of validation *orchestration*,
 //! and it is observable: `unsafe_config_violations` returns every violation, in one fixed

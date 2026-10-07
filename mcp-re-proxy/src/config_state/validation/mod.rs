@@ -146,7 +146,7 @@ pub fn unsafe_config_violations(config: &DeploymentRequest) -> Vec<String> {
 /// One pass, two products. A validator that recognises `TrustRevocation::PushNetworked`,
 /// checks it, and throws the recognition away leaves every downstream stage to re-derive
 /// the same fact from the same fields — one deployment fact with two derivations, free to
-/// disagree. So the classification is returned (`work/CONFIG-STATE-ATLAS.md` CF-10) and
+/// disagree. So the classification is returned and
 /// becomes what plans project from.
 ///
 /// **Order is a separate contract.** Every violation is reported, not the first, and the

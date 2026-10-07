@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `Replay` configuration machine — `work/CONFIG-STATE-ATLAS.md` §C.1.
+//! The `Replay` configuration machine — unit `proxy.replay_configuration_state`.
 //!
 //! Where admitted nonces live, and therefore what replay guarantee the deployment can
 //! claim. **Two states**, both shared:

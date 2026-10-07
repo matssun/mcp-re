@@ -143,7 +143,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-051 §6 (MCPRE-116): versioned serving-config snapshot + in-process
     # CRL hot-reloader. Pure std; always compiled by every flavor.
     "src/config_snapshot.rs",
-    # The classified legal deployment state — layer A of the configuration state atlas.
+    # The classified legal deployment state — layer A.
     # One classifier/validator per configuration machine, and the value they produce.
     "src/config_state/admission.rs",
     "src/config_state/authorization.rs",
@@ -1055,7 +1055,7 @@ nt_rust_test(
 # What `ValidatedConfig` establishes, measured from outside the crate. In the DEFAULT
 # lane because the relations it characterizes are the ones every build has.
 # `config_refusal_precedence_test`
-# The refusal ORDER a multiply-illegal configuration meets. State legality is the atlas's
+# The refusal ORDER a multiply-illegal configuration meets. State legality is layer A's
 # question; diagnostic precedence is orchestration's, and it is observable — so it is
 # pinned separately, before the boundary is reorganised.
 # `documented_cli_test`

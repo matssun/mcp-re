@@ -269,71 +269,6 @@ dead_tokens = 1
 status = "unreviewed"
 
 [[debt]]
-path = "mcp-re-proxy/src/config_state/admission.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/channel_credential_custody.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/continuation_control.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/cross_machine.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/custody.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/delegated_signing.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/evidence.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/in_flight_limit.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/mod.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/replay.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/transport.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/src/config_state/validation/mod.rs"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/src/http_inner/mod.rs"
 dead_tokens = 1
 status = "unreviewed"
@@ -346,11 +281,6 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-proxy/src/replay_plane/materialized.rs"
 dead_tokens = 2
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-proxy/tests/integration/config_refusal_precedence_test.rs"
-dead_tokens = 1
 status = "unreviewed"
 
 [[debt]]

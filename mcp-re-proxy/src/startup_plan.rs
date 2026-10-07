@@ -270,7 +270,7 @@ impl TrustEpochPlan {
 /// What response-signing custody must establish (ADR-MCPRE-052).
 ///
 /// Delegated signing is the only response mode, so this is a STRUCT and not an enum: the
-/// atlas classifies it as guard-only, with one state, and manufacturing variants for
+/// layer A classifies it as guard-only, with one state, and manufacturing variants for
 /// symmetry with `ClientRevocationPlan` would describe postures that do not exist.
 ///
 /// The plan holds the normalized custody policy itself. Every default is applied here,

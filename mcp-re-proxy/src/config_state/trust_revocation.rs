@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `TrustRevocation` configuration machine — `work/CONFIG-STATE-ATLAS.md` §C.2.
+//! The `TrustRevocation` configuration machine — unit `proxy.trust_revocation_classification`.
 //!
 //! Four states, distinguished by the declared tier and by whether a networked epoch
 //! source is configured:
@@ -20,7 +20,7 @@
 //!
 //! **The epoch source is a selector, not a parameter.** It is what distinguishes the last
 //! two states, so a tier that cannot consume it does not merely ignore it — the request is
-//! incoherent, and refusing that is atlas rule X8.
+//! incoherent, and it is refused.
 //!
 //! This machine owns whether the epoch configuration is LEGAL. It does not own what the
 //! configuration MEANS to a runtime plane: normalizing that is startup planning's job,

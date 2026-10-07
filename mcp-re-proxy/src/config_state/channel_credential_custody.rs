@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `ChannelCredentialCustody` configuration machine — `work/CONFIG-STATE-ATLAS.md` §C.3.
+//! The `ChannelCredentialCustody` configuration machine — unit
+//! `proxy.channel_credential_custody_state`.
 //!
 //! Whether the private key that establishes this deployment's communication channel can
 //! leave the signer holding it. Two states:

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The admission-limit basis — `work/CONFIG-STATE-ATLAS.md` §H.2.
+//! The admission-limit basis — unit `proxy.in_flight_limit_basis`.
 //!
 //! Not a deployment machine: there is no posture here, no control that is on in one state
 //! and off in another. It is a RESOLVED FACT — layer A has answered which of two mutually

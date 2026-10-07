@@ -51,7 +51,7 @@ pub mod cli;
 /// Wall-clock acquisition — the one place the OS clock enters the proxy, and the module
 /// `boundary.clock` names.
 pub mod clock;
-/// The classified legal deployment state (layer A of the configuration state atlas).
+/// The classified legal deployment state (layer A).
 pub mod config_state;
 /// The CLI-neutral request model: what a deployment asks for, before anything judges it.
 ///

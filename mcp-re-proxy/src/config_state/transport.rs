@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `ChannelBinding` and `CrlRevocation` machines — `work/CONFIG-STATE-ATLAS.md`
-//! §C.5 and §C.6.
+//! The `ChannelBinding` and `CrlRevocation` machines — unit
+//! `proxy.transport_binding_and_crl_state`.
 //!
 //! Two machines in one file because they are two small closed models over the same
 //! domain, and separating them into two files would say they are further apart than they
@@ -15,13 +15,13 @@
 //!
 //! The Guards column is discharged per handshake by `CertificateChainEvidence::interpret_identity`,
 //! which reads only the configured field, has no fallback and refuses a malformed value. The
-//! atlas's `reverse_proxy_*` Forbidden entry is discharged by unrepresentability: no such field
+//! `reverse_proxy_*` forbidden selectors are discharged by unrepresentability: no such field
 //! exists on `DeploymentRequest`.
 //!
 //! `binding` and `identity_source` are **two selectors of one machine**, and the machine is
 //! named for what it owns rather than for either of them. `binding` contributes one
 //! reachable value today, so the live distinction is carried by `identity_source` — the
-//! clearest instance of the atlas's rule that a selector is syntax and a machine is a
+//! clearest instance of layer A's rule that a selector is syntax and a machine is a
 //! semantic ownership unit.
 //!
 //! ## CrlRevocation — offline client-certificate revocation
