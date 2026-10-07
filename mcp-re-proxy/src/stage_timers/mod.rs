@@ -22,6 +22,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 mod accumulator;
+mod report_file;
 use accumulator::Acc;
 use accumulator::NAMES;
 
@@ -258,7 +259,7 @@ fn write_report() {
         a.inflight_max.load(Ordering::Relaxed),
         mean_inflight
     ));
-    let _ = std::fs::write(path, out);
+    report_file::rewrite(path, &out);
 }
 #[cfg(test)]
 mod tests {

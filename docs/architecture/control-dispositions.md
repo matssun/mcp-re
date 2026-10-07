@@ -2997,8 +2997,8 @@ THM-0031, falsifier `M341`.
 
 ## NP-126 — a configured client CRL is loaded or the listener fails closed
 
-**Controls:** `mcp-re-proxy` `lib#client_crl_publication::client_crl_loading_tests` (5) — `a_malformed_pem_client_crl_fails_closed`, `a_non_pem_client_crl_is_passed_through_as_one_der`, `an_empty_client_crl_file_fails_closed`, `missing_client_crl_file_fails_closed`, `no_crl_paths_loads_empty_vec`.
-**Statement.** *A configured-but-unreadable client-CRL path is a HARD ERROR naming the path, never a silently skipped revocation check; and an empty CRL list loads as an empty list rather than as a failure, because configuring no CRL is a posture and not a mistake.*
+**Controls:** `mcp-re-proxy` `lib#client_crl_publication::client_crl_loading_tests` (6) — `a_client_crl_file_over_the_size_limit_is_refused`, `a_malformed_pem_client_crl_fails_closed`, `a_non_pem_client_crl_is_passed_through_as_one_der`, `an_empty_client_crl_file_fails_closed`, `missing_client_crl_file_fails_closed`, `no_crl_paths_loads_empty_vec`.
+**Statement.** *A configured-but-unreadable client-CRL path is a HARD ERROR naming the path, never a silently skipped revocation check; a file larger than the loader's size limit is refused whole, never truncated; and an empty CRL list loads as an empty list rather than as a failure, because configuring no CRL is a posture and not a mistake.*
 **If false.** A listener starts with a revocation list it could not read and believes it is enforcing revocation — the fail-open an operator cannot see, because every later line about the CRL posture is then about a list that was never loaded.
 **Likely owner:** none.
 **Severity:** `critical`.
@@ -4965,3 +4965,14 @@ this one covers request signers too. No theorem depends on it.
 **Root relationship.** Under THM-0094/THM-0095. Findings `31419f23`, `83208e90`, `9cf9662b` (Python) and the TypeScript twin of the same defect; `582be933` (empty `issuer_key_id`).
 **Severity:** `medium`.
 **Recorded:** 2026-10-05, owner Ruling 18, Stream A.
+
+## NP-278 — the stage-timer diagnostic writes only a file it created
+
+**Controls:** `mcp-re-proxy` `lib#stage_timers::report_file::tests` (3) — `an_existing_file_is_refused_and_left_intact`, `a_symlink_at_the_path_is_refused_and_its_target_left_intact`, `a_created_file_is_rewritten_through_its_handle`.
+**Carrier:** `mcp-re-proxy/src/stage_timers/report_file.rs`.
+**Statement.** *The report path named by `MCP_RE_STAGE_TIMERS` is created with `create_new`, so an existing file, or a symlink to one, is never opened for writing; every later snapshot is written through the handle that creation returned, never through the name again.*
+**If false.** Whoever can set the proxy's environment can make the serving process truncate and overwrite any file it can write (its retained evidence, an audit log), an integrity loss reached through a performance diagnostic.
+**Likely owner:** none. The diagnostic is in no unit's `paths`.
+**Root relationship.** Finding `d55a7fee921db397`. ND-014 continues to cover the seven measurement controls in `stage_timers::tests`; these three are not measurement controls, because they decide what the shipped process writes.
+**Severity:** `medium`.
+**Recorded:** 2026-10-08, r12 WB5b.

@@ -20,9 +20,7 @@ use rustls_pki_types::CertificateRevocationListDer;
 /// `Stale` CRL fails every new handshake closed. This startup gate surfaces that
 /// condition **loudly at boot**: under strict the proxy refuses to start, rather
 /// than coming up and silently rejecting every client at the first handshake, and
-/// it warns while a CRL is `NearExpiry` so the operator can reload/restart with a
-/// refreshed CRL before the cutover (the "restart before `nextUpdate`" contract;
-/// the in-process hot-reloader is a v0.10 follow-up).
+/// it warns while a CRL is `NearExpiry` so a refreshed CRL is in place before the cutover.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CrlFreshness {
     /// `now < nextUpdate - warn_window` — comfortably valid.
@@ -144,25 +142,33 @@ pub fn crl_posture(crl_der: &[u8]) -> Result<CrlPosture, TlsError> {
     })
 }
 
-/// Load the configured offline client-certificate revocation lists (#3839) into
+/// The largest client CRL file read, in bytes: a file is read whole, so this bounds one load.
+const MAX_CLIENT_CRL_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Load the configured client-certificate revocation lists (#3839) into
 /// the DER form rustls' `WebPkiClientVerifier` consumes. Each path may hold one or
 /// more CRLs in PEM (`-----BEGIN X509 CRL-----`) or a single raw DER CRL. Refuses an
 /// unreadable path, malformed PEM and an empty file; a non-PEM file is passed through
 /// as one DER CRL undecoded, and DER validity, `nextUpdate` and signature are refused
-/// by `ClientCrlEvidence::from_checked` (`crate::tls_plane::crl_evidence`).
+/// by `ClientCrlEvidence::from_checked` (`crate::tls_plane::crl_evidence`). A file
+/// larger than `MAX_CLIENT_CRL_FILE_BYTES` is refused, never truncated.
 ///
-/// OFFLINE only: these bytes are read once at startup and never refreshed over the
-/// network. Online OCSP / CRL-distribution-point fetching is deliberately NOT done
-/// here and is deferred to a follow-up (it needs an HTTP client + a live
-/// responder, which would expand the firewalled supply chain).
+/// Local files only, read at startup and by the reload worker; nothing is fetched.
 pub fn load_client_crls(
     paths: &[String],
 ) -> Result<Vec<rustls_pki_types::CertificateRevocationListDer<'static>>, String> {
     use rustls_pki_types::pem::PemObject;
+    use std::io::Read;
 
     let mut crls: Vec<CertificateRevocationListDer<'static>> = Vec::new();
     for path in paths {
-        let bytes = std::fs::read(path).map_err(|e| format!("client CRL {path}: {e}"))?;
+        let limit = MAX_CLIENT_CRL_FILE_BYTES.saturating_add(1);
+        let mut bytes = Vec::new();
+        let read = std::fs::File::open(path).and_then(|f| f.take(limit).read_to_end(&mut bytes));
+        read.map_err(|e| format!("client CRL {path}: {e}"))?;
+        if !u64::try_from(bytes.len()).is_ok_and(|n| n <= MAX_CLIENT_CRL_FILE_BYTES) {
+            return Err(format!("client CRL {path}: larger than the size limit"));
+        }
         // Try PEM first (one file may carry several `X509 CRL` blocks). If the file
         // contains no PEM CRL block, treat the whole file as a single DER CRL.
         let pem: Vec<CertificateRevocationListDer<'static>> =
@@ -367,6 +373,20 @@ mod client_crl_loading_tests {
         let result = super::load_client_crls(&[path.to_string_lossy().into_owned()]);
         std::fs::remove_file(&path).expect("remove fixture");
         result.map(|crls| crls.into_iter().map(|c| c.as_ref().to_vec()).collect())
+    }
+
+    /// A file past the limit is refused whole: a truncated prefix would be a different
+    /// document, and a reload reading an unbounded file is an unbounded allocation.
+    #[test]
+    fn a_client_crl_file_over_the_size_limit_is_refused() {
+        let path = std::env::temp_dir().join(format!("mcp-re-crl-oversize-{}", std::process::id()));
+        let file = std::fs::File::create(&path).expect("create fixture");
+        file.set_len(super::MAX_CLIENT_CRL_FILE_BYTES + 1)
+            .expect("size fixture");
+        let result = super::load_client_crls(&[path.to_string_lossy().into_owned()]);
+        std::fs::remove_file(&path).expect("remove fixture");
+        let err = result.unwrap_err();
+        assert!(err.contains("larger than the size limit"), "got: {err}");
     }
 
     #[test]

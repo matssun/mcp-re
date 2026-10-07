@@ -14940,6 +14940,15 @@ decision = "not-evidence"
 reason_family = "ND-003"
 recorded = "2026-10-06"
 
+[[proposition]]
+id = "NP-278"
+title = "The stage-timer diagnostic writes only a file it created"
+carrier = "mcp-re-proxy/src/stage_timers/report_file.rs"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "a premise of the proxy units above it; the diagnostic is in no unit's paths"
+record = "docs/architecture/control-dispositions.md#np-278"
+
 [[disposition]]
 id = "CD-20411"
 project = ""
@@ -15043,3 +15052,35 @@ control = "src/lib.rs#cli::peer_identity_flags::tests::a_chosen_uri_san_is_not_t
 decision = "new-proposition"
 proposition = "NP-033"
 recorded = "2026-10-07"
+
+[[disposition]]
+id = "CD-20412"
+project = "mcp-re-proxy"
+control = "src/lib.rs#client_crl_publication::client_crl_loading_tests::a_client_crl_file_over_the_size_limit_is_refused"
+decision = "new-proposition"
+proposition = "NP-126"
+recorded = "2026-10-08"
+
+[[disposition]]
+id = "CD-20413"
+project = "mcp-re-proxy"
+control = "src/lib.rs#stage_timers::report_file::tests::an_existing_file_is_refused_and_left_intact"
+decision = "new-proposition"
+proposition = "NP-278"
+recorded = "2026-10-08"
+
+[[disposition]]
+id = "CD-20414"
+project = "mcp-re-proxy"
+control = "src/lib.rs#stage_timers::report_file::tests::a_symlink_at_the_path_is_refused_and_its_target_left_intact"
+decision = "new-proposition"
+proposition = "NP-278"
+recorded = "2026-10-08"
+
+[[disposition]]
+id = "CD-20415"
+project = "mcp-re-proxy"
+control = "src/lib.rs#stage_timers::report_file::tests::a_created_file_is_rewritten_through_its_handle"
+decision = "new-proposition"
+proposition = "NP-278"
+recorded = "2026-10-08"

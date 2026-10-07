@@ -547,6 +547,7 @@ _PROXY_LIB_SRCS = [
     "src/client_revocation/verdict.rs",
     "src/stage_timers/mod.rs",
     "src/stage_timers/accumulator.rs",
+    "src/stage_timers/report_file.rs",
     "src/blocking_mtls_harness/connection.rs",
     "src/blocking_mtls_harness/deadline_stream.rs",
     "src/blocking_mtls_harness/http1.rs",
