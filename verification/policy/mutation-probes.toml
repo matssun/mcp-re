@@ -3658,10 +3658,10 @@ theorem = "THM-0105"
 conjunct = "retention is charged to the PRINCIPAL the verifier resolved, never to the signer slot, so one subject gets one budget however many keys it enrols"
 path = "mcp-re-proxy/src/async_replay/mod.rs"
 anchor = """
-        let charge = Charge::reserve(&self.ledger, key.principal(), now_unix, retain_until)
+        let charge = Charge::reserve(&self.ledger, key.principal(), retention_now, retain_until)
 """
 weakening = """
-        let charge = Charge::reserve(&self.ledger, key.signer(), now_unix, retain_until)
+        let charge = Charge::reserve(&self.ledger, key.signer(), retention_now, retain_until)
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#async_replay::tests::one_subject_gets_one_budget_however_many_keys_it_holds",
@@ -11011,10 +11011,10 @@ unit = "proxy.freshness_window_state"
 conjunct = "every shared store keeps every record the declared replica clock divergence bound longer than the verifier's horizon, because the clock it derives its expiry from is held back by that bound"
 path = "mcp-re-proxy/src/config_state/replica_clock.rs"
 anchor = """
-        Box::new(move || clock().saturating_sub(secs))
+        instant.saturating_sub(self.secs)
 """
 weakening = """
-        Box::new(move || clock().saturating_sub(secs * 0))
+        instant.saturating_sub(self.secs * 0)
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#config_state::replica_clock::tests::the_retention_clock_reads_exactly_the_declared_bound_earlier",
@@ -12920,3 +12920,19 @@ note = """
 An operator whose receipt write failed would be told no artifact exists, discard a durable
 attestation, and re-submit a statement that is already registered.
 """
+
+[[probe]]
+id = "M535-proxy-a-charge-lapses-before-the-padded-store-record"
+unit = "proxy.async_replay_retention"
+theorem = "THM-0105"
+conjunct = "the retention account runs on the timeline the shared stores expire records on, so a charge is held until its record leaves the store, retain_until plus the declared replica clock divergence"
+path = "mcp-re-proxy/src/async_replay/mod.rs"
+anchor = """
+        let retention_now = divergence.held_back(now_unix);
+"""
+weakening = """
+        let retention_now = now_unix;
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#async_replay::tests::a_charge_is_held_until_the_padded_store_horizon",
+]

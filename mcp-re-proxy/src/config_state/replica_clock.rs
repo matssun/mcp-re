@@ -93,8 +93,18 @@ impl ReplicaClockDivergence {
         &self,
         clock: impl Fn() -> i64 + Send + Sync + 'static,
     ) -> Box<dyn Fn() -> i64 + Send + Sync> {
-        let secs = self.secs;
-        Box::new(move || clock().saturating_sub(secs))
+        let bound = *self;
+        Box::new(move || bound.held_back(clock()))
+    }
+
+    /// `instant` read on the retention timeline: held back by the declared bound.
+    ///
+    /// The one statement of the padding. A shared store reads its clock through it, and the
+    /// per-replica retention account prunes on it, so a charge and the record it accounts
+    /// for lapse at the same true instant, `retain_until` plus the bound. Saturating, so an
+    /// extreme reading stays extreme rather than wrapping.
+    pub fn held_back(&self, instant: i64) -> i64 {
+        instant.saturating_sub(self.secs)
     }
 }
 

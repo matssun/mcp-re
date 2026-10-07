@@ -9701,6 +9701,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#async_replay::tests::one_subject_gets_one_budget_however_many_keys_it_holds",
   "//mcp-re-proxy:proxy_unit_test#async_replay::tests::every_clone_of_a_tier_budgets_against_the_same_account",
   "//mcp-re-proxy:proxy_unit_test#async_replay::tests::a_replay_hands_the_charge_back",
+  "//mcp-re-proxy:proxy_unit_test#async_replay::tests::a_charge_is_held_until_the_padded_store_horizon",
   "//mcp-re-proxy:proxy_unit_test#async_replay::tests::a_store_failure_is_unavailable_and_keeps_the_charge",
   "//mcp-re-proxy:proxy_unit_test#async_replay::tests::an_abandoned_insert_keeps_its_charge_because_the_write_may_have_landed",
   "//mcp-re-proxy:proxy_unit_test#async_replay::tests::an_abandoned_insert_s_charge_expires_with_the_entry_it_may_have_created",

@@ -200,14 +200,14 @@ impl AsyncReplayTier {
     ) -> Result<ReplayDecision, ReplayCacheError> {
         let composite = composite_replay_key(key.signer(), key.audience(), key.nonce());
         let retain_until = self.freshness.replay_retain_until(key.expires_at_unix());
-        // Charged to the resolved PRINCIPAL, not to the signer slot: the slot carries
-        // the keyid so distinct keys can never share a replay key, which would hand a
-        // subject one budget per key it holds. Passed explicitly so a store never has
-        // to recover it by parsing a key it did not compose.
-        //
-        // The charge is taken HERE, above the backend seam, so the bound holds for
-        // every deployable adapter — see [`RetentionLedger`].
-        let charge = Charge::reserve(&self.ledger, key.principal(), now_unix, retain_until)
+        // Charged to the resolved PRINCIPAL, not the signer slot, whose keyid would give a
+        // subject one budget per key; passed explicitly so no store parses a key it did not
+        // compose. Taken HERE, above the backend seam, so the bound holds for every
+        // deployable adapter (see [`RetentionLedger`]), and on the retention timeline the
+        // shared stores expire records on, so a charge lasts as long as its record.
+        let divergence = self.freshness.replica_clock_divergence();
+        let retention_now = divergence.held_back(now_unix);
+        let charge = Charge::reserve(&self.ledger, key.principal(), retention_now, retain_until)
             .map_err(ReplayCacheError::from)?;
         // Scoped to the STORE round trip alone, so the span does not also cover the
         // charge accounting around it. This is the only awaited I/O a request performs,
@@ -456,6 +456,65 @@ mod tests {
                 "one retained nonce is one charge, however often it is presented"
             );
         });
+    }
+
+    /// A charge lapses when the record it accounts for leaves a shared store, and no
+    /// earlier.
+    ///
+    /// The shared stores expire a record on the replica's clock held back by the declared
+    /// divergence `d`, so they keep it until `retain_until + d` in true time. An account
+    /// pruning on the verifier's bare reading would hand the charge back `d` seconds early,
+    /// and one actor could hold `(W + d) / W` times its budget in the store.
+    #[test]
+    fn a_charge_is_held_until_the_padded_store_horizon() {
+        const D: i64 = 7;
+        let freshness = crate::config_state::test_support::freshness(0)
+            .with_replica_clock_divergence(
+                crate::config_state::ReplicaClockDivergence::new(D).expect("inside the ceiling"),
+            );
+        let tier = AsyncReplayTier::new_bounded(
+            Arc::new(UnboundedDurableStore::default()),
+            freshness,
+            10_000,
+        );
+        const ACTOR: &str = "did:example:held";
+        const FILLER: &str = "did:example:filler";
+        let retain_until = 1_000;
+        // Every reservation at `now` takes the ledger one step toward its cadence prune.
+        let drive_prune_at = |now: i64, round: &str| {
+            let tier = tier.clone();
+            let round = round.to_owned();
+            block(async move {
+                for i in 0..super::bounds::ASYNC_PRUNE_EVERY_N_INSERTS {
+                    tier.check_and_insert(
+                        &replay_key(FILLER, &format!("{round}-{i}"), now + 1_000),
+                        now,
+                    )
+                    .await
+                    .expect("filler admitted");
+                }
+            });
+        };
+        block(async {
+            assert_eq!(
+                tier.check_and_insert(&replay_key(ACTOR, "kept", retain_until), 900)
+                    .await
+                    .expect("admitted"),
+                ReplayDecision::Fresh
+            );
+        });
+        drive_prune_at(retain_until + D - 1, "inside");
+        assert_eq!(
+            tier.ledger.held_by(&principal_of(ACTOR)),
+            1,
+            "the store still holds the record, so the account must still hold its charge"
+        );
+        drive_prune_at(retain_until + D + 1, "past");
+        assert_eq!(
+            tier.ledger.held_by(&principal_of(ACTOR)),
+            0,
+            "the record has left the store, so its charge is handed back"
+        );
     }
 
     /// The budget is charged to the RESOLVED PRINCIPAL, never to the signer slot.
