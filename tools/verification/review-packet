@@ -8,10 +8,11 @@ between being written and being read. The one thing it adds is arrangement: the 
 grouped by permanent system root and ordered by dependency, which is how they have to be read
 to be reviewable at all — a flat list of 41 propositions is a list, not an argument.
 
-Its subject is the COMPLEMENT of `verification/reviews/specification/`: a theorem is in the
-packet exactly when no independent review record exists for it. That is what "lacks a review"
-means operationally, and it is why the packet shrinks by itself as records are written rather
-than needing to be re-scoped by hand.
+Its subject is the theorems whose owner review is not CURRENT (`tools/verification/review`,
+Ruling 35 §3): never reviewed, or reviewed at another claim, over unsigned premises, or before
+the supporting code, tests or proved symbols moved. That is what "lacks a review" means
+operationally, and it is why the packet shrinks by itself as records are written rather than
+needing to be re-scoped by hand.
 
 Run:  python3 tools/verification/review-packet > verification/reviews/packets/<name>.md
 """
@@ -73,10 +74,19 @@ def closure(root):
         stack.extend(reversed(thms[x].get("depends_on", [])))
     return seen
 
-#: Theorems with an INDEPENDENT specification-review record on disk. The packet covers
-#: their complement, which is what "lacks an independent review" means operationally — not
-#: "written recently".
-REVIEWED = {p.stem for p in Path("verification/reviews/specification").glob("THM-*.json")}
+#: Theorems whose owner review is CURRENT — claim, premises and semantic evidence, as
+#: `tools/verification/review` derives it (Ruling 35 §3). The packet covers their
+#: complement. A record on disk is not enough: one written at another claim, over unsigned
+#: premises, or before the supporting code moved does not cover the theorem as it stands.
+import json, subprocess
+_derived = subprocess.run(
+    [sys.executable, str(Path(__file__).resolve().parent / "review"), "--json"],
+    capture_output=True, text=True, check=True,
+)
+REVIEWED = {
+    tid for tid, state in json.loads(_derived.stdout)["theorems"].items()
+    if state["review_current"]
+}
 
 def para(s):
     return " ".join(s.split())
@@ -87,11 +97,11 @@ w("<!-- SPDX-License-Identifier: Apache-2.0 -->")
 w("# Consolidated owner specification-review packet — ADR-MCPRE-059 §28")
 w("")
 if not [t for t in thms if t not in REVIEWED]:
-    w("**Status: EMPTY — every theorem carries an independent specification-review record.**")
+    w("**Status: EMPTY — every theorem's owner review is current.**")
     w("")
-    w("That is the packet working, not the packet being skipped: its subject is the")
-    w("COMPLEMENT of `verification/reviews/specification/`, so it shrinks by itself as records")
-    w("are written and reaches nothing exactly when nothing is unreviewed. A future theorem")
+    w("That is the packet working, not the packet being skipped: its subject is every")
+    w("theorem whose review is not current, so it shrinks by itself as records are written")
+    w("and reaches nothing exactly when nothing is unreviewed. A future theorem")
     w("appears here the moment it is registered.")
     w("")
     w("The assumption register below is retained: assumptions are reviewed on their own axis")

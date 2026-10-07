@@ -33,7 +33,7 @@ no longer matches the tree announces itself instead of passing quietly.
 
 | Axis | Subject | Reviewed fingerprint |
 |---|---|---|
-| `specification` | `THM-NNNN` | the theorem fingerprint — claim, dependency closure, review requirement |
+| `specification` | `THM-NNNN` | the theorem fingerprint — claim, dependency closure, review requirement — **and** the semantic `review_digest` it was read against |
 | `assumption` | `ASM-NNNN` | the digest of the assumption's registry entry |
 | `audit` | a `[[unit]]` id | the unit fingerprint, which already carries its in-scope assumption closure |
 
@@ -49,11 +49,45 @@ so the theorem fingerprint moves, so this record names a fingerprint that no lon
 thing happens under a different cause, because an approval given under a stronger
 requirement is not an approval under a weaker one.
 
+## REVIEW_CURRENT and EVIDENCE_ESTABLISHED (Ruling 35 §3)
+
+A specification record names two digests. `reviewed_fingerprint` is the claim surface above.
+`review_digest` (with `review_components`) is what the owner read the claim AGAINST:
+
+    review_digest = H(claim, dependency claims, review requirement,
+                      premises        — each assumption in the closure, by entry digest,
+                      supporting_semantics — per supporting unit, the SEMANTIC components
+                                        of its fingerprint)
+
+The semantic components (`_fingerprint.SEMANTIC_UNIT_COMPONENTS`) are what a claim is about:
+`source_inputs`, `enabled_features`, `proof_dependencies`, `gate_controls`, the exported and
+consumed contracts, the test and probe selection (`test_evidence_definition`,
+`test_selection`, `test_sources`, `mutation_probes`, `structural_probes`, `measurements`),
+the formal statement surface (`proved_symbols`, `extracted_symbols`, `lean_theorems`,
+`lean_theorem_sources`), the unit's `class`, its trusted assumptions and governing
+boundaries. The rest (`EVIDENCE_UNIT_COMPONENTS`) — encoding, generated model, build
+configuration, every lane's own identity, the toolchain, the policy revisions — decide only
+whether a RUN still vouches for those inputs. The partition is closed and censused.
+
+`tools/verification/review` reports three verdicts per theorem:
+
+| verdict | holds when |
+|---|---|
+| `REVIEW_CURRENT` | the record matches the current claim, the ledger backs it, every premise is reviewed and backed at its current digest, and `review_digest` equals the current one |
+| `EVIDENCE_ESTABLISHED` | the theorem is supported and every supporting unit is FRESH — an attestation at its full fingerprint, toolchain and policy included |
+| `CURRENTLY_VERIFIED` | both, and every theorem it depends on is currently verified |
+
+So an edit to supporting source makes the review stale (`STALE_SEMANTICS`, naming the unit and
+component) and the evidence stale; a toolchain or proof-policy change makes only the evidence
+stale, and re-running it restores currency without a re-read. A record written before this
+axis carries no `review_digest` and reads `NO_SEMANTIC_DIGEST`; none is reconstructed for it.
+
 Records carry `components` as well as the aggregate digest so the derivation can name *what*
 moved rather than only *that* something did. A record without them still works; it just
 reports `STALE_REVIEW` and cannot say why.
 
-Read the state with `tools/verification/review`. Get the digest to put in a record with
+Read the state with `tools/verification/review`. Get the two digests to put in a record —
+`fingerprint`/`components` and `review_digest`/`review_components` — with
 `tools/verification/review --fingerprint THM-NNNN`. There is deliberately no command that
 writes a record: a tool that could mint an approval on request is the single-command
 self-approval §14.7 exists to prevent.

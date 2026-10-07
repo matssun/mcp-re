@@ -22,8 +22,9 @@ def theorem_index(theorems: dict) -> str:
         "Security theorem index",
         "Every claim MCP-RE states, with its owner and the review units that support it.\n"
         "Support is STRUCTURAL — that a unit exists and is named, not that its evidence is\n"
-        "fresh. Whether a claim is established is the conjunction `tools/verification/review`\n"
-        "derives, and it is not shown here because this view cannot see the attestations.",
+        "fresh. Whether a claim is currently verified — owner review current AND evidence\n"
+        "established — is what `tools/verification/review` derives, and it is not shown here\n"
+        "because this view cannot see the attestations.",
     )
     rows = [
         (

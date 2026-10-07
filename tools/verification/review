@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Theorem assurance: fingerprints, review state, and the conjunction — §14.1, §14.7.
 
-Shows, per declared theorem, the four axes that must hold together before a claim may be
-called established:
+Shows, per declared theorem, the two axes that must hold together before a claim may be
+called CURRENTLY VERIFIED (Ruling 35 §3):
 
-    structural support     a unit supports it (T1, `_theorems`)
-    unit evidence          every supporting unit derives FRESH (`_graph`)
-    dependencies           every premise is itself established
-    specification review   the owner's review covers the CURRENT theorem fingerprint
+    review current         the owner's review covers the CURRENT claim, its CURRENT premises
+                           and the CURRENT semantic evidence of its supporting units
+    evidence established   it is supported, and every supporting unit derives FRESH (`_graph`)
+
+and, for currently verified, every theorem it depends on is itself currently verified.
 
 and, separately, ROOT COMPLETENESS (§28.8): whether every claim the owner declared a system
 promise in `root_theorems` is established. That is a different question from freshness and is
@@ -19,8 +20,9 @@ mode T6 and release assurance use.
 This command DERIVES and DISPLAYS. It never writes a review, and it must never grow a flag
 that does: an approval is a human act recorded as a commit under `verification/reviews/`,
 and a tool that could mint one on request would be the single-command self-approval §14.7
-exists to prevent. `--fingerprint` prints the digest a reviewer must name in that record,
-which is the only assistance a tool should offer here.
+exists to prevent. `--fingerprint` prints the two digests a reviewer must name in that
+record — the claim fingerprint and the semantic `review_digest` — which is the only
+assistance a tool should offer here.
 """
 
 from __future__ import annotations
@@ -43,7 +45,12 @@ from _assurance_graph import (  # noqa: E402
 )
 from _evidence_class import SEVERITIES  # noqa: E402
 from _approvals import ApprovalError, entry_text, ledger_state, load_ledger  # noqa: E402
-from _fingerprint import fingerprint_theorem, fingerprint_unit, theorem_premises  # noqa: E402
+from _fingerprint import (  # noqa: E402
+    fingerprint_theorem,
+    fingerprint_unit,
+    theorem_premises,
+    theorem_review_digests,
+)
 from _graph import evaluate, load_attestations  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -376,17 +383,31 @@ def main() -> int:
     entries = theorems.get("theorem", [])
     fingerprints = {row["id"]: fingerprint_theorem(row, theorems) for row in entries}
 
-    if args.fingerprint:
-        if args.fingerprint not in fingerprints:
-            print(f"FAIL: no theorem {args.fingerprint!r} declared", file=sys.stderr)
-            return 1
-        print(json.dumps(fingerprints[args.fingerprint], indent=2, sort_keys=True))
-        return 0
+    if args.fingerprint and args.fingerprint not in fingerprints:
+        print(f"FAIL: no theorem {args.fingerprint!r} declared", file=sys.stderr)
+        return 1
 
     units = doc.get("unit", [])
     current = {
         unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
     }
+    premises = theorem_premises(theorems, current, assumptions)
+    review_digests = theorem_review_digests(theorems, fingerprints, premises, current)
+
+    if args.fingerprint:
+        digest = review_digests[args.fingerprint]
+        print(
+            json.dumps(
+                {
+                    **fingerprints[args.fingerprint],
+                    "review_digest": digest["fingerprint"] if digest else None,
+                    "review_components": digest["components"] if digest else None,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if digest else 1
     derived = evaluate(
         units, doc.get("edge", []), current, load_attestations(args.attestations)
     )
@@ -400,8 +421,9 @@ def main() -> int:
         fingerprints,
         load_reviews(review_root(REPO_ROOT)),
         derived["states"],
-        theorem_premises(theorems, current, assumptions),
+        premises,
         backing,
+        review_digests,
     )
 
     roots = root_completeness(theorems, assurance)
@@ -434,11 +456,13 @@ def main() -> int:
         state = assurance[row["id"]]
         spec_state, spec_reason = state["specification_review"]
         review_state, review_reason = state["review"]
-        mark = "ESTABLISHED" if state["established"] else "not established"
+        evidence_state, evidence_reason = state["evidence"]
+        mark = "CURRENTLY VERIFIED" if state["currently_verified"] else "not currently verified"
         print(f"\n  {row['id']}  {row['title']}")
         print(f"    {mark}{'  (deprecated)' if state['deprecated'] else ''}")
+        print(f"    review current         {review_state}: {review_reason}")
+        print(f"    evidence established   {evidence_state}: {evidence_reason}")
         print(f"    specification review   {spec_state}: {spec_reason}")
-        print(f"    review (claim+premises) {review_state}: {review_reason}")
         for unit_id, unit_state in sorted(state["unit_states"].items()):
             print(f"    unit://{unit_id:<28} {unit_state}")
         if not state["supporting_units"]:
@@ -446,10 +470,12 @@ def main() -> int:
         deps = row.get("depends_on", [])
         if deps:
             print(f"    depends on             {', '.join(deps)}")
-    established = sum(1 for state in assurance.values() if state["established"])
-    reviewed = sum(1 for state in assurance.values() if state["review"][0] == "REVIEWED")
-    print(f"\n  {reviewed} of {len(entries)} theorem(s) reviewed (claim and premises)")
-    print(f"  {established} of {len(entries)} theorem(s) established")
+    reviewed = sum(1 for state in assurance.values() if state["review_current"])
+    evidenced = sum(1 for state in assurance.values() if state["evidence_established"])
+    verified = sum(1 for state in assurance.values() if state["currently_verified"])
+    print(f"\n  {reviewed} of {len(entries)} theorem(s) REVIEW_CURRENT")
+    print(f"  {evidenced} of {len(entries)} theorem(s) EVIDENCE_ESTABLISHED")
+    print(f"  {verified} of {len(entries)} theorem(s) CURRENTLY_VERIFIED")
     _print_roots(roots)
     _print_premises(theorems, doc, assumptions)
     print_assurance_graph(theorems, doc)
