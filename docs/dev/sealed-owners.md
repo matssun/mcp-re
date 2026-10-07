@@ -318,12 +318,13 @@ nobody pinned. The seal was attempted and the answer came out the same way as
 with no pin behind it — the in-process `PrototypeTransparencyService`, which the conformance
 corpora are built from.
 
-What was done instead, and what it is worth: the fields are private and there are two NAMED
-producers, `pinned` (private, reached only through `ScittServiceTrustPin::resolve`) and
-`stated`, whose name is its contract — *the caller is asserting these; no operator pinned
-them*. That buys legibility at every call site, not unconstructibility, and the record says
-so rather than claiming a seal. It is the third measurement of this rule and the first where
-the seam's second producer is a shipped type rather than a test.
+What was done instead: the fields are private and there are two NAMED producers, `pinned`
+(private, reached only through `ScittServiceTrustPin::resolve`) and `stated`, whose name is
+its contract — *the caller is asserting these; no operator pinned them*. `stated` is
+compiled only under `test` or the test-only `pre_052_fixtures` feature, the flavor the
+conformance corpora link. A product build therefore has `pinned` as its only producer, so
+THM-0041's scope holds there: `ReceiptPositionProfile::Bound` is selected only by a pin's
+`position_profile`.
 
 #### Where the seal DID hold, in the same file
 

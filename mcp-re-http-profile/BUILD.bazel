@@ -46,7 +46,8 @@ nt_rust_library(
 )
 
 # ADR-MCPRE-052: the same sources with `pre_052_fixtures` on, so the batteries that
-# exercise the REFUSAL of direct-root response signing can construct one. A test target
+# exercise the REFUSAL of direct-root response signing can construct one, and the SCITT
+# conformance corpora can state a transparency service with no pin behind it. A test target
 # gets the feature only by linking this `testonly` flavor — the identical pattern as
 # `//mcp-re-host:mcp_re_host_test_fixtures` and the proxy's feature flavors.
 #
