@@ -162,6 +162,33 @@ def test_a_failing_member_fails_the_battery():
     assert "a::tests::two (FAILED)" in detail
 
 
+def test_a_failing_member_records_what_the_runner_said_about_it():
+    """The evidence record must carry the cause, not only the verdict: a `FAILED` with no
+    panic text is a red nobody can diagnose away from the machine that produced it."""
+    ok, detail = run_with(
+        "running 2 tests\n"
+        "test a::tests::one ... ok\n"
+        "test a::tests::two ... FAILED\n"
+        "\nfailures:\n\n"
+        "---- a::tests::two stdout ----\n"
+        "thread 'a::tests::two' panicked at src/a.rs:9:5:\n"
+        "the token signature must verify\n"
+        "\nfailures:\n    a::tests::two\n"
+        "\ntest result: FAILED. 1 passed; 1 failed\n",
+        returncode=101,
+    )
+    assert not ok
+    assert "panicked at src/a.rs:9:5" in detail
+    assert "the token signature must verify" in detail
+    assert "a::tests::one ... ok" not in detail, "only the failing test's block is kept"
+
+
+def test_a_run_that_died_before_reporting_records_its_tail():
+    ok, detail = run_with("Compiling x\nerror: linking with `cc` failed\n", returncode=1)
+    assert not ok
+    assert "linking with `cc` failed" in detail
+
+
 def test_a_nonzero_exit_is_not_a_pass_even_when_every_line_said_ok():
     """A target that printed every expected `ok` and then died — a panic in a later test,
     a linker failure in a second binary — did not complete, so the battery's result is
