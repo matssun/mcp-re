@@ -1986,21 +1986,23 @@ tool_specific_mechanism = "none:trusted-seam"
 
 [[assumption]]
 id = "ASM-0052"
-description = "The PKCS#11 token keeps the response-signing and TLS key objects `CKA_SENSITIVE` and non-extractable."
+description = "The PKCS#11 token reports `CKA_SENSITIVE` and `CKA_EXTRACTABLE` truthfully for the response-signing and TLS private key objects, and enforces them."
 justification = """
 `proxy.pkcs11_adapter`'s description asserts that the Ed25519 private key never leaves the
-token. Nothing in this repository establishes that. `AttributeTemplate::ed25519_labelled`
-asks the token for `CKA_CLASS`, `CKA_KEY_TYPE` and `CKA_LABEL` and nothing else; no code
-reads `CKA_SENSITIVE` or `CKA_EXTRACTABLE`, and a token that answered a `C_GetAttributeValue`
-for `CKA_VALUE` on the private key would be obeyed by a caller that asked. The adapter
-simply never asks — which is a property of the code as written, not of the object, and the
-next edit can change it without contradicting anything stated here.
+token. Most of that is now checked rather than trusted: at startup the adapter reads
+`CKA_SENSITIVE` and `CKA_EXTRACTABLE` of each private key object it will sign with and
+refuses one the token reports as not sensitive or as extractable, and refuses a token that
+cannot report either (`find_token_bound_private_key`). PKCS#11 makes both attributes one-way —
+sensitive cannot be cleared, extractable cannot be set again — so a key reported bound at
+startup stays bound. The adapter reads no other attribute of a private key object and never
+asks for `CKA_VALUE`.
 
-This is the most load-bearing premise behind the whole PKCS#11 custody claim, and it is the
-operator's, not MCP-RE's: it is established when the key object is provisioned on the token,
-by whoever provisioned it. It stops being acceptable if a key object is ever created by
-MCP-RE rather than found by label, or if an attribute read is added that could return key
-material.
+What remains is the token's own honesty, and it is the operator's choice of token, not
+MCP-RE's: that the attributes the token reports are the ones it enforces, and that it does
+not reveal key material through any operation while reporting otherwise. A token that lies
+about its own attributes is outside anything MCP-RE can observe through the PKCS#11
+interface. It stops being acceptable if a key object is ever created or imported by MCP-RE
+rather than found by label, or if an attribute read is added that could return key material.
 """
 scope = [
   "unit://proxy.pkcs11_adapter",
@@ -2011,13 +2013,11 @@ introduced_by = "r12 FILE-02 remediation (R12-1200)"
 review_requirement = "Owner review of any change to the attribute template, to what is read from a key object, or to how key objects come to exist on the token."
 premise_class = "external-boundary"
 boundary_owner = """
-The OPERATOR'S TOKEN PROVISIONING, across the PKCS#11 object boundary: the key objects named
-by `--pkcs11-*-label` were created with `CKA_SENSITIVE = true` and `CKA_EXTRACTABLE = false`
-and are not subsequently altered.
+The OPERATOR'S PKCS#11 TOKEN, across the PKCS#11 object boundary: the `CKA_SENSITIVE` and `CKA_EXTRACTABLE` values it reports for the key objects named by `--pkcs11-*-label` are the ones it enforces.
 """
 affected_contracts = []
 sites = [
-  "mcp-re-proxy/src/pkcs11_native.rs#AttributeTemplate::ed25519_labelled",
+  "mcp-re-proxy/src/pkcs11_keysource/token.rs#find_token_bound_private_key",
   "mcp-re-proxy/src/pkcs11_keysource/mod.rs#Pkcs11Token",
 ]
 tool_specific_mechanism = "none:trusted-seam"

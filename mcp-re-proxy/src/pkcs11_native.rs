@@ -5,9 +5,9 @@
 //! The high-level `cryptoki` crate transitively pulls the UNMAINTAINED `paste` crate
 //! (RUSTSEC-2024-0436), which fails the supply-chain gate; `cryptoki-sys` carries only the
 //! raw PKCS#11 bindings and depends solely on `libloading`. This module is the SMALL safe
-//! surface [`crate::pkcs11_keysource`] needs over them: load+initialize a module,
-//! enumerate token slots and read their labels, open an RW session, log in as the User,
-//! find objects by template, sign with `CKM_EDDSA`, read `CKA_EC_POINT`. Nothing more.
+//! surface [`crate::pkcs11_keysource`] needs over them: load+initialize a module, enumerate
+//! token slots and read their labels, open an RW session, log in as the User, find objects by
+//! template, sign with `CKM_EDDSA`, read `CKA_EC_POINT` and a key's [`custody`]. Nothing more.
 //!
 //! # Function-list dispatch
 //! PKCS#11 modules reliably export only `C_GetFunctionList`; the individual
@@ -23,8 +23,7 @@
 //! `expect`/`assert` on any token or FFI path, and never a fabricated result.
 //!
 //! # RAII
-//! [`Pkcs11Context`] calls `C_Finalize` on drop; [`Session`] calls
-//! `C_CloseSession` on drop.
+//! [`Pkcs11Context`] calls `C_Finalize` on drop; [`Session`] calls `C_CloseSession` on drop.
 //!
 //! Compiled ONLY under the non-default `pkcs11_keysource` feature.
 #![cfg(feature = "pkcs11_keysource")]
@@ -165,6 +164,7 @@ macro_rules! func {
             .ok_or_else(|| Pkcs11Error::MissingFunction(stringify!($field).to_string()))?
     };
 }
+pub mod custody;
 
 /// A loaded + initialized PKCS#11 module. Owns the `libloading` library (kept
 /// alive for the lifetime of every call through the function list) and the

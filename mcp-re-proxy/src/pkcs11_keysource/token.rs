@@ -58,6 +58,35 @@ pub(crate) fn find_key(
     }
 }
 
+/// Locate the single private key object labelled `key_label` and refuse it unless the token
+/// reports it `CKA_SENSITIVE` and not `CKA_EXTRACTABLE`.
+///
+/// The custody claim — the private key never leaves the token — is checked here rather than
+/// left to whoever provisioned the object: a key the token itself reports as exportable is
+/// refused at startup. What remains trusted is that the token reports these attributes
+/// truthfully and enforces them (ASM-0052).
+pub(crate) fn find_token_bound_private_key(
+    view: &SessionRef<'_>,
+    key_label: &str,
+) -> Result<CK_OBJECT_HANDLE, SessionOpError> {
+    let key = find_key(view, key_label, ObjectClass::Private)?;
+    let custody = view.key_custody(key).map_err(|e| {
+        classify_op_error(e, |e| {
+            KeyError::Malformed(format!(
+                "pkcs11: read the custody attributes of key '{key_label}': {e}"
+            ))
+        })
+    })?;
+    if !custody.is_token_bound() {
+        return Err(SessionOpError::Fatal(KeyError::Malformed(format!(
+            "pkcs11: private key '{key_label}' can leave the token (CKA_SENSITIVE={}, \
+             CKA_EXTRACTABLE={}); refusing a key the token does not bind",
+            custody.sensitive, custody.extractable
+        ))));
+    }
+    Ok(key)
+}
+
 /// Human-readable name for an [`ObjectClass`] in error context (the wrapper enum
 /// is intentionally minimal and not `Debug`-printed onto the token path).
 pub(crate) fn class_name(class: ObjectClass) -> &'static str {

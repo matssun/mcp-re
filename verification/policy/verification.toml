@@ -10638,7 +10638,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.pkcs11_adapter"
 class = "V0"
-description = "The PKCS#11-backed response signer: the Ed25519 private key never leaves the token, the public key is read from the token and re-emitted as well-formed RFC 8410 SPKI, and a 64-byte signature that does not verify under it is refused before emission. A session that goes invalid is reopened once and retried; a fatal error is not retried and a failed retry is never cached. A session whose re-open fails, or whose freshly opened session is invalid again, is not re-opened by any caller within a cool-off, so logins are bounded per unit time rather than per request; a session whose lock was poisoned by a panicking operation is retired and re-opened rather than left dead."
+description = "The PKCS#11-backed response signer: the Ed25519 private key never leaves the token — a private key object the token reports as extractable or not sensitive is refused at startup — the public key is read from the token and re-emitted as well-formed RFC 8410 SPKI, and a 64-byte signature that does not verify under it is refused before emission. A session that goes invalid is reopened once and retried; a fatal error is not retried and a failed retry is never cached. A session whose re-open fails, or whose freshly opened session is invalid again, is not re-opened by any caller within a cool-off, so logins are bounded per unit time rather than per request; a session whose lock was poisoned by a panicking operation is retired and re-opened rather than left dead."
 paths = [
   # Enumerated rather than globbed, because a `lib#pkcs11_keysource::...` selector names a
   # module whose own source must be measured: without the module file in `paths`, the test
@@ -10667,6 +10667,7 @@ evidence = [
   "mutation://proxy/pkcs11_adapter/token_custody_and_sessions",
 ]
 tested_symbols = [
+  "mcp-re-proxy/src/pkcs11_native/custody.rs",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::unverifiable_64byte_signature_is_rejected_before_emit",
   # The session discipline. Its security content is the retry rule, not the amortization:
   # a fatal error retried would drive a token into a lockout, and a failed retry cached
@@ -10708,6 +10709,9 @@ exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
 evidence = [
+  "//mcp-re-proxy:pkcs11_keysource_e2e_test#pkcs11_a_response_key_the_token_would_export_is_refused",
+  "//mcp-re-proxy:pkcs11_keysource_e2e_test#pkcs11_a_tls_key_the_token_would_export_is_refused",
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_native::custody::tests::only_a_sensitive_non_extractable_key_is_token_bound",
   "test://proxy/aws_sts/credential_lifetime",
   "mutation://proxy/aws_sts/credential_lifetime",
 ]

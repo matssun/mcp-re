@@ -26,6 +26,7 @@ use super::session::classify_op_error;
 use super::session::SessionOpError;
 use super::token::ed25519_spki_from_ec_point;
 use super::token::find_key;
+use super::token::find_token_bound_private_key;
 use super::token::raw_ed25519_point;
 use super::verify_before_emit;
 use super::Pkcs11Token;
@@ -74,12 +75,13 @@ impl Pkcs11TlsSigner {
         let tls_key_label = tls_key_label.to_string();
 
         // Prove BOTH TLS key objects exist and are single Ed25519 objects (fail closed
-        // on zero/multiple/non-Ed25519), reusing the token's already-primed login.
+        // on zero/multiple/non-Ed25519), and that the token reports the private one as
+        // unable to leave it, reusing the token's already-primed login.
         // `CKK_EC_EDWARDS` in the lookup template admits Ed448 as well, so being Ed25519
         // is established by reading the public point here, not by the template.
         let (tls_key, tls_spki) = token.session.with_session(token.as_ref(), |logged_in| {
             let view = token.context.with_handle(logged_in.handle);
-            find_key(&view, &tls_key_label, ObjectClass::Private)?;
+            find_token_bound_private_key(&view, &tls_key_label)?;
             tls_public_key(&view, &tls_key_label)
         })?;
 

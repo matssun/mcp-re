@@ -7,7 +7,8 @@
 //!   `C_Initialize` / `C_Finalize`, `C_GetSlotList` / `C_GetTokenInfo`,
 //!   `C_OpenSession` / `C_CloseSession`, `C_Login`,
 //!   `C_FindObjectsInit` / `C_FindObjects` / `C_FindObjectsFinal`,
-//!   `C_SignInit` / `C_Sign` (`CKM_EDDSA`), `C_GetAttributeValue` (`CKA_EC_POINT`).
+//!   `C_SignInit` / `C_Sign` (`CKM_EDDSA`), `C_GetAttributeValue` (`CKA_EC_POINT`, and
+//!   `CKA_SENSITIVE` / `CKA_EXTRACTABLE` on a private key).
 //! Every other function-list slot is left NULL, so if the client ever reached for
 //! one the client's own `func!` guard would surface a `MissingFunction` error.
 //!
@@ -21,7 +22,8 @@
 //!   * `MOCK_PKCS11_OBJECTS`     — `;`-separated `label,keytype,id` entries, where
 //!     `keytype` is `ed25519` (a signable `CKK_EC_EDWARDS` key pair),
 //!     `ed25519-misbound` (the same, but the private object signs with a key other than
-//!     the advertised one) or `ec` (a
+//!     the advertised one), `ed25519-extractable` (the same as `ed25519`, but the private
+//!     object reports `CKA_SENSITIVE = false` and `CKA_EXTRACTABLE = true`) or `ec` (a
 //!     `CKK_EC` object used only to prove a non-Ed25519 TLS key is rejected).
 //!
 //! Each entry materialises BOTH a `CKO_PRIVATE_KEY` and a `CKO_PUBLIC_KEY` object
@@ -37,8 +39,10 @@ use std::sync::OnceLock;
 
 use cryptoki_sys::CKA_CLASS;
 use cryptoki_sys::CKA_EC_POINT;
+use cryptoki_sys::CKA_EXTRACTABLE;
 use cryptoki_sys::CKA_KEY_TYPE;
 use cryptoki_sys::CKA_LABEL;
+use cryptoki_sys::CKA_SENSITIVE;
 use cryptoki_sys::CKK_EC;
 use cryptoki_sys::CKK_EC_EDWARDS;
 use cryptoki_sys::CKM_EDDSA;
@@ -88,6 +92,9 @@ struct KeyObject {
     /// wrapping the 32-byte Edwards point (`0x04 0x20 || point`), matching what a
     /// real token returns and what the client's `raw_ed25519_point` accepts.
     ec_point: Vec<u8>,
+    /// Whether the token may let this key leave it: the reverse of a provisioned
+    /// non-exportable key. Reported only for private objects.
+    exportable: bool,
 }
 
 /// In-progress `C_FindObjects` iteration state for a session.
@@ -134,8 +141,9 @@ impl State {
             let keytype = parts[1];
             let id = parts[2];
 
+            let exportable = keytype == "ed25519-extractable";
             let (key_type, signing, point32) = match keytype {
-                "ed25519" => {
+                "ed25519" | "ed25519-extractable" => {
                     let sk = derive_signing_key(parts[0], id);
                     let point = sk.verifying_key().to_bytes().to_vec();
                     (CKK_EC_EDWARDS, Some(sk), point)
@@ -168,6 +176,7 @@ impl State {
                     // the point. Cloning the signer keeps both self-consistent.
                     signing: signing.clone(),
                     ec_point: ec_point.clone(),
+                    exportable,
                 });
                 next_handle += 1;
             }
@@ -574,8 +583,22 @@ unsafe extern "C" fn c_get_attribute_value(
     };
     let attrs: &mut [CK_ATTRIBUTE] = std::slice::from_raw_parts_mut(templ, count as usize);
     for attr in attrs {
-        // The client only ever asks for CKA_EC_POINT; anything else is unsupported.
-        if attr.type_ as CK_ATTRIBUTE_TYPE != CKA_EC_POINT {
+        let kind = attr.type_ as CK_ATTRIBUTE_TYPE;
+        if obj.class == CKO_PRIVATE_KEY && (kind == CKA_SENSITIVE || kind == CKA_EXTRACTABLE) {
+            let flag = if kind == CKA_SENSITIVE {
+                !obj.exportable
+            } else {
+                obj.exportable
+            };
+            if !attr.pValue.is_null() {
+                *(attr.pValue as *mut u8) = u8::from(flag);
+            }
+            attr.ulValueLen = 1;
+            continue;
+        }
+        // Otherwise the client only ever asks for CKA_EC_POINT; anything else is
+        // unsupported.
+        if kind != CKA_EC_POINT {
             attr.ulValueLen = CK_ULONG::MAX; // CK_UNAVAILABLE_INFORMATION
             continue;
         }

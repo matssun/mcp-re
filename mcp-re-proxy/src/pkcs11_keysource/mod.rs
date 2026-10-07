@@ -84,6 +84,7 @@ use session::SessionOpError;
 use session_pool::SessionPool;
 use session_pool::TLS_SESSION_POOL_SIZE;
 use token::find_key;
+use token::find_token_bound_private_key;
 use token::find_token_slot;
 use token::raw_ed25519_point;
 
@@ -270,15 +271,16 @@ impl Pkcs11KeySource {
         });
 
         // Prove, at construction, that the PIN logs in and BOTH response-signing key
-        // objects exist — and that the public one IS Ed25519: `CKK_EC_EDWARDS` in the
-        // lookup template covers Ed448 too, so the discriminator is the 32-byte point
-        // `verification_key` establishes. That point becomes the pinned response key.
+        // objects exist, that the token reports the private one as unable to leave it, and
+        // that the public one IS Ed25519: `CKK_EC_EDWARDS` in the lookup template covers
+        // Ed448 too, so the discriminator is the 32-byte point `verification_key`
+        // establishes. That point becomes the pinned response key.
         // A misconfiguration fails closed at startup, not on the first signed response,
         // and this primes the shared login.
         let key_label = key_label.to_string();
         let response_key = token.session.with_session(token.as_ref(), |logged_in| {
             let view = token.context.with_handle(logged_in.handle);
-            find_key(&view, &key_label, ObjectClass::Private)?;
+            find_token_bound_private_key(&view, &key_label)?;
             verification_key(&view, &key_label)
         })?;
 

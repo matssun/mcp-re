@@ -383,6 +383,7 @@ _PROXY_LIB_SRCS = [
     # cryptoki-sys FFI bindings (replaces the high-level cryptoki crate +
     # transitive unmaintained `paste`). Same `pkcs11_keysource` feature gate.
     "src/pkcs11_native.rs",
+    "src/pkcs11_native/custody.rs",
     # Issue #4030: online OCSP client-cert revocation (behind #[cfg(feature =
     # "online_ocsp")]; cfg'd out of the default build).
     "src/ocsp.rs",

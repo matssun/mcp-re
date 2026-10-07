@@ -60,8 +60,10 @@ on:
       #   does not reach the default lane — and the classification clause is quantified
       #   over every source, so a change here dirties the unit either way.
       - "mcp-re-proxy/src/redis_admission_source/**"
-      # r12 file 2: the executed PKCS#11 module path's filesystem-integrity floor.
+      # r12 file 2: the executed PKCS#11 module path's filesystem-integrity floor, and the
+      # private-key custody read (ASM-0052).
       - "mcp-re-proxy/src/pkcs11_native.rs"
+      - "mcp-re-proxy/src/pkcs11_native/**"
       # r12 file 4: the retention decision both redis-backed stores reach. The file is
       # read by probes M124/M409/M410, so a change to it re-measures those units.
       - "mcp-re-proxy/src/async_redis_store/**"
@@ -464,8 +466,10 @@ on:
       #   does not reach the default lane — and the classification clause is quantified
       #   over every source, so a change here dirties the unit either way.
       - "mcp-re-proxy/src/redis_admission_source/**"
-      # r12 file 2: the executed PKCS#11 module path's filesystem-integrity floor.
+      # r12 file 2: the executed PKCS#11 module path's filesystem-integrity floor, and the
+      # private-key custody read (ASM-0052).
       - "mcp-re-proxy/src/pkcs11_native.rs"
+      - "mcp-re-proxy/src/pkcs11_native/**"
       # r12 file 4: the retention decision both redis-backed stores reach. The file is
       # read by probes M124/M409/M410, so a change to it re-measures those units.
       - "mcp-re-proxy/src/async_redis_store/**"

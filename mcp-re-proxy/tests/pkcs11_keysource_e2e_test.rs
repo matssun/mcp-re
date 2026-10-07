@@ -137,6 +137,7 @@ impl MockToken {
             "EC:edwards25519" | "ed25519" => "ed25519",
             "EC:prime256v1" | "ec" => "ec",
             "ed25519-misbound" => "ed25519-misbound",
+            "ed25519-extractable" => "ed25519-extractable",
             other => panic!("unsupported mock key type {other:?}"),
         };
         self.objects.push(format!("{label},{kt},{id}"));
@@ -292,6 +293,56 @@ fn pkcs11_tls_label_equal_to_response_label_is_refused() {
     assert!(
         matches!(result, Err(KeyError::Malformed(_))),
         "one token object may not custody both the TLS key and the response-signing key"
+    );
+}
+
+/// The response-signing key must be one the token binds: a private key object the token
+/// reports as extractable or not sensitive is refused at open, naming both attributes.
+#[test]
+fn pkcs11_a_response_key_the_token_would_export_is_refused() {
+    let module = mock_module();
+    let _guard = provisioning_lock();
+    let mut token = MockToken::init();
+    token.keygen("ed25519-extractable", "mcp-re-sign", "01");
+
+    let result = Pkcs11KeySource::open(
+        &module,
+        &token.pin,
+        &token.token_label,
+        "mcp-re-sign",
+        placeholder_tls(),
+        None,
+    );
+    match result {
+        Err(KeyError::Malformed(msg)) => assert!(
+            msg.contains("CKA_SENSITIVE=false") && msg.contains("CKA_EXTRACTABLE=true"),
+            "the refusal must name the custody attributes, got: {msg}"
+        ),
+        Err(_) => panic!("an exportable response key must be refused as Malformed"),
+        Ok(_) => panic!("an exportable response key must be refused at open"),
+    }
+}
+
+/// The same for the TLS key: a delegated TLS key the token would export is refused at open.
+#[test]
+fn pkcs11_a_tls_key_the_token_would_export_is_refused() {
+    let module = mock_module();
+    let _guard = provisioning_lock();
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcp-re-sign", "01");
+    token.keygen("ed25519-extractable", "mcp-re-tls", "02");
+
+    let result = Pkcs11KeySource::open(
+        &module,
+        &token.pin,
+        &token.token_label,
+        "mcp-re-sign",
+        placeholder_tls(),
+        Some("mcp-re-tls"),
+    );
+    assert!(
+        matches!(result, Err(KeyError::Malformed(ref msg)) if msg.contains("CKA_EXTRACTABLE=true")),
+        "an exportable TLS key must be refused at open"
     );
 }
 
