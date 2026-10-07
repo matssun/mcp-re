@@ -59,8 +59,9 @@ The verified client identity is extracted from the leaf certificate using the
 ```text
 --transport-identity-source uri_san   # URI SAN (SPIFFE-style), recommended default
 --transport-identity-source dns_san   # DNS SAN
---transport-identity-source cn_legacy # Common Name — LEGACY, deprecated, warns
 ```
+
+The subject Common Name is never an identity source; any other value is refused.
 
 If the selected field is absent from the certificate, identity extraction returns
 nothing and the (required) binding fails closed — a missing URI SAN is **never**

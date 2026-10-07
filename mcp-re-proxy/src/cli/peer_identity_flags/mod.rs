@@ -127,10 +127,9 @@ impl PeerIdentityFlags {
         self.identity_field = Some(match value {
             "uri_san" => IdentityPolicy::UriSan,
             "dns_san" => IdentityPolicy::DnsSan,
-            "cn_legacy" => IdentityPolicy::CnLegacy,
             other => {
                 return Err(format!(
-                    "unknown --transport-identity-source '{other}' (uri_san|dns_san|cn_legacy)"
+                    "unknown --transport-identity-source '{other}' (uri_san|dns_san)"
                 ))
             }
         });

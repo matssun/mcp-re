@@ -260,15 +260,6 @@ fn dns_san_policy_reads_the_dns_san() {
 }
 
 #[test]
-fn cn_legacy_policy_reads_the_common_name() {
-    let ca = make_ca();
-    let (leaf, _key) = make_leaf(&ca, vec![], Some("agent-cn"), true);
-    let id = extract_identity(leaf.as_ref(), IdentityPolicy::CnLegacy).expect("identity");
-    assert_eq!(id.value(), "agent-cn");
-    assert_eq!(id.source(), IdentitySource::CommonName);
-}
-
-#[test]
 fn selected_source_absent_fails_closed_no_fallback() {
     let ca = make_ca();
     // A cert with ONLY a DNS SAN + CN, no URI SAN.
@@ -376,20 +367,16 @@ fn uri_san_with_nul_control_char_fails_closed() {
 }
 
 #[test]
-fn crlf_in_dns_san_and_cn_fails_closed_like_the_header_path() {
-    // The log-injection/smuggling shape the header path already rejects, asserted
-    // for BOTH remaining policies so the fix is not URI-SAN-specific.
+fn crlf_in_dns_san_fails_closed_like_the_header_path() {
+    // The log-injection/smuggling shape the header path already rejects, asserted for the
+    // DNS SAN policy so the fix is not URI-SAN-specific.
     let ca = make_ca();
     let smuggle = "host.example.org\r\nX-Spoof: evil";
     let san: SanType = SanType::DnsName(smuggle.try_into().expect("CRLF is valid IA5"));
-    let (leaf, _key) = make_leaf(&ca, vec![san], Some("cn\r\ninjected"), true);
+    let (leaf, _key) = make_leaf(&ca, vec![san], None, true);
     assert!(
         extract_identity(leaf.as_ref(), IdentityPolicy::DnsSan).is_none(),
         "a DNS SAN carrying CRLF must fail closed"
-    );
-    assert!(
-        extract_identity(leaf.as_ref(), IdentityPolicy::CnLegacy).is_none(),
-        "a CN carrying CRLF must fail closed"
     );
 }
 
@@ -460,9 +447,9 @@ fn non_ia5_unicode_uri_san_is_rejected_at_mint_time() {
 }
 
 #[test]
-fn no_san_fails_closed_for_san_policies_cn_only_for_legacy() {
-    // Empty SAN list. URI-SAN and DNS-SAN policies must both fail closed (None);
-    // CnLegacy returns the CN only when present.
+fn no_san_fails_closed_for_every_san_policy() {
+    // Empty SAN list: both policies fail closed (None), and the present Common Name is
+    // never read in their place.
     let ca = make_ca();
     let (leaf, _key) = make_leaf(&ca, vec![], Some("legacy-cn"), true);
     assert!(
@@ -473,16 +460,6 @@ fn no_san_fails_closed_for_san_policies_cn_only_for_legacy() {
         extract_identity(leaf.as_ref(), IdentityPolicy::DnsSan).is_none(),
         "DnsSan must fail closed with no SAN"
     );
-    let cn = extract_identity(leaf.as_ref(), IdentityPolicy::CnLegacy).expect("cn identity");
-    assert_eq!(cn.value(), "legacy-cn");
-    assert_eq!(cn.source(), IdentitySource::CommonName);
-    // NOTE: a truly CN-less leaf is not mintable via these rcgen 0.14 helpers —
-    // `self_signed`/`signed_by` inject a default CN ("rcgen self signed cert")
-    // when no DN is supplied, so CnLegacy would read THAT, not None. That is a
-    // fixture artifact (rcgen always emits a subject), not a fault in
-    // `extract_identity`, which returns whatever well-formed CN the cert carries.
-    // The fail-closed contract for CnLegacy is therefore exercised by the
-    // genuinely-absent SAN policies above (UriSan/DnsSan → None).
 }
 
 // ---------------------------------------------------------------------------

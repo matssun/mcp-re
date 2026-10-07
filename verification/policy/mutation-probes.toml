@@ -1063,7 +1063,7 @@ anchor = """
 weakening = """
     Ok(CertificatePeerIdentityEvidence::new(
         value,
-        super::certificate_identity_policy::CertificateIdentitySource::CommonName,
+        super::certificate_identity_policy::CertificateIdentitySource::UriSan,
     ))
 """
 expect_red = [
@@ -1071,8 +1071,13 @@ expect_red = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_identity_interpreter::tests::each_policy_reads_its_own_field_and_reports_its_own_source",
 ]
 
+# M28 is retired (owner Ruling 31.1), and its id is not reused. Its weakening pointed the
+# DNS-SAN policy at the subject Common Name, which the certificate adapter no longer reads:
+# the field set has no Common Name, so that mutation does not compile and the behaviour it
+# mutated does not exist. M531 carries the same conjunct with the one other field there is.
+
 [[probe]]
-id = "M28-certificate-identity-policy-substitution"
+id = "M531-certificate-identity-dns-policy-reads-the-uri-field"
 unit = "proxy.certificate_identity"
 theorem = "THM-0024"
 conjunct = "the field read is the one the policy names, for every policy"
@@ -1084,7 +1089,7 @@ anchor = """
         CertificateIdentityPolicy::DnsSan => fields.first_dns_san(),
 """
 weakening = """
-        CertificateIdentityPolicy::DnsSan => fields.common_name(),
+        CertificateIdentityPolicy::DnsSan => fields.first_uri_san(),
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_identity_interpreter::tests::each_policy_reads_its_own_field_and_reports_its_own_source",

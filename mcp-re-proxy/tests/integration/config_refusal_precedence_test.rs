@@ -20,7 +20,6 @@ use mcp_re_proxy::cli::{self};
 use mcp_re_proxy::deployment_request::{
     AuthzKind, DeploymentRequest, OcspResponderRequest, OnlineRevocationEvidenceRequest,
 };
-use mcp_re_proxy::IdentityPolicy;
 
 /// A legal configuration, from the parser, so every violation below is one this fixture
 /// introduces on purpose rather than one the baseline dragged in.
@@ -121,7 +120,6 @@ fn keys(violations: &[String]) -> Vec<&'static str> {
         "--read-timeout-secs",
         "--write-timeout-secs",
         "--request-deadline-secs",
-        "--transport-identity-source cn_legacy",
         "--replay-durability-tier",
         "--transport-binding none",
     ];
@@ -211,11 +209,6 @@ fn the_boundary_refuses_in_this_order() {
             // own position. Deliberate: an undeployable peer-identity form is a statement
             // about whether this deployment exists at all, and an operator should meet it
             // before a limit or a timeout.
-            //
-            // Its sibling `--transport-identity-source cn_legacy` is no longer beside it in
-            // this fixture and cannot be: the identity field is a MEMBER of the
-            // channel-credential form, so a request naming the unbound form has no field to
-            // deprecate. Its slot is pinned in its own run below.
             "--transport-binding none",
             // NEW. Requiredness for these lived in the parser's `require()`, which rejects
             // an ABSENT flag and says nothing about an EMPTY value. They sit immediately
@@ -326,10 +319,6 @@ fn the_boundary_reports_every_violation_not_the_first() {
 
     let refusal = mcp_re_proxy::config_state::validation::ValidatedDeployment::try_from(config)
         .expect_err("three violations must refuse");
-    // `cn_legacy` used to be the third here. It cannot be: the identity FIELD is a member
-    // of the channel-credential form, and this fixture's other violation names the unbound
-    // form — so the two clauses are now mutually exclusive by construction rather than by
-    // fixture. The third is a different machine's, which is what the property needs.
     for expected in [
         "--authz",
         "--transport-binding none",
@@ -340,35 +329,6 @@ fn the_boundary_reports_every_violation_not_the_first() {
             "missing {expected} in: {refusal}"
         );
     }
-}
-
-/// The deprecated identity field keeps the `ChannelBinding` machine's slot.
-///
-/// Pinned in its own run because a single configuration can no longer provoke it beside
-/// `--transport-binding none`: the field is a member of the channel-credential form, so a
-/// request that names another form has no field to deprecate. Two clauses of one machine
-/// that used to be siblings are now alternatives, and the order between them is a fact
-/// about the machine rather than about one fixture.
-#[test]
-fn the_deprecated_identity_field_takes_the_channel_binding_slot() {
-    let mut config = legal();
-    config.max_clock_skew = -1;
-    config.peer_identity =
-        mcp_re_proxy::deployment_request::PeerIdentityEvidenceRequest::channel_credential(
-            IdentityPolicy::CnLegacy,
-        );
-    config.trust_path = String::new();
-
-    let order = keys(&mcp_re_proxy::config_state::validation::unsafe_config_violations(&config));
-    assert_eq!(
-        order,
-        vec![
-            "--max-clock-skew",
-            "--transport-identity-source cn_legacy",
-            "--trust is empty",
-        ],
-        "the boundary's refusal order changed"
-    );
 }
 
 /// The zero-cadence refusal occupies the SAME slot as its missing-cadence sibling.

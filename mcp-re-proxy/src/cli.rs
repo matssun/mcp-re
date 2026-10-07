@@ -1258,8 +1258,8 @@ mod tests {
 
     #[test]
     fn parses_identity_source_selection() {
-        // uri_san (default) and dns_san are the production-acceptable sources; the
-        // deprecated cn_legacy is always rejected (strict_rejects_cn_legacy_...).
+        // uri_san (default) and dns_san are the only sources; any other value is
+        // rejected (strict_rejects_cn_legacy_...).
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "uri_san"]));
         assert_eq!(
@@ -3257,7 +3257,10 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "cn_legacy"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("cn_legacy"), "got: {err}");
+        assert!(
+            err.contains("unknown --transport-identity-source 'cn_legacy'"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -3265,21 +3268,12 @@ mod tests {
         // The error aggregates every parse-time violation so the operator can fix
         // the whole posture in one pass, not one error per restart. A command line that
         // declares no replay configuration is itself a violation and aggregates alongside
-        // the cert-lifetime and cn_legacy ones.
+        // the cert-lifetime one.
         let mut a = minimal(); // declares no replay configuration
-        a.splice(
-            0..0,
-            args(&[
-                "--max-client-cert-lifetime",
-                "none",
-                "--transport-identity-source",
-                "cn_legacy",
-            ]),
-        );
+        a.splice(0..0, args(&["--max-client-cert-lifetime", "none"]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--replay-durability-tier"), "got: {err}");
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
-        assert!(err.contains("cn_legacy"), "got: {err}");
     }
 
     // --- #4082 (MCP-RE-MED-1) additional strict/production posture rejections -----

@@ -2931,8 +2931,9 @@ The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit (findi
    clause position in `validation::legality_violations`, separate from the binding
    machine's refusals; the binding machine's state does not depend on it.
 8. **Test-only interface.** None.
-9. **Unreachable.** None found under the current legality model; `IdentityPolicy::CnLegacy`
-   is reachable from argv and refused here.
+9. **Unreachable.** None found under the current legality model. (The Common-Name identity
+   source this item named was deleted under owner Ruling 31.1; `cn_legacy` is now an unknown
+   `--transport-identity-source` value refused by the parser.)
 10. **Represented twice.** `MAX_CLIENT_CERT_LIFETIME` lives here but is read by
     `client_credential_window` and the CLI; it is one constant, held by the wrong owner.
 11. **Constructible inconsistency.** None: both states are private-field types produced

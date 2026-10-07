@@ -3332,7 +3332,7 @@ the merge path checks.
 
 ## NP-152 — the listener's own admission, the historical identity facade's returns, and the delegated TLS handshakes
 
-**Controls:** `mcp-re-proxy/tests/integration/tls_test.rs` (21), `mcp-re-proxy/tests/integration/mtls_transport_binding_test.rs` (3), `mcp-re-proxy/tests/fault_injection_test.rs` (2), `mcp-re-proxy/src/aws_kms_keysource.rs` (2), `mcp-re-proxy/src/gcp_kms_keysource.rs` (1).
+**Controls:** `mcp-re-proxy/tests/integration/tls_test.rs` (20), `mcp-re-proxy/tests/integration/mtls_transport_binding_test.rs` (3), `mcp-re-proxy/tests/fault_injection_test.rs` (2), `mcp-re-proxy/src/aws_kms_keysource.rs` (2), `mcp-re-proxy/src/gcp_kms_keysource.rs` (1).
 **Statement.** *End to end over a real listener, and over the two things that listener is built from: a client certificate that is untrusted, revoked, expired or over-long is refused during the handshake and the transport binding holds between the channel peer and the request actor, with the declared fault injector as the anti-vacuity arm; the historical `extract_identity` facade returns the configured field of a real DER leaf and returns NOTHING rather than falling back to another one; the published CRL says how close it is to falling out of force and what its own digest and dates are; and a delegated TLS listener — local, AWS-KMS-backed or GCP-KMS-backed — completes a real handshake whose CertificateVerify the delegated signer produced, and fails it when that signature is corrupted.*
 **If false.** The listener admits a peer it was configured to refuse; or a deployment that configured URI SANs is silently downgraded to a Common Name by a facade the authority's own no-fallback controls do not measure; or a handshake is signed by a key the served certificate does not present. The fault-injection controls are here because a handshake refusal nobody can make fail is a refusal nobody has measured.
 **Likely owner:** none — a composition's source is every unit under it.
@@ -3349,7 +3349,7 @@ the merge path checks.
 
 ## NP-153 — the startup transcript is what the deployment actually did
 
-**Controls:** 21 — `app_startup_characterization_test` (8), `config_refusal_precedence_test` (5), `startup_transcript::normalize_tests` (5), `documented_cli_test` (2), `config_legality_characterization_test` (1). All in `mcp-re-proxy/tests/integration`, all in the default lane.
+**Controls:** 20 — `app_startup_characterization_test` (8), `config_refusal_precedence_test` (4), `startup_transcript::normalize_tests` (5), `documented_cli_test` (2), `config_legality_characterization_test` (1). All in `mcp-re-proxy/tests/integration`, all in the default lane.
 **Statement.** *Over a real startup: a refusal precedence is stable and names the first thing wrong rather than merely refusing; the startup-transcript normalizer reads every state-carrying seam in both directions and fails rather than guessing; the authorization seam declares both of its postures; the documented sidecar command line is a configuration the proxy will start with; and the boundary's recommended replay backend is not a state the next stage will start.*
 **If false.** An operator reads a transcript that describes a deployment other than the one running, or follows a remedy the next stage refuses. This is the composition above NP-004, NP-123 and the argv family: each of those says a posture is stated; this says the statement is true of this process.
 **Likely owner:** none — a composition's source is every unit under it.

@@ -2219,7 +2219,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_chain_evidence::tests::bytes_that_are_not_a_certificate_refuse_as_malformed_not_as_absent",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_chain_evidence::tests::empty_bytes_are_a_malformed_certificate_rather_than_an_absent_one",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_chain_evidence::tests::a_duplicated_san_extension_in_real_der_refuses_as_uninterpretable_never_as_absent",
-  "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_chain_evidence::tests::a_common_name_the_parser_cannot_read_in_real_der_refuses_as_uninterpretable_never_as_absent",
+  "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_chain_evidence::tests::a_common_name_the_parser_cannot_read_refuses_nothing_because_it_is_never_read",
   # --- provenance is part of the fact ---
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_peer_identity_evidence::tests::two_evidences_differing_only_in_source_are_not_equal",
   "//mcp-re-proxy:proxy_unit_test#communication_assurance::certificate_identity_policy::tests::every_policy_selects_exactly_one_source",
@@ -11215,7 +11215,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::both_binding_states_are_classified_and_accepted",
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::every_legal_crl_state_form_is_classified_and_accepted",
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::only_exact_binding_becomes_a_state_and_every_other_kind_is_refused_aloud",
-  "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::the_deprecated_identity_source_names_no_state",
   "//mcp-re-proxy:proxy_unit_test#config_state::transport::tests::the_identity_field_names_the_state_and_the_form_decides_whether_there_is_one",
   # ADR-MCPRE-069 CO-S3-6 (NP-153). Three clauses this owner already states, measured on a
   # `DeploymentRequest` that met no parser. The zero-cadence refusal is this module's own

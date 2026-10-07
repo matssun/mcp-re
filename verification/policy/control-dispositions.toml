@@ -10143,14 +10143,6 @@ proposition = "NP-153"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19051"
-project = "mcp-re-proxy"
-control = "tests/integration/main.rs#config_refusal_precedence_test::the_deprecated_identity_field_takes_the_channel_binding_slot"
-decision = "new-proposition"
-proposition = "NP-153"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19052"
 project = "mcp-re-proxy"
 control = "tests/integration/main.rs#config_refusal_precedence_test::the_trust_and_fleet_clauses_keep_their_places"
@@ -10319,14 +10311,6 @@ proposition = "NP-153"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19083"
-project = "mcp-re-proxy"
-control = "tests/integration/main.rs#tls_test::cn_legacy_policy_reads_the_common_name"
-decision = "new-proposition"
-proposition = "NP-152"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19084"
 project = "mcp-re-proxy"
 control = "tests/integration/main.rs#tls_test::crl_freshness_classifies_fresh_near_and_stale"
@@ -10345,7 +10329,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-19087"
 project = "mcp-re-proxy"
-control = "tests/integration/main.rs#tls_test::crlf_in_dns_san_and_cn_fails_closed_like_the_header_path"
+control = "tests/integration/main.rs#tls_test::crlf_in_dns_san_fails_closed_like_the_header_path"
 decision = "new-proposition"
 proposition = "NP-152"
 recorded = "2026-09-19"
@@ -10401,7 +10385,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-19096"
 project = "mcp-re-proxy"
-control = "tests/integration/main.rs#tls_test::no_san_fails_closed_for_san_policies_cn_only_for_legacy"
+control = "tests/integration/main.rs#tls_test::no_san_fails_closed_for_every_san_policy"
 decision = "new-proposition"
 proposition = "NP-152"
 recorded = "2026-09-19"

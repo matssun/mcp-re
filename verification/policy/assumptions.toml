@@ -914,7 +914,7 @@ tool_specific_mechanism = "none:trusted-seam"
 
 [[assumption]]
 id = "ASM-0030"
-description = "The X.509 parser faithfully reports a leaf's URI SANs, DNS SANs, and subject Common Name, in the order the certificate presents them."
+description = "The X.509 parser faithfully reports a leaf's URI SANs and DNS SANs, in the order the certificate presents them."
 justification = """
 `x509_parser` is a foreign ASN.1/X.509 implementation. It is not verified here and proving
 it is explicitly not attempted: an ASN.1 decoder is a far larger verification target than
@@ -943,7 +943,7 @@ introduced_by = "ADR-MCPRE-063 Slice 1"
 review_requirement = "Owner review; any change to the certificate identity adapter or its parser dependency."
 premise_class = "external-boundary"
 boundary_owner = """
-The pinned `x509_parser` crate, across its ASN.1/X.509 decoding API: it reports a leaf's URI SANs, DNS SANs and subject Common Name faithfully and in certificate order, under the default parsing configuration this adapter uses.
+The pinned `x509_parser` crate, across its ASN.1/X.509 decoding API: it reports a leaf's URI SANs and DNS SANs faithfully and in certificate order, under the default parsing configuration this adapter uses.
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
@@ -1273,8 +1273,8 @@ is the one place the currency authority meets it. The adapter reads and decides 
 reports `notBefore`, `notAfter`, `issuer.as_raw()`, `raw_serial()`, and whether the issuer
 `Name` encoding equals the subject `Name` encoding.
 
-This is NOT ASM-0030. That assumption is about identity fields — URI and DNS SANs, the
-subject Common Name, and their presentation order — and about the authority that decides
+This is NOT ASM-0030. That assumption is about identity fields — URI and DNS SANs and
+their presentation order — and about the authority that decides
 WHO a peer is. Currency decides something else from a different field set: whether a
 credential is still acceptable at a named instant. Neither premise implies the other, and
 the earlier attempt to let ASM-0030 stand for both is what this entry replaces.

@@ -32,7 +32,6 @@ pub fn build_attested_ingress_binding(
     let source = match attested.asserted_identity_kind {
         IdentityPolicy::UriSan => crate::transport::IdentitySource::UriSan,
         IdentityPolicy::DnsSan => crate::transport::IdentitySource::DnsSan,
-        IdentityPolicy::CnLegacy => crate::transport::IdentitySource::CommonName,
     };
     let mut keys = Vec::with_capacity(attested.attestor_keys.len());
     for (key_id, key_b64) in &attested.attestor_keys {

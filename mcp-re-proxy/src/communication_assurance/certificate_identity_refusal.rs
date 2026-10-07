@@ -41,7 +41,7 @@ pub enum LeafIdentityRefusal {
     MalformedCertificate,
     /// The certificate parsed, but the representation carrying the configured field could
     /// not be interpreted: a malformed or (per the parser's contract) duplicated SAN
-    /// extension, or a Common Name whose string encoding cannot be represented.
+    /// extension.
     ///
     /// This is NOT absence and must never be reported as absence. A peer that presented a
     /// broken field and a peer that presented no field are different incidents, and only

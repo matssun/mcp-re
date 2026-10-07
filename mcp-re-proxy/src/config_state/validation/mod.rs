@@ -43,7 +43,7 @@ use machine_violations::MachineViolations;
 /// The guards themselves are not new — [`unsafe_config_violations`] has always run at
 /// the end of [`parse_args`]. What was missing is that passing through `parse_args` was
 /// the ONLY thing that ran them. `DeploymentRequest` has 76 public fields, so any caller that built
-/// one in code and handed it to `app::run` got a proxy with cn_legacy identity, a
+/// one in code and handed it to `app::run` got a proxy with a
 /// non-durable replay tier or a disabled client-cert lifetime — every posture the
 /// project refuses — with nothing to stop it. The guard was
 /// at the wrong altitude: on one path into the runtime rather than on the runtime.
@@ -132,8 +132,7 @@ impl TryFrom<DeploymentRequest> for ValidatedDeployment {
 /// `max_client_cert_lifetime == None`) is likewise rejected.
 ///
 /// The postures rejected here are the pure-config, platform-independent fail-open
-/// ones: a non-durable/weak replay tier (#90/ADR-MCPS-020), lb-assertion binding, and
-/// cn_legacy identity.
+/// ones: a non-durable/weak replay tier (#90/ADR-MCPS-020) and lb-assertion binding.
 ///
 /// The violations alone. [`validate_configuration`] is the boundary proper — it runs the
 /// same single pass and additionally returns what that pass RECOGNISED, which is what the

@@ -156,7 +156,7 @@ so.
 | Flag | Meaning |
 | --- | --- |
 | `--transport-binding exact` (default) | The authenticated mTLS peer identity must equal the resolved request actor's **subject** — i.e. the client leaf's SAN carries the `signer`, not the composite actor id. Rotating a signing key needs no certificate reissue. (Binding is mandatory — there is no `none` option; a decoupled channel↔signer posture is refused.) |
-| `--transport-identity-source uri_san` (default) / `dns_san` | Which client-cert field is the authoritative identity. (`cn_legacy` is refused.) |
+| `--transport-identity-source uri_san` (default) / `dns_san` | Which client-cert field is the authoritative identity. Any other value, including `cn_legacy`, is refused. |
 | `--max-client-cert-lifetime 1h` (default) | The v1 revocation posture. Accepts `1h`/`30m`/`3600` up to the 1h ceiling; `none`/`0` (disabled) and any value over the ceiling are refused. |
 
 ### Replay store (`shared_replay.rs`, `replay_tier.rs`)

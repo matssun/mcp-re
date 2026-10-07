@@ -168,9 +168,9 @@ struct ChannelBindingEffects {
 ///
 /// The state is the authority: `config_state::transport` decides whether a deployment is
 /// channel-bound and how, and this is the only place that answer becomes an effect. A
-/// request the owner refuses to classify — `cn_legacy` identity, or a binding kind no
-/// deployment can be in — reaches no state, so there is nothing here to derive from and
-/// no exact-match policy can be installed over an identity field the owner rejected.
+/// request the owner refuses to classify — a binding kind no deployment can be in —
+/// reaches no state, so there is nothing here to derive from and no exact-match policy
+/// can be installed over a binding the owner rejected.
 ///
 /// Every state in the model binds exactly, so the policy does not vary; what the state
 /// carries is which SAN the identity comes from. A second binding mode would appear here
@@ -261,7 +261,7 @@ fn run_validated(
         );
     }
 
-    // Security posture note. The hard guards (cn_legacy, memory/weak replay,
+    // Security posture note. The hard guards (memory/weak replay,
     // over-ceiling/disabled cert lifetime, lb-assertion, node-local replay under
     // --fleet) are ALL rejected at parse time by
     // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them.
@@ -1036,13 +1036,7 @@ mod tests {
     }
 
     /// The two halves of one decision are checked together: which SAN the identity is read
-    /// from, and that the request signer is compared with it at all. The negative control
-    /// is the deprecated identity source, which reaches no state — so the projection has
-    /// nothing to map and the exact-match policy cannot end up running over a CN.
-    ///
-    /// The broken implementation this catches: reading `binding` and `identity_source` off
-    /// the request at the call site, which installs `ExactMatchBinding` over
-    /// `IdentityPolicy::CnLegacy` for a request this owner refuses outright.
+    /// from, and that the request signer is compared with it at all.
     ///
     /// The `expected_field` column is LOAD-BEARING (r11 R11-129): it used to be bound to
     /// `_` and asserted nothing, so the control read as covering which certificate field
@@ -1109,17 +1103,6 @@ mod tests {
                 "{expected_state:?} must refuse a request presenting no authenticated peer"
             );
         }
-
-        let mut config = config_with("file", "/seed", "/key");
-        config.peer_identity =
-            crate::deployment_request::PeerIdentityEvidenceRequest::channel_credential(
-                IdentityPolicy::CnLegacy,
-            );
-        assert!(
-            classify_and_validate_binding(&config).0.is_none(),
-            "a state for cn_legacy would let the serving path install an exact-match \
-             policy over the deprecated CN identity"
-        );
     }
 
     /// The fleet's input is the serving TOPOLOGY REQUEST, projected into the runtime's

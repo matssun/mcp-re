@@ -63,10 +63,6 @@ pub enum IdentityPolicy {
     /// DNS Subject Alternative Name. Use only when the deployment's client
     /// identities are genuinely DNS names and this is an explicit choice.
     DnsSan,
-    /// Subject Common Name. LEGACY ONLY — the CN is unstructured and deprecated
-    /// for identity by the CA/Browser Forum. Selecting it emits a startup
-    /// warning; prefer a URI or DNS SAN.
-    CnLegacy,
 }
 
 impl IdentityPolicy {

@@ -1103,7 +1103,7 @@ the test rather than a mixture:
 
 | unit | probes | what every probe does |
 |---|---|---|
-| `proxy.certificate_identity` | M25, M26, M27, M28, M30 | replace a field-selection or projection expression; expect named tests red |
+| `proxy.certificate_identity` | M25, M26, M27, M30, M531 | replace a field-selection or projection expression; expect named tests red |
 | `proxy.peer_identity_value` | M29 | delete `if trimmed.chars().any(char::is_control) { return Err(…) }` |
 | `proxy.credential_key_correspondence` | M31, M33, M34, M35 | `if false && …`; an error-mapping substitution; `unwrap_or(&[])`; a prefix-strip replacement |
 | `proxy.ed25519_public_key` | M32 | replace the canonical SPKI prefix strip with a suffix slice |

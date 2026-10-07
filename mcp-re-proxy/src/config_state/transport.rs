@@ -135,32 +135,21 @@ impl ClientRevocationPlan {
 /// Recognise the channel-binding state, or say why the request names none.
 ///
 /// Unlike most machines this one can fail to classify: `binding` has three variants no
-/// deployment can be in, and `identity_source` has a deprecated one. They are input forms,
-/// not states, so they produce no member of the model.
+/// deployment can be in. They are input forms, not states, so they produce no member of
+/// the model.
 fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, Vec<String>> {
     let form = &config.peer_identity;
-    let mut refusals = binding_kind_refusals(form);
-    // The identity FIELD is asked of the form that has one. No other form reads a
-    // certificate, so under those there is no field to be deprecated — where the old shape
-    // had a sibling `identity_source` that every form carried and only one consulted.
-    // The default field is applied HERE, after the request has recorded whether the
-    // operator chose one.
+    let refusals = binding_kind_refusals(form);
+    // The identity FIELD is asked of the form that has one; no other form reads a
+    // certificate. The default field is applied HERE, after the request has recorded
+    // whether the operator chose one.
     let field = form
         .credential_identity()
         .map(|identity| identity.field.unwrap_or(IdentityPolicy::RECOMMENDED));
-    let identity = match field {
-        Some(IdentityPolicy::UriSan) => Some(ChannelBindingState::ExactUriSan),
-        Some(IdentityPolicy::DnsSan) => Some(ChannelBindingState::ExactDnsSan),
-        Some(IdentityPolicy::CnLegacy) => {
-            refusals.push(
-                "--transport-identity-source cn_legacy is a deprecated, insecure identity \
-                 binding; use uri_san or dns_san"
-                    .to_string(),
-            );
-            None
-        }
-        None => None,
-    };
+    let identity = field.map(|field| match field {
+        IdentityPolicy::UriSan => ChannelBindingState::ExactUriSan,
+        IdentityPolicy::DnsSan => ChannelBindingState::ExactDnsSan,
+    });
     // The state is the PAIR, so a form that is not the one deployable form cannot reach a
     // state named `Exact*` however the refusal list came out.
     match (identity, refusals.is_empty()) {
@@ -566,19 +555,6 @@ mod tests {
             violations
                 .iter()
                 .any(|v| v.contains("attested-ingress is not a supported deployment mode")),
-            "{violations:?}"
-        );
-    }
-
-    #[test]
-    fn the_deprecated_identity_source_names_no_state() {
-        let (state, violations) = binding(|c| {
-            c.peer_identity =
-                PeerIdentityEvidenceRequest::channel_credential(IdentityPolicy::CnLegacy);
-        });
-        assert!(state.is_none());
-        assert!(
-            violations.iter().any(|v| v.contains("cn_legacy")),
             "{violations:?}"
         );
     }

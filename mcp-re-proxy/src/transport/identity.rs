@@ -43,8 +43,6 @@ pub enum IdentitySource {
     UriSan,
     /// A DNS Subject Alternative Name.
     DnsSan,
-    /// The subject Common Name (last resort).
-    CommonName,
 }
 
 /// A client identity a verification established — on the served path, always from the leaf

@@ -28,8 +28,7 @@
 ///
 /// The `Uninterpretable` case exists because a query against the certificate can fail
 /// rather than come back empty: a SAN extension that is malformed or (per the parser's
-/// contract) duplicated, or a Common Name whose string encoding cannot be represented.
-/// Those are present-but-unreadable, and collapsing them into `Read(None)` would report a
+/// contract) duplicated. That is present-but-unreadable, and collapsing them into `Read(None)` would report a
 /// peer that presented a broken field as a peer that presented no field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FieldReadout<T> {
@@ -44,21 +43,15 @@ pub(super) enum FieldReadout<T> {
 pub(super) struct CertificateIdentityFields {
     uri_sans: FieldReadout<Vec<String>>,
     dns_sans: FieldReadout<Vec<String>>,
-    common_name: FieldReadout<Option<String>>,
 }
 
 impl CertificateIdentityFields {
-    /// Build the interpreted field set from three readouts.
+    /// Build the interpreted field set from two readouts.
     pub(super) fn new(
         uri_sans: FieldReadout<Vec<String>>,
         dns_sans: FieldReadout<Vec<String>>,
-        common_name: FieldReadout<Option<String>>,
     ) -> Self {
-        CertificateIdentityFields {
-            uri_sans,
-            dns_sans,
-            common_name,
-        }
+        CertificateIdentityFields { uri_sans, dns_sans }
     }
 
     /// A field set every one of whose fields was readable.
@@ -68,16 +61,8 @@ impl CertificateIdentityFields {
     /// production constructor that assumed readability would be a way to lose the
     /// distinction this type exists to carry.
     #[cfg(test)]
-    pub(super) fn readable(
-        uri_sans: Vec<String>,
-        dns_sans: Vec<String>,
-        common_name: Option<String>,
-    ) -> Self {
-        CertificateIdentityFields::new(
-            FieldReadout::Read(uri_sans),
-            FieldReadout::Read(dns_sans),
-            FieldReadout::Read(common_name),
-        )
+    pub(super) fn readable(uri_sans: Vec<String>, dns_sans: Vec<String>) -> Self {
+        CertificateIdentityFields::new(FieldReadout::Read(uri_sans), FieldReadout::Read(dns_sans))
     }
 
     /// The first URI SAN, if the representation was readable and carries any.
@@ -91,14 +76,6 @@ impl CertificateIdentityFields {
     /// The first DNS SAN, if the representation was readable and carries any.
     pub(super) fn first_dns_san(&self) -> FieldReadout<Option<&str>> {
         first_of(&self.dns_sans)
-    }
-
-    /// The subject Common Name, if its representation was readable.
-    pub(super) fn common_name(&self) -> FieldReadout<Option<&str>> {
-        match &self.common_name {
-            FieldReadout::Read(value) => FieldReadout::Read(value.as_deref()),
-            FieldReadout::Uninterpretable => FieldReadout::Uninterpretable,
-        }
     }
 }
 
@@ -126,7 +103,6 @@ mod tests {
                 "first.example.org".to_string(),
                 "second.example.org".to_string(),
             ],
-            Some("cn.example.org".to_string()),
         );
         assert_eq!(
             fields.first_uri_san(),
@@ -136,18 +112,13 @@ mod tests {
             fields.first_dns_san(),
             FieldReadout::Read(Some("first.example.org"))
         );
-        assert_eq!(
-            fields.common_name(),
-            FieldReadout::Read(Some("cn.example.org"))
-        );
     }
 
     #[test]
     fn an_absent_field_projects_as_read_nothing_rather_than_as_unreadable() {
-        let fields = CertificateIdentityFields::readable(Vec::new(), Vec::new(), None);
+        let fields = CertificateIdentityFields::readable(Vec::new(), Vec::new());
         assert_eq!(fields.first_uri_san(), FieldReadout::Read(None));
         assert_eq!(fields.first_dns_san(), FieldReadout::Read(None));
-        assert_eq!(fields.common_name(), FieldReadout::Read(None));
     }
 
     #[test]
@@ -158,11 +129,9 @@ mod tests {
         let fields = CertificateIdentityFields::new(
             FieldReadout::Uninterpretable,
             FieldReadout::Read(Vec::new()),
-            FieldReadout::Uninterpretable,
         );
         assert_eq!(fields.first_uri_san(), FieldReadout::Uninterpretable);
         assert_ne!(fields.first_uri_san(), FieldReadout::Read(None));
-        assert_eq!(fields.common_name(), FieldReadout::Uninterpretable);
         assert_eq!(
             fields.first_dns_san(),
             FieldReadout::Read(None),
@@ -178,7 +147,6 @@ mod tests {
         let fields = CertificateIdentityFields::readable(
             vec!["\r".to_string(), "spiffe://example.org/valid".to_string()],
             Vec::new(),
-            None,
         );
         assert_eq!(
             fields.first_uri_san(),
