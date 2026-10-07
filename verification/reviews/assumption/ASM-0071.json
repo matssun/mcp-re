@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:a5545642007d41da5f091fd456db8d712bf8d538df16ac7504b866164b3ed18a"
+  },
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0071-supported-advance-wording (docs/security/owner-approvals-2026-10-07.jsonl, approved 2026-10-07, entry-text sha256 637d1153f084254459314f51c5933b0a85a26a40cc3c163dc813e5cf75679690), which signs this entry's current text. Authority: OWNER-RULINGS.md Ruling 34 \u00a73 (ASM-0071 wording corrected with THM-0133: the operator's advance is `mcp-re-proxy trust-epoch advance`, which commits counter and generation in one step, so the premise is stated over the (counter, generation) pair the plane reads; no raw INCR)",
+  "reviewed_fingerprint": "sha256:a5545642007d41da5f091fd456db8d712bf8d538df16ac7504b866164b3ed18a",
+  "reviewer": "mats@sundvall.name",
+  "subject": "ASM-0071"
+}

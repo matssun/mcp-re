@@ -99,10 +99,24 @@ UNKNOWN = "UNKNOWN"
 #: components. Distinct from the `STALE_*` causes, which can.
 STALE_REVIEW = "STALE_REVIEW"
 
+#: A review record that matches the tree, for a subject the owner-approval ledger does not
+#: back as it stands (`_approvals.ledger_state`): a record is a file anyone can commit, and
+#: the ledger is where the owner's signature over the text is checked.
+UNBACKED = "UNBACKED"
+#: A theorem whose own specification review holds while an assumption in its premise closure
+#: is not reviewed and backed at its current digest.
+PREMISE_UNREVIEWED = "PREMISE_UNREVIEWED"
+
 #: Every state this module can return. Anything not `REVIEWED` withholds establishment.
-REVIEW_STATES = {UNREVIEWED, REVIEWED, UNKNOWN, STALE_REVIEW, "STALE_INPUT"} | set(
-    COMPONENT_CAUSE.values()
-)
+REVIEW_STATES = {
+    UNREVIEWED,
+    REVIEWED,
+    UNKNOWN,
+    STALE_REVIEW,
+    "STALE_INPUT",
+    UNBACKED,
+    PREMISE_UNREVIEWED,
+} | set(COMPONENT_CAUSE.values())
 
 
 def _by_precedence(causes: set[str]) -> str:
@@ -220,11 +234,70 @@ def derive_review_state(current: dict, record: dict | None) -> tuple[str, str]:
     return REVIEWED, f"reviewed at {current['fingerprint'][7:23]}"
 
 
+def backed_review_state(
+    current: dict, record: dict | None, backing: tuple[bool, str] | None
+) -> tuple[str, str]:
+    """`derive_review_state`, then the ledger cross-check.
+
+    A record that matches the tree is `REVIEWED` only if `backing` — the subject's
+    `_approvals.ledger_state` — says the owner's signature covers it. No backing supplied is
+    not backed: the absence of a check is not a pass.
+    """
+    state, reason = derive_review_state(current, record)
+    if state != REVIEWED:
+        return state, reason
+    if backing is None:
+        return UNBACKED, "no owner-approval ledger check was supplied for this subject"
+    backed, why = backing
+    if not backed:
+        return UNBACKED, f"{reason}, but {why}"
+    return REVIEWED, f"{reason}; {why}"
+
+
+def assumption_review_state(
+    assumption_id: str,
+    digest: str,
+    reviews: dict[tuple[str, str], dict],
+    backing: dict[str, tuple[bool, str]],
+) -> tuple[str, str]:
+    """One premise on the assumption axis: its review record against the entry's current
+    digest (`_fingerprint.assumption_digest`), cross-checked against the ledger."""
+    return backed_review_state(
+        {"fingerprint": digest, "components": {"assumption_entry": digest}},
+        reviews.get(("assumption", assumption_id)),
+        backing.get(assumption_id),
+    )
+
+
+def _combined_review(
+    spec_state: str,
+    spec_reason: str,
+    closure: dict[str, str] | None,
+    premise_review: dict[str, tuple[str, str]],
+) -> tuple[str, str]:
+    """REVIEWED means the current claim AND its current premises are what the owner
+    reviewed. The claim's own state leads when it fails, since a re-read starts there."""
+    if spec_state != REVIEWED:
+        return spec_state, spec_reason
+    if closure is None:
+        return UNKNOWN, "the premise closure was not computed, so it cannot be compared"
+    open_premises = sorted(
+        f"{asm} {state}" for asm, (state, _) in premise_review.items() if state != REVIEWED
+    )
+    if open_premises:
+        return PREMISE_UNREVIEWED, "premise(s) not reviewed as they stand: " + ", ".join(
+            open_premises
+        )
+    return REVIEWED, f"{spec_reason}; {len(premise_review)} premise(s) reviewed"
+
+
 def theorem_assurance(
     theorems: dict,
     theorem_fingerprints: dict[str, dict],
     reviews: dict[tuple[str, str], dict],
     unit_states: dict[str, tuple[str, str]],
+    premises: dict[str, dict[str, str]],
+    backing: dict[str, tuple[bool, str]],
 ) -> dict[str, dict]:
     """The conjunction — the one place the word "established" is earned.
 
@@ -233,11 +306,19 @@ def theorem_assurance(
         structural support   some unit supports it, and it is not deprecated
         unit evidence        every supporting unit derives FRESH
         dependencies         every theorem it depends on is itself established
-        specification review the owner's review covers the CURRENT theorem fingerprint
+        review               the owner's review covers the CURRENT theorem fingerprint, the
+                             ledger backs it, and every assumption in its premise closure is
+                             reviewed and backed at its CURRENT digest
 
-    Assumption review rides along inside the unit axis: an assumption entry that moved
-    dirties its unit's `trusted_assumptions` component, so the unit is not FRESH and the
-    conjunction already fails. That is composition, not omission — no second rule.
+    `premises` maps each theorem to its premise closure, assumption id -> current digest
+    (`_fingerprint.theorem_premises`); a theorem missing from it has an unknown closure and
+    is not reviewed. `backing` maps subjects to `_approvals.ledger_state`.
+
+    The premise axis is its own rule, not something the unit axis carries. A moved
+    assumption does dirty its unit's `trusted_assumptions`, so `established` already failed
+    — but the unit axis measures whether evidence was re-run, and re-running it makes the
+    unit FRESH on a premise nobody signed. Only the assumption review axis says the owner
+    read the premise, and `review` is REVIEWED only when every premise says so.
 
     Anything unresolvable is not established. There is deliberately no "mostly" state: the
     reason the registry reports structural support separately (T1) is so that this function
@@ -248,15 +329,23 @@ def theorem_assurance(
     for theorem_id, entry in entries.items():
         supporting = [str(t).removeprefix("unit://") for t in entry.get("supported_by", [])]
         unit_axis = [unit_states.get(unit, ("UNKNOWN", "not declared")) for unit in supporting]
-        spec_state, spec_reason = derive_review_state(
+        spec_state, spec_reason = backed_review_state(
             theorem_fingerprints[theorem_id],
             reviews.get(("specification", theorem_id)),
+            backing.get(theorem_id),
         )
+        closure = premises.get(theorem_id)
+        premise_review = {
+            asm: assumption_review_state(asm, digest, reviews, backing)
+            for asm, digest in sorted((closure or {}).items())
+        }
         result[theorem_id] = {
             "deprecated": bool(entry.get("replaced_by")),
             "supporting_units": supporting,
             "unit_states": {unit: state for unit, (state, _) in zip(supporting, unit_axis)},
             "specification_review": (spec_state, spec_reason),
+            "premise_review": premise_review,
+            "review": _combined_review(spec_state, spec_reason, closure, premise_review),
             "established": False,
         }
 
@@ -268,7 +357,7 @@ def theorem_assurance(
             not state["deprecated"]
             and bool(state["supporting_units"])
             and all(unit_state == "FRESH" for unit_state in state["unit_states"].values())
-            and state["specification_review"][0] == REVIEWED
+            and state["review"][0] == REVIEWED
         )
     changed = True
     while changed:
@@ -324,6 +413,9 @@ def _blocking_cause(state: dict) -> str:
     review_state, reason = state["specification_review"]
     if review_state != REVIEWED:
         return f"SPECIFICATION REVIEW {review_state}: {reason}"
+    review_state, reason = state["review"]
+    if review_state != REVIEWED:
+        return f"PREMISE REVIEW {review_state}: {reason}"
     return "DEPENDENCY: every local axis holds; a premise below it does not"
 
 

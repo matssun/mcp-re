@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:7ce0fda924c910b8864a20e11b69300f17dbed660fe93a8faa9e931544a931b6"
+  },
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0032-common-name-reference-correction (docs/security/owner-approvals-2026-10-07.jsonl, approved 2026-10-07, entry-text sha256 c761105930e51eb58695fd5c68e42114b788077002328a5a63aaa36be88b8fed), which signs this entry's current text. Authority: OWNER-RULINGS.md Ruling 34 \u00a75 (ASM-0032: authority-reference correction; its justification's cross-reference to ASM-0030 no longer names the subject Common Name, deleted under Ruling 31.1)",
+  "reviewed_fingerprint": "sha256:7ce0fda924c910b8864a20e11b69300f17dbed660fe93a8faa9e931544a931b6",
+  "reviewer": "mats@sundvall.name",
+  "subject": "ASM-0032"
+}

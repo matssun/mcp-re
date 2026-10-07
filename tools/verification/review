@@ -42,7 +42,8 @@ from _assurance_graph import (  # noqa: E402
     unmet_obligations,
 )
 from _evidence_class import SEVERITIES  # noqa: E402
-from _fingerprint import fingerprint_theorem, fingerprint_unit  # noqa: E402
+from _approvals import ApprovalError, entry_text, ledger_state, load_ledger  # noqa: E402
+from _fingerprint import fingerprint_theorem, fingerprint_unit, theorem_premises  # noqa: E402
 from _graph import evaluate, load_attestations  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -308,6 +309,30 @@ def _root_ok(roots: dict, require: bool) -> bool:
     return False
 
 
+def review_backing(
+    theorems: dict, assumptions: dict, ledger: list[dict]
+) -> dict[str, tuple[bool, str]]:
+    """`_approvals.ledger_state` for every theorem and assumption, against the registry text
+    as it stands. Assumptions need an entry approval at their current text; theorems are
+    refuted only by an entry approval at some other text (see `ledger_state`)."""
+    registry = {
+        "THM": (REPO_ROOT / "verification/policy/theorems.toml").read_text(encoding="utf-8"),
+        "ASM": (REPO_ROOT / "verification/policy/assumptions.toml").read_text(encoding="utf-8"),
+    }
+    subjects = [row["id"] for row in theorems.get("theorem", [])] + [
+        row["id"] for row in assumptions.get("assumption", [])
+    ]
+    return {
+        subject: ledger_state(
+            subject,
+            entry_text(registry[subject[:3]], subject),
+            ledger,
+            allow_ruling=subject.startswith("THM-"),
+        )
+        for subject in subjects
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="machine-readable output")
@@ -365,11 +390,18 @@ def main() -> int:
     derived = evaluate(
         units, doc.get("edge", []), current, load_attestations(args.attestations)
     )
+    try:
+        backing = review_backing(theorems, assumptions, load_ledger(REPO_ROOT))
+    except ApprovalError as exc:
+        print(f"FAIL: owner-approval ledger: {exc}", file=sys.stderr)
+        return 1
     assurance = theorem_assurance(
         theorems,
         fingerprints,
         load_reviews(review_root(REPO_ROOT)),
         derived["states"],
+        theorem_premises(theorems, current, assumptions),
+        backing,
     )
 
     roots = root_completeness(theorems, assurance)
@@ -401,10 +433,12 @@ def main() -> int:
     for row in entries:
         state = assurance[row["id"]]
         spec_state, spec_reason = state["specification_review"]
+        review_state, review_reason = state["review"]
         mark = "ESTABLISHED" if state["established"] else "not established"
         print(f"\n  {row['id']}  {row['title']}")
         print(f"    {mark}{'  (deprecated)' if state['deprecated'] else ''}")
         print(f"    specification review   {spec_state}: {spec_reason}")
+        print(f"    review (claim+premises) {review_state}: {review_reason}")
         for unit_id, unit_state in sorted(state["unit_states"].items()):
             print(f"    unit://{unit_id:<28} {unit_state}")
         if not state["supporting_units"]:
@@ -413,7 +447,9 @@ def main() -> int:
         if deps:
             print(f"    depends on             {', '.join(deps)}")
     established = sum(1 for state in assurance.values() if state["established"])
-    print(f"\n  {established} of {len(entries)} theorem(s) established")
+    reviewed = sum(1 for state in assurance.values() if state["review"][0] == "REVIEWED")
+    print(f"\n  {reviewed} of {len(entries)} theorem(s) reviewed (claim and premises)")
+    print(f"  {established} of {len(entries)} theorem(s) established")
     _print_roots(roots)
     _print_premises(theorems, doc, assumptions)
     print_assurance_graph(theorems, doc)

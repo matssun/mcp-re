@@ -22,6 +22,7 @@ Run: python3 tools/verification/test_theorem_review.py
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -45,6 +46,8 @@ from _review import (  # noqa: E402
     INCOMPLETE,
     REVIEWED,
     REVIEW_STATES,
+    PREMISE_UNREVIEWED,
+    UNBACKED,
     UNDECLARED,
     UNREVIEWED,
     _valid,
@@ -376,6 +379,26 @@ def test_every_returned_state_is_in_the_closed_set():
 # --- the conjunction: no axis may carry the others ----------------------------------
 
 
+#: Every subject backed by the owner-approval ledger: the fixtures below test the other
+#: axes, and `test_*premise*`/`test_*ledger*` test this one.
+class Backing(dict):
+    """A ledger answer for every subject, `default` unless overridden."""
+
+    def __init__(self, default=(True, "fixture ledger signs it"), **overrides):
+        super().__init__(overrides)
+        self.default = default
+
+    def get(self, key, fallback=None):
+        return super().get(key, self.default)
+
+
+BACKED = Backing()
+
+
+def no_premises(doc) -> dict:
+    return {row["id"]: {} for row in doc["theorem"]}
+
+
 def assurance(doc, *, unit_state="FRESH", reviewed=True, **kwargs):
     fps = fingerprints(doc)
     reviews = {}
@@ -384,7 +407,7 @@ def assurance(doc, *, unit_state="FRESH", reviewed=True, **kwargs):
             ("specification", tid): review_for(fp, tid) for tid, fp in fps.items()
         }
     states = {UNIT: (unit_state, "test fixture")}
-    return theorem_assurance(doc, fps, reviews, states, **kwargs)
+    return theorem_assurance(doc, fps, reviews, states, no_premises(doc), BACKED, **kwargs)
 
 
 def test_all_axes_green_is_established():
@@ -422,12 +445,174 @@ def test_an_unestablished_premise_denies_every_claim_above_it():
         for tid, fp in fps.items()
         if tid != "THM-0001"
     }
-    result = theorem_assurance(doc, fps, reviews, {UNIT: ("FRESH", "fixture")})
+    result = theorem_assurance(
+        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), BACKED
+    )
     assert [result[tid]["established"] for tid in ("THM-0001", "THM-0002", "THM-0003")] == [
         False,
         False,
         False,
     ]
+
+
+# --- the premise axis: REVIEWED covers the claim AND its premises (Ruling 34 §7 A) ------
+
+
+ASM = {"id": "ASM-0001", "description": "The clock is monotone.", "scope": [f"unit://{UNIT}"]}
+
+
+def assumption_review(entry: dict) -> dict:
+    digest = assumption_digest(entry)
+    return {
+        "axis": "assumption",
+        "subject": entry["id"],
+        "reviewed_fingerprint": digest,
+        "components": {"assumption_entry": digest},
+        "reviewer": "owner@example.com",
+    }
+
+
+def premise_assurance(*, premise_entry=ASM, record=True, backing=BACKED):
+    doc = registry()
+    fps = fingerprints(doc)
+    reviews = {("specification", "THM-0001"): review_for(fps["THM-0001"])}
+    if record:
+        reviews[("assumption", ASM["id"])] = assumption_review(ASM)
+    premises = {"THM-0001": {premise_entry["id"]: assumption_digest(premise_entry)}}
+    return theorem_assurance(
+        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, premises, backing
+    )["THM-0001"]
+
+
+def test_a_reviewed_claim_on_an_unreviewed_premise_is_not_reviewed():
+    """The false REVIEWED the closure packet found: THM-0007 and 22 others read REVIEWED
+    while an assumption under them changed and nobody signed it. The claim's own record is
+    current; the premise has none."""
+    state = premise_assurance(record=False)
+    assert state["specification_review"][0] == REVIEWED
+    assert state["review"][0] == PREMISE_UNREVIEWED, state["review"]
+    assert state["established"] is False
+
+
+def test_a_premise_reviewed_at_an_earlier_text_is_not_reviewed():
+    """The digest is over the whole entry, so a widened premise invalidates its review."""
+    widened = {**ASM, "description": ASM["description"] + " Or nearly so."}
+    state = premise_assurance(premise_entry=widened)
+    assert state["review"][0] == PREMISE_UNREVIEWED, state["review"]
+    assert "ASM-0001" in state["review"][1]
+
+
+def test_a_reviewed_and_backed_premise_lets_the_claim_be_reviewed():
+    state = premise_assurance()
+    assert state["review"][0] == REVIEWED, state["review"]
+    assert state["established"] is True
+
+
+def test_an_unknown_premise_closure_is_not_reviewed():
+    """A theorem the caller computed no closure for has an UNKNOWN closure, not an empty
+    one: no premises to check must not read as every premise checked."""
+    doc = registry()
+    fps = fingerprints(doc)
+    reviews = {("specification", "THM-0001"): review_for(fps["THM-0001"])}
+    state = theorem_assurance(
+        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, {}, BACKED
+    )["THM-0001"]
+    assert state["review"][0] != REVIEWED, state["review"]
+
+
+# --- ledger integrity: a record is backed by what the ledger SAYS (Ruling 34 §7 B) ------
+
+
+def test_a_premise_review_the_ledger_does_not_sign_is_unbacked():
+    """A review-axis record is a file anyone can commit. Without an owner signature over the
+    entry's current text it does not make the premise reviewed."""
+    unsigned = Backing(**{"ASM-0001": (False, "not signed")})
+    state = premise_assurance(backing=unsigned)
+    assert state["premise_review"]["ASM-0001"][0] == UNBACKED
+    assert state["review"][0] == PREMISE_UNREVIEWED
+
+
+def test_a_specification_review_the_ledger_refutes_is_unbacked():
+    refuted = Backing(**{"THM-0001": (False, "signed only at other text")})
+    doc = registry()
+    fps = fingerprints(doc)
+    reviews = {("specification", "THM-0001"): review_for(fps["THM-0001"])}
+    state = theorem_assurance(
+        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), refuted
+    )["THM-0001"]
+    assert state["specification_review"][0] == UNBACKED
+    assert state["established"] is False
+
+
+def test_no_ledger_check_is_not_a_pass():
+    doc = registry()
+    fps = fingerprints(doc)
+    reviews = {("specification", "THM-0001"): review_for(fps["THM-0001"])}
+    state = theorem_assurance(
+        doc, fps, reviews, {UNIT: ("FRESH", "fixture")}, no_premises(doc), {}
+    )["THM-0001"]
+    assert state["specification_review"][0] == UNBACKED
+
+
+def test_the_ledger_signs_entry_text_not_a_subject_name():
+    """`ledger_state` against a real-shaped ledger: an entry approval at earlier text does
+    not back the entry; at the current text it does; an assumption the ledger only NAMES in
+    a ruling's prose is not backed; a theorem with no entry approval keeps its record's
+    authority."""
+    from _approvals import entry_text, ledger_state, text_digest
+
+    registry_text = (
+        '[[assumption]]\nid = "ASM-0001"\ndescription = "now"\n\n'
+        "# a comment introducing the next entry\n"
+        '[[assumption]]\nid = "ASM-0002"\ndescription = "other"\n'
+    )
+    current = entry_text(registry_text, "ASM-0001")
+    assert current == '[[assumption]]\nid = "ASM-0001"\ndescription = "now"\n'
+    old = current.replace("now", "then")
+    src = 'verification/policy/assumptions.toml [[assumption]] id = "ASM-0001"'
+    stale = [{"source": src, "text": old, "sha256": text_digest(old), "ruling": "r1"}]
+    assert ledger_state("ASM-0001", current, stale, allow_ruling=False)[0] is False
+    signed = stale + [{"source": src, "text": current, "sha256": text_digest(current),
+                       "ruling": "r2"}]
+    assert ledger_state("ASM-0001", current, signed, allow_ruling=False)[0] is True
+    prose = [{"source": "a ruling", "text": "x", "sha256": text_digest("x"), "ruling": "r",
+              "surfaces": ["ASM-0001"]}]
+    assert ledger_state("ASM-0001", current, prose, allow_ruling=False)[0] is False
+    assert ledger_state("THM-0001", "irrelevant", prose, allow_ruling=True)[0] is True
+
+
+def test_a_ledger_line_whose_digest_does_not_cover_its_text_is_refused():
+    import tempfile
+
+    from _approvals import ApprovalError, load_ledger
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "docs/security").mkdir(parents=True)
+        line = {"ruling": "r", "approved_by": "o", "approved": "d", "source": "s",
+                "text": "signed", "sha256": "0" * 64}
+        (root / "docs/security/owner-approvals-2026-01-01.jsonl").write_text(
+            json.dumps(line) + "\n"
+        )
+        try:
+            load_ledger(root)
+        except ApprovalError as exc:
+            assert "does not cover" in str(exc)
+        else:
+            raise AssertionError("a forged ledger line was accepted")
+
+
+def test_the_live_ledger_hashes_and_every_entry_approval_parses():
+    from _approvals import entry_subject, load_ledger
+    from _manifest import REPO_ROOT
+
+    rows = load_ledger(REPO_ROOT)
+    assert rows, "the live ledger is empty — a check over nothing is not a check"
+    import tomllib
+
+    for row in rows:
+        if entry_subject(row):
+            tomllib.loads(row["text"])
 
 
 # --- root completeness: the second property, ADR-MCPRE-059 §28.8 ---------------------

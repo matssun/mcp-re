@@ -918,3 +918,38 @@ def fingerprint_theorem(entry: dict, theorems: dict) -> dict:
     }
 
 
+
+
+def theorem_premises(
+    theorems: dict, unit_fingerprints: dict[str, dict], assumptions: dict
+) -> dict[str, dict[str, str] | None]:
+    """Each theorem's premise closure: assumption id -> current `assumption_digest`.
+
+    A theorem rests on every assumption its supporting units trust — the same closure each
+    unit's `trusted_assumptions` component carries — and on every assumption scoped to a
+    trust boundary one of those units crosses (`governing_boundaries`), because a boundary
+    premise is what the unit's class cap is conditional on. A theorem with a supporting unit
+    that has no fingerprint maps to None: its closure is unknown, not empty.
+    """
+    by_boundary: dict[str, dict[str, str]] = {}
+    for entry in assumptions.get("assumption", []):
+        for scope in entry.get("scope", []):
+            if scope.startswith("boundary://"):
+                by_boundary.setdefault(scope.removeprefix("boundary://"), {})[
+                    entry["id"]
+                ] = assumption_digest(entry)
+    out: dict[str, dict[str, str] | None] = {}
+    for row in theorems.get("theorem", []):
+        closure: dict[str, str] | None = {}
+        for target in row.get("supported_by", []):
+            unit = str(target).removeprefix("unit://")
+            fingerprint = unit_fingerprints.get(unit)
+            if fingerprint is None:
+                closure = None
+                break
+            components = fingerprint["components"]
+            closure.update(components["trusted_assumptions"])
+            for boundary in components["governing_boundaries"]:
+                closure.update(by_boundary.get(boundary, {}))
+        out[row["id"]] = closure
+    return out

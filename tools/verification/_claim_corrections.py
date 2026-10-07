@@ -219,6 +219,66 @@ def _packet_defect(record: dict, repo_root: Path, where: str) -> str | None:
     return None
 
 
+def _depends_closure(subject: str, theorems: dict) -> set[str]:
+    """`subject`'s transitive `depends_on` premises."""
+    by_id = {row["id"]: row for row in theorems.get("theorem", [])}
+    seen: set[str] = set()
+    stack = list(by_id.get(subject, {}).get("depends_on", []))
+    while stack:
+        dep = stack.pop()
+        if dep in seen:
+            continue
+        seen.add(dep)
+        stack.extend(by_id.get(dep, {}).get("depends_on", []))
+    return seen
+
+
+def _ledger_defect(record: dict, ledger: list[dict], theorems: dict, where: str) -> str | None:
+    """A record whose `packet` is the owner-approval ledger must be backed by what that
+    ledger SAYS, not by the file existing.
+
+    The ledger must hold a line that speaks about this correction: one naming the subject,
+    or — for a dependency correction — a premise in its `depends_on` closure, since that is
+    the claim whose approved change moved this one. An own-claim correction against a ledger
+    that carries an ENTRY approval for the subject must match it field for field: every
+    corrected field's `new` text is what the signed entry says. A line about something else,
+    or a signature over different text, is not this record's authority.
+    """
+    from _approvals import entry_subject, names
+
+    packet = str(record["packet"])
+    rows = [row for row in ledger if row["_file"] == packet]
+    subject = str(record["subject"])
+    relevant = {subject}
+    if "theorem_claim" not in record.get("changed_components", []):
+        relevant |= _depends_closure(subject, theorems)
+    if not any(names(row, other) for row in rows for other in relevant):
+        return (
+            f"{where}: names packet {packet!r}, and no line there speaks about {subject}"
+            f"{' or a premise it depends on' if len(relevant) > 1 else ''}. An approval "
+            f"of something else is not this correction's authority."
+        )
+    if "theorem_claim" not in record.get("changed_components", []):
+        return None
+    entries = [row for row in rows if entry_subject(row) == subject]
+    if not entries:
+        return None
+    import tomllib
+
+    for row in entries:
+        try:
+            signed = tomllib.loads(row["text"]).get("theorem", [{}])[0]
+        except tomllib.TOMLDecodeError:
+            continue
+        if all(signed.get(c["field"]) == c["new"] for c in record["corrections"]):
+            return None
+    return (
+        f"{where}: the ledger's entry approval(s) for {subject} in {packet!r} do not sign "
+        f"the corrected text this record writes. A signature over different text is "
+        f"evidence about that text only."
+    )
+
+
 def load_corrections(root: Path, repo_root: Path | None = None) -> dict[str, list[dict]]:
     """Every record on disk, grouped by subject, ordered by the chain they form.
 
@@ -231,6 +291,8 @@ def load_corrections(root: Path, repo_root: Path | None = None) -> dict[str, lis
     out: dict[str, list[dict]] = {}
     if not root.is_dir():
         return out
+    ledger: list[dict] | None = None
+    theorems: dict = {}
     for path in sorted(root.glob("*.json")):
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
@@ -241,6 +303,24 @@ def load_corrections(root: Path, repo_root: Path | None = None) -> dict[str, lis
             defect = _packet_defect(record, repo_root, path.name)
             if defect:
                 raise CorrectionError(defect)
+            if str(record["packet"]).startswith("docs/security/owner-approvals-"):
+                if ledger is None:
+                    import tomllib
+
+                    from _approvals import ApprovalError, load_ledger
+
+                    try:
+                        ledger = load_ledger(repo_root)
+                    except ApprovalError as exc:
+                        raise CorrectionError(f"owner-approval ledger: {exc}") from exc
+                    theorems = tomllib.loads(
+                        (repo_root / "verification/policy/theorems.toml").read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                defect = _ledger_defect(record, ledger, theorems, path.name)
+                if defect:
+                    raise CorrectionError(defect)
         out.setdefault(str(record["subject"]), []).append(record)
     return out
 
