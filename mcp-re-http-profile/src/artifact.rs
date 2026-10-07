@@ -52,8 +52,12 @@ pub fn bearer_token(authorization_header: &str) -> Option<&str> {
 }
 
 /// `base64url-no-pad(SHA-256(bytes))` — the shared thumbprint primitive.
-// ADR-MCPRE-059 ASM-0018: below `boundary.crypto_primitives`.
+// ADR-MCPRE-059 ASM-0018: below `boundary.crypto_primitives`. Trusted only to return the
+// thumbprint of its input; nothing is claimed about the digest.
 #[cfg_attr(feature = "verify", verus_verify(external_body))]
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures out@ == crate::verus_std_specs::sha256_b64url_of(bytes@),
+))]
 fn sha256_b64url(bytes: &[u8]) -> String {
     b64url_encode(&Sha256::digest(bytes))
 }
@@ -164,11 +168,16 @@ fn expect_type(binding: &ArtifactBinding, want: ArtifactType) -> Result<(), Http
     Ok(())
 }
 
-// ADR-MCPRE-059 ASM-0018: the digest comparison's MEANING is a statement about SHA-256,
-// so the typed-verifier theorem takes it as an opaque decision and claims nothing here.
-#[cfg_attr(feature = "verify", verus_verify(external_body))]
+// Proved: `Ok` exactly when the binding's digest is, byte for byte, the thumbprint of the
+// presented credential. What that thumbprint means is SHA-256's, and stays at ASM-0018.
+#[cfg_attr(feature = "verify", verus_verify)]
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok(()) <==> binding.spec_digest_value()
+            == crate::verus_std_specs::sha256_b64url_of(credential@),
+))]
 fn compare(binding: &ArtifactBinding, credential: &[u8]) -> Result<(), HttpProfileError> {
-    if sha256_b64url(credential) == binding.digest_value() {
+    if binding.digest_is(&sha256_b64url(credential)) {
         Ok(())
     } else {
         Err(HttpProfileError::ArtifactBindingFailed)

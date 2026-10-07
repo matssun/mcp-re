@@ -237,39 +237,33 @@ tool_specific_mechanism = "verus:assume_specification"
 
 [[assumption]]
 id = "ASM-0007"
-description = "`VerifierPolicy::max_clock_skew` returns this policy's configured skew."
+description = "WITHDRAWN — discharged by proof: `VerifierPolicy::max_clock_skew` is verified against the policy's closed specification."
 justification = """
-A field read, presented to the verifier as an uninterpreted function of the policy object.
-Uninterpreted is the point: the theorem must hold for WHATEVER skew a deployment
-configures, so it assumes only that repeated reads of the same policy agree. Verifying the
-body instead would require making VerifierPolicy transparent, which drags its algorithm
-registry and transport policy into the proof for no gain.
+Was: `VerifierPolicy::max_clock_skew` returns this policy's configured skew, trusted as an `external_body` field read.
+
+Discharged: `VerifierPolicy` is a verified datatype and `max_clock_skew` is proved to return `spec_max_clock_skew`, the field it reads; that specification is closed outside `policy`, so the freshness theorem still quantifies over every configured skew. Proved symbol of `http_profile.freshness_window`. Kept, marked withdrawn, so earlier attestations stay explicable.
 """
-scope = ["unit://http_profile.freshness_window", "boundary://boundary.unmodelled_own_behaviour"]
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
-review_requirement = "Owner review; any change that makes the getter more than a field read."
-premise_class = "assumed"
-affected_contracts = ["contract://http_profile/verify/check_params"]
-sites = [
-  "mcp-re-http-profile/src/policy.rs#VerifierPolicy::max_clock_skew",
-]
-tool_specific_mechanism = "verus:external_body"
+review_requirement = "None — discharged by proof, r12 Ruling 36."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0008"
-description = "`VerifierPolicy::max_signature_validity` returns this policy's configured window bound."
-justification = "As ASM-0007, for the width bound."
-scope = ["unit://http_profile.freshness_window", "boundary://boundary.unmodelled_own_behaviour"]
+description = "WITHDRAWN — discharged by proof: `VerifierPolicy::max_signature_validity` is verified against the policy's closed specification."
+justification = """
+Was: `VerifierPolicy::max_signature_validity` returns this policy's configured window bound, trusted as an `external_body` field read.
+
+Discharged: As ASM-0007: `max_signature_validity` is proved to return `spec_max_signature_validity`, the field it reads. Proved symbol of `http_profile.freshness_window`. Kept, marked withdrawn, so earlier attestations stay explicable.
+"""
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
-review_requirement = "Owner review; any change that makes the getter more than a field read."
-premise_class = "assumed"
-affected_contracts = ["contract://http_profile/verify/check_params"]
-sites = [
-  "mcp-re-http-profile/src/policy.rs#VerifierPolicy::max_signature_validity",
-]
-tool_specific_mechanism = "verus:external_body"
+review_requirement = "None — discharged by proof, r12 Ruling 36."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0009"
@@ -451,70 +445,62 @@ tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0018"
-description = "`sha256_b64url` and `compare` are opaque digest primitives; nothing is claimed about the digest."
+description = "`sha256_b64url` returns `sha256_b64url_of` of its input bytes: the thumbprint primitive, trusted to compute the function it names and nothing more."
 justification = """
-Below `boundary.crypto_primitives`. The typed-verifier theorem is about which
-artifact_type/binding_type pair may leave the verifier as Ok — a control-flow property
-that holds whatever the comparison decides. Stating an ensures here would import a
-preimage-resistance claim into a theorem that does not need one.
+Below `boundary.crypto_primitives`. `sha256_b64url` is SHA-256 over the presented bytes,
+base64url-encoded, computed by the `sha2` crate; the prover cannot check that, so its
+`external_body` states only that the result is `sha256_b64url_of(bytes)`, an uninterpreted
+function of the bytes (ASM-0073). No collision or preimage property is claimed.
+
+The digest COMPARISON is not here. `compare` is proved: it returns `Ok` exactly when the
+binding's digest is, character for character, `sha256_b64url_of` of the presented
+credential. What remains trusted is that this function is SHA-256's thumbprint, and what
+makes a matching thumbprint mean the credential is the one bound is SHA-256's
+second-preimage resistance (ASM-0028), which this entry does not assume.
 """
-scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_own_behaviour"]
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.crypto_primitives"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
-review_requirement = "Owner review; MUST be discharged before any theorem claiming a binding commits to the presented credential."
-premise_class = "review-obligation"
-discharging_event = { kind = "owner-event", statement = "A theorem claims a binding commits to the presented credential. This premise MUST be discharged before that claim may be made." }
+review_requirement = "Owner review; any change to what `sha256_b64url` computes or to its specification."
+premise_class = "external-boundary"
+boundary_owner = """
+The `sha2` crate's SHA-256 and the base64url encoding, across `sha256_b64url`: the result is the unpadded base64url SHA-256 digest of the input bytes.
+"""
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
   "mcp-re-http-profile/src/artifact.rs#sha256_b64url",
-  "mcp-re-http-profile/src/artifact.rs#compare",
 ]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
 id = "ASM-0062"
-description = "`ArtifactBinding::artifact_type` and `ArtifactBinding::binding_type` return the value's own private fields."
+description = "WITHDRAWN — discharged by proof: `ArtifactBinding::artifact_type` and `binding_type` are verified against the binding's closed specification."
 justification = """
-`ArtifactBinding`'s representation is private, so the typed-verifier theorem cannot read the
-tags as fields. The two getters are field reads, presented to the verifier as uninterpreted
-functions of the binding (ASM-0063) exactly as the policy accessors are (ASM-0007): the theorem
-quantifies over whatever pair a binding carries, so it assumes only that repeated reads of one
-binding agree. The structural validity the old `validate` carried (digest shape, the
-reference-field all-or-none rule) is no longer a premise: the value cannot exist without it, so
-there is nothing for the theorem to take as opaque.
+Was: `ArtifactBinding::artifact_type` and `ArtifactBinding::binding_type` return the value's own private fields, trusted as `external_body` field reads.
+
+Discharged: `ArtifactBinding` is a verified datatype with its representation still private, and both getters are proved to return `spec_artifact_type` / `spec_binding_type`, the fields they read. Those specifications are closed outside the owner's module, so no proof elsewhere reads the representation. Proved symbols of `http_profile.artifact_typing`. Kept, marked withdrawn, so earlier attestations stay explicable.
 """
-scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_own_behaviour"]
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "r12 ruling 12 item 12"
-review_requirement = "Owner review; any change that makes either getter more than a field read."
-premise_class = "assumed"
-affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
-sites = [
-  "mcp-re-http-profile/src/block/artifact_binding.rs#ArtifactBinding::artifact_type",
-  "mcp-re-http-profile/src/block/artifact_binding.rs#ArtifactBinding::binding_type",
-]
-tool_specific_mechanism = "verus:external_body"
+review_requirement = "None — discharged by proof, r12 Ruling 36."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0063"
-description = "`artifact_type_of(binding)` and `binding_type_of(binding)` are the tags a binding carries, as functions of the binding."
+description = "WITHDRAWN — discharged by proof: `artifact_type_of` and `binding_type_of` are defined through the binding's closed specification, not declared uninterpreted."
 justification = """
-Uninterpreted on purpose, as ASM-0025 is for the skew: the typed-verifier theorem must hold for
-WHATEVER tags a binding carries, so it assumes nothing about them but that they are a function
-of the binding. The paired `external_body` getters are ASM-0062; this is the specification-level
-declaration those getters are presented through.
+Was: `artifact_type_of(binding)` and `binding_type_of(binding)` are the tags a binding carries, as uninterpreted functions of the binding.
+
+Discharged: Both are open specifications over the binding's closed `spec_artifact_type` / `spec_binding_type`, which the getters are proved against (ASM-0062's discharge). The typed-verifier theorem still holds for whatever tags a binding carries. Kept, marked withdrawn, so earlier attestations stay explicable.
 """
-scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_own_behaviour"]
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "r12 ruling 12 item 12"
-review_requirement = "Owner review; any change that makes the tags more than per-binding constants."
-premise_class = "assumed"
-affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
-sites = [
-  "mcp-re-http-profile/src/verus_std_specs.rs#artifact_type_of",
-  "mcp-re-http-profile/src/verus_std_specs.rs#binding_type_of",
-]
-tool_specific_mechanism = "verus:uninterp"
+review_requirement = "None — discharged by proof, r12 Ruling 36."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0020"
@@ -652,28 +638,18 @@ tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
 id = "ASM-0064"
-description = "`RequestEvidenceDigest::same_handle` returning true means the two handles carry the same digest value."
+description = "WITHDRAWN — discharged by proof: `RequestEvidenceDigest::same_handle` is verified to answer exactly field equality."
 justification = """
-The comparator the continuation binding is stated through now that the store retains evidence
-handles rather than signature bases: `HttpContinuation::verify` and `RetainedContinuation`
-compare handles in their own slots. It constrains one two-field comparison and nothing else.
+Was: `RequestEvidenceDigest::same_handle` returning true means the two handles carry the same digest value, trusted as an `external_body` comparator.
 
-The digest stays UNINTERPRETED, as under ASM-0023: no collision or preimage resistance is
-claimed, only that a true answer means the two values are equal. What the continuation theorem
-needs is that an answer leg binds to the handle the open leg retained; that equality of two
-strings is equality of the values they spell is the whole of what is trusted.
+Discharged: `same_handle` has a verified body whose postcondition is that it returns true exactly when both the algorithm and the value strings are equal, which implies the contract the continuation binding reads. String equality is vstd's specification of `String::eq`. The digest itself stays uninterpreted. Proved symbol of `http_profile.continuation_binding`. Kept, marked withdrawn, so earlier attestations stay explicable.
 """
-scope = ["unit://http_profile.continuation_binding", "boundary://boundary.unmodelled_own_behaviour"]
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "r12 ruling 12 item 16"
-review_requirement = "Owner review; discharge requires a proof about the handle comparison, or about the digest construction, which crosses boundary.crypto_primitives."
-premise_class = "review-obligation"
-discharging_event = { kind = "owner-event", statement = "The handle comparator is given a verified body, or a proof about the labeled-digest construction is admitted across boundary.crypto_primitives." }
-affected_contracts = ["contract://http_profile/block/continuation_verify"]
-sites = [
-  "mcp-re-http-profile/src/evidence/digest.rs#RequestEvidenceDigest::same_handle",
-]
-tool_specific_mechanism = "verus:external_body"
+review_requirement = "None — discharged by proof, r12 Ruling 36."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 # --- Uninterpreted specification functions -----------------------------------
 #
@@ -715,48 +691,57 @@ sites = [
 tool_specific_mechanism = "verus:uninterp"
 
 [[assumption]]
-id = "ASM-0025"
-description = "`skew_of(policy)` is the deployment's configured clock skew, as a function of the policy object."
+id = "ASM-0073"
+description = "`sha256_b64url_of(bytes)` is a function of its argument and nothing more."
 justification = """
-Uninterpreted on purpose, and the purpose is strength rather than convenience: the
-freshness theorem must hold for WHATEVER skew a deployment configures, so the proof may
-assume nothing about the value — not a bound, not a sign, only that repeated reads of the
-same policy agree. Interpreting it would weaken the theorem to one configuration.
-
-The paired `external_body` getter is ASM-0007; this is the specification-level declaration
-that getter is presented through.
+The declaration behind ASM-0018, stated where the checker can see it. Uninterpreted is the
+entire content: nothing about SHA-256 is claimed — not collision resistance, not preimage
+resistance. Only that the same bytes give the same thumbprint, which is what lets
+`compare`'s proved postcondition name the thumbprint of the presented credential.
 """
 scope = [
-  "unit://http_profile.freshness_window",
+  "unit://http_profile.artifact_typing",
   "boundary://boundary.unmodelled_own_behaviour",
 ]
 owner = "mats@sundvall.name"
-introduced_by = "ADR-MCPRE-059 WP3"
-review_requirement = "Owner review; any change that makes the skew more than a per-policy constant."
+introduced_by = "r12 Ruling 36 (ASM-0018 split: the compare half discharged by proof)"
+review_requirement = "Owner review; discharge requires crossing boundary.crypto_primitives with a proof about the digest."
 premise_class = "assumed"
-affected_contracts = ["contract://http_profile/verify/check_params"]
+affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
-  "mcp-re-http-profile/src/verus_std_specs.rs#skew_of",
+  "mcp-re-http-profile/src/verus_std_specs.rs#sha256_b64url_of",
 ]
 tool_specific_mechanism = "verus:uninterp"
 
 [[assumption]]
-id = "ASM-0026"
-description = "`validity_of(policy)` is the widest accepted `expires - created`, as a function of the policy object."
-justification = "As ASM-0025, for the window-width bound. Paired with the `external_body` getter ASM-0008."
-scope = [
-  "unit://http_profile.freshness_window",
-  "boundary://boundary.unmodelled_own_behaviour",
-]
+id = "ASM-0025"
+description = "WITHDRAWN — discharged by proof: `skew_of` is defined through the policy's closed specification, not declared uninterpreted."
+justification = """
+Was: `skew_of(policy)` is the deployment's configured clock skew, as an uninterpreted function of the policy object.
+
+Discharged: `skew_of` is an open specification over `VerifierPolicy::spec_max_clock_skew`, which `max_clock_skew` is proved against (ASM-0007's discharge). Nothing is declared uninterpreted; outside `policy` the value is still unknown, so the theorem's generality is unchanged. Kept, marked withdrawn, so earlier attestations stay explicable.
+"""
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
-review_requirement = "Owner review; any change that makes the bound more than a per-policy constant."
-premise_class = "assumed"
-affected_contracts = ["contract://http_profile/verify/check_params"]
-sites = [
-  "mcp-re-http-profile/src/verus_std_specs.rs#validity_of",
-]
-tool_specific_mechanism = "verus:uninterp"
+review_requirement = "None — discharged by proof, r12 Ruling 36."
+affected_contracts = []
+tool_specific_mechanism = "none"
+
+[[assumption]]
+id = "ASM-0026"
+description = "WITHDRAWN — discharged by proof: `validity_of` is defined through the policy's closed specification, not declared uninterpreted."
+justification = """
+Was: `validity_of(policy)` is the widest accepted `expires - created`, as an uninterpreted function of the policy object.
+
+Discharged: As ASM-0025, over `spec_max_signature_validity` (ASM-0008's discharge). Kept, marked withdrawn, so earlier attestations stay explicable.
+"""
+scope = []
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP3"
+review_requirement = "None — discharged by proof, r12 Ruling 36."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 # ---------------------------------------------------------------------------
 # The verifier's result claims — ADR-MCPRE-061 §12, MCPRE-136
@@ -1631,7 +1616,7 @@ scope = [
   "boundary://boundary.unmodelled_own_behaviour",
 ]
 sites = [
-  "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifierPolicy",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExMcpTransportPolicy",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExSignatureParams",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExProfileAlgorithm",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpProfileError",
@@ -1649,7 +1634,6 @@ sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionVerdict",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionPolicy",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExArtifactType",
-  "mcp-re-http-profile/src/verus_std_specs.rs#ExArtifactBinding",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExSignerSlot",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExActorIdentity",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExResolvedActor",
@@ -1674,35 +1658,33 @@ tool_specific_mechanism = "verus:external_type_specification"
 
 [[assumption]]
 id = "ASM-0046"
-description = "`ExVerifierPolicy`, `ExProfileAlgorithm`, `ExVerificationKey`, `ExArtifactBinding` and `ExRequestRoleEvidence` are OPAQUE: the prover models each as a datatype with no readable fields."
+description = "`ExMcpTransportPolicy`, `ExProfileAlgorithm`, `ExVerificationKey` and `ExRequestRoleEvidence` are OPAQUE: the prover models each as a datatype with no readable fields."
 justification = """
 The weakest premise in this registry, and it is here because the mechanism list is right to
 count it. `external_body` on a type specification REMOVES the ability to reason about the
 representation; it does not add a claim about one. No theorem reads a field of any of these
-five, and none may — the policy accessors (ASM-0007, ASM-0008, ASM-0009) are the only way
-in, and each is registered on its own.
+four, and none may.
 
-Opacity is the correct choice for exactly these five and not for the mirrors beside them.
-`VerifierPolicy` carries a deployment's construction, algorithm registry and transport
-policy, none of which any claim here reasons about; `ProfileAlgorithm` is a resolved
-algorithm the freshness theorem deliberately says nothing about; `VerificationKey` is a
-foreign type whose contents no theorem mentions (ASM-0013 registers its mirror for the same
-reason). Making any of them transparent would put representation the proofs do not model
-inside their reach.
+Opacity is the correct choice for exactly these four and not for the mirrors beside them.
+`McpTransportPolicy` is the MCP transport contract a `VerifierPolicy` carries, which no claim
+here reasons about; the verified policy needs only to name the field's type.
+`ProfileAlgorithm` is a resolved algorithm the freshness theorem deliberately says nothing
+about, reached only through `accepted_algorithm` (ASM-0009); `VerificationKey` is a foreign
+type whose contents no theorem mentions (ASM-0013 registers its mirror for the same reason).
+Making any of them transparent would put representation the proofs do not model inside their
+reach.
 
-`ArtifactBinding` is the fourth, for the reverse reason: its representation is private to the
-owner so that holding a value means it is well-formed, and a transparent mirror would let a
-proof read the fields the owner hides. The prover reaches a binding only through its two tag
-getters (ASM-0062, ASM-0063).
-
-`RequestRoleEvidence` is the fifth, for the same reason as `ArtifactBinding`: its
-representation is private so that holding one means it was derived from a signature base
-under the request role. Unlike the binding it needs no getter premise, because no theorem
-reads it at all; the prover names it only because the verified request products carry one.
-What is trusted is exactly that the type is opaque to the prover. No behavioural property
+`RequestRoleEvidence` is the fourth, for the reverse reason: its representation is private so
+that holding one means it was derived from a signature base under the request role. No
+theorem reads it at all; the prover names it only because the verified request products carry
+one. What is trusted is exactly that the type is opaque to the prover. No behavioural property
 moves into this entry: the continuation proof compares `RequestEvidenceDigest` claims, whose
 mirror stays transparent, and its contract is unchanged. `ResponseRoleEvidence` is not here
 because no type the prover reads contains one.
+
+`VerifierPolicy` and `ArtifactBinding` are not here: each is a verified datatype whose
+representation stays private to its owner's module, read only through closed specifications
+its getters are proved against.
 
 It stops being acceptable the moment a theorem needs to say something about one of these
 representations, at which point the entry is replaced by a proof about it rather than
@@ -1717,10 +1699,9 @@ scope = [
   "boundary://boundary.unmodelled_own_behaviour",
 ]
 sites = [
-  "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifierPolicy",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExMcpTransportPolicy",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExProfileAlgorithm",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExVerificationKey",
-  "mcp-re-http-profile/src/verus_std_specs.rs#ExArtifactBinding",
   "mcp-re-http-profile/src/evidence/prover_model.rs#ExRequestRoleEvidence",
 ]
 owner = "mats@sundvall.name"
@@ -2375,13 +2356,6 @@ differs.
 scope = [
   "unit://http_profile.scitt_algorithm_agreement",
   "unit://http_profile.scitt_derived_root",
-
-A change inside this version is detected rather than remembered: the golden vector
-`the_manifest_signing_input_and_signature_are_byte_stable` pins the exact signing-input bytes
-of a fixed manifest and the exact signature a fixed org key makes over them, and fails on any
-change to the serialization, the preimage or the field order. That makes a breach of the
-constraint visible; it does not discharge it, because the constraint is what released clients
-consume, which no test here controls.
   "boundary://boundary.crypto_primitives",
 ]
 owner = "mats@sundvall.name"
@@ -2401,6 +2375,13 @@ present version would break every manifest already distributed to released clien
 replacement (compact JWS over the received bytes), its version boundary and cutover, its
 signing semantics and golden vectors belong to a separate ADR-MCPRE-053 slice, with no
 dual-format reader. Owner Ruling 13.1 (2026-10-04, finding 9f28d71b502a2418).
+
+A change inside this version is detected rather than remembered: the golden vector
+`the_manifest_signing_input_and_signature_are_byte_stable` pins the exact signing-input bytes
+of a fixed manifest and the exact signature a fixed org key makes over them, and fails on any
+change to the serialization, the preimage or the field order. That makes a breach of the
+constraint visible; it does not discharge it, because the constraint is what released clients
+consume, which no test here controls.
 """
 scope = ["unit://client.trust_manifest_lifecycle", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"

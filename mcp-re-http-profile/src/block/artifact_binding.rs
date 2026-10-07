@@ -28,10 +28,10 @@
 
 use mcp_re_core::b64url_encode;
 use serde::Deserialize;
-use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
 
+mod reads;
 mod unchecked;
 mod vocabulary;
 pub use unchecked::UncheckedArtifactBinding;
@@ -41,7 +41,7 @@ pub use vocabulary::BindingType;
 use crate::error::HttpProfileError;
 use crate::ids::EVIDENCE_DIGEST_ALG;
 #[cfg(feature = "verify")]
-use verus_builtin_macros::{verus_spec, verus_verify};
+use verus_builtin_macros::verus_verify;
 
 /// One `artifact_bindings[]` entry: the `artifact_type`/`binding_type` axis
 /// split plus the digest (and reference metadata for the reference form). No
@@ -54,7 +54,8 @@ use verus_builtin_macros::{verus_spec, verus_verify};
 /// through [`UncheckedArtifactBinding`] — are fallible where the input is not already
 /// proven, so holding a binding means those rules hold with no caller having remembered to
 /// check. Consumers read it through the named projections.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "verify", verus_verify)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactBinding {
     artifact_type: ArtifactType,
     binding_type: BindingType,
@@ -63,14 +64,11 @@ pub struct ArtifactBinding {
     /// `base64url-no-pad` digest — bare, no prefix (v0.11 grill E-5).
     digest_value: String,
     /// External authorization-system namespace (reference form only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     authorization_system_id: Option<String>,
     /// The external scheme: what `reference_value` means and how the digest was
     /// produced (reference form only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     reference_scheme_id: Option<String>,
     /// Decision/grant handle for cross-audit (reference form only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     reference_value: Option<String>,
 }
 
@@ -147,27 +145,6 @@ impl ArtifactBinding {
             reference_scheme_id: Some(reference_scheme_id.to_owned()),
             reference_value: Some(reference_value.to_owned()),
         })
-    }
-
-    /// What the artifact is.
-    // ADR-MCPRE-059 ASM-0062: a field read, told to the typed-verifier theorem as an opaque
-    // function of the binding, which is quantified over rather than interpreted.
-    #[cfg_attr(feature = "verify", verus_verify(external_body))]
-    #[cfg_attr(feature = "verify", verus_spec(out =>
-        ensures out == crate::verus_std_specs::artifact_type_of(self),
-    ))]
-    pub fn artifact_type(&self) -> ArtifactType {
-        self.artifact_type
-    }
-
-    /// How the artifact is bound.
-    // ADR-MCPRE-059 ASM-0062, as `artifact_type`.
-    #[cfg_attr(feature = "verify", verus_verify(external_body))]
-    #[cfg_attr(feature = "verify", verus_spec(out =>
-        ensures out == crate::verus_std_specs::binding_type_of(self),
-    ))]
-    pub fn binding_type(&self) -> BindingType {
-        self.binding_type
     }
 
     /// The digest algorithm token (always the profile's).

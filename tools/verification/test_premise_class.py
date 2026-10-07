@@ -271,8 +271,11 @@ def test_the_estate_is_fully_typed_and_the_split_is_the_measured_one():
             counts[entry["premise_class"]] += 1
         else:
             withdrawn += 1
-    assert sum(counts.values()) + withdrawn == 69, counts
-    assert withdrawn == 5, "ASM-0015, ASM-0022, ASM-0042, ASM-0043 and ASM-0055 trust nothing"
+    assert sum(counts.values()) + withdrawn == 70, counts
+    assert withdrawn == 12, (
+        "ASM-0007, ASM-0008, ASM-0015, ASM-0022, ASM-0025, ASM-0026, ASM-0042, ASM-0043, "
+        "ASM-0055, ASM-0062, ASM-0063 and ASM-0064 trust nothing"
+    )
     assert all(count for count in counts.values()), (
         f"a class nothing uses is a class nobody had to think about: {counts}"
     )
@@ -280,7 +283,7 @@ def test_the_estate_is_fully_typed_and_the_split_is_the_measured_one():
 
 def test_the_schema_version_is_enforced():
     """A registry written against schema 1 loading under schema-2 tooling would be read as a
-    fully typed estate with 69 untyped records in it."""
+    fully typed estate with 70 untyped records in it."""
     doc = tomllib.loads(ASSUMPTIONS_TOML.read_text(encoding="utf-8"))
     assert doc["schema_version"] == ASSUMPTIONS_SCHEMA_VERSION
 

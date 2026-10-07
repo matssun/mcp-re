@@ -1297,6 +1297,7 @@ paths = [
   # quantifies over.
   "mcp-re-http-profile/src/verifier.rs",
   "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/policy/bounds.rs",
   "mcp-re-http-profile/src/ids.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
   "mcp-re-http-profile/src/evidence/prover_model.rs",
@@ -1321,6 +1322,7 @@ evidence = [
 # field strictness, not freshness, so they are not members here.
 tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#policy::tests::signature_validity_ceiling_defaults_and_validates",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#policy::bounds::tests::each_bound_reads_the_value_the_policy_was_built_with",
   "//mcp-re-http-profile:mcp_re_http_profile_test#policy::tests::default_is_ed25519_only_with_bounded_skew",
   "//mcp-re-http-profile:mcp_re_http_profile_test#policy::tests::out_of_bounds_configuration_fails_closed",
   "//mcp-re-http-profile:proof_path_test#stale_window_fails_closed",
@@ -1328,7 +1330,11 @@ tested_symbols = [
   "//mcp-re-http-profile:proof_path_test#the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not",
   "//mcp-re-http-profile:mcp_re_http_profile_test#policy::tests::default_policy_is_one_new_would_build",
 ]
-proved_symbols = ["mcp_re_http_profile::verify::floor::params::check_params"]
+proved_symbols = [
+  "mcp_re_http_profile::verify::floor::params::check_params",
+  "mcp_re_http_profile::policy::VerifierPolicy::max_clock_skew",
+  "mcp_re_http_profile::policy::VerifierPolicy::max_signature_validity",
+]
 features = ["verify"]
 pilot = "verus-pilot"
 
@@ -1678,6 +1684,7 @@ paths = [
   # The path follows the ITEM: a unit whose path set no longer covers its own
   # specification stops asking rather than going red.
   "mcp-re-http-profile/src/block/artifact_binding.rs",
+  "mcp-re-http-profile/src/block/artifact_binding/reads.rs",
   "mcp-re-http-profile/src/block/artifact_binding/unchecked.rs",
   "mcp-re-http-profile/src/block/artifact_binding/vocabulary.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
@@ -1699,6 +1706,8 @@ evidence = [
 # level mismatch cases. The theorem's value is that it covers the inputs these do not.
 tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#artifact::tests::dpop_ath_binds_the_access_token",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::unchecked::tests::a_binding_serializes_as_its_wire_form",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#block::artifact_binding::reads::tests::the_reads_return_what_the_binding_was_built_with",
   "//mcp-re-http-profile:mcp_re_http_profile_test#artifact::tests::dpop_ath_mismatch_fails_with_artifact_binding_failed",
   "//mcp-re-http-profile:mcp_re_http_profile_test#artifact::tests::mtls_x5t_binds_the_certificate",
   "//mcp-re-http-profile:mcp_re_http_profile_test#artifact::tests::rar_binds_the_authorization_details",
@@ -1717,6 +1726,10 @@ proved_symbols = [
   "mcp_re_http_profile::artifact::verify_dpop_ath",
   "mcp_re_http_profile::artifact::verify_mtls_x5t_s256",
   "mcp_re_http_profile::artifact::verify_rar_details",
+  "mcp_re_http_profile::artifact::compare",
+  "mcp_re_http_profile::block::artifact_binding::ArtifactBinding::artifact_type",
+  "mcp_re_http_profile::block::artifact_binding::ArtifactBinding::binding_type",
+  "mcp_re_http_profile::block::artifact_binding::ArtifactBinding::digest_is",
 ]
 features = ["verify"]
 pilot = "verus-wp2"
@@ -2026,7 +2039,10 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::a_wrong_role_handle_from_handles_is_refused_by_verify",
   "//mcp-re-http-profile:mcp_re_http_profile_test#block::tests::from_handles_over_role_labeled_digests_is_wire_identical_to_build",
 ]
-proved_symbols = ["mcp_re_http_profile::block::HttpContinuation::verify"]
+proved_symbols = [
+  "mcp_re_http_profile::block::HttpContinuation::verify",
+  "mcp_re_http_profile::evidence::digest::RequestEvidenceDigest::same_handle",
+]
 features = ["verify"]
 pilot = "verus-wp3"
 
@@ -4470,6 +4486,7 @@ evidence = [
 # every superseded manifest ever published.
 tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::signed_manifest_loads_current_issuers",
+  "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_manifest_signing_input_and_signature_are_byte_stable",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::tampered_manifest_fails_the_signature",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::untrusted_signer_is_rejected",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::wrong_profile_is_rejected",
@@ -4486,7 +4503,6 @@ tested_symbols = [
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::anchors::tests::a_current_unrevoked_issuer_resolves_for_the_response_slot_only",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_signer_kid_is_covered_by_the_signature",
   "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::preimage::tests::the_signer_kid_manifest_boundary_cannot_be_moved",
-  "//mcp-re-client-core:mcp_re_client_core_test#trust_manifest::tests::the_manifest_signing_input_and_signature_are_byte_stable",
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::manifest_validity::tests::the_deadline_is_inclusive_of_the_instant_it_names",
   "//mcp-re-client-core:mcp_re_client_core_test#delegated_trust::manifest_validity::tests::a_hand_assembled_picture_has_no_deadline_to_miss",
 ]
@@ -10651,6 +10667,7 @@ paths = [
   "mcp-re-proxy/src/pkcs11_keysource/tls_signer.rs",
   "mcp-re-proxy/src/pkcs11_keysource/token.rs",
   "mcp-re-proxy/src/pkcs11_native.rs",
+  "mcp-re-proxy/src/pkcs11_native/custody.rs",
   "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs",
   # The Cryptoki fault injector this unit's e2e control drives lives in the SEPARATE Bazel
   # package `mcp-re-proxy/tests/mock-pkcs11`. It is deliberately NOT named here: a unit's
@@ -10668,7 +10685,6 @@ evidence = [
   "mutation://proxy/pkcs11_adapter/token_custody_and_sessions",
 ]
 tested_symbols = [
-  "mcp-re-proxy/src/pkcs11_native/custody.rs",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::unverifiable_64byte_signature_is_rejected_before_emit",
   # The session discipline. Its security content is the retry rule, not the amortization:
   # a fatal error retried would drive a token into a lockout, and a failed retry cached
@@ -10693,6 +10709,9 @@ tested_symbols = [
   # declared battery states only what the adapter rejects, and an adapter that had
   # stopped reaching the token at all would keep it green.
   "//mcp-re-proxy:pkcs11_keysource_e2e_test#pkcs11_sign_verifies_against_token_public_key",
+  "//mcp-re-proxy:pkcs11_keysource_e2e_test#pkcs11_a_response_key_the_token_would_export_is_refused",
+  "//mcp-re-proxy:pkcs11_keysource_e2e_test#pkcs11_a_tls_key_the_token_would_export_is_refused",
+  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_native::custody::tests::only_a_sensitive_non_extractable_key_is_token_bound",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::token::tests::a_point_that_is_not_32_bytes_is_refused",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::token::tests::an_spki_is_only_built_from_an_accepted_point",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::token::tests::both_conformant_ec_point_encodings_yield_the_same_32_byte_point",
@@ -10710,9 +10729,6 @@ exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
 evidence = [
-  "//mcp-re-proxy:pkcs11_keysource_e2e_test#pkcs11_a_response_key_the_token_would_export_is_refused",
-  "//mcp-re-proxy:pkcs11_keysource_e2e_test#pkcs11_a_tls_key_the_token_would_export_is_refused",
-  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_native::custody::tests::only_a_sensitive_non_extractable_key_is_token_bound",
   "test://proxy/aws_sts/credential_lifetime",
   "mutation://proxy/aws_sts/credential_lifetime",
 ]

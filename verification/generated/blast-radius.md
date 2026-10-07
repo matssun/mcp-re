@@ -470,8 +470,8 @@ attestations this view cannot see.
 | ASM-0004 | description, justification, scope or mechanism | core.time_rfc3339 | assumption review |
 | ASM-0005 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.freshness_window | assumption review |
 | ASM-0006 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.freshness_window | assumption review |
-| ASM-0007 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
-| ASM-0008 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
+| ASM-0007 | description, justification, scope or mechanism | _no unit_ | assumption review |
+| ASM-0008 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0009 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
 | ASM-0010 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
 | ASM-0011 | description, justification, scope or mechanism | http_profile.admission_currency | assumption review |
@@ -485,8 +485,8 @@ attestations this view cannot see.
 | ASM-0022 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0023 | description, justification, scope or mechanism | http_profile.continuation_binding | assumption review |
 | ASM-0024 | description, justification, scope or mechanism | http_profile.continuation_binding, http_profile.continuation_unbypassability | assumption review |
-| ASM-0025 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
-| ASM-0026 | description, justification, scope or mechanism | http_profile.freshness_window | assumption review |
+| ASM-0025 | description, justification, scope or mechanism | _no unit_ | assumption review |
+| ASM-0026 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0027 | description, justification, scope or mechanism | http_profile.bound_response_seam_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.delegated_credential_chain, http_profile.delegated_unbound_result, http_profile.request_floor_result, http_profile.unbound_response_seam_result, http_profile.unbound_response_shared_facts | assumption review |
 | ASM-0028 | description, justification, scope or mechanism | http_profile.bound_response_full_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.request_floor_result, http_profile.request_full_result, http_profile.unbound_response_shared_facts | assumption review |
 | ASM-0029 | description, justification, scope or mechanism | http_profile.bound_response_seam_result, http_profile.delegated_credential_chain, http_profile.request_floor_result, http_profile.unbound_response_seam_result | assumption review |
@@ -522,9 +522,9 @@ attestations this view cannot see.
 | ASM-0059 | description, justification, scope or mechanism | proxy.redis_replay_adapter | assumption review |
 | ASM-0060 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |
 | ASM-0061 | description, justification, scope or mechanism | proxy.etcd_replay_adapter, proxy.redis_replay_adapter | assumption review |
-| ASM-0062 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
-| ASM-0063 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |
-| ASM-0064 | description, justification, scope or mechanism | http_profile.continuation_binding | assumption review |
+| ASM-0062 | description, justification, scope or mechanism | _no unit_ | assumption review |
+| ASM-0063 | description, justification, scope or mechanism | _no unit_ | assumption review |
+| ASM-0064 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0065 | description, justification, scope or mechanism | http_profile.scitt_algorithm_agreement, http_profile.scitt_derived_root | assumption review |
 | ASM-0066 | description, justification, scope or mechanism | client.trust_manifest_lifecycle | assumption review |
 | ASM-0067 | description, justification, scope or mechanism | _no unit_ | assumption review |
@@ -533,3 +533,4 @@ attestations this view cannot see.
 | ASM-0070 | description, justification, scope or mechanism | client.transport_server_identity | assumption review |
 | ASM-0071 | description, justification, scope or mechanism | proxy.delegated_epoch_label | assumption review |
 | ASM-0072 | description, justification, scope or mechanism | client.response_binding_disposition | assumption review |
+| ASM-0073 | description, justification, scope or mechanism | http_profile.artifact_typing | assumption review |

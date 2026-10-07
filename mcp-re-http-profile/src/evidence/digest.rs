@@ -51,16 +51,16 @@ impl RequestEvidenceDigest {
     }
 
     /// Whether this handle IS `other`: the same algorithm and the same value.
-    // ADR-MCPRE-059 ASM-0064: the handle comparator, trusted at exactly the strength the
-    // binding contract needs — a true answer means the two values are equal. The digest
-    // itself stays uninterpreted, so no cryptographic property is assumed here.
-    #[cfg_attr(feature = "verify", verus_verify(external_body))]
+    // Proved: a true answer is exactly the two fields comparing equal. The digest itself
+    // stays uninterpreted, so no cryptographic property is claimed here.
+    #[cfg_attr(feature = "verify", verus_verify)]
     #[cfg_attr(feature = "verify", verus_spec(result =>
         ensures
-            result ==> self.digest_value@ == other.digest_value@,
+            result == (self.digest_alg@ == other.digest_alg@
+                && self.digest_value@ == other.digest_value@),
     ))]
     pub fn same_handle(&self, other: &RequestEvidenceDigest) -> bool {
-        self.digest_alg == other.digest_alg && self.digest_value == other.digest_value
+        self.digest_alg.eq(&other.digest_alg) && self.digest_value.eq(&other.digest_value)
     }
 
     /// Constant-shape check that this handle commits to `bytes` IN `role`. A handle that

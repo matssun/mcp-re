@@ -23,7 +23,7 @@ about the boundary.
 | boundary | kind | class cap | premises crossing it | reaches theorems |
 |---|---|---|---|---|
 | boundary.clock | environment | V0 | ASM-0057, ASM-0061, ASM-0069 | THM-0001, THM-0003, THM-0004, THM-0005, THM-0006, THM-0014, THM-0016, THM-0017, THM-0019, THM-0020, THM-0021, THM-0022, THM-0106, THM-0107 |
-| boundary.crypto_primitives | cryptographic | V0 | ASM-0027, ASM-0028, ASM-0037, ASM-0049, ASM-0060, ASM-0065, ASM-0072 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022, THM-0041, THM-0048, THM-0050, THM-0059, THM-0076, THM-0087, THM-0103 |
+| boundary.crypto_primitives | cryptographic | V0 | ASM-0018, ASM-0027, ASM-0028, ASM-0037, ASM-0049, ASM-0060, ASM-0065, ASM-0072 | THM-0007, THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022, THM-0041, THM-0048, THM-0050, THM-0059, THM-0076, THM-0087, THM-0103 |
 | boundary.external_kms | external-service | V0 | _no premise_ | _no theorem_ |
 | boundary.inner_server_channel | deployment-topology | V0 | ASM-0050, ASM-0051 | _no theorem_ |
 | boundary.libc | ffi | V0 | _no premise_ | _no theorem_ |
@@ -33,7 +33,7 @@ about the boundary.
 | boundary.rust_std | language-runtime | _no cap_ | ASM-0002, ASM-0003, ASM-0005, ASM-0006, ASM-0010, ASM-0014, ASM-0020, ASM-0056 | THM-0001, THM-0002, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022, THM-0132 |
 | boundary.shared_state_store | external-service | V0 | ASM-0040, ASM-0041, ASM-0044, ASM-0047, ASM-0048, ASM-0058, ASM-0059, ASM-0071 | THM-0087, THM-0092, THM-0106, THM-0107, THM-0133 |
 | boundary.tls_mechanism | foreign-dependency | V0 | ASM-0033, ASM-0034, ASM-0035, ASM-0036, ASM-0039, ASM-0070 | THM-0027, THM-0028, THM-0029, THM-0030, THM-0031, THM-0109 |
-| boundary.unmodelled_own_behaviour | proof-lane | V0 | ASM-0001, ASM-0004, ASM-0007, ASM-0008, ASM-0009, ASM-0011, ASM-0012, ASM-0013, ASM-0018, ASM-0021, ASM-0023, ASM-0024, ASM-0025, ASM-0026, ASM-0029, ASM-0045, ASM-0046, ASM-0062, ASM-0063, ASM-0064, ASM-0066, ASM-0067 | THM-0001, THM-0002, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0009, THM-0010, THM-0014, THM-0016, THM-0017, THM-0019, THM-0020, THM-0021, THM-0022, THM-0057, THM-0058 |
+| boundary.unmodelled_own_behaviour | proof-lane | V0 | ASM-0001, ASM-0004, ASM-0009, ASM-0011, ASM-0012, ASM-0013, ASM-0021, ASM-0023, ASM-0024, ASM-0029, ASM-0045, ASM-0046, ASM-0066, ASM-0067, ASM-0073 | THM-0001, THM-0002, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0009, THM-0010, THM-0014, THM-0016, THM-0017, THM-0019, THM-0020, THM-0021, THM-0022, THM-0057, THM-0058 |
 | boundary.x509 | foreign-dependency | V0 | ASM-0030, ASM-0031, ASM-0032, ASM-0038 | THM-0024, THM-0025, THM-0026, THM-0032 |
 
 10 of 13 declared boundary(ies) carry at least one registered premise.

@@ -32,7 +32,7 @@
 // feature-gated and each specification rides a `cfg_attr` that expands to nothing
 // unless `--features verify` is on.
 #[cfg(feature = "verify")]
-use verus_builtin_macros::{verus_spec, verus_verify};
+use verus_builtin_macros::verus_verify;
 #[cfg(feature = "verify")]
 #[allow(unused_imports)]
 use vstd::prelude::*;
@@ -40,6 +40,8 @@ use vstd::prelude::*;
 use crate::error::HttpProfileError;
 use crate::ids::ALG_ED25519;
 use mcp_re_core::MaxClockSkew;
+
+mod bounds;
 
 /// A signature algorithm this crate can actually VERIFY.
 ///
@@ -85,6 +87,7 @@ pub const DEFAULT_ALGORITHMS: [&str; 1] = [ALG_ED25519];
 ///
 /// Fields are private and validated at construction, so a policy can never be
 /// mutated past its validated bound afterwards.
+#[cfg_attr(feature = "verify", verus_verify)]
 #[derive(Debug, Clone)]
 pub struct VerifierPolicy {
     algorithms: Vec<ProfileAlgorithm>,
@@ -189,18 +192,6 @@ impl VerifierPolicy {
         self.algorithms.contains(&alg).then_some(alg)
     }
 
-    /// The validated skew tolerance, in seconds.
-    // ADR-MCPRE-059 ASM-0007: a field read, told to the verifier as an opaque function of
-    // the policy. The freshness theorem quantifies over whatever value a deployment
-    // configures, so nothing more than "it is this policy's skew" is needed or claimed.
-    #[cfg_attr(feature = "verify", verus_verify(external_body))]
-    #[cfg_attr(feature = "verify", verus_spec(out =>
-        ensures out == crate::verus_std_specs::skew_of(self),
-    ))]
-    pub fn max_clock_skew(&self) -> i64 {
-        self.max_clock_skew
-    }
-
     /// Narrow the accepted signature-validity window. The default is also the ceiling:
     /// a value outside `1..=DEFAULT_MAX_SIGNATURE_VALIDITY` fails closed, never widens.
     pub fn with_max_signature_validity(mut self, secs: i64) -> Result<Self, HttpProfileError> {
@@ -211,16 +202,6 @@ impl VerifierPolicy {
         }
         self.max_signature_validity = secs;
         Ok(self)
-    }
-
-    /// The widest accepted `expires - created`, in seconds.
-    // ADR-MCPRE-059 ASM-0008 — see `max_clock_skew`.
-    #[cfg_attr(feature = "verify", verus_verify(external_body))]
-    #[cfg_attr(feature = "verify", verus_spec(out =>
-        ensures out == crate::verus_std_specs::validity_of(self),
-    ))]
-    pub fn max_signature_validity(&self) -> i64 {
-        self.max_signature_validity
     }
 }
 
