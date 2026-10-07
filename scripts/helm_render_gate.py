@@ -677,6 +677,16 @@ CASES: list[tuple[str, dict, bool, str]] = [
         False,
         "degradedBoundSecs",
     ),
+    (
+        "a degraded window past the CLI ceiling is refused at render",
+        merged({"admissionCurrency": {"mode": "optional", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5",
+                                      "redisUrl": "rediss://r:6379",
+                                      "recordMaxAgeSecs": 60,
+                                      "allowDegraded": True, "degradedBoundSecs": 3601}}),
+        False,
+        "at most 3600",
+    ),
     # The half-configured state that reads as "admission control is on" to anyone
     # auditing the rendered args while nothing is enforced.
     (

@@ -55,9 +55,13 @@ use std::pin::Pin;
 /// "a store that answered is never an outage" is a property of a type rather than a rule
 /// each source re-implements.
 mod answer;
+#[cfg(any(test, feature = "async_serve"))]
 mod in_memory;
 mod verifier;
 
+// A process-local store cannot carry a revocation across replicas, so it is a test fixture
+// and compiled only for the test flavors (`async_serve`), never into a deployed library.
+#[cfg(any(test, feature = "async_serve"))]
 pub use in_memory::InMemoryAdmissionSource;
 pub use verifier::AdmissionRecordVerifier;
 
@@ -66,6 +70,7 @@ pub use verifier::AdmissionRecordVerifier;
 // is compiled under `redis_replay`, which makes it a sibling rather than a child, and the
 // classification is the rule the statement quantifies over every source. `answer`'s module
 // body stays private, so nothing else about it becomes crate API.
+#[cfg(any(test, feature = "async_serve"))]
 pub(crate) use answer::classify_answer;
 #[cfg(feature = "redis_replay")]
 pub(crate) use answer::classify_stored_bytes;

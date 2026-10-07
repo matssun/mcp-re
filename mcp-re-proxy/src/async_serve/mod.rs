@@ -194,14 +194,14 @@ pub async fn serve<H: AsyncRequestHandler>(
     let admission = CoreAdmission::for_core(&options, handshake_bound);
 
     while !shutdown.load(Ordering::SeqCst) {
-        // Poll-with-timeout so the shutdown flag is observed within one interval
-        // even under an idle listener.
-        let accepted = tokio::time::timeout(ACCEPT_POLL_INTERVAL, listener.accept()).await;
+        // Poll with a deadline so the shutdown flag is observed within one interval.
+        let poll_deadline = accept::poll_deadline(ACCEPT_POLL_INTERVAL);
+        let accepted = tokio::time::timeout_at(poll_deadline, listener.accept()).await;
         let (tcp, _peer) = match accepted {
             Ok(Ok(pair)) => pair,
             // What an accept error costs the loop is `accept`'s decision.
             Ok(Err(error)) => {
-                accept::after_error(&error).await;
+                accept::after_error(&error, poll_deadline).await;
                 continue;
             }
             // Idle poll elapsed: re-check the shutdown guard.

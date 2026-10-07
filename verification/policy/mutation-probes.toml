@@ -12977,3 +12977,57 @@ expect_red = [
   "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::unicode_whitespace_and_format_controls_are_escaped",
   "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::a_value_cannot_forge_a_field_for_a_unicode_whitespace_reader",
 ]
+
+[[probe]]
+id = "M538-proxy-a-degraded-window-past-the-ceiling-names-a-state"
+unit = "proxy.admission_configuration_state"
+conjunct = "a degraded admission window past MAX_DEGRADED_ADMISSION_BOUND_SECS is refused, not clamped"
+path = "mcp-re-proxy/src/config_state/admission.rs"
+anchor = """
+            if bound_secs.get() > MAX_DEGRADED_ADMISSION_BOUND_SECS =>
+"""
+weakening = """
+            if bound_secs.get() > u64::MAX - 1 =>
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_degraded_window_past_the_ceiling_names_no_state_and_the_ceiling_does",
+]
+note = """
+A degraded window is a fail-open interval for revoked workloads; an unbounded declared one is a permanent fail-open while the posture still reads "required".
+"""
+
+[[probe]]
+id = "M539-proxy-the-accept-backoff-outlives-its-poll-interval"
+unit = "proxy.serving_drain"
+conjunct = "the accept-error backoff ends with the poll interval the error arrived in (THM-0104)"
+path = "mcp-re-proxy/src/async_serve/accept.rs"
+anchor = """
+        tokio::time::sleep_until(poll_deadline).await;
+"""
+weakening = """
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#async_serve::accept::tests::the_backoff_ends_with_the_poll_interval_the_error_arrived_in",
+]
+note = """
+A fresh full interval after a late accept error pushes the next shutdown check past one poll interval from the signal.
+"""
+
+[[probe]]
+id = "M540-proxy-a-connection-serving-a-request-reads-as-idle"
+unit = "proxy.serving_drain"
+conjunct = "a connection with a request in flight is never idle; only one carrying none for the bound is"
+path = "mcp-re-proxy/src/async_serve/connection/activity.rs"
+anchor = """
+        if self.in_flight.load(Ordering::SeqCst) != 0 {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#async_serve::connection::activity::tests::a_request_in_flight_is_never_idle_and_its_end_restarts_the_bound",
+]
+note = """
+The idle bound closes connections gracefully; counting a serving connection as idle would close it under a long request.
+"""

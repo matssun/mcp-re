@@ -12,7 +12,8 @@
 //! no key.
 //!
 //! What it CANNOT do is carry a revocation across replicas: each process holds its own map,
-//! so revoking here says nothing to any other replica. A fleet wires the shared store.
+//! so revoking here says nothing to any other replica. That is why it is a test fixture,
+//! compiled only for the test flavors, and a deployment wires the shared store.
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
@@ -24,7 +25,7 @@ use super::verifier::AdmissionRecordVerifier;
 use super::AnsweredAs;
 use super::{AdmissionFuture, AdmissionSourceError, AsyncAdmissionSource};
 
-/// A single-process in-memory admission source — single-replica runs and test harnesses.
+/// A single-process in-memory admission source, for test harnesses.
 pub struct InMemoryAdmissionSource {
     /// Signed records, by the id they were published under.
     records: Mutex<HashMap<String, String>>,

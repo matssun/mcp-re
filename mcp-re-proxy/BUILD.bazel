@@ -578,6 +578,7 @@ _PROXY_LIB_SRCS = [
     "src/async_serve/core_admission.rs",
     "src/async_serve/body_budget.rs",
     "src/async_serve/connection.rs",
+    "src/async_serve/connection/activity.rs",
     "src/async_serve/http_limits.rs",
     "src/async_serve/inbound.rs",
     "src/async_serve/open_connection.rs",
@@ -1004,11 +1005,11 @@ nt_rust_test(
     ],
 )
 
-# ADR-MCPRE-051 (MCPRE-118): the async serving path is now UNCONDITIONAL, so the
-# async crates live in `_PROXY_LIB_DEPS` and this flavor is a thin alias of the base
-# (the vestigial `async_serve` feature is a no-op — no code gates on it anymore).
-# Retained so the async test targets' `:mcp_re_proxy_async  # keep` dep edges stay
-# stable (MCPS-69) without a churny repoint.
+# ADR-MCPRE-051 (MCPRE-118): the async serving path is UNCONDITIONAL, so the async
+# crates live in `_PROXY_LIB_DEPS` and this flavor differs from the base only by
+# `async_serve`, the test flavors' feature: it exposes the process-local test fixture
+# `InMemoryAdmissionSource`, which no deployed flavor links. Every consumer of this
+# flavor is a test.
 nt_rust_library(
     name = "mcp_re_proxy_async",
     srcs = _PROXY_LIB_SRCS,
@@ -1463,13 +1464,13 @@ nt_rust_library(
 
 # Every ext feature over the pre-052 fixture chain (`_PROXY_LIB_DEPS_PRE052`): the
 # library for the batteries that need both the ext features and the fixtures.
-# `async_serve` gates nothing in the library (only test files carry
-# `#![cfg(feature = "async_serve")]`), so the `async_serve` ext suites link it too.
+# It sets `async_serve`, the test flavors' feature, so the ext suites reach the
+# process-local test fixture `InMemoryAdmissionSource` the async suites use.
 nt_rust_library(
     name = "mcp_re_proxy_ext_pre052",
     testonly = True,
     srcs = _PROXY_LIB_SRCS,
-    crate_features = _PROXY_EXT_FEATURES,
+    crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     crate_name = "mcp_re_proxy",
     edition = "2021",
     deps = _PROXY_LIB_DEPS_PRE052 + _PROXY_EXT_CRATES,

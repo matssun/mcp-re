@@ -29,6 +29,9 @@ claimed the guard held "at any replica count" and the chart did not.
 {{- if and .Values.admissionCurrency.allowDegraded (not (gt (int .Values.admissionCurrency.degradedBoundSecs) 0)) -}}
 {{- fail "admissionCurrency.allowDegraded=true requires a positive admissionCurrency.degradedBoundSecs: degraded serving is a BOUNDED window measured from the last successful authority read, and an unbounded or zero one is not a policy." -}}
 {{- end -}}
+{{- if and .Values.admissionCurrency.allowDegraded (gt (int .Values.admissionCurrency.degradedBoundSecs) 3600) -}}
+{{- fail "admissionCurrency.degradedBoundSecs must be at most 3600: while the authority is unreachable a revoked workload is served on last-known state for the whole window, so a longer one is a fail-open the deployment cannot bound (the CLI refuses it too)." -}}
+{{- end -}}
 {{/*
 LAST of the enforcing guards, deliberately. Every clause above predates it, and the
 diagnostic a multiply-misconfigured deployment meets first must not move because a new

@@ -6599,8 +6599,10 @@ id = "proxy.serving_drain"
 class = "V0"
 description = "What a shutdown does to connections already in the async serving path: acceptance stops, every connection is shut down gracefully on the drain signal (finishing the requests it has, writing their responses, admitting no more), an RAII guard taken at accept counts a connection as open until its task ends, and the drain waits on that count until it reaches zero or the grace expires — so a reply being written is delivered rather than cut off. Work the grace leaves behind may be cancelled wherever it is suspended, the handler and a reply's write included, and a cancelled task is never polled again. Claims nothing about how LONG teardown takes, and nothing about whether cancelled work crossed the exchange execution threshold."
 paths = [
+  "mcp-re-proxy/src/async_serve/accept.rs",
   "mcp-re-proxy/src/async_serve/core_admission.rs",
   "mcp-re-proxy/src/async_serve/connection.rs",
+  "mcp-re-proxy/src/async_serve/connection/activity.rs",
   "mcp-re-proxy/src/async_serve/mod.rs",
   "mcp-re-proxy/src/async_serve/open_connection.rs",
   "mcp-re-proxy/src/async_serve/request.rs",
@@ -6637,6 +6639,13 @@ tested_symbols = [
   "//mcp-re-proxy:async_drain_test#stuck_request_cannot_delay_exit_past_grace",
   "//mcp-re-proxy:proxy_ext_unit_test#async_serve::request::tests::the_handler_is_handed_the_charged_allocation_not_a_copy",
   "//mcp-re-proxy:proxy_ext_unit_test#async_serve::open_connection::tests::a_connection_is_counted_from_accept_until_it_ends",
+  # THM-0104: one accept attempt and its backoff fit inside one poll interval, so the shutdown
+  # flag is re-checked once per interval after a failed accept too.
+  "//mcp-re-proxy:proxy_ext_unit_test#async_serve::accept::tests::the_backoff_ends_with_the_poll_interval_the_error_arrived_in",
+  # The idle bound (HTTP/2 has none of its own): a connection carrying no request is closed
+  # after the bound, one serving a request never is, and a request's end restarts it.
+  "//mcp-re-proxy:proxy_ext_unit_test#async_serve::connection::activity::tests::a_connection_carrying_no_request_is_idle_after_the_bound",
+  "//mcp-re-proxy:proxy_ext_unit_test#async_serve::connection::activity::tests::a_request_in_flight_is_never_idle_and_its_end_restarts_the_bound",
   "//mcp-re-proxy:proxy_ext_unit_test#async_serve::open_connection::tests::the_drain_signal_reaches_a_connection_accepted_before_or_after_it",
   "//mcp-re-proxy:proxy_ext_unit_test#async_serve::open_connection::tests::the_drain_waits_for_an_open_connection_then_returns",
 ]
@@ -8305,6 +8314,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_refused_configuration_recognises_no_state",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_gate_that_names_no_authority_is_refused_rather_than_read_as_off",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::the_degraded_sub_state_is_accepted_with_a_positive_window",
+  "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::a_degraded_window_past_the_ceiling_names_no_state_and_the_ceiling_does",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::an_enforcing_state_names_every_value_it_cannot_verify_without",
   "//mcp-re-proxy:proxy_unit_test#config_state::admission::tests::an_authority_key_that_cannot_verify_anything_is_refused",
 ]

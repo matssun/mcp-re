@@ -439,16 +439,45 @@ pub(crate) fn validated_admission_authority(
         kid: gate.authority_kid.clone(),
         key,
         record_store: gate.store.clone(),
-        availability: match gate.availability {
-            AdmissionAvailabilityRequest::FailClosed => AdmissionAvailability::FailClosed,
-            AdmissionAvailabilityRequest::Degraded { bound_secs } => {
-                AdmissionAvailability::BoundedDegraded { bound_secs }
-            }
-        },
+        availability: validated_availability(gate.availability)?,
         currentness: AdmissionRecordCurrentness {
             max_age_secs: gate.record_max_age_secs,
         },
     }))
+}
+
+/// The longest degraded window P a deployment may declare, in seconds.
+///
+/// A degraded window is a fail-open interval: while it is open, a revoked workload is
+/// served on last-known state. One hour is the longest a bounded credential lives anywhere
+/// else in the proxy — the delegated signing credential (`MAX_DELEGATED_TTL_SECS`) — so no
+/// declared outage tolerance outlives every other bounded authority here. An authority
+/// unreachable for longer is an incident for an operator, not a window to keep serving in.
+pub(crate) const MAX_DEGRADED_ADMISSION_BOUND_SECS: u64 = 3600;
+
+/// The availability a validated gate carries.
+///
+/// A window above [`MAX_DEGRADED_ADMISSION_BOUND_SECS`] is refused, never clamped: a
+/// deployment that asked for a longer window has not asked for this one.
+fn validated_availability(
+    requested: AdmissionAvailabilityRequest,
+) -> Result<AdmissionAvailability, String> {
+    match requested {
+        AdmissionAvailabilityRequest::FailClosed => Ok(AdmissionAvailability::FailClosed),
+        AdmissionAvailabilityRequest::Degraded { bound_secs }
+            if bound_secs.get() > MAX_DEGRADED_ADMISSION_BOUND_SECS =>
+        {
+            Err(format!(
+                "--admission-degraded-bound-secs must be at most \
+                 {MAX_DEGRADED_ADMISSION_BOUND_SECS} (got {bound_secs}): while the authority \
+                 is unreachable a revoked workload is served on last-known state for the \
+                 whole window, so a longer one is a fail-open the deployment cannot bound"
+            ))
+        }
+        AdmissionAvailabilityRequest::Degraded { bound_secs } => {
+            Ok(AdmissionAvailability::BoundedDegraded { bound_secs })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -637,6 +666,42 @@ mod tests {
         });
         assert!(state.is_none(), "a state was built over an empty kid");
         assert!(!violations.is_empty(), "an empty kid was accepted silently");
+    }
+
+    /// A degraded window past the ceiling names no state, and the refusal names the flag
+    /// and the ceiling; the ceiling itself is accepted unchanged, not clamped to it.
+    #[test]
+    fn a_degraded_window_past_the_ceiling_names_no_state_and_the_ceiling_does() {
+        let at = |secs: u64| {
+            run(move |c| {
+                c.admission =
+                    AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                        availability: AdmissionAvailabilityRequest::Degraded {
+                            bound_secs: NonZeroU64::new(secs).expect("positive"),
+                        },
+                        ..gate()
+                    });
+            })
+        };
+        for past in [MAX_DEGRADED_ADMISSION_BOUND_SECS + 1, u64::MAX] {
+            let (state, violations) = at(past);
+            assert!(state.is_none(), "a window of {past}s was accepted");
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("--admission-degraded-bound-secs")
+                        && v.contains(&MAX_DEGRADED_ADMISSION_BOUND_SECS.to_string())),
+                "the refusal must name the flag and the ceiling: {violations:?}"
+            );
+        }
+        let (state, violations) = at(MAX_DEGRADED_ADMISSION_BOUND_SECS);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(
+            state.and_then(|s| s.enforced().map(|g| g.availability())),
+            Some(AdmissionAvailability::BoundedDegraded {
+                bound_secs: NonZeroU64::new(MAX_DEGRADED_ADMISSION_BOUND_SECS).expect("positive"),
+            })
+        );
     }
 
     #[test]

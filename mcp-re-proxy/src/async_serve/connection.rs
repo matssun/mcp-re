@@ -27,10 +27,13 @@ use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::ServerOptions;
 
 use super::core_admission::CoreAdmission;
-use super::http_limits::http_builder;
+use super::http_limits::{http_builder, idle_bound};
 use super::open_connection::OpenConnection;
 use super::request::handle_request;
 use super::AsyncRequestHandler;
+
+mod activity;
+use activity::ConnectionActivity;
 
 /// Serve ONE accepted TCP connection: handshake it, read what the handshake established,
 /// then run every request it carries under the operator's limits.
@@ -78,15 +81,22 @@ where
     // Read before `options` moves into the service closure below.
     let max_connection_age = options.client_credential_window.connection_age();
     let drain_grace = options.limits.drain_grace;
+    let idle = idle_bound(&options);
     let builder = http_builder(&options);
+    let activity = Arc::new(ConnectionActivity::default());
 
     let io = TokioIo::new(stream);
+    let counted = Arc::clone(&activity);
     let service = service_fn(move |req: Request<Incoming>| {
         let options = Arc::clone(&options);
         let handler = Arc::clone(&handler);
         let peer_credential = Arc::clone(&peer_credential);
         let admission = admission.clone();
-        async move { handle_request(req, options, handler, peer_credential, admission).await }
+        let in_flight = counted.begin();
+        async move {
+            let _in_flight = in_flight;
+            handle_request(req, options, handler, peer_credential, admission).await
+        }
     });
     // Serve every request on this connection (keep-alive / H2 multiplexed). A
     // connection-level error just ends this task; other connections are unaffected.
@@ -107,6 +117,10 @@ where
     // invalidates them; a CRL reload does not. Per-request revocation is what holds against
     // a revoked-but-resuming peer.
     //
+    // IDLE: a connection carrying no request for the idle bound is closed the same way.
+    // HTTP/1 already bounds the gap between requests; this is what bounds it on HTTP/2,
+    // where a peer answering keep-alive PINGs would otherwise hold its permit to the age.
+    //
     // THE DRAIN: on the core's shutdown the connection is shut down the same way, so a
     // kept-alive connection stops admitting requests and one with a reply being written
     // finishes it. The core's drain waits on this task, so it ends after the reply does.
@@ -114,9 +128,16 @@ where
     tokio::pin!(conn);
     let age = tokio::time::sleep(max_connection_age);
     tokio::pin!(age);
+    let idle = async {
+        match idle {
+            Some(bound) => activity.idle_for(bound).await,
+            None => std::future::pending().await,
+        }
+    };
     tokio::select! {
         _ = conn.as_mut() => return Ok(()),
         () = &mut age => {}
+        () = idle => {}
         () = open.draining() => {}
     }
     conn.as_mut().graceful_shutdown();

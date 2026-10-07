@@ -18,16 +18,23 @@ use crate::tls::ServerOptions;
 
 use super::MIN_HYPER_BUF_BYTES;
 
+/// How long a connection may carry no request: the header-read bound HTTP/1 already
+/// applies between requests, and the bound HTTP/2 is held to by the connection's own idle
+/// watch, so the two protocols share one answer.
+pub(super) fn idle_bound(options: &ServerOptions) -> Option<std::time::Duration> {
+    options
+        .limits
+        .request_deadline
+        .or(options.limits.read_timeout)
+}
+
 /// hyper configured from the operator's limits.
 ///
 /// Every one of these was parsed and validated already; this is where each becomes a bound
 /// on the wire rather than a number in a struct. `--max-header-bytes` in particular was
 /// read by nothing on this path, so an operator tightening it got a silent no-op.
 pub(super) fn http_builder(options: &ServerOptions) -> auto::Builder<TokioExecutor> {
-    let header_read_timeout = options
-        .limits
-        .request_deadline
-        .or(options.limits.read_timeout);
+    let header_read_timeout = idle_bound(options);
     let stream_ceiling = options.limits.max_in_flight_requests;
     let max_header_bytes = options.limits.max_header_bytes;
     let write_timeout = options.limits.write_timeout;

@@ -161,11 +161,12 @@ cpstore_etcd = []
 # is part of THIS feature's module — `online_ocsp` + `--client-ocsp require`
 # performs real verification and can never admit on an unverified signature.
 online_ocsp = []
-# ADR-MCPRE-051 Phase 2 (§1): compile the OPT-IN async serving path (tokio +
-# tokio-rustls + hyper HTTP/1.1 keep-alive + HTTP/2). OFF by default — the default
-# `:mcp_re_proxy` target neither sets this nor links tokio/hyper, so the production
-# closure stays the blocking std::net path (ADR-MCPS-018). A shared runtime is dev
-# scaffolding only (ADR-MCPRE-051 §1; per-core SO_REUSEPORT is MCPRE-113).
+# The test flavors' feature. The async serving path itself is unconditional
+# (ADR-MCPRE-051); this is set only by `:mcp_re_proxy_async` and
+# `:mcp_re_proxy_async_pre052`, whose every consumer is a test, and no deployed flavor sets
+# it. What it exposes is the process-local test fixture `InMemoryAdmissionSource`, which
+# cannot carry a revocation across replicas and so is no part of the library a deployment
+# links.
 async_serve = []
 
 [dev-dependencies]

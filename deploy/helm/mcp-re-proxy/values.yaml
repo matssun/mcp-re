@@ -254,8 +254,8 @@ admission:
 #
 # degraded serving: with the authority unreachable every call fails closed unless
 # allowDegraded is set, and then only for degradedBoundSecs after the last successful
-# read. A degraded window is a BOUNDED policy — an unbounded or zero one is not, and
-# both the CLI and the render guard refuse it.
+# read. A degraded window is a BOUNDED policy: zero, and anything above 3600 seconds,
+# are refused by both the CLI and the render guard.
 admissionCurrency:
   mode: ""
   # The kid of the admission AUTHORITY whose assertions this boundary accepts.

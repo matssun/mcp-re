@@ -35,6 +35,7 @@
 use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal;
 use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
 
+#[cfg(any(test, feature = "async_serve", feature = "redis_replay"))]
 use super::verifier::AdmissionRecordVerifier;
 
 /// What a reachable store's answer means.
@@ -62,6 +63,9 @@ pub enum AnsweredAs {
 }
 
 /// Classify a reachable store's answer. `raw` is `None` when the store holds no record.
+///
+/// Compiled wherever a store is: the shared one (`redis_replay`) and the test fixture.
+#[cfg(any(test, feature = "async_serve", feature = "redis_replay"))]
 pub(crate) fn classify_answer(
     verifier: &AdmissionRecordVerifier,
     admission_id: &str,
