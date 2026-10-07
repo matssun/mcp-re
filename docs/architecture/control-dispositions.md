@@ -153,7 +153,7 @@ declared evidence and leaves the census by being named in the registry.
 ## ND-003 — assurance-process ratchets and registries
 
 **Covers:** `assurance_obligation_gate.py`, `claim_surface_gate.py`, `clippy_ratchet_gate.py`,
-`control_census_gate.py`, `evidence_class_ratchet.py`, `merge_path_gate.py`,
+`control_census_gate.py`, `evidence_class_ratchet.py`, `finding_ledger_gate.py`, `merge_path_gate.py`,
 `module_size_gate.py`, `os_entropy_census_gate.py`, `registry_approval_gate.py`,
 `release_assurance_gate.py`, `rehearsal_claim_gate.py`, `slo_invocation_gate.py`,
 `slo_evidence_identity.py`, `unit_closure_gate.py`, `verification_trigger_gate.py`,

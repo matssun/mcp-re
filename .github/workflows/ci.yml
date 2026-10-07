@@ -131,6 +131,15 @@ jobs:
           python3 scripts/os_entropy_census_gate.py --selftest
           python3 scripts/os_entropy_census_gate.py
 
+      # Finding-ledger gate: every ledger row carries a disposition the taxonomy can
+      # close, or it is counted open. `accepted-risk` / `wontfix` are refused, a premise
+      # names a registered ASM, a constraint names the owner ruling that accepted it.
+      # 187 uncounted accepted-risk rows once hid eight live defects. Fast, python-only.
+      - name: Finding-ledger gate (no accepted-risk; open count is every row not validly closed)
+        run: |
+          python3 scripts/finding_ledger_gate.py --selftest
+          python3 scripts/finding_ledger_gate.py
+
       # Doc-path gate: refuses a path-like token in current text that does not resolve
       # to a file of this repository, and — the rule the whole class turns on — one that
       # resolves ONLY to a gitignored path. Fifteen citations of a `work/`-local design

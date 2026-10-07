@@ -8,14 +8,24 @@ JSONL file (one finding per line) checked into the audited repo (e.g.
 `docs/security/finding-ledger.jsonl`); git history is the audit trail.
 
 Disposition taxonomy (`status`):
-  open              active, real, tracked by an issue — re-surface as "already tracked"
-  fixed             remediated in code (carry the PR) — re-surface = REGRESSION (loud)
+  open              active, real, tracked — re-surface as "already tracked"
+  escalated / needs-senior-eval   waiting on a decision; counted open
+  fixed             remediated in code (carry the commit) — re-surface = REGRESSION (loud)
   false-positive    adjudicated not a real defect
-  accepted-risk     real but intentionally accepted (e.g. ADR posture, reference impl)
-  wontfix           real, decided not to address
+  premise           the finding is the statement of a registered assumption; `premise`
+                    names its ASM id in verification/policy/assumptions.toml
+  constraint        a demonstrated architectural constraint an owner ruling accepted;
+                    `owner_ruling` names the ruling ("Ruling 22.1")
   superseded        the finding's location no longer exists (code removed/relocated)
+  duplicate         another observation of a finding named by `duplicate_of`
   positive-control  an INFO finding confirming a good control is present
+  informational     an info-severity finding kept off the remediation worklist
   handled-prior-round   filed + closed in a prior round, exact resolution not re-derived
+
+`accepted-risk` and `wontfix` are not dispositions: a real security defect is fixed,
+disproved, or stays open. `set` refuses them, `check` fails on any row carrying them,
+and `stats` counts every row that is not validly closed as open — a `premise` naming no
+registered assumption and a `constraint` naming no owner ruling included.
 
 `verified.method` records HOW a disposition was reached — never overclaim:
   gate-3skeptic | manual-source | fix-merged | review-adjudicated | intentional-posture
@@ -31,7 +41,9 @@ Subcommands:
   ingest       LEDGER PRERUN --round R [--status S] [--method M]
   reconcile    LEDGER PRERUN
   set          LEDGER --id ID [--status S] [--method M] [--issue N] [--pr N] [--note ..]
-  stats        LEDGER
+               [--premise ASM-NNNN] [--owner-ruling "Ruling N"]
+  stats        LEDGER [--assumptions TOML]
+  check        LEDGER [--assumptions TOML]
 """
 import argparse
 import hashlib
@@ -39,6 +51,7 @@ import json
 import os
 import re
 import sys
+import tomllib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _persist import atomic_write_lines, exclusive  # noqa: E402
@@ -49,12 +62,53 @@ _STOP = {
     "that", "this", "from", "into", "only", "any", "all", "can", "could", "may",
     "when", "if", "then", "than", "so", "a", "per", "each", "both",
 }
-SUPPRESS = {"fixed", "false-positive", "accepted-risk", "wontfix", "superseded",
-            "positive-control", "informational"}
+SUPPRESS = {"fixed", "false-positive", "superseded", "positive-control", "informational",
+            "premise", "constraint"}
 # Statuses kept OFF the remediation worklist. `informational` = an info-severity
 # finding: captured durably and emitted in the per-run info digest issue, but
 # NOT worked by the file-by-file loop (ADR-SEC-023 funnel policy: critical→low
 # are all dealt with; info is "might look into, or not").
+
+OPEN_STATUSES = {"open", "escalated", "needs-senior-eval", "regression"}
+CLOSED_STATUSES = {"fixed", "false-positive", "premise", "constraint", "superseded",
+                   "duplicate", "positive-control", "informational", "handled-prior-round"}
+# Not dispositions. "Real, and we decided to live with it" closes nothing: the defect
+# is still there, and a ledger that counts it closed reports a zero that measures nothing.
+REFUSED_STATUSES = {"accepted-risk", "wontfix"}
+ASSUMPTIONS_TOML = "verification/policy/assumptions.toml"
+_ASM = re.compile(r"^ASM-\d{4}$")
+_OWNER_RULING = re.compile(r"^Ruling \d+(\.\d+)?\b")
+
+
+def registered_assumptions(path=ASSUMPTIONS_TOML):
+    """The ASM ids registered in `path`, or None when the registry is not present."""
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, "rb") as fh:
+        return {a["id"] for a in tomllib.load(fh).get("assumption", [])}
+
+
+def closure_problem(e, assumptions):
+    """Why `e` is not a valid disposition, or None. `assumptions` None skips the ASM lookup."""
+    st = e.get("status")
+    if st in REFUSED_STATUSES:
+        return "status %r is not a disposition: fix it, disprove it, or leave it open" % st
+    if st not in OPEN_STATUSES | CLOSED_STATUSES:
+        return "status %r is not in the taxonomy" % st
+    if st == "premise":
+        asm = str(e.get("premise", ""))
+        if not _ASM.match(asm):
+            return "premise names no ASM id (`premise` = %r)" % asm
+        if assumptions is not None and asm not in assumptions:
+            return "premise %s is not registered in %s" % (asm, ASSUMPTIONS_TOML)
+    if st == "constraint" and not _OWNER_RULING.match(str(e.get("owner_ruling", ""))):
+        return "constraint names no owner ruling (`owner_ruling` = %r)" % e.get("owner_ruling")
+    return None
+
+
+def is_open(e, assumptions):
+    """Open unless validly closed: a row the taxonomy cannot close counts as open."""
+    return e.get("status") in OPEN_STATUSES or closure_problem(e, assumptions) is not None
 
 
 def _basename(file_or_loc):
@@ -128,6 +182,9 @@ def cmd_fingerprint(a):
 
 
 def cmd_ingest(a):
+    if a.status and a.status not in OPEN_STATUSES | {"informational"}:
+        sys.exit(f"ingest: --status {a.status!r} refused — a new finding enters open or "
+                 f"informational; a disposition is a `set` that names its evidence")
     prerun = json.load(open(a.prerun))
     findings = _findings_of(prerun)
     # Same rule as cmd_set: the lock covers load -> mutate -> store. Ingest is
@@ -211,7 +268,7 @@ def cmd_reconcile(a):
         elif e["status"] in SUPPRESS:
             rec["status"] = e["status"]
             suppressed.append(rec)
-        else:  # open / handled-prior-round / wontfix-as-open
+        else:  # open / escalated / handled-prior-round / duplicate
             rec["status"] = e["status"]
             rec["refs"] = e.get("refs", {})
             tracked.append(rec)
@@ -245,6 +302,10 @@ def cmd_set(a):
             sys.exit(f"set: id {a.id} not in ledger")
         if a.status:
             e["status"] = a.status
+        if a.premise:
+            e["premise"] = a.premise
+        if a.owner_ruling:
+            e["owner_ruling"] = a.owner_ruling
         if a.method:
             e.setdefault("verified", {})["method"] = a.method
         if a.issue:
@@ -262,18 +323,44 @@ def cmd_set(a):
             e["cluster_id"] = a.cluster
         if a.ruling:
             e["ruling_id"] = a.ruling
+        problem = closure_problem(e, registered_assumptions(a.assumptions))
+        if problem:
+            sys.exit(f"set {a.id}: refused — {problem}")
         _save(a.ledger, by_id)
     print(f"set {a.id}: status={e['status']} refs={e.get('refs')}")
 
 
 def cmd_stats(a):
     by_id = _load(a.ledger)
-    by_status, by_sev = {}, {}
+    assumptions = registered_assumptions(a.assumptions)
+    by_status, by_sev, open_by_sev = {}, {}, {}
     for e in by_id.values():
         by_status[e["status"]] = by_status.get(e["status"], 0) + 1
         by_sev[e["severity"]] = by_sev.get(e["severity"], 0) + 1
+        if is_open(e, assumptions):
+            open_by_sev[e["severity"]] = open_by_sev.get(e["severity"], 0) + 1
+    invalid = sorted(e["id"] for e in by_id.values() if closure_problem(e, assumptions))
     print(json.dumps({"total": len(by_id), "by_status": by_status,
-                      "by_severity": by_sev}, indent=1))
+                      "by_severity": by_sev, "open": sum(open_by_sev.values()),
+                      "open_by_severity": open_by_sev,
+                      "not_validly_closed": invalid}, indent=1))
+
+
+def cmd_check(a):
+    by_id = _load(a.ledger)
+    if not by_id:
+        sys.exit(f"check: {a.ledger} holds no findings — an empty ledger checks nothing")
+    assumptions = registered_assumptions(a.assumptions)
+    problems = [(i, p) for i, e in sorted(by_id.items())
+                if (p := closure_problem(e, assumptions))]
+    for i, p in problems:
+        print(f"  - {i}: {p}")
+    if problems:
+        print(f"ledger check: FAIL — {len(problems)} of {len(by_id)} row(s) carry no valid disposition")
+        return 1
+    n_open = sum(1 for e in by_id.values() if is_open(e, assumptions))
+    print(f"ledger check: OK — {len(by_id)} row(s), {n_open} open")
+    return 0
 
 
 def main():
@@ -311,14 +398,24 @@ def main():
                     help="finding id this one duplicates (structural, not prose)")
     st.add_argument("--cluster", help="cluster id: several observations of ONE defect")
     st.add_argument("--ruling", help="shared ruling id that discharges this escalation")
+    st.add_argument("--premise", help="status=premise: the registered ASM id it states")
+    st.add_argument("--owner-ruling", dest="owner_ruling",
+                    help='status=constraint: the owner ruling that accepted it ("Ruling 22.1")')
+    st.add_argument("--assumptions", default=ASSUMPTIONS_TOML)
     st.set_defaults(fn=cmd_set)
 
     st2 = sub.add_parser("stats")
     st2.add_argument("ledger")
+    st2.add_argument("--assumptions", default=ASSUMPTIONS_TOML)
     st2.set_defaults(fn=cmd_stats)
 
+    ck = sub.add_parser("check")
+    ck.add_argument("ledger")
+    ck.add_argument("--assumptions", default=ASSUMPTIONS_TOML)
+    ck.set_defaults(fn=cmd_check)
+
     a = p.parse_args()
-    a.fn(a)
+    sys.exit(a.fn(a))
 
 
 if __name__ == "__main__":

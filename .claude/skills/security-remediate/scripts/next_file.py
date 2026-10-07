@@ -39,7 +39,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Statuses that still require work (block a file from being green).
 # `needs-senior-eval` is what a CHEAP-tier evaluator sets when it wants to CLOSE a
-# finding (false-positive / accepted-risk). A cheap model may act, but may not
+# finding (false-positive / premise). A cheap model may act, but may not
 # close: closing is terminal and its failure mode is invisible. The status keeps
 # the finding actionable and promotes its whole file to the senior tier, so the
 # promotion happens at most once and the loop cannot ping-pong.

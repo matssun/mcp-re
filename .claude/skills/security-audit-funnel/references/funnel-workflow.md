@@ -74,8 +74,8 @@ significant title tokens)` — stable under line drift / reworded titles):
 - **tracked** — `open` / `handled-prior-round` → already filed; link the existing
   issue, do not re-file.
 - **regression** — a `fixed` finding reappeared → **loud**; a fix regressed.
-- **suppressed** — `false-positive` / `accepted-risk` / `wontfix` / `superseded`
-  / `positive-control` → skip; log the count, never silently drop.
+- **suppressed** — `false-positive` / `premise` / `constraint` / `superseded`
+  / `positive-control` / `informational` → skip; log the count, never silently drop.
 - **fuzzy_candidates** — same file + same category but no exact fingerprint →
   surface for human/LLM confirmation; never auto-suppress.
 

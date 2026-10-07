@@ -36,10 +36,13 @@ All paths below are relative to the repo root; scripts are in
 
 Ledger statuses — actionable (`open`, `provisional`, `confirmed`, `regression`,
 `needs-senior-eval`) are the worklist; `escalated` / `exhausted` block and wait
-for a human; everything else is terminal (`fixed`, `false-positive`,
-`accepted-risk`, `superseded`, `wontfix`, `duplicate`, `handled-prior-round`,
-`positive-control`, `informational`). A closure other than `fixed`/`superseded`/
-`duplicate` needs a one-line reason; `fixed` is written only by `finalize.py`,
+for a human; everything else is terminal (`fixed`, `false-positive`, `premise`,
+`constraint`, `superseded`, `duplicate`, `handled-prior-round`, `positive-control`,
+`informational`). A `premise` names its registered ASM in `premise`; a `constraint`
+names the owner ruling that accepted it in `owner_ruling`. `accepted-risk` and
+`wontfix` are not dispositions — `ledger.py` and `dispose.py` refuse them, and
+`scripts/finding_ledger_gate.py` fails the merge path on a row carrying one. A
+closure other than `fixed`/`superseded`/`duplicate` needs a one-line reason; `fixed` is written only by `finalize.py`,
 after a reviewer accepted a landed diff.
 
 ## Bootstrap a round (once)

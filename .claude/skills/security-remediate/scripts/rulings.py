@@ -111,8 +111,9 @@ def main() -> int:
          "python3 .claude/skills/security-remediate/scripts/ledger.py set <ledger> \\",
          "  --id <id> --status open --method review-adjudicated --note \"RULED: <the decision>\"",
          "```",
-         "`open` returns it to the worklist with the ruling recorded; `wontfix` / "
-         "`accepted-risk` close it with your reason.\n"]
+         "`open` returns it to the worklist with the ruling recorded; `constraint` "
+         "with `--owner-ruling \"Ruling N\"` records a demonstrated architectural "
+         "constraint you accepted. There is no accepted-risk: a real defect is fixed.\n"]
 
     for title, keys in (("Decisions", decisions), ("Ratifications — one surviving text, "
                                                    "owner-ratified surface", signature)):

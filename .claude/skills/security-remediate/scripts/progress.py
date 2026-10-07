@@ -21,7 +21,7 @@ rather than as a shorter log.
 Subcommands:
   append     one stage event (role, outcome, counts)
   close      a terminal disposition — its own verbose line, because
-             false-positive / accepted-risk are the irreversible decisions
+             false-positive / premise are the irreversible decisions
   reconcile  synthesize `lost` for files that never reached a terminal event
   stats      calibration: closure rate, work rate, escalation rate, streaks
   watch      read JSONL on stdin, emit ONLY anomaly lines (for Monitor)
