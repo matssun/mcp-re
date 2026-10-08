@@ -2894,17 +2894,19 @@ tool_specific_mechanism = "foreign-dependency"
 id = "ASM-0079"
 description = "`Instant` is monotonic and advances at true rate while the process runs."
 justification = """
-The trust plane's resolution window and reload cadence are measured on `std::time::Instant`: a
-cached key's authority ends at its first-caching instant plus the window `T` (THM-0097), and a
-reload is due a cadence after the last one. Those are DURATIONS, which is why they are not on
-the wall clock — and a duration means something only if the monotonic clock never goes back and
-advances at the rate time does. A clock that stalls keeps a cached answer authoritative past
+A reload is due a cadence after the last one, measured on `std::time::Instant`; a cached key's
+authority ends at its first-caching reading of the cache's clock plus the window `T` (THM-0097),
+and that clock is `Instant`-elapsed seconds plus the highest wall-minus-monotonic offset seen, so
+it advances at least as fast as `Instant` and a wall-clock step can only shorten `T`. Those are
+DURATIONS, which is why they are not read off the wall clock — and a duration means something only
+if the monotonic clock never goes back and advances at the rate time does. A clock that stalls keeps a cached answer authoritative past
 `T`; that is the failure that matters here.
 
 It is not a wall-clock premise and is not implied by one: a monotonic clock is trusted to
 advance, not to agree with any peer.
 
-It stops being acceptable if either window is measured on anything but the monotonic clock.
+It stops being acceptable if the reload cadence is measured on anything but the monotonic clock, or
+if the cache's clock is built on anything that can advance slower than it.
 """
 scope = [
   "unit://proxy.trust_resolution_window",
@@ -3019,7 +3021,7 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0083"
-description = "When `serde_json::from_slice` succeeds on a byte string, whether into a `Value` or into a type deriving `serde::Deserialize`, the byte string is an RFC 8259 JSON text, and for a text with no duplicate object member name a returned `Value` represents the object, array and scalar values that text encodes."
+description = "When `serde_json::from_slice` succeeds on a byte string, whether into a `Value` or into a type deriving `serde::Deserialize`, the byte string is an RFC 8259 JSON text, and for a text with no duplicate object member name a returned `Value`, or a value deserialized into a type deriving `serde::Deserialize`, holds the object, array and scalar values that text encodes (a member the type names holds the text's value for that member)."
 justification = """
 THM-0083 refuses a body unless it is a legal JSON-RPC 2.0 request, and establishes the
 outstanding id from that one validation. Every clause after the first reads the body through
@@ -3033,7 +3035,7 @@ accepted: a refusal of a legal text is a refusal, which the envelope's clauses t
 
 The operator's trust document is read through the typed form, `serde_json::from_slice` into a
 struct deriving `serde::Deserialize` (THM-0098), and the same soundness fact is what it relies
-on: a document the parse accepts is a JSON text. Its refusals of a member written twice and of
+on, together with its fidelity: a document the parse accepts is a JSON text, and for a text with no duplicate member name the decoded strings and values are the ones the text wrote, which is what binds each key id to the signer that wrote it. Its refusals of a member written twice and of
 an unknown member are `serde_derive` behaviour pinned by this project's own tests
 (`a_duplicated_member_is_refused_rather_than_read_last_wins`,
 `an_unknown_member_is_refused_rather_than_ignored`, `an_unknown_slot_is_refused_rather_than_ignored`,
@@ -3054,8 +3056,9 @@ premise_class = "external-boundary"
 boundary_owner = """
 The `serde_json` crate, across `from_slice` on a byte string, into a `Value` or into a type deriving
 `serde::Deserialize`: when it succeeds, the byte string is an RFC 8259 JSON text, and for a text
-without duplicate member names a returned `Value` represents the object, array and scalar values
-the text encodes. It does not promise to accept every RFC 8259 text.
+without duplicate member names a returned `Value`, or a value deserialized into such a type, holds the
+object, array and scalar values the text encodes (a member the type names holds the text's value for
+that member). It does not promise to accept every RFC 8259 text.
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
