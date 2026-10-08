@@ -84,9 +84,10 @@ Avoid broad aesthetic or style changes.
 
 ### Step 7 — Proof/evidence
 
-Establish:
+Establish, with evidence admissible for each obligation's requirement (01 §3.1):
 
 - mechanism proof;
+- implementation refinement of each mapped transition (02 §13.1), not only the mapping;
 - subsystem invariant;
 - relevant composition theorem;
 - structural closure;
@@ -108,7 +109,7 @@ Examples:
 
 Prove the interface contracts between this machine and adjacent machines.
 
-Only then declare the subsystem migrated.
+Only then declare the subsystem migrated, against the criterion in `05-refinement-and-closure-model.md` §8.
 
 ## 3. Issue taxonomy
 
@@ -190,9 +191,29 @@ It contains:
 
 The pilot should produce reusable templates for later subsystems.
 
+### 5.1 Pilot phases
+
+The phases below are a recommendation, not a binding plan. Each phase ends with a short written result; a later phase does not start on the assumption that an earlier one went as expected.
+
+**P0 — Model only.** Define $C$, $S$, $E$, $A$, $O$ and the transition relation for delegated signing and trust epoch, including failure, recovery, rollback and concurrency. Name every nondeterministic observation as an event (02 §1.1). No production refactor.
+
+**P1 — Implementation census.** Map every relevant production site to a semantic element, or mark it unmappable with the reason. Classify each site as in §2 Step 4. No refactor.
+
+**P2 — Generated obligations.** Derive the obligations from the model (03 §6), each with its property class and assurance requirement. Compare them against the existing THM/ASM registry: which existing theorems correspond, which generated obligations have no theorem, which theorems correspond to no generated obligation, and which premises are actually MCP-RE-owned behavior.
+
+**P3 — Architecture decisions.** Ratify only rules that survived contact with the real implementation in P1 and P2. This is where ADR candidates may emerge (§7), and where the working model is amended where the pilot showed it wrong.
+
+**P4 — Bounded implementation migration.** Refactor model/implementation mismatches one at a time, each with its refinement evidence.
+
+**P5 — Structural sealing.** Make the bypass paths found in P1 mechanically impossible or gate-detectable.
+
+**P6 — Composition.** Establish the cross-machine invariants and ordering contracts with neighbouring machines (signer lifecycle, credential validity, admission).
+
+**The pilot is allowed to falsify the working model.** It is an experiment on the model, not a demonstration of it. If P0–P2 show that the semantic form, the determinism choice, the evidence classes, or the two-graph split do not fit real code, the result is an amended model, and that result is as valuable as a confirmation. The documents in this directory should be read with that in mind.
+
 ## 6. Pilot exit criteria
 
-Do not call the pilot complete until:
+The pilot's machines are complete when they meet the **migrated** criterion in `05-refinement-and-closure-model.md` §8. In this document's terms, do not call the pilot complete until:
 
 1. every production behavior maps to the semantic machine;
 2. every registered transition has generated obligations;
@@ -203,7 +224,9 @@ Do not call the pilot complete until:
 7. configuration classes are explicit;
 8. failure/recovery/rollback/concurrency are represented;
 9. cross-machine dependencies are expressed as composition theorems;
-10. mutation/falsification demonstrates that important clauses are actually observed by the proof package.
+10. mutation/falsification demonstrates that important clauses are actually observed by the proof package;
+11. every obligation's evidence is admissible for its requirement (01 §3.1), not merely present;
+12. the pilot has produced a written account of where the working model held and where it was amended.
 
 ## 7. ADR policy
 
@@ -267,8 +290,10 @@ For each machine report:
 - model status;
 - implementation-mapping completeness;
 - number of unclassified production sites;
-- generated obligations;
-- obligations proved;
+- obligation generators run over this machine's domain;
+- generated obligations, by property class;
+- obligations discharged with admissible evidence;
+- obligations with evidence of an inadmissible class;
 - external assumptions;
 - structural bypasses remaining;
 - composition edges unresolved;
@@ -285,10 +310,25 @@ for the subsystem.
 
 ## 11. Relationship to current remediation PR
 
-The current security-remediation campaign should not be expanded into the entire migration described here.
+The current security-remediation campaign (#1083) **must not** become this migration programme.
 
-Its job is to leave the current branch secure, internally consistent, and truthfully verified.
+Its job is to leave the current branch secure, internally consistent, and truthfully verified. Nothing in these documents is a reason to widen its scope, delay its closure, or restructure its theorems ahead of the pilot.
 
-The semantic-machine program should begin as a follow-on architecture effort, initially with read-only modelling and one bounded pilot.
+The semantic-machine program begins after #1083 as a follow-on architecture effort, initially with read-only modelling and one bounded pilot.
 
 That separation avoids turning the remediation PR into an uncontrolled architectural rewrite while preserving the lessons discovered by the campaign.
+
+### 11.1 Remediation machinery as proto-infrastructure
+
+Some machinery the remediation built for its own needs may already be early forms of what this model needs:
+
+- separate review and evidence axes (`REVIEW_CURRENT` / `EVIDENCE_ESTABLISHED`);
+- semantic review digests over claim, premises, sources, selected tests and proved symbols;
+- explicit premise closure, with unit-scoped and boundary-scoped premises attached by rule;
+- the distinction between a model registration and a logical premise;
+- the structural and mutation census;
+- non-vacuity probes for proof targets;
+- validated security configuration types;
+- typed authenticated/verified values with constrained construction.
+
+After #1083, the first question for each of these is **whether it already corresponds to the semantic model**, and if so what it is in the model's terms (a review axis, a premise of class `External`, a structural closure, a reachability obligation). Only where it does not correspond is a rewrite considered, and then as a P3 decision with a reason, not as a default.
