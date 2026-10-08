@@ -86,7 +86,7 @@ is meaningful only if the obligation universe has itself been generated adequate
 Closure therefore requires **both**:
 
 1. **Generator coverage**: the candidate obligation set was produced independently by each of the generators listed in §8, and each generator's coverage of its own domain is recorded; and
-2. **Disposition**: every generated obligation is satisfied in the sense of §3.1, or classified, with a reason, as not security-relevant.
+2. **Disposition**: every generated obligation has a terminal disposition (05 §5.2). There is no `accepted-risk` disposition: an obligation that remains applicable and unsatisfied remains open.
 
 This remains a relative, closed-world claim. It does not assert absolute completeness; it asserts that the declared generators were run, that their outputs were reconciled, and that nothing they produced is without a disposition.
 

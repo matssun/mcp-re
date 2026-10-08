@@ -15,7 +15,7 @@ For each machine:
 $$
 step : C \times S \times E \times A \rightarrow O
 \qquad
-O = Commit(S', Effects) \mid Refuse(Reason) \mid Await(Pending)
+O = Commit(S', Effects) \mid Refuse(Reason) \mid Await(S', Pending)
 $$
 
 `step` is **deterministic**: a total function of complete inputs (02 §1.1). Every observation the decision depends on, such as clock readings, signer and store results, entropy where its value matters, recovery input and relevant interleavings, is an event in $E$.
@@ -35,7 +35,7 @@ s_{k} =
 \begin{cases}
 S' & \text{if } step([c], s_{k-1}, e_k, a_k) = Commit(S', \_) \\
 s_{k-1} & \text{if the outcome is } Refuse(\_) \\
-\text{as defined by the machine} & \text{if the outcome is } Await(\_)
+S' & \text{if the outcome is } Await(S', \_)
 \end{cases}
 $$
 
@@ -43,7 +43,7 @@ $ReachableStates([c])$ is the set of all $s_k$ over all admissible executions.
 
 Nondeterminism lives in the quantifier over admissible event sequences. A property that must hold "whatever the store returns" or "under any interleaving" is a property over all admissible $r$. It is not a property of a relational `step`.
 
-The effect of `Await` on state is not yet fixed. Two readings are possible: `Await` records the pending effect in the state, so a completion event can be matched to it; or the state is unchanged and the pending effect is carried outside $S$. This is open question Q2 (§9).
+A security-relevant outstanding external effect is semantic state (02 §2.1). `Await` carries a successor state that records it, either inside $S'$ or as the `Pending` component alongside it; the exact representation is open question Q2 (§9). The model constrains completion correlation, duplicate and stale completions, timeout and cancellation, retry, restart while pending, and authority change or revocation while pending. A wait with no security-relevant outstanding effect has $S' = s_{k-1}$, and the machine records why.
 
 ### 1.3 The relational alternative
 
@@ -87,7 +87,7 @@ where $Corresponds$ requires the following.
 
 - **Commit.** If the semantic outcome is $Commit(S', Eff)$, then $\alpha(i') = S'$ and the implementation's security effects map under $\alpha_{Eff}$ to exactly $Eff$.
 - **Refuse.** If the semantic outcome is $Refuse(R)$, the implementation refuses with a reason mapping to $R$, and $\alpha(i') = \alpha(i)$ with no security effect.
-- **Await.** If the semantic outcome is $Await(P)$, the implementation's pending work maps to $P$, under whichever reading of `Await` §1.2 settles on.
+- **Await.** If the semantic outcome is $Await(S', P)$, then $\alpha(i') = S'$ and the implementation's outstanding work maps to $P$. Outstanding effects are part of what $\alpha$ reads.
 
 This is a forward simulation in which the implementation may only do what the semantics allows. It is a **safety** refinement: it bounds what the implementation can do. It does not show that the implementation eventually does anything. Liveness and bounded-progress obligations need their own evidence (§3.3).
 
@@ -137,11 +137,21 @@ $$
 
 | requirement | admissible evidence | not admissible |
 |---|---|---|
-| `Formal` | a machine-checked proof of the stated claim over its full quantifier; exhaustive checking over a finite domain proved to be the whole domain | tests over samples; review prose |
+| `Formal` | a machine-checked proof of the stated claim over its full quantifier; exhaustive finite checking meeting the conditions below | tests over samples; review prose; enumeration whose completeness is asserted or sampled |
 | `Structural` | compiler/type-system enforcement; a gate that fails on the forbidden construct and is shown live by a falsifier that turns it red | a gate with no falsifier; a convention |
 | `Executable` | tests or probes run in the build/feature lane where the property exists, with mutation evidence that they observe the clause | a lane that compiles the test to zero cases; a test of a different lane |
 | `External` | a registered premise about something outside MCP-RE's implementation boundary, reviewed at its current text | anything about MCP-RE-owned behavior |
 | `Hybrid` | each named part satisfied by evidence admissible for that part | one part standing in for another |
+
+**Exhaustive finite checking** is admissible `Formal` evidence only when all of the following hold:
+
+1. the domain is mechanically established to be finite;
+2. the enumerated set is mechanically established to be the complete domain;
+3. the predicate checked is the proposition being claimed;
+4. every element is checked;
+5. the checking mechanism sits inside the declared proof/trust boundary.
+
+If the completeness of the enumeration is only asserted or sampled, the evidence is `Executable`, not `Formal`.
 
 The rules this enforces:
 
@@ -197,7 +207,7 @@ $$
 
 $OwnCurrent_X(v)$ compares $v$'s own digest on that axis against what was approved or established. The review digest covers the claim, premises, semantic sources, selected tests and proved symbols. The evidence digest adds the toolchain, the policy and execution.
 
-A traceability edge affects currency only through a digest. If the artifact it points at is a digest input, changing the artifact moves the digest. The edge itself never propagates invalidation.
+The logical graph alone controls dependency propagation: $Current_X$ flows upward only along $E_L$. Traceability edges do not become logical dependencies. Semantically relevant traceability and correspondence information may still be part of $OwnCurrent_X(v)$ through $v$'s fingerprint: changing which implementation path refines a transition, for example, requires correspondence re-review of the theorems concerned, with no new dependency edge. Which traceability information is semantically relevant in this sense is part of open question Q9 (§9).
 
 $$
 CurrentlyVerified(v) \iff Current_{Review}(v) \land Current_{Evidence}(v)
@@ -223,12 +233,16 @@ The outputs are **reconciled**. Duplicates are merged. An obligation found by on
 
 ### 5.2 Disposition
 
-At closure, each obligation has exactly one disposition:
+At closure, each obligation has a terminal disposition. Legitimate terminal dispositions include:
 
-- **Satisfied**, in the sense of §3.1; or
+- **Satisfied** (§3.1), by proof or other admissible evidence, by structural discharge, or by an explicit `External` premise where the obligation concerns something outside MCP-RE;
+- **Superseded**, by another obligation that covers it;
+- **Disproved / non-defect**, with the reason the obligation does not hold as a requirement or the reported defect does not exist;
+- **Architectural constraint** that changes the declared guarantee, so that the obligation no longer applies to the guarantee as declared;
+- **Excluded** from the model's declared scope, explicitly;
 - **NotSecurityRelevant**, with a reviewed reason.
 
-`Open` is not a closure disposition. No disposition accepts an unsatisfied security obligation as it stands. An obligation about something outside MCP-RE is satisfied by an admissible `External` premise. An obligation about MCP-RE's own behavior is satisfied by evidence or remains open.
+**There is no `accepted-risk` disposition.** An unsatisfied security obligation inside the declared MCP-RE security model cannot reach terminal closure by being accepted. An obligation that remains applicable and unsatisfied remains **open**, and `Open` is not a terminal disposition.
 
 ### 5.3 Closure condition
 
@@ -237,10 +251,10 @@ Closed
 \iff
 \Big(\forall k:\ Covered(g_k)\Big)
 \;\land\;
-\Big(\forall o \in \mathcal{O}:\ Satisfied(o) \lor NotSecurityRelevant(o)\Big)
+\Big(\forall o \in \mathcal{O}:\ Terminal(o)\Big)
 $$
 
-Both conjuncts are required. The second without the first is the statement "nothing we looked for is missing", which says nothing about what was not looked for.
+where $Terminal(o)$ means one of the terminal dispositions of §5.2. Both conjuncts are required. The second without the first is the statement "nothing we looked for is missing", which says nothing about what was not looked for.
 
 The claim remains **relative and closed-world** (01 §3). It is relative to the declared generators, the declared environment and threat model, and the declared external premises.
 
@@ -283,7 +297,7 @@ Individually correct machines do not compose correctly by default. The preservat
 
 Some cross-machine requirements are not predicates over one state but constraints on order: retire the signer before publishing the trust change, or the reverse, or atomically. These are stated as composition obligations over event sequences.
 
-Where machines run on several replicas, a replica may observe another machine's state late. Whether composition invariants are stated over each replica's view or over a global state is open question Q5 (§9).
+Where machines run on several replicas, the model carries both the authoritative state and each replica's observed state, and does not assume they are equal (02 §12.1). The relation between them, for example $AllowedView(S^{view}_r, S^{auth}, C, t)$, is part of the model, and that each view satisfies it is an obligation. The exact relation and its representation are open question Q5 (§9).
 
 ## 7. Semantic configuration classes
 
@@ -328,14 +342,14 @@ Migration is a state that can be lost. A change that moves a digest or adds an u
 These are points where the model cannot be made precise without either a decision or contact with real code. The delegated-signing / trust-epoch pilot is expected to answer them, or to show that the question was wrong.
 
 - **Q1 — Determinism.** Can every transition in delegated signing and trust epoch be expressed as a deterministic `step` with all observations in $E$? If one cannot, which one, and why?
-- **Q2 — `Await`.** Does `Await` change $S$, recording the pending effect, or leave it unchanged? What makes a completion event match its pending effect, and what happens to a completion that matches nothing?
+- **Q2 — Pending-effect representation.** Decided: a security-relevant outstanding effect is semantic state (02 §2.1). Open: its exact representation (inside $S'$ or as `Pending` alongside it), and how the pilot's effects express correlation, duplicate and stale completion, timeout and cancellation, retry, restart while pending, and authority change while pending.
 - **Q3 — Abstraction.** What is $\alpha$ for real Rust state that spans memory, Redis and KMS? Where does the representation invariant $RI$ live, and can it be established at the type level?
 - **Q4 — Refinement method.** Can the pure-decision / adapter split (02 §8) be achieved without distorting the code, so that refinement is provable over the decision core? Where it cannot, what is the honest `Hybrid` decomposition?
-- **Q5 — Replicas.** Are composition invariants stated over each replica's view, over a global state, or over both with a staleness bound?
+- **Q5 — Replica relation.** Decided: both authoritative and per-replica observed state are modelled, without assuming equality (02 §12.1). Open: the exact $AllowedView$ relation (bounded staleness, currentness, or another form), its representation, and which invariants are stated over views and which over the authoritative state.
 - **Q6 — Existing registry.** How do the existing THM/ASM entries map to generated obligations? Which theorems correspond to no generated obligation? Which generated obligations have no theorem? Which premises are really MCP-RE-owned behavior?
 - **Q7 — Requirements.** Is the five-valued requirement set enough, or does the pilot need more structure, for example distinguishing proof over the model from proof over code?
 - **Q8 — Generator coverage.** How is coverage measured for each generator over a real subsystem? What is the unit of the implementation-surface census?
-- **Q9 — Graph split.** Which existing registry relations are logical and which are traceability? Does any existing invalidation rule propagate along an edge that §4 classifies as traceability?
+- **Q9 — Graph split.** Which existing registry relations are logical and which are traceability? Does any existing invalidation rule propagate along an edge that §4 classifies as traceability? Which traceability and correspondence information is semantically relevant, and so belongs in a theorem's fingerprint?
 - **Q10 — Configuration classes.** What is $SecuritySemantics$ for the pilot's configuration surface, and how many accepted classes are there?
 - **Q11 — Existing machinery.** Which remediation-era structures (04 §11.1) already correspond to model elements, and which would need rewriting?
 - **Q12 — Model fitness.** Where did the working model have to be amended, and does any amendment generalize beyond the pilot?

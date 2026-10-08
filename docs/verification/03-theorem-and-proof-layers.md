@@ -144,7 +144,9 @@ Edges that **locate** a theorem in the system without being part of its proof:
 
 This graph does **not** have to be acyclic: code implements several theorems, theorems cover several transitions, and those relationships form cycles harmlessly.
 
-A traceability edge does not, by itself, invalidate anything. It matters for currency only where the review digest of a theorem includes the artifact the edge points at (for example, the code `implemented_by` names is part of what was reviewed); in that case it is the digest that moves, not the edge.
+The logical DAG alone controls **logical dependency propagation**: a theorem becomes non-current because something it logically depends on did. A traceability edge never becomes a logical dependency by being present.
+
+That does not make traceability irrelevant to currency. Semantically relevant traceability and correspondence information is part of what a theorem's review or evidence covers, and a change to it can invalidate that review or evidence **through the theorem's own fingerprint**. Changing which implementation path refines a semantic transition, for example, requires the correspondence to be re-reviewed, without creating any theorem dependency edge. Once the theorem is non-current for that reason, its logical ancestors follow along the logical DAG in the ordinary way.
 
 ### 3.3 When an edge changes graphs
 
@@ -291,7 +293,7 @@ $$
 \exists e:\ Valid(e,o) \land Class(e) \in Admissible(Requirement(o))
 $$
 
-or an explicit classification that the obligation is not security relevant.
+or another terminal disposition (`05-refinement-and-closure-model.md` §5.2). An obligation that remains applicable and unsatisfied is open; it is never closed as accepted risk.
 
 Unknown obligations are not allowed at closure. As 01 §3.2 states, that condition has meaning only when each generator has been run over its domain: closure requires generator coverage **and** disposition, not disposition alone.
 

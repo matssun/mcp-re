@@ -58,10 +58,23 @@ Commit(S', Effects)
 \;|\;
 Refuse(Reason)
 \;|\;
-Await(Pending)
+Await(S', Pending)
 $$
 
 A security-relevant operation should not have an implicit fourth class of outcome.
+
+### 2.1 Pending effects are state
+
+A security-relevant outstanding external effect, such as a signature requested from KMS or a store write not yet acknowledged, **is itself semantic state**. `Await` therefore carries a successor state: the outstanding effect is recorded in $S'$, or carried alongside it as `Pending`. The exact representation is for the pilot to determine (05 §9, Q2). Either way, the model must be able to express and constrain:
+
+- **completion correlation**: which outstanding effect a completion event belongs to;
+- **duplicate and stale completions**: a completion that arrives twice, or for an effect that is no longer outstanding;
+- **timeout and cancellation**: an outstanding effect abandoned before it completes;
+- **retry**: reissuing an effect, and the relation between the two attempts;
+- **restart while pending**: what recovery reconstructs about effects that were outstanding at process death;
+- **authority change or revocation while pending**: whether a completion may still take effect after the authority under which it was issued has changed.
+
+A wait with genuinely no security-relevant outstanding effect may leave the state unchanged ($S' = S$). That is the exception, and the machine records why the wait is state-neutral.
 
 This forces questions such as:
 
@@ -461,6 +474,21 @@ TrustEpoch.Current(epoch)
 $$
 
 Some cross-machine relationships are not state predicates but **ordering requirements**: signer retirement and a trust-state change may have to be applied in a particular order, or atomically, for the invariant to survive the transition between them. These are stated as composition obligations over the event sequences, not as invariants over a single state.
+
+### 12.1 Authoritative state and replica views
+
+Where a machine runs on several replicas, the model carries **both**:
+
+- the **authoritative** (logical) security state, $S^{auth}$; and
+- each replica's **observed** (local) state, $S^{view}_r$.
+
+The model does not assume they are equal. The relation a replica's view must satisfy is part of the model, for example a bounded-staleness or currentness relation
+
+$$
+AllowedView(S^{view}_r,\ S^{auth},\ C,\ t)
+$$
+
+A replica decides on $S^{view}_r$, and that the view satisfies the relation is itself an obligation. The exact relation, its representation, and which invariants are stated over views and which over $S^{auth}$ are for the pilot to derive (05 §9, Q5).
 
 ## 13. Implementation correspondence
 
