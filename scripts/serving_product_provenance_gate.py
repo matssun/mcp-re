@@ -18,6 +18,11 @@ WHAT THIS PROVES, exactly, over production Rust (test regions excluded):
      from `Verifier::verify_request` or not at all.
   5. **The exchange carries the product; it does not restate it.** `Exchange` has no `pub`
      field, so no consumer can be handed one assembled from parts.
+  6. **The product the exchange carries is read-only from verification on.** `Exchange` holds
+     it as `&'a VerifiedMcpRequest` — a shared reference, so no stage can assign a field
+     through the carrier — and `handle` binds the verifier's return immutably and never
+     borrows it mutably or assigns into it. This is the fact THM-0034's subject projection
+     rests on: the fields are public, so only the binding keeps them as verified.
 
 WHY THIS GATE AND NOT A TYPE. `VerifiedMcpRequest` has PUBLIC fields. It is
 `#[non_exhaustive]`, so no crate but `mcp-re-http-profile` can write one by struct expression,
@@ -216,6 +221,35 @@ def check_serving(serving: str) -> list[str]:
             f"{SERVING}: `{CARRIER}` has a `pub` field. The carrier holds borrowed products; "
             f"a public field lets a consumer be handed one assembled from parts."
         )
+    if fields is not None:
+        problems += check_read_only(handle, fields)
+    return problems
+
+
+def check_read_only(handle: str | None, fields: str) -> list[str]:
+    """(6) — the carried product cannot be written after verification."""
+    problems: list[str] = []
+    shared = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?verified:\s*&'a\s+" + PRODUCT + r"\s*,", re.M)
+    if not shared.search(fields):
+        problems.append(
+            f"{SERVING}: `{CARRIER}::verified` is no longer `&'a {PRODUCT}`. The product's "
+            f"fields are public; only a shared borrow keeps every stage from assigning one, "
+            f"and the subject THM-0034 projects is read from it."
+        )
+    if handle is None:
+        return problems
+    if not re.search(r"\blet\s+verified\s*=", handle):
+        problems.append(
+            f"{SERVING}: `handle` no longer binds the verifier's return as an immutable "
+            f"`let verified`. A mutable binding lets the assembly rewrite the product the "
+            f"exchange then carries."
+        )
+    writes = re.findall(r"&\s*mut\s+verified\b|\bverified(?:\.\w+)+\s*(?:[-+*/|&^]?=)(?!=)", handle)
+    if writes:
+        problems.append(
+            f"{SERVING}: `handle` writes the verified product ({len(writes)} site(s)). What "
+            f"verification returned is what every later stage must read."
+        )
     return problems
 
 
@@ -272,6 +306,30 @@ def selftest() -> int:
             "a public field on the carrier",
             check_serving,
             serving.replace("    verified: &'a VerifiedMcpRequest,", "    pub verified: &'a VerifiedMcpRequest,"),
+            1,
+        ),
+        (
+            "the carrier holding the product mutably",
+            check_serving,
+            serving.replace("    verified: &'a VerifiedMcpRequest,", "    verified: &'a mut VerifiedMcpRequest,"),
+            1,
+        ),
+        (
+            "a mutable binding of the verifier's return",
+            check_serving,
+            serving.replace(
+                "let verified = match self.verify_stage(",
+                "let mut verified = match self.verify_stage(",
+            ),
+            1,
+        ),
+        (
+            "an assignment into the verified product",
+            check_serving,
+            serving.replace(
+                "let actor_id = verified.resolved_actor().actor_id();",
+                "verified.audience = String::new();\n        let actor_id = verified.resolved_actor().actor_id();",
+            ),
             1,
         ),
         (

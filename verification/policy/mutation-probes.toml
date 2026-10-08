@@ -13390,3 +13390,22 @@ weakening = """
 expect_red = [
   "//mcp-re-http-profile:delegated_202_test#a_delegated_202_outside_its_signature_window_is_refused",
 ]
+
+[[probe]]
+id = "M558-degraded-age-bound-is-exact"
+unit = "http_profile.admission_currency"
+theorem = "THM-0005"
+conjunct = "a degraded candidate's assertion was issued no more than P plus the clock skew before `now`"
+note = "r12 K-1. The Verus ensures carries the conjunct over the integers, and the exact `i128` comparison is what makes it hold for every input the public policy fields admit. The weakening restores the saturating form: the age clamps to `i64::MAX` and compares equal to a bound sum at that clamp, so an assertion one second past the bound is served as a candidate; the end-of-range test must go red."
+path = "mcp-re-http-profile/src/admission_policy.rs"
+anchor = """
+    (now as i128) - (iat as i128)
+        > (policy.degraded_propagation_bound as i128) + (policy.max_clock_skew as i128)
+"""
+weakening = """
+    now.saturating_sub(iat)
+        > policy.degraded_propagation_bound.saturating_add(policy.max_clock_skew)
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_degraded_assertion_older_than_the_bound_is_refused_at_the_end_of_the_range",
+]

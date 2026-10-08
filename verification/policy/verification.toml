@@ -1433,6 +1433,7 @@ evidence = [
 # theorems explicitly disclaim, carried here as test evidence rather than as a proof.
 tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_current_admitted_workload_passes",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_degraded_assertion_older_than_the_bound_is_refused_at_the_end_of_the_range",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_issued_to_another_actor_does_not_admit_this_caller",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_stale_generation_is_rejected_even_though_the_assertion_is_valid",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_workload_revoked_after_issuance_is_refused",

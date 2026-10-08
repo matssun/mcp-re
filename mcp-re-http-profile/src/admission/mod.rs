@@ -37,6 +37,7 @@ use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
 
+use crate::admission_policy::degraded_age_exceeded;
 use crate::admission_policy::AdmissionPolicy;
 use crate::authoritative_admission::AuthoritativeAdmission;
 use crate::block::BindingType;
@@ -398,6 +399,8 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
             &&& v.admitted_actor@ == authenticated.admitted_actor@
             &&& authoritative is None
             &&& policy.allow_degraded_mode
+            &&& now - authenticated.iat
+                    <= policy.degraded_propagation_bound + policy.max_clock_skew
         },
 ))]
 pub fn check_admission(
@@ -443,11 +446,7 @@ pub fn check_admission(
             // authority has been unreachable — is elapsed HISTORY this stateless relation
             // cannot see, and it belongs to the stateful enforcer's monotonic window. That
             // is why the arm below is a CANDIDATE.
-            if now.saturating_sub(authenticated.iat)
-                > policy
-                    .degraded_propagation_bound
-                    .saturating_add(policy.max_clock_skew)
-            {
+            if degraded_age_exceeded(policy, now, authenticated.iat) {
                 return Err(HttpProfileError::AdmissionStateUnavailable);
             }
             Ok(AdmissionVerdict::DegradedCandidate(VerifiedAdmission {
@@ -821,6 +820,41 @@ mod tests {
     /// the proxy's admission_enforcer `degraded_window`, which uses P without skew and is
     /// closed at P=0. A caller of `check_admission` without that enforcer gets the wider
     /// assertion-level window, which is why the CLI also refuses P=0.
+    /// The degraded age bound is exact at the ends of the range: an assertion one second
+    /// older than `P + skew` is refused even when the age itself does not fit an `i64`, where
+    /// a saturating difference would clamp to `i64::MAX` and compare equal to the bound.
+    #[test]
+    fn a_degraded_assertion_older_than_the_bound_is_refused_at_the_end_of_the_range() {
+        let pol = AdmissionPolicy {
+            allow_degraded_mode: true,
+            degraded_propagation_bound: i64::MAX - 30,
+            ..AdmissionPolicy::default()
+        };
+        assert_eq!(
+            pol.max_clock_skew, 30,
+            "the bound below is exactly i64::MAX"
+        );
+        let at_age = |iat: i64| AuthenticatedAdmission {
+            admission_id: "wl-1".to_owned(),
+            generation: 5,
+            admitted_actor: TEST_ACTOR.to_owned(),
+            iat,
+        };
+
+        // Age i64::MAX + 1: one past the bound, and not representable as an i64.
+        let past = NOW - i64::MAX - 1;
+        assert_eq!(
+            check_admission(at_age(past), None, &pol, NOW).unwrap_err(),
+            HttpProfileError::AdmissionStateUnavailable,
+        );
+        // Age exactly i64::MAX: on the bound, still a candidate.
+        let on = NOW - i64::MAX;
+        assert!(matches!(
+            check_admission(at_age(on), None, &pol, NOW),
+            Ok(AdmissionVerdict::DegradedCandidate(_))
+        ));
+    }
+
     #[test]
     fn a_zero_p_still_leaves_a_degraded_window_the_width_of_the_clock_skew() {
         let pol = AdmissionPolicy {

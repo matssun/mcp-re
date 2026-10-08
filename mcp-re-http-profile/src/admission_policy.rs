@@ -10,6 +10,12 @@
 //! that matters — it is the opt-in the degraded clause of the §7 currency contract is
 //! stated in terms of, and its default is the fail-closed answer.
 
+#[cfg(feature = "verify")]
+use verus_builtin_macros::verus_spec;
+#[cfg(feature = "verify")]
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 /// The verifier-local admission freshness + fallback budget (§5.2).
 ///
 /// # Why this is not sealed, and where the legality actually lives
@@ -56,4 +62,22 @@ impl Default for AdmissionPolicy {
             allow_degraded_mode: false,
         }
     }
+}
+
+/// Whether an assertion issued at `iat` is older at `now` than the degraded bound P plus the
+/// skew tolerance — the age term of the §7 degraded clause, compared exactly.
+///
+/// Widened to `i128` so neither side clamps: a saturating age stops at `i64::MAX`, and
+/// against a bound sum at that clamp an assertion older than the bound would pass. `pub(crate)`
+/// because the currency check in `crate::admission` is its consumer and this module, which
+/// owns the budget, is not that module's ancestor.
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures out == (now - iat > policy.degraded_propagation_bound + policy.max_clock_skew),
+))]
+// Four widened `i64` operands: the difference and the sum both lie within [-2^64, 2^64],
+// far inside `i128`.
+#[allow(clippy::arithmetic_side_effects)]
+pub(crate) fn degraded_age_exceeded(policy: &AdmissionPolicy, now: i64, iat: i64) -> bool {
+    (now as i128) - (iat as i128)
+        > (policy.degraded_propagation_bound as i128) + (policy.max_clock_skew as i128)
 }
