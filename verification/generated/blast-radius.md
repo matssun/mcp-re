@@ -314,6 +314,7 @@ attestations this view cannot see.
 | unit://sdk_typescript.exchange_binding | source, contracts or evidence | THM-0095 | _no consumer_ |
 | unit://sdk_typescript.execution_report | source, contracts or evidence | THM-0095 | _no consumer_ |
 | unit://sdk_typescript.local_failure_provenance | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.native_binding | source, contracts or evidence | THM-0095 | _no consumer_ |
 | unit://sdk_typescript.nonce_floor | source, contracts or evidence | THM-0095 | _no consumer_ |
 | unit://sdk_typescript.notification_delivery | source, contracts or evidence | THM-0095 | _no consumer_ |
 | unit://sdk_typescript.post_close_emission | source, contracts or evidence | THM-0095 | _no consumer_ |
@@ -539,10 +540,11 @@ attestations this view cannot see.
 | ASM-0076 | description, justification, scope or mechanism | proxy.aws_sts_credentials, proxy.aws_web_identity_credential_exchange, proxy.gcp_kms_adapter, proxy.gcp_metadata_token_lifetime | assumption review |
 | ASM-0077 | description, justification, scope or mechanism | client.anchor_refresh, client.serving_lifetime, client.trust_manifest_lifecycle | assumption review |
 | ASM-0078 | description, justification, scope or mechanism | proxy.retention_commitment | assumption review |
-| ASM-0079 | description, justification, scope or mechanism | proxy.trust_reload_cadence, proxy.trust_resolution_window | assumption review |
+| ASM-0079 | description, justification, scope or mechanism | proxy.admission_currency_gate, proxy.trust_reload_cadence, proxy.trust_resolution_window | assumption review |
 | ASM-0080 | description, justification, scope or mechanism | proxy.client_revocation_currency, proxy.client_revocation_index_verdict | assumption review |
 | ASM-0081 | description, justification, scope or mechanism | proxy.delegated_epoch_label | assumption review |
 | ASM-0082 | description, justification, scope or mechanism | proxy.kms_endpoint_authority, proxy.outbound_destination | assumption review |
-| ASM-0083 | description, justification, scope or mechanism | http_profile.request_envelope | assumption review |
+| ASM-0083 | description, justification, scope or mechanism | http_profile.request_envelope, proxy.trust_document_interpretation | assumption review |
 | ASM-0084 | description, justification, scope or mechanism | client.manifest_floor | assumption review |
-| ASM-0085 | description, justification, scope or mechanism | http_profile.scitt_algorithm_agreement, http_profile.scitt_position_commitment, http_profile.scitt_receipt_shape, http_profile.scitt_statement_attribution | assumption review |
+| ASM-0085 | description, justification, scope or mechanism | http_profile.scitt_algorithm_agreement, http_profile.scitt_derived_root, http_profile.scitt_position_commitment, http_profile.scitt_receipt_shape, http_profile.scitt_statement_attribution | assumption review |
+| ASM-0086 | description, justification, scope or mechanism | proxy.credential_currency | assumption review |

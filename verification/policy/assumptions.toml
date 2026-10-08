@@ -611,7 +611,7 @@ tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0023"
-description = "`RequestEvidenceDigest::matches_labeled` returning true means this handle's value IS the labeled digest of those bytes under that role's label."
+description = "`RequestEvidenceDigest::matches_labeled` returning true means this handle names the profile's digest algorithm and its value IS the labeled digest of those bytes under that role's label."
 justification = """
 The replacement for ASM-0022, and deliberately much narrower: it constrains one three-line
 comparator instead of leaving a twenty-line role-checking function meaningless.
@@ -626,6 +626,9 @@ its own required role label — and deliberately not enough to prove role SEPARA
 would need `label_a != label_b ==> digest(label_a, x) != digest(label_b, y)`. That is a
 domain-separation property of the construction, it lives at
 `boundary.crypto_primitives`, and no wording here should let it be read as proved.
+
+The algorithm clause is a plain equality against the profile's single digest algorithm
+identifier; it is trusted with the rest of the comparator.
 """
 scope = ["unit://http_profile.continuation_binding", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
@@ -2906,6 +2909,7 @@ It stops being acceptable if either window is measured on anything but the monot
 scope = [
   "unit://proxy.trust_resolution_window",
   "unit://proxy.trust_reload_cadence",
+  "unit://proxy.admission_currency_gate",
   "boundary://boundary.monotonic_clock",
 ]
 owner = "mats@sundvall.name"
@@ -3015,7 +3019,7 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0083"
-description = "When `serde_json::from_slice::<Value>` succeeds on a request body, the body is an RFC 8259 JSON text, and for a text with no duplicate object member name the returned `Value` represents the object, array and scalar values that text encodes."
+description = "When `serde_json::from_slice` succeeds on a byte string, whether into a `Value` or into a type deriving `serde::Deserialize`, the byte string is an RFC 8259 JSON text, and for a text with no duplicate object member name a returned `Value` represents the object, array and scalar values that text encodes."
 justification = """
 THM-0083 refuses a body unless it is a legal JSON-RPC 2.0 request, and establishes the
 outstanding id from that one validation. Every clause after the first reads the body through
@@ -3027,11 +3031,20 @@ the body was a JSON text, and for a text with no duplicate the `Value` returned 
 objects, arrays and scalars the text encodes. It is not trusted that every RFC 8259 text is
 accepted: a refusal of a legal text is a refusal, which the envelope's clauses treat as one.
 
+The operator's trust document is read through the typed form, `serde_json::from_slice` into a
+struct deriving `serde::Deserialize` (THM-0098), and the same soundness fact is what it relies
+on: a document the parse accepts is a JSON text. Its refusals of a member written twice and of
+an unknown member are `serde_derive` behaviour pinned by this project's own tests
+(`a_duplicated_member_is_refused_rather_than_read_last_wins`,
+`an_unknown_member_is_refused_rather_than_ignored`, `an_unknown_slot_is_refused_rather_than_ignored`,
+`slots_must_be_an_array_when_present`); they are not part of this premise.
+
 It stops being acceptable if the request envelope is read through another parser, or if the
 representability check stops running first.
 """
 scope = [
   "unit://http_profile.request_envelope",
+  "unit://proxy.trust_document_interpretation",
   "boundary://boundary.json_parser",
 ]
 owner = "mats@sundvall.name"
@@ -3039,10 +3052,10 @@ introduced_by = "r12 RERE-RATIFICATION §4b P-8 (Ruling 40 step 4)"
 review_requirement = "Owner review on any change to the JSON parsing dependency, or to the order in which the envelope's clauses are asked."
 premise_class = "external-boundary"
 boundary_owner = """
-The `serde_json` crate, across `from_slice::<Value>` on a request body: when it succeeds, the
-body is an RFC 8259 JSON text, and for a text without duplicate member names the returned `Value`
-represents the object, array and scalar values the text encodes. It does not promise to accept
-every RFC 8259 text.
+The `serde_json` crate, across `from_slice` on a byte string, into a `Value` or into a type deriving
+`serde::Deserialize`: when it succeeds, the byte string is an RFC 8259 JSON text, and for a text
+without duplicate member names a returned `Value` represents the object, array and scalar values
+the text encodes. It does not promise to accept every RFC 8259 text.
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
@@ -3110,6 +3123,7 @@ structure is ever built by this project instead of by `coset`.
 scope = [
   "unit://http_profile.scitt_statement_attribution",
   "unit://http_profile.scitt_receipt_shape",
+  "unit://http_profile.scitt_derived_root",
   "unit://http_profile.scitt_algorithm_agreement",
   "unit://http_profile.scitt_position_commitment",
   "boundary://boundary.cose_cbor",
@@ -3125,3 +3139,36 @@ and across the construction of the `Sig_structure` for a signature check from a 
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
+[[assumption]]
+id = "ASM-0086"
+description = "`X509Certificate::verify_signature(None)` returns Ok only when the certificate signature verifies under the certificate's own subject public key."
+justification = """
+`credential_currency/x509_adapter` reports, for a certificate, whether it is self-signed: its
+issuer `Name` encoding equals its subject `Name` encoding AND `verify_signature(None)` is Ok.
+`evaluation` exempts a certificate reported self-signed from the validity-window check, so a
+key-rollover intermediate (one that shares its name with its own issuer but is signed by another
+key) is held to its window as path building holds it (THM-0032). Whether the exemption applies to
+a given certificate therefore depends on `verify_signature(None)` answering Ok only for a signature
+made under the certificate's own subject public key; the library's signature check is the
+library's, and nothing here establishes it.
+
+What stays this project's and is tested here: the comparison of the two `Name` encodings, the
+conjunction of that comparison with the signature check, the exemption itself, and that the
+validity window still applies to every certificate not reported self-signed
+(`a_self_issued_certificate_is_self_signed_only_under_its_own_key`). This premise says nothing
+about certificate trust, path validity, issuer selection or X.509 in general.
+
+It stops being acceptable if the adapter checks a certificate's signature through another call,
+or passes a key to `verify_signature` instead of `None`.
+"""
+scope = ["unit://proxy.credential_currency", "boundary://boundary.x509"]
+owner = "mats@sundvall.name"
+introduced_by = "r12 step 7 (owner ruling on THM-0032)"
+review_requirement = "Owner review on any change to the credential-currency X.509 adapter, to its parser dependency, or to how a certificate is reported self-signed."
+premise_class = "external-boundary"
+boundary_owner = """
+The pinned `x509_parser` crate, across `X509Certificate::verify_signature(None)`: it returns Ok
+only when the certificate's signature verifies under the certificate's own subject public key.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

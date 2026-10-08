@@ -335,7 +335,7 @@ def test_the_estate_is_fully_typed_and_the_split_is_the_measured_one():
             registrations.add(entry["id"])
         else:
             counts[entry["premise_class"]] += 1
-    assert sum(counts.values()) + len(registrations) + withdrawn == 82, counts
+    assert sum(counts.values()) + len(registrations) + withdrawn == 83, counts
     assert registrations == {"ASM-0074", "ASM-0075"}, sorted(registrations)
     assert withdrawn == 12, (
         "ASM-0007, ASM-0008, ASM-0015, ASM-0022, ASM-0025, ASM-0026, ASM-0042, ASM-0043, "

@@ -425,12 +425,13 @@ max_class_without_assumption = "V0"
 
 [[boundary]]
 id = "boundary.json_parser"
-description = "JSON parsing of a request body, as implemented by `serde_json`."
+description = "JSON parsing of a request body and of the operator's trust document, as implemented by `serde_json`."
 kind = "foreign-dependency"
 paths = [
   "mcp-re-http-profile/src/envelope/request.rs",
+  "mcp-re-proxy/src/trust_document.rs",
 ]
-beyond = "Whether a body the parser accepts is an RFC 8259 JSON text and, for a text without duplicate member names, the value it returns represents the objects, arrays and scalars the text encodes."
+beyond = "Whether a byte string the parser accepts is an RFC 8259 JSON text and, for a text without duplicate member names, the value it returns represents the objects, arrays and scalars the text encodes."
 max_class_without_assumption = "V0"
 
 [[boundary]]
