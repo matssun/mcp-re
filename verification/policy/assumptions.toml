@@ -2227,7 +2227,7 @@ tool_specific_mechanism = "none:trusted-seam"
 
 [[assumption]]
 id = "ASM-0057"
-description = "The per-request wall-clock `now` the serving path hands each verifier operation is the current UTC time, to within the deployment's configured skew of every peer's clock."
+description = "The per-request wall-clock `now` the serving path hands each verifier operation, and against which it opens the response signing window, is the current UTC time, to within the deployment's configured skew of every peer's clock."
 justification = """
 Every `Verifier` operation takes `now: i64` as an argument. The verifier holds no clock, and
 that is deliberate rather than an omission: `chain/hop.rs` verifies a retained exchange at the
@@ -2476,14 +2476,16 @@ tool_specific_mechanism = "none:trusted-primitive"
 
 [[assumption]]
 id = "ASM-0066"
-description = "The signed trust-anchor manifest is verified over the serialization the released clients already consume, and that serialization is a frozen compatibility surface for the present version: every signer and verifier reproduces the same signing input from it until ADR-MCPRE-053 replaces it."
+description = "The trust-anchor manifest signature covers the signer's serde_json serialization of the manifest, carried verbatim as the envelope's `manifest` member, and verifiers check it over those bytes as received. That serialization is a frozen compatibility surface for the present version until ADR-MCPRE-053 replaces it: released clients that re-serialize what they parsed verify only while a signer emits it unchanged."
 justification = """
-A compatibility constraint MCP-RE relies on, not a proved cryptographic property: nothing
-here establishes that the representation is canonical, only that changing it inside the
-present version would break every manifest already distributed to released clients. The
-replacement (compact JWS over the received bytes), its version boundary and cutover, its
-signing semantics and golden vectors belong to a separate ADR-MCPRE-053 slice, with no
-dual-format reader. Owner Ruling 13.1 (2026-10-04, finding 9f28d71b502a2418).
+A compatibility constraint MCP-RE relies on, not a proved cryptographic property. A verifier
+in this tree checks the signature over the `manifest` bytes it received and parses them only
+afterwards, so nothing here depends on the representation being canonical. What remains is the
+released clients: they rebuild the signing input from what they parsed, so changing the
+signer's serialization inside the present version would break every manifest distributed to
+them. The replacement (compact JWS), its version boundary and cutover, its signing semantics
+and golden vectors belong to a separate ADR-MCPRE-053 slice, with no dual-format reader. Owner
+Ruling 13.1 (2026-10-04, finding 9f28d71b502a2418).
 
 A change inside this version is detected rather than remembered: the golden vector
 `the_manifest_signing_input_and_signature_are_byte_stable` pins the exact signing-input bytes
@@ -2774,7 +2776,7 @@ tool_specific_mechanism = "none:trusted-primitive"
 
 [[assumption]]
 id = "ASM-0076"
-description = "The serving host's wall clock (`SystemTime`) reads within the declared skew of true time; a clock stepped backwards can make an expired credential or decision read as current."
+description = "The serving host's wall clock (`SystemTime`), as the STS and GCE/GKE metadata credential sources read it, never reads more than sixty seconds behind true UTC time, and never steps backwards by more than sixty seconds in total while a credential whose expiry it stamped is in use, so the sixty-second refresh margin those sources keep ahead of an expiry absorbs it; a clock further behind makes an expired credential read as current."
 justification = """
 The STS and GCE/GKE metadata credential sources judge an issued credential's remaining lifetime
 against the host's wall clock: the expiry the issuer stated is compared with `SystemTime::now()`
@@ -2787,12 +2789,18 @@ It is not ASM-0057. That premise states what the serving path hands each verifie
 a credential source is not a verifier operation: it reads the clock for itself, at its own
 moments, to manage a credential this proxy presents rather than one it judges.
 
-A clock stepped backwards makes an expired credential read as current, and one stepped forwards
-discards a current one early; the first is the security failure. Nothing in this repository can
-detect either from one reading.
+Each source re-exchanges a credential sixty seconds before its expiry
+(`CREDENTIAL_REFRESH_MARGIN`, `TOKEN_REFRESH_MARGIN`), so a clock behind true time by less than
+that still stops using the credential no later than its true expiry. Two kinds of expiry are
+compared: an absolute one the issuer stated (STS `Expiration`), which needs the reading to be
+near true time, and one this host stamped as a reading plus a stated lifetime (the metadata
+server's `expires_in`, and the bounded reuse floor), which needs the clock not to step back
+across the credential's use. The premise states both. A clock further behind
+makes an expired credential read as current, and one ahead discards a current one early; the
+first is the security failure. Nothing in this repository can detect either from one reading.
 
 It stops being acceptable if a credential source judges a lifetime against anything other than
-the host wall clock, or gains a clock of its own.
+the host wall clock, gains a clock of its own, or keeps a refresh margin below sixty seconds.
 """
 scope = [
   "unit://proxy.aws_sts_credentials",
@@ -2803,12 +2811,13 @@ scope = [
 ]
 owner = "mats@sundvall.name"
 introduced_by = "r12 RERE-RATIFICATION §4b P-1 (Ruling 40 step 4)"
-review_requirement = "Owner review if a credential source's lifetime is judged against anything other than the host wall clock."
+review_requirement = "Owner review if a credential source's lifetime is judged against anything other than the host wall clock, or its refresh margin falls below sixty seconds."
 premise_class = "external-boundary"
 boundary_owner = """
 The DEPLOYMENT OPERATOR's host clock discipline (NTP or equivalent), across the `SystemTime::now()`
-readings the STS and metadata credential sources take: each reading is the current UTC time to
-within the configured skew.
+readings the STS and metadata credential sources take: no reading is behind the current UTC time
+by more than sixty seconds, and the clock does not step backwards by more than sixty seconds in
+total while a credential whose expiry it stamped is in use.
 """
 affected_contracts = []
 tool_specific_mechanism = "none:trusted-seam"

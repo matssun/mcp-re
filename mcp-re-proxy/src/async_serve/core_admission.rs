@@ -108,8 +108,8 @@ impl CoreAdmission {
     pub(super) async fn drain(&self, grace: std::time::Duration) {
         self.drain_signal.send_replace(true);
         // Class R: the grace is a HARD CEILING on how long teardown may wait, so one that
-        // cannot be turned into an instant is no bound at all — the drain declines to
-        // start rather than parking process exit behind a deadline it cannot enforce.
+        // cannot be turned into an instant is no bound at all — the drain, already signalled,
+        // declines to wait rather than parking process exit behind a deadline it cannot enforce.
         let Some(deadline) = tokio::time::Instant::now().checked_add(grace) else {
             return;
         };

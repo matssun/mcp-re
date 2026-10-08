@@ -121,12 +121,11 @@ fn unix_seconds(at: std::time::SystemTime) -> Option<i64> {
 /// Serve until a shutdown signal is observed.
 ///
 /// The anchor refresher is started UNCONDITIONALLY and held for the process lifetime. It is
-/// not only how a published revocation reaches a running client — it is the only place
-/// anchors are WITHDRAWN once the manifest in force has passed its own `expires_at`, and
-/// nothing on the request path consults that expiry. A client without it verifies for as
-/// long as it runs under a trust picture whose governing document has lapsed, which is
-/// exactly the state the manifest loader's expiry check exists to refuse. `validate()`
-/// bounds `trust.reload_secs`, so the cadence is also a ceiling on that window.
+/// the only place a newer manifest — a revocation, a rotation, an extension — reaches a
+/// running client. A client without it keeps trusting a root an org has since revoked or
+/// retired, under the superseded picture, until that picture's own `expires_at`.
+/// `validate()` bounds `trust.reload_secs`, so the cadence is also a ceiling on how long a
+/// published revocation waits to take effect.
 pub(crate) fn serve_until_shutdown(
     config: &ClientConfig,
     built: mcp_re_client::BuiltClient,

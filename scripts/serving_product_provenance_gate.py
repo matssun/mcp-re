@@ -19,12 +19,13 @@ WHAT THIS PROVES, exactly, over production Rust (test regions excluded):
   5. **The exchange carries the product; it does not restate it.** `Exchange` has no `pub`
      field, so no consumer can be handed one assembled from parts.
 
-WHY THIS GATE AND NOT A TYPE. `VerifiedMcpRequest` has PUBLIC fields, so any crate can
-construct one from parts — which is exactly why every verifier theorem's `scope` says it
-characterizes values the operation RETURNED and not values that happen to have the type.
-The obvious fix is to seal the representation, and it is not available: the Verus obligation
-on `prepare_http_dispatch` reads `verified.request_block` as a FIELD so the prover can relate
-the obligation to the value, and `#[verifier::external_type_specification]` refuses a
+WHY THIS GATE AND NOT A TYPE. `VerifiedMcpRequest` has PUBLIC fields. It is
+`#[non_exhaustive]`, so no crate but `mcp-re-http-profile` can write one by struct expression,
+but any holder can assign the fields of one — which is why every verifier theorem's `scope`
+says it characterizes values the operation RETURNED and not values that happen to have the
+type. The obvious fix is to make the fields private, and it is not available: the Verus
+obligation on `prepare_http_dispatch` reads `verified.request_block` as a FIELD so the prover
+can relate the obligation to the value, and `#[verifier::external_type_specification]` refuses a
 non-public field. A proved postcondition outranks a seal (`docs/dev/sealed-owners.md`), so
 the seam stays open and this gate is what stands in the gap — as EVIDENCE, never as
 unconstructibility. Delete it and a second product compiles.

@@ -44,8 +44,8 @@ use std::collections::BTreeSet;
 const ORDINARY: &[(&str, &str)] = &[
     (
         "audience",
-        "the deployment's own audience coordinate; ServerIdentity owns the identity built \
-         from it, and the string itself names no posture",
+        "the audience coordinate requests are verified against; no owner classifies it, and \
+         it names no posture",
     ),
     (
         "bind",
