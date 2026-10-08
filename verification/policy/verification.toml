@@ -1633,6 +1633,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_wrongtype_reply_is_an_answer_about_the_key_and_not_an_outage",
   "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_value_of_another_type_is_unreadable_and_not_an_outage",
   "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::nil_is_absent_and_a_bulk_string_is_its_bytes_whatever_they_are",
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_rejected_credential_is_an_answer_and_not_an_outage",
   "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_dropped_connection_is_the_outage",
   "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_server_that_can_answer_nothing_right_now_is_the_outage",
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::answer::tests::stored_bytes_that_are_not_text_are_a_malformed_record_and_not_an_outage",

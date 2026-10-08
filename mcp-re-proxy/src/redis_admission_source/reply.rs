@@ -12,12 +12,18 @@
 //! answers with `WRONGTYPE`, or bytes that are not text. Both are the store ANSWERING about
 //! that key, so both are definitive negatives here.
 //!
-//! An outage is therefore the store not answering at all — the connection failed, dropped
-//! or timed out — or the server stating that it cannot answer anything right now (loading a
-//! dump, a cluster down or retrying, a master down). Every other error reply, and every
-//! value that is not a bulk string or nil, is an answer about the key and classifies as a
-//! malformed record. The default for an error kind not named here is the answer side: an
-//! unrecognised reply fails closed rather than into the degraded fork.
+//! An outage is therefore the store not answering at all — the connection failed, dropped,
+//! was refused or timed out, or no cluster node could be reached — or the server stating that
+//! it cannot answer anything right now (loading a dump, a cluster down or retrying, a master
+//! down). Every other error reply, and every value that is not a bulk string or nil, is an
+//! answer about the key and classifies as a malformed record. The default for an error kind
+//! not named here is the answer side: an unrecognised reply fails closed rather than into the
+//! degraded fork.
+//!
+//! A store that rejects this deployment's credentials (`AuthenticationFailed`) is answering:
+//! it has refused the reader. That is a configuration failure of the deployment, not a
+//! temporary inability of the authority to answer, so it fails closed and never reaches the
+//! bounded degraded window.
 
 use redis::ErrorKind;
 use redis::RedisError;
@@ -76,7 +82,6 @@ fn is_outage(error: &RedisError) -> bool {
                     | ServerErrorKind::ClusterDown
                     | ServerErrorKind::MasterDown
             ) | ErrorKind::ClusterConnectionNotFound
-                | ErrorKind::AuthenticationFailed
         )
 }
 
@@ -127,6 +132,18 @@ mod tests {
         assert_eq!(
             read_reply(Ok(redis::Value::BulkString(vec![0xff, 0x00]))).expect("an answer"),
             StoreReply::Bytes(vec![0xff, 0x00])
+        );
+    }
+
+    #[test]
+    fn a_rejected_credential_is_an_answer_and_not_an_outage() {
+        let rejected = redis::RedisError::from((
+            redis::ErrorKind::AuthenticationFailed,
+            "authentication failed",
+        ));
+        assert_eq!(
+            read_reply(Err(rejected)).expect("an answer"),
+            StoreReply::Unreadable
         );
     }
 

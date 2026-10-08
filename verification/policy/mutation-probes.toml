@@ -13426,3 +13426,21 @@ weakening = """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_older_than_the_budget_is_refused_at_the_end_of_the_range",
 ]
+
+[[probe]]
+id = "M560-proxy-a-rejected-credential-reaches-the-degraded-fork"
+unit = "proxy.admission_state_source"
+theorem = "THM-0129"
+conjunct = "a reachable store that answered about the workload's key, or rejected this deployment's credentials, is a definitive negative and never the outage routed to the replica-wide degraded window"
+note = "r12 step 6. The weakening restores AuthenticationFailed to the outage kinds, so a store that refuses the reader serves on the degraded window instead of failing closed; the regression test must go red."
+path = "mcp-re-proxy/src/redis_admission_source/reply.rs"
+anchor = """
+            ) | ErrorKind::ClusterConnectionNotFound
+"""
+weakening = """
+            ) | ErrorKind::ClusterConnectionNotFound
+                | ErrorKind::AuthenticationFailed
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_rejected_credential_is_an_answer_and_not_an_outage",
+]
