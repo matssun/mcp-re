@@ -14,7 +14,7 @@ The immediate purpose of these documents is not to prescribe a complete refactor
 ## Document hierarchy
 
 1. **01-verification-architecture-thesis.md**  
-   The overall problem, goals, principles, and the distinction between theorem correctness and verification completeness.
+   The overall problem, goals, principles, and the distinction between theorem correctness and verification completeness; admissibility-checked discharge, generator coverage as a condition of closure, and property classes.
 
 2. **02-semantic-machine-model.md**  
    The core semantic form
@@ -23,13 +23,16 @@ The immediate purpose of these documents is not to prescribe a complete refactor
    step : C \times S \times E \times A \rightarrow O
    $$
 
-   and how it recursively applies at system, subsystem, and transition levels.
+   with all nondeterministic observations carried as events, so that `step` is deterministic; how it recursively applies at system, subsystem, and transition levels; semantic configuration classes; cross-machine invariants; and the difference between mapping and refinement.
 
 3. **03-theorem-and-proof-layers.md**  
-   A proposed theorem hierarchy, proof DAG, and the relationship between local mechanism proofs, subsystem invariants, composition theorems, configuration theorems, and top-level security claims.
+   A proposed theorem hierarchy; the split between the logical dependency DAG, which controls currency, and the traceability graph, which does not; and the relationship between local mechanism proofs, subsystem invariants, composition theorems, configuration theorems, and top-level security claims.
 
 4. **04-work-program-and-governance.md**  
-   How the model should drive investigation, ADRs, issues, sprint planning, implementation mapping, refactoring, sealing, and verification closure.
+   How the model should drive investigation, ADRs, issues, sprint planning, implementation mapping, refactoring, sealing, and verification closure; the phased pilot (P0–P6); and the relationship to the current remediation PR.
+
+5. **05-refinement-and-closure-model.md**  
+   The formal relationships between 02 and 03 in one place: transition semantics, implementation abstraction and refinement, obligation requirements and admissible evidence, the two graphs, the closure condition, composition invariants, configuration classes, the definition of a migrated machine, and the open questions the pilot should answer.
 
 These are **working architecture documents**, not ratified ADRs.
 
@@ -117,7 +120,7 @@ $$
 
 ## Near-term recommendation
 
-Before large-scale migration, use one difficult subsystem as a pilot. Delegated signing and trust epoch are good candidates because they exercise configuration, authority, mutable state, persistence, rollback, concurrency, entropy, failure handling, and multi-replica composition.
+Before large-scale migration, use one difficult subsystem as a pilot. The pilot is an experiment on this model, not a demonstration of it: it may falsify or change any part of these documents (04 §5.1). Delegated signing and trust epoch are good candidates because they exercise configuration, authority, mutable state, persistence, rollback, concurrency, entropy, failure handling, and multi-replica composition.
 
 The pilot should answer:
 
@@ -126,5 +129,7 @@ The pilot should answer:
 3. Can the implementation be refactored incrementally until it structurally refines the model?
 4. Can structural gates prevent new bypass paths?
 5. Do the local proofs compose into meaningful top-level security claims?
+
+The fuller list of open questions, including the points where the model needs a decision before it can be made precise, is in `05-refinement-and-closure-model.md` §9.
 
 Only after that pilot should the pattern be generalized across MCP-RE.
