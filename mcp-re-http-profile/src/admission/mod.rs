@@ -37,8 +37,8 @@ use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
 
-use crate::admission_policy::degraded_age_exceeded;
 use crate::admission_policy::AdmissionPolicy;
+use crate::admission_policy::{assertion_age_exceeded, degraded_age_exceeded};
 use crate::authoritative_admission::AuthoritativeAdmission;
 use crate::block::BindingType;
 use crate::delegation::Audience;
@@ -309,12 +309,11 @@ fn verify_admission_assertion(
     // Freshness: within [nbf, exp] ± skew, AND not older than the declared budget
     // N (§5.2). The TTL alone is the issuer's choice; N is the verifier's own cap
     // on how stale a snapshot it will act on.
-    // SATURATING throughout, matching the primary freshness gate (verify.rs). These
-    // operands come straight out of a JWS payload, so `now - claims.iat` with an
-    // extreme `iat` wraps in a release build — silently passing the staleness cap the
-    // expression exists to enforce — and panics on the serving path in any build with
-    // overflow checks. Two divergent implementations of one window is the bug; this is
-    // the audited form.
+    // These operands come straight out of a JWS payload, so a bare `now - claims.iat`
+    // with an extreme `iat` wraps in a release build and panics in any build with
+    // overflow checks. The window is SATURATING, matching the primary freshness gate
+    // (verify.rs); the age against N is compared exactly by `assertion_age_exceeded`,
+    // because a saturating age clamps to the same `i64::MAX` a saturating budget does.
     let skew = policy.max_clock_skew;
     if claims.nbf.saturating_sub(skew) > now
         || claims.exp.saturating_add(skew) <= now
@@ -325,12 +324,10 @@ fn verify_admission_assertion(
     // An `iat` ahead of the verifier is refused outright. `iat` is an independent claim
     // from `[nbf, exp]`, and BOTH age computations that bound how stale a snapshot may be
     // — the N cap here and the §5.2 degraded P window in `check_admission` — are
-    // `now - iat` under saturation, so a future issuance floors both at zero and passes
-    // them for the assertion's whole TTL. The skew term is the same tolerance the window
-    // above gets, no wider.
-    if now.saturating_sub(claims.iat) > policy.max_assertion_age.saturating_add(skew)
-        || claims.iat > now.saturating_add(skew)
-    {
+    // `now - iat` against an upper bound only, so a future issuance makes both ages
+    // negative and passes them for the assertion's whole TTL. The skew term is the same
+    // tolerance the window above gets, no wider.
+    if assertion_age_exceeded(policy, now, claims.iat) || claims.iat > now.saturating_add(skew) {
         return Err(HttpProfileError::AdmissionAssertionExpired);
     }
     Ok(claims)
@@ -1043,10 +1040,43 @@ mod tests {
         verify(&fresh).expect("an assertion inside N is accepted");
     }
 
+    #[test]
+    fn an_assertion_older_than_the_budget_is_refused_at_the_end_of_the_range() {
+        let pol = AdmissionPolicy {
+            max_assertion_age: i64::MAX - 30,
+            ..AdmissionPolicy::default()
+        };
+        assert_eq!(
+            pol.max_clock_skew, 30,
+            "the budget below is exactly i64::MAX"
+        );
+        let verify_at = |iat: i64| {
+            let mut c = claims(5, AdmissionStatus::Admitted, iat);
+            c.nbf = iat;
+            c.exp = NOW + 300;
+            verify_admission_assertion(
+                &issue(&c),
+                crate::ids::PROFILE_TAG,
+                &["mcp.example.com"],
+                &pol,
+                NOW,
+                resolver(),
+            )
+        };
+
+        // Age i64::MAX + 1: one past the budget, and not representable as an i64.
+        assert_eq!(
+            verify_at(NOW - i64::MAX - 1).unwrap_err(),
+            HttpProfileError::AdmissionAssertionExpired,
+        );
+        // Age exactly i64::MAX: on the budget, still accepted.
+        verify_at(NOW - i64::MAX).expect("an assertion on the budget is accepted");
+    }
+
     /// A future-dated `iat` is the one input that defeats BOTH age bounds at once. Both are
-    /// `now - iat` under saturation, so an issuance dated ahead of the verifier floors the
-    /// N cap and the degraded P window at zero and passes them for the assertion's whole
-    /// TTL — turning the bounded degraded window §5.2 argues from into the TTL itself.
+    /// `now - iat` against an upper bound only, so an issuance dated ahead of the verifier
+    /// has a negative age under the N cap and the degraded P window and passes them for the
+    /// assertion's whole TTL — turning the bounded degraded window §5.2 argues from into the TTL itself.
     #[test]
     fn an_assertion_dated_ahead_of_the_verifier_is_rejected() {
         let mut ahead = claims(5, AdmissionStatus::Admitted, NOW - 10);

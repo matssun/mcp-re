@@ -1391,6 +1391,7 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_for_another_profile_or_audience_is_rejected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_outside_its_validity_window_is_rejected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_older_than_the_verifiers_own_budget_is_rejected",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_older_than_the_budget_is_refused_at_the_end_of_the_range",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_dated_ahead_of_the_verifier_is_rejected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_whose_header_kid_disagrees_with_its_claims_is_rejected",
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_malformed_compact_assertion_is_refused_as_malformed",

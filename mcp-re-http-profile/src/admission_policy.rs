@@ -81,3 +81,17 @@ pub(crate) fn degraded_age_exceeded(policy: &AdmissionPolicy, now: i64, iat: i64
     (now as i128) - (iat as i128)
         > (policy.degraded_propagation_bound as i128) + (policy.max_clock_skew as i128)
 }
+
+/// Whether an assertion issued at `iat` is older at `now` than the staleness budget N plus the
+/// skew tolerance — the verifier's own cap in `verify_admission_assertion`, compared exactly.
+///
+/// Widened to `i128` for the same reason as [`degraded_age_exceeded`]: under saturation an
+/// age clamped at `i64::MAX` equals a budget sum clamped there, and the over-age assertion
+/// passes. `pub(crate)` for the same consumer, `crate::admission`.
+// Four widened `i64` operands: the difference and the sum both lie within [-2^64, 2^64],
+// far inside `i128`.
+#[allow(clippy::arithmetic_side_effects)]
+pub(crate) fn assertion_age_exceeded(policy: &AdmissionPolicy, now: i64, iat: i64) -> bool {
+    (now as i128) - (iat as i128)
+        > (policy.max_assertion_age as i128) + (policy.max_clock_skew as i128)
+}

@@ -6394,9 +6394,7 @@ theorem = "THM-0053"
 conjunct = "an assertion outside the verifier's own independent staleness budget, or dated ahead of the verifier, is refused"
 path = "mcp-re-http-profile/src/admission/mod.rs"
 anchor = """
-    if now.saturating_sub(claims.iat) > policy.max_assertion_age.saturating_add(skew)
-        || claims.iat > now.saturating_add(skew)
-    {
+    if assertion_age_exceeded(policy, now, claims.iat) || claims.iat > now.saturating_add(skew) {
 """
 weakening = """
     if false {
@@ -13408,4 +13406,23 @@ weakening = """
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::a_degraded_assertion_older_than_the_bound_is_refused_at_the_end_of_the_range",
+]
+
+[[probe]]
+id = "M559-assertion-age-budget-is-exact"
+unit = "http_profile.admission_assertion"
+theorem = "THM-0053"
+conjunct = "an assertion outside the verifier's own independent staleness budget, or dated ahead of the verifier, is refused"
+note = "r12 WB8b, the K-1 shape in the N cap. The exact `i128` comparison is what makes the budget hold for every input the public policy fields admit. The weakening restores the saturating form: the age clamps to `i64::MAX` and compares equal to a budget sum at that clamp, so an assertion one second past the budget is accepted; the end-of-range test must go red."
+path = "mcp-re-http-profile/src/admission_policy.rs"
+anchor = """
+    (now as i128) - (iat as i128)
+        > (policy.max_assertion_age as i128) + (policy.max_clock_skew as i128)
+"""
+weakening = """
+    now.saturating_sub(iat)
+        > policy.max_assertion_age.saturating_add(policy.max_clock_skew)
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#admission::tests::an_assertion_older_than_the_budget_is_refused_at_the_end_of_the_range",
 ]
