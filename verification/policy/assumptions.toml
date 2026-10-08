@@ -3084,7 +3084,7 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0085"
-description = "When MCP-RE decodes input through `ciborium` as a CBOR value, or through `coset` as a COSE_Sign1, and the decode succeeds, the decoded CBOR values correspond to the values the input bytes encode, and the decoded protected headers, unprotected headers, payload and signature are those the input bytes represent, with the protected and unprotected headers kept distinct. The `Sig_structure` that `coset` builds from such a decoded COSE_Sign1 for a signature check is the RFC 9052 section 4.4 encoding over the protected-header bytes exactly as received, the external AAD supplied and the payload."
+description = "When MCP-RE decodes input through `ciborium` as a CBOR value, or through `coset` as a COSE_Sign1, and the decode succeeds, the decoded CBOR values correspond to the values the input bytes encode, and the decoded protected headers, unprotected headers, payload and signature are those the input bytes represent, with the protected and unprotected headers kept distinct. The `Sig_structure` that `coset` builds from such a decoded COSE_Sign1 for a signature check is the RFC 9052 section 4.4 encoding over the protected-header bytes exactly as received, and the external AAD and payload passed to it."
 justification = """
 THM-0041 reads a Signed Statement and a Receipt off the wire through `coset::CoseSign1` and
 `ciborium`, and then reasons about what is in them: the algorithm and the claims it reads come

@@ -452,6 +452,6 @@ paths = [
   "mcp-re-http-profile/src/scitt/receipt/parse.rs",
   "mcp-re-http-profile/src/scitt/statement/parse.rs",
 ]
-beyond = "Whether a successful decode returns the values, headers, payload and signature the input bytes encode, with the protected and unprotected headers kept distinct, and whether the `Sig_structure` handed to a signature check is the RFC 9052 section 4.4 encoding over the bytes as received."
+beyond = "Whether a successful decode returns the values, headers, payload and signature the input bytes encode, with the protected and unprotected headers kept distinct, and whether the `Sig_structure` handed to a signature check is the RFC 9052 section 4.4 encoding over the protected-header bytes exactly as received, the external AAD passed to the library and the payload passed to the library."
 max_class_without_assumption = "V0"
 

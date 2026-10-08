@@ -35,7 +35,7 @@ pub type ActorResolver = Box<dyn Fn(&str, SignerSlot) -> ResolverOutcome + Send 
 /// so it has no outage to report. The same resolver verifies both the admission assertion
 /// and the authoritative admission record.
 ///
-/// The authority is fixed for the lifetime of the process: [`fixed_authority_resolver`]
+/// The authority is fixed for the lifetime of the process: `admission_enforcer::fixed_authority_resolver`
 /// captures one kid and one key, and nothing re-reads them. Changing, rotating or revoking
 /// the configured authority governs a running replica's admission decisions only after that
 /// replica is restarted or redeployed with the new `--admission-authority-kid` and
