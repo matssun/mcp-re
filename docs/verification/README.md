@@ -14,7 +14,7 @@ The immediate purpose of these documents is not to prescribe a complete refactor
 ## Document hierarchy
 
 1. **01-verification-architecture-thesis.md**  
-   The overall problem, goals, principles, and the distinction between theorem correctness and verification completeness; admissibility-checked satisfaction, generator coverage as a condition of closure, and property classes.
+   The overall problem, goals, principles, and the distinction between theorem correctness and verification completeness; admissibility-checked discharge, generator coverage as a condition of closure, and property classes.
 
 2. **02-semantic-machine-model.md**  
    The core semantic form
