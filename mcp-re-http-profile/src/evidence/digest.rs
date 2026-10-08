@@ -66,13 +66,15 @@ impl RequestEvidenceDigest {
     /// Constant-shape check that this handle commits to `bytes` IN `role`. A handle that
     /// commits to the same bytes in a different role does not match.
     // ADR-MCPRE-059 ASM-0023: trusted at exactly the strength the role-separation contract
-    // needs — a true answer means this handle's value IS the labeled digest of these bytes
-    // under that role's label. The digest itself stays uninterpreted.
+    // needs — a true answer means this handle names the profile's digest algorithm and its
+    // value IS the labeled digest of these bytes under that role's label. The digest itself
+    // stays uninterpreted.
     #[cfg_attr(feature = "verify", verus_verify(external_body))]
     #[cfg_attr(feature = "verify", verus_spec(result =>
         ensures
-            result ==> self.digest_value@ == crate::verus_std_specs::labeled_digest(
-                crate::evidence::prover_model::role_label(role), bytes@),
+            result ==> self.digest_alg@ == crate::ids::EVIDENCE_DIGEST_ALG@
+                && self.digest_value@ == crate::verus_std_specs::labeled_digest(
+                    crate::evidence::prover_model::role_label(role), bytes@),
     ))]
     pub fn matches_labeled(&self, role: EvidenceRole, bytes: &[u8]) -> bool {
         self.digest_alg == EVIDENCE_DIGEST_ALG

@@ -347,9 +347,13 @@ impl HttpContinuation {
     #[cfg_attr(feature = "verify", verus_spec(out =>
         ensures
             out matches Ok(()) ==> {
+                &&& self.previous_request_evidence.digest_alg@ == previous_request.digest_alg@
                 &&& self.previous_request_evidence.digest_value@ == previous_request.digest_value@
+                &&& self.input_required_response_evidence.digest_alg@
+                        == input_required_response.digest_alg@
                 &&& self.input_required_response_evidence.digest_value@
                         == input_required_response.digest_value@
+                &&& self.request_state_digest.digest_alg@ == crate::ids::EVIDENCE_DIGEST_ALG@
                 &&& self.request_state_digest.digest_value@
                         == crate::verus_std_specs::labeled_digest(
                             crate::ids::EVIDENCE_LABEL_REQUEST_STATE@, request_state@)

@@ -111,10 +111,11 @@ pub fn verify_authorization_decision(
         return Err(PdpDecisionRefusal::AudienceMismatch);
     }
 
-    // SATURATING throughout, matching the primary freshness gate. These operands come
-    // straight out of a JWS payload, so `now - claims.iat` with an extreme `iat` wraps in a
-    // release build — silently passing the staleness cap the expression exists to enforce —
-    // and panics on the serving path in any build with overflow checks.
+    // These operands come straight out of a JWS payload, so `now - claims.iat` with an
+    // extreme `iat` wraps in a release build — silently passing the staleness cap the
+    // expression exists to enforce — and panics on the serving path in any build with
+    // overflow checks. The window-edge comparisons saturate; the age against the cap is
+    // compared exactly, because a saturating age clamps at the cap.
     let skew = freshness.max_clock_skew;
     if claims.nbf.saturating_sub(skew) > now
         || claims.exp.saturating_add(skew) <= now
@@ -129,10 +130,23 @@ pub fn verify_authorization_decision(
     if claims.iat.saturating_sub(skew) > now {
         return Err(PdpDecisionRefusal::IssuedInTheFuture);
     }
-    if now.saturating_sub(claims.iat) > freshness.max_decision_age.saturating_add(skew) {
+    if decision_age_exceeded(freshness, now, claims.iat) {
         return Err(PdpDecisionRefusal::Stale);
     }
     Ok(claims)
+}
+
+/// Whether a decision issued at `iat` is older at `now` than the verifier's cap plus the skew
+/// tolerance, compared exactly.
+///
+/// Widened to `i128` so neither side clamps: a saturating age stops at `i64::MAX`, and against
+/// a cap sum clamped there a decision older than the cap would pass.
+// Four widened `i64` operands: the difference and the sum both lie within [-2^64, 2^64],
+// far inside `i128`.
+#[allow(clippy::arithmetic_side_effects)]
+fn decision_age_exceeded(freshness: &PdpDecisionFreshness, now: i64, iat: i64) -> bool {
+    (now as i128) - (iat as i128)
+        > (freshness.max_decision_age as i128) + (freshness.max_clock_skew as i128)
 }
 
 fn split_compact(jws: &str) -> Result<(&str, &str, &str), PdpDecisionRefusal> {
@@ -336,6 +350,33 @@ mod tests {
         c.exp = NOW + 300;
         assert_eq!(
             verify(&issue_with(&authority(), &c)),
+            Err(PdpDecisionRefusal::Stale)
+        );
+    }
+
+    #[test]
+    fn a_decision_older_than_the_cap_is_refused_at_the_end_of_the_range() {
+        // `--max-decision-age` takes any positive `i64`. With the cap within the skew of
+        // `i64::MAX` and an `iat` near `i64::MIN`, the age and the cap sum both clamp to
+        // `i64::MAX` under saturation and compare equal: the exact age is `NOW - i64::MIN`,
+        // which is past the cap sum `i64::MAX - 5 + 30`.
+        let mut c = claims();
+        c.iat = i64::MIN;
+        c.nbf = NOW - 10;
+        c.exp = NOW + 300;
+        let wide = PdpDecisionFreshness {
+            max_clock_skew: 30,
+            max_decision_age: i64::MAX - 5,
+        };
+        assert_eq!(
+            verify_authorization_decision(
+                &issue_with(&authority(), &c),
+                PROFILE,
+                &[AUD],
+                &wide,
+                NOW,
+                resolver()
+            ),
             Err(PdpDecisionRefusal::Stale)
         );
     }

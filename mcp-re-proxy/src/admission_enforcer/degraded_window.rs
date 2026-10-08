@@ -127,7 +127,11 @@ impl DegradedWindow {
             // instant for the comparison below to mistake for a window, hence the `let-else`.
             return true;
         };
-        now.saturating_duration_since(last) > window_of(policy)
+        let Some(window) = window_of(policy) else {
+            // A bound that is not positive is no window at all, at every elapsed time.
+            return true;
+        };
+        now.saturating_duration_since(last) > window
     }
 }
 
@@ -146,10 +150,14 @@ impl DegradedWindow {
 /// assertion-freshness and record-currentness comparisons inside `check_admission`.
 ///
 /// The policy carries seconds as `i64` because that is the wire vocabulary. A non-positive
-/// bound is no window at all rather than an enormous one, so a nonsense configuration
-/// cannot widen anything and no arithmetic wraps.
-fn window_of(policy: &AdmissionPolicy) -> Duration {
-    Duration::from_secs(u64::try_from(policy.degraded_propagation_bound).unwrap_or(0))
+/// bound is `None`, no window at all rather than an enormous or a zero-length one, so a
+/// nonsense configuration cannot widen anything, no arithmetic wraps, and no elapsed time —
+/// zero included — is inside it.
+fn window_of(policy: &AdmissionPolicy) -> Option<Duration> {
+    u64::try_from(policy.degraded_propagation_bound)
+        .ok()
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
 }
 
 #[cfg(test)]
@@ -180,6 +188,20 @@ mod tests {
     #[test]
     fn a_replica_that_never_reached_the_authority_has_no_window() {
         assert!(DegradedWindow::unearned().exhausted_at(&policy(60, 5, true), base()));
+    }
+
+    /// A bound that is not positive is no window: not even at the instant of the last read.
+    #[test]
+    fn a_non_positive_bound_is_no_window_even_at_zero_elapsed_time() {
+        let t0 = base();
+        let window = DegradedWindow::unearned();
+        window.record_read(t0);
+        for bound in [0, -1, i64::MIN] {
+            assert!(
+                window.exhausted_at(&policy(bound, 5, true), t0),
+                "a bound of {bound} must leave no window open at zero elapsed time"
+            );
+        }
     }
 
     /// An unbounded window does not entitle a replica that never earned one.
@@ -289,14 +311,14 @@ mod tests {
         assert!(window.exhausted_at(&policy(3_600, 30, false), after(t0, 1)));
     }
 
-    /// A configuration the wire vocabulary admits and a `Duration` does not: the window is
-    /// zero rather than enormous, so a nonsense bound cannot widen anything.
+    /// A configuration the wire vocabulary admits and a `Duration` does not: there is no
+    /// window rather than an enormous one, so a nonsense bound cannot widen anything.
     #[test]
     fn a_negative_bound_is_no_window_rather_than_a_long_one() {
         let t0 = base();
         let window = DegradedWindow::unearned();
         window.record_read(t0);
-        assert_eq!(window_of(&policy(-1, 0, true)), Duration::ZERO);
+        assert_eq!(window_of(&policy(-1, 0, true)), None);
         assert!(window.exhausted_at(&policy(-1, 0, true), after(t0, 1)));
     }
 
@@ -305,10 +327,11 @@ mod tests {
     #[test]
     fn the_window_is_judged_at_the_instant_of_the_call() {
         let window = DegradedWindow::unearned();
-        let read = Instant::now();
+        let read = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .expect("the monotonic clock has run for two seconds");
         window.record_read(read);
-        std::thread::sleep(Duration::from_millis(5));
-        assert!(window.exhausted(&policy(0, 0, true)));
-        assert!(!window.exhausted_at(&policy(0, 0, true), read));
+        assert!(window.exhausted(&policy(1, 0, true)));
+        assert!(!window.exhausted_at(&policy(1, 0, true), read));
     }
 }

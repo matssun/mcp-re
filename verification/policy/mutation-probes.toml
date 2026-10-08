@@ -2167,7 +2167,7 @@ conjunct = "the decision is no older than this deployment's own decision-age cap
 # day-long decisions silently sets every PEP's staleness tolerance.
 path = "mcp-re-http-profile/src/pdp_decision/verify.rs"
 anchor = """
-    if now.saturating_sub(claims.iat) > freshness.max_decision_age.saturating_add(skew) {
+    if decision_age_exceeded(freshness, now, claims.iat) {
         return Err(PdpDecisionRefusal::Stale);
     }
 """
@@ -13481,4 +13481,60 @@ weakening = """    let _ = refuse_repeated_key;
 """
 expect_red = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::receipt::parse::tests::a_vdp_map_with_a_repeated_key_is_refused",
+]
+
+[[probe]]
+id = "M563-pdp-decision-age-cap-is-exact"
+unit = "http_profile.pdp_decision_authentication"
+theorem = "THM-0039"
+conjunct = "a decision older than the verifier's own cap plus the skew tolerance is refused as stale"
+note = "r12 step 7 re-review. The exact `i128` comparison is what makes the cap hold for every input the public freshness fields admit. The weakening restores the saturating form: the age clamps to `i64::MAX` and compares equal to a cap sum clamped there, so a decision past the cap is accepted; the end-of-range test must go red."
+path = "mcp-re-http-profile/src/pdp_decision/verify.rs"
+anchor = """
+    (now as i128) - (iat as i128)
+        > (freshness.max_decision_age as i128) + (freshness.max_clock_skew as i128)
+"""
+weakening = """
+    now.saturating_sub(iat)
+        > freshness.max_decision_age.saturating_add(freshness.max_clock_skew)
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#pdp_decision::verify::tests::a_decision_older_than_the_cap_is_refused_at_the_end_of_the_range",
+]
+
+[[probe]]
+id = "M564-admission-record-window-budget-is-exact"
+unit = "http_profile.admission_state_provenance"
+theorem = "THM-0129"
+conjunct = "an accepted record's window began no earlier than the budget before it ends, so no record is read later than `iat + budget + skew`"
+note = "r12 step 7 re-review. The exact `i128` width is what makes the ceiling hold for every budget the command line admits. The weakening restores the saturating width: it clamps to `i64::MAX` and compares equal to a budget at that value, so a window wider than the budget is accepted; the end-of-range test must go red."
+path = "mcp-re-http-profile/src/authoritative_admission/record/currentness.rs"
+anchor = """
+    (claims.exp as i128) - (claims.iat as i128) > (currentness.max_record_age as i128)
+"""
+weakening = """
+    claims.exp.saturating_sub(claims.iat) > currentness.max_record_age
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#authoritative_admission::record::currentness::tests::a_window_wider_than_the_budget_is_refused_at_the_end_of_the_range",
+]
+
+[[probe]]
+id = "M565-degraded-window-non-positive-bound-is-no-window"
+unit = "proxy.admission_currency_gate"
+theorem = "THM-0132"
+conjunct = "a non-positive bound is no window rather than a long one, at every elapsed time including zero"
+note = "r12 step 7 re-review. A non-positive bound has no window: `window_of` is `None`, and `exhausted_at` treats `None` as exhausted before comparing any elapsed time. The weakening treats `None` as a zero-length window, so at zero elapsed time the replica is still inside it; the zero-elapsed test must go red."
+path = "mcp-re-proxy/src/admission_enforcer/degraded_window.rs"
+anchor = """
+        let Some(window) = window_of(policy) else {
+            // A bound that is not positive is no window at all, at every elapsed time.
+            return true;
+        };
+"""
+weakening = """
+        let window = window_of(policy).unwrap_or(Duration::ZERO);
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#admission_enforcer::degraded_window::tests::a_non_positive_bound_is_no_window_even_at_zero_elapsed_time",
 ]
