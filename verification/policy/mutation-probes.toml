@@ -4133,17 +4133,20 @@ conjunct = "the degraded window is exactly P, and the wall-clock skew allowance 
 # extra time is one this replica keeps serving against.
 path = "mcp-re-proxy/src/admission_enforcer/degraded_window.rs"
 anchor = """
-    Duration::from_secs(u64::try_from(policy.degraded_propagation_bound).unwrap_or(0))
+    u64::try_from(policy.degraded_propagation_bound)
+        .ok()
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
 """
 weakening = """
-    Duration::from_secs(
-        u64::try_from(
-            policy
-                .degraded_propagation_bound
-                .saturating_add(policy.max_clock_skew),
-        )
-        .unwrap_or(0),
+    u64::try_from(
+        policy
+            .degraded_propagation_bound
+            .saturating_add(policy.max_clock_skew),
     )
+    .ok()
+    .filter(|secs| *secs > 0)
+    .map(Duration::from_secs)
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::degraded_window::tests::the_skew_allowance_does_not_widen_the_outage_window",
