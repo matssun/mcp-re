@@ -13541,3 +13541,23 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::degraded_window::tests::a_non_positive_bound_is_no_window_even_at_zero_elapsed_time",
 ]
+
+[[probe]]
+id = "M566-the-audit-scalar-refuses-every-format-control"
+unit = "proxy.audit_text_rendering"
+theorem = "THM-0130"
+conjunct = "the escape's image contains no bidi or format control: every Unicode Cf codepoint is a render hazard"
+note = "r12 step 7 re-review. `is_render_hazard` refuses a codepoint that appears in `FORMAT_CONTROLS`, the Unicode Cf range table. The weakening drops the table arm, which leaves exactly the controls and whitespace; a Cf codepoint the earlier hand-picked set missed (U+0600, U+070F, U+110BD) is then emitted verbatim and the format-control tests must go red."
+path = "mcp-re-proxy/src/audit_record/scalar.rs"
+anchor = """
+        || FORMAT_CONTROLS
+            .iter()
+            .any(|&(first, last)| (first..=last).contains(&(c as u32)))
+"""
+weakening = """
+        || false
+"""
+expect_red = [
+  "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::every_format_control_is_a_hazard_and_ordinary_text_is_not",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::the_format_control_table_is_exact_at_every_range_edge",
+]

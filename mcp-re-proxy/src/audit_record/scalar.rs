@@ -80,8 +80,10 @@ pub(crate) fn escape_scalar(value: &str) -> String {
 ///   U+3000, …) SEPARATES tokens for a reader that splits on Unicode whitespace — Python's
 ///   `str.split()`, Go's `strings.Fields`, or any pipeline that normalises spaces — so a value
 ///   carrying one would read there as two fields, and the second could shadow a real one.
-/// - **Invisible and bidi format controls** do not end or split anything; they make a line
-///   DISPLAY as something other than what it says.
+/// - **Every format control** (General_Category `Cf`: [`FORMAT_CONTROLS`]) does not end or
+///   split anything; it makes a line DISPLAY as something other than what it says. The bidi
+///   embeddings, overrides and isolates, the zero-width characters, the byte order mark, the
+///   tag characters and the script-specific format characters are all `Cf`.
 ///
 /// One statement of the set, shared with
 /// [`crate::communication_assurance::peer_identity_value`]: a peer identity is refused for
@@ -90,21 +92,37 @@ pub(crate) fn escape_scalar(value: &str) -> String {
 pub(crate) fn is_render_hazard(c: char) -> bool {
     c.is_control()
         || (c.is_whitespace() && c != ' ')
-        || matches!(
-            c as u32,
-            0x00AD
-                | 0x061C
-                | 0x180E
-                | 0x200B..=0x200F
-                | 0x202A..=0x202E
-                | 0x2060..=0x2064
-                | 0x2066..=0x206F
-                | 0xFEFF
-                | 0xFFF9..=0xFFFB
-                | 0xE0001
-                | 0xE0020..=0xE007F
-        )
+        || FORMAT_CONTROLS
+            .iter()
+            .any(|&(first, last)| (first..=last).contains(&(c as u32)))
 }
+
+/// Unicode 16.0.0 General_Category `Cf` as inclusive `(first, last)` codepoint ranges.
+/// `scripts/format_control_table_gate.py` regenerates the table from `unicodedata` and fails
+/// when this one differs.
+const FORMAT_CONTROLS: &[(u32, u32)] = &[
+    (0x00AD, 0x00AD),
+    (0x0600, 0x0605),
+    (0x061C, 0x061C),
+    (0x06DD, 0x06DD),
+    (0x070F, 0x070F),
+    (0x0890, 0x0891),
+    (0x08E2, 0x08E2),
+    (0x180E, 0x180E),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x2064),
+    (0x2066, 0x206F),
+    (0xFEFF, 0xFEFF),
+    (0xFFF9, 0xFFFB),
+    (0x110BD, 0x110BD),
+    (0x110CD, 0x110CD),
+    (0x13430, 0x1343F),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0001, 0xE0001),
+    (0xE0020, 0xE007F),
+];
 
 /// The left inverse of [`escape_scalar`].
 ///
@@ -427,6 +445,62 @@ mod tests {
                 !s.is_empty() && escape_scalar(s) == *s,
                 "the predicate and the escape disagree about {s:?}"
             );
+        }
+    }
+
+    /// The format controls the earlier hand-picked set missed — Arabic number signs, the
+    /// Syriac abbreviation mark, Egyptian hieroglyph format controls, shorthand format
+    /// controls and musical symbol format controls — are refused and spelled out, and
+    /// ordinary non-format text is left verbatim.
+    #[test]
+    fn every_format_control_is_a_hazard_and_ordinary_text_is_not() {
+        for code in [
+            0x0600u32, 0x0605, 0x06DD, 0x070F, 0x0890, 0x0891, 0x08E2, 0x110BD, 0x110CD, 0x13430,
+            0x1343F, 0x1BCA0, 0x1BCA3, 0x1D173, 0x1D17A, 0x200B,
+        ] {
+            let c = char::from_u32(code).expect("scalar value");
+            assert!(is_render_hazard(c), "U+{code:04X} is a format control");
+            assert_eq!(
+                escape_scalar(&format!("a{c}b")),
+                format!("a\\u{{{code:x}}}b")
+            );
+        }
+        for c in [
+            '\u{00E9}',
+            '\u{4E2D}',
+            '\u{1F600}',
+            '\u{0301}',
+            '\u{2010}',
+            '\u{2070}',
+        ] {
+            assert!(!is_render_hazard(c), "{c:?} must be left verbatim");
+            assert_eq!(escape_scalar(&c.to_string()), c.to_string());
+        }
+    }
+
+    /// Both ends of every range in the table are hazards, and the codepoint just outside
+    /// each end is a hazard only for a reason other than the table.
+    #[test]
+    fn the_format_control_table_is_exact_at_every_range_edge() {
+        let otherwise = |c: char| c.is_control() || (c.is_whitespace() && c != ' ');
+        for &(first, last) in FORMAT_CONTROLS {
+            for edge in [first, last] {
+                let c = char::from_u32(edge).expect("scalar value");
+                assert!(is_render_hazard(c), "U+{edge:04X} ends a format range");
+            }
+            for outside in [first.checked_sub(1), last.checked_add(1)]
+                .into_iter()
+                .flatten()
+            {
+                if let Some(c) = char::from_u32(outside) {
+                    if !FORMAT_CONTROLS
+                        .iter()
+                        .any(|&(a, b)| (a..=b).contains(&outside))
+                    {
+                        assert_eq!(is_render_hazard(c), otherwise(c), "U+{outside:04X}");
+                    }
+                }
+            }
         }
     }
 }

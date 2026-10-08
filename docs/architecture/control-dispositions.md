@@ -4976,3 +4976,15 @@ this one covers request signers too. No theorem depends on it.
 **Root relationship.** Finding `d55a7fee921db397`. ND-014 continues to cover the seven measurement controls in `stage_timers::tests`; these three are not measurement controls, because they decide what the shipped process writes.
 **Severity:** `medium`.
 **Recorded:** 2026-10-08, r12 WB5b.
+
+## NP-279 — the audit scalar's format-control table equals Unicode General_Category Cf
+
+**Controls:** `gate#scripts/format_control_table_gate.py` (with `--selftest`, which proves a deleted range, a narrowed range, an extra range and a missing version are each detected).
+**Carrier:** `mcp-re-proxy/src/audit_record/scalar.rs` — `FORMAT_CONTROLS`, the range table `is_render_hazard` consults.
+**Statement.** *`FORMAT_CONTROLS` lists exactly the codepoints whose Unicode General_Category is `Cf`, for the Unicode version the table declares, and the gate refuses to pass under an interpreter that ships another version.*
+**If false.** A format control the table dropped is emitted verbatim in an audit record and accepted in a peer identity: a line that displays as something other than what it says. The unit's tests name representative codepoints and every range edge of the table AS WRITTEN, so a range removed from the table is invisible to them.
+**Likely owner:** `proxy.audit_text_rendering`.
+**Root relationship.** THM-0130 ("no bidi or format control"); finding `587973d0f12becb0`.
+**Severity:** `medium`.
+**Recorded:** 2026-10-08, r12 step 7.
+

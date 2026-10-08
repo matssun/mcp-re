@@ -15084,3 +15084,21 @@ control = "src/lib.rs#stage_timers::report_file::tests::a_created_file_is_rewrit
 decision = "new-proposition"
 proposition = "NP-278"
 recorded = "2026-10-08"
+
+[[proposition]]
+id = "NP-279"
+title = "The audit scalar's format-control table equals Unicode General_Category Cf"
+carrier = "mcp-re-proxy/src/audit_record/scalar.rs"
+likely_owner = "proxy.audit_text_rendering"
+consequence = "medium"
+root_relationship = "the table is what THM-0130's 'no bidi or format control' is made of; the unit's tests name representative codepoints and the range edges, and only this comparison notices a range the table dropped"
+record = "docs/architecture/control-dispositions.md#np-279"
+
+[[disposition]]
+id = "CD-20416"
+project = ""
+control = "gate#scripts/format_control_table_gate.py"
+decision = "new-proposition"
+proposition = "NP-279"
+recorded = "2026-10-08"
+

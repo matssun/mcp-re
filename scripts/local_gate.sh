@@ -146,6 +146,8 @@ stage_static() {
     && python3 scripts/test_target_gate.py \
     && python3 scripts/test_inventory_gate.py --selftest \
     && python3 scripts/test_inventory_gate.py \
+    && python3 scripts/format_control_table_gate.py --selftest \
+    && python3 scripts/format_control_table_gate.py \
     && python3 scripts/no_cargo_execution_gate.py --selftest \
     && python3 scripts/no_cargo_execution_gate.py \
     && python3 scripts/crate_spec_parity_gate.py --selftest \

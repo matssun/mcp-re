@@ -7317,6 +7317,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#audit_record::text::tests::a_rendered_record_parses_back_to_the_fields_that_were_written",
   "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::is_separator_free_is_exactly_the_escapes_fixed_point",
   "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::unicode_whitespace_and_format_controls_are_escaped",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::every_format_control_is_a_hazard_and_ordinary_text_is_not",
+  "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::the_format_control_table_is_exact_at_every_range_edge",
   "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::a_value_cannot_forge_a_field_for_a_unicode_whitespace_reader",
   "//mcp-re-proxy:proxy_unit_test#audit_record::text::tests::a_token_carrying_a_newline_still_renders_one_physical_record",
   "//mcp-re-proxy:proxy_unit_test#audit_record::text::tests::a_field_name_carrying_a_separator_cannot_add_a_field",

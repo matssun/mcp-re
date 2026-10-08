@@ -160,6 +160,9 @@ mod tests {
             "spiffe://example.org/a\u{00A0}b",
             "spiffe://example.org/a\u{2028}b",
             "spiffe://example.org/a\u{E0041}b",
+            // A format control outside the bidi and zero-width families: Unicode Cf as a whole.
+            "spiffe://example.org/a\u{0600}b",
+            "spiffe://example.org/a\u{110BD}b",
         ] {
             assert_eq!(
                 PeerIdentityValue::interpret(candidate),
