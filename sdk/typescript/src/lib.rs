@@ -30,7 +30,9 @@ use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::ProvidedAuthorization;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
+mod projection;
 mod trust;
+use projection::project_verdict;
 use trust::root_resolver;
 use trust::PinnedIssuer;
 
@@ -685,43 +687,44 @@ pub fn verify_response(
     let request_state = verified
         .continuation_state()
         .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
-    // A verified rejection receipt is genuine evidence but NOT an acceptance — surface
-    // the outcome so the caller does not read a signed replay/trust rejection as a
-    // success. (An unsigned / direct-root / forged answer never reaches here: it fails
-    // verify_delegated_response above and is raised as an error.)
+    // A verified rejection receipt is genuine evidence but NOT an acceptance — the
+    // projection surfaces the outcome so the caller does not read a signed replay/trust
+    // rejection as a success. (An unsigned / direct-root / forged answer never reaches
+    // here: it fails verify_delegated_response above and is raised as an error.)
     let ev = verified.verified();
-    let (outcome, wire_code, bound, execution) = match verified.outcome() {
-        mcp_re_client_core::DelegatedOutcome::Success => (
-            "success".to_owned(),
-            None,
-            true,
-            mcp_re_client_core::ExecutionContract::default(),
-        ),
-        mcp_re_client_core::DelegatedOutcome::Rejection {
-            wire_code,
-            execution,
-        } => (
-            "rejection".to_owned(),
-            wire_code.clone(),
-            ev.is_bound(),
-            execution.clone(),
-        ),
-    };
     // The response evidence handle (D_irr): the answer leg binds to it. Read from the
     // VERIFIED response evidence, never from unverified bytes.
-    let resp_digest = ev.response_signature_base_digest().clone();
-    Ok(VerifyResultJs {
-        ok: true,
-        server_keyid: ev.accepted_signer().identity.keyid.clone(),
-        outcome,
-        wire_code,
-        bound,
-        execution_status: execution.execution_status,
-        retry_safety: execution.retry_safety,
-        continuation_status: execution.continuation_status,
-        retention_status: execution.retention_status,
-        resp_evidence_digest_alg: resp_digest.digest_alg().to_owned(),
-        resp_evidence_digest_value: resp_digest.digest_value().to_owned(),
+    let resp_digest = ev.response_signature_base_digest();
+    Ok(project_verdict(
+        &ev.accepted_signer().identity.keyid,
+        verified.outcome(),
+        ev.is_bound(),
+        resp_digest.digest_alg(),
+        resp_digest.digest_value(),
         request_state,
-    })
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::whole_seconds;
+
+    #[test]
+    fn a_time_that_is_not_whole_seconds_is_refused() {
+        for bad in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            0.5,
+            9_007_199_254_740_992.0,
+            -9_007_199_254_740_992.0,
+        ] {
+            assert!(whole_seconds(bad, "now").is_err(), "{bad} must be refused");
+        }
+        assert_eq!(
+            whole_seconds(9_007_199_254_740_991.0, "now").ok(),
+            Some(9_007_199_254_740_991)
+        );
+        assert_eq!(whole_seconds(-3.0, "now").ok(), Some(-3));
+    }
 }

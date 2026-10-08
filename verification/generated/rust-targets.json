@@ -9074,6 +9074,26 @@
    "testonly": false,
    "verus_deps": []
   },
+  "//sdk/typescript:native_binding_test": {
+   "crate": "",
+   "crate_name": "mcp_re_sdk_core",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core"
+   ],
+   "features": [],
+   "kind": "rust_test",
+   "manual": false,
+   "package": "sdk/typescript",
+   "root": "sdk/typescript/src/lib.rs",
+   "srcs": [
+    "sdk/typescript/src/lib.rs",
+    "sdk/typescript/src/projection.rs",
+    "sdk/typescript/src/trust.rs"
+   ],
+   "testonly": true,
+   "verus_deps": []
+  },
   "//sdk/typescript:native_shared": {
    "crate": "",
    "crate_name": "mcp_re_sdk_core",
@@ -9088,6 +9108,7 @@
    "root": "sdk/typescript/src/lib.rs",
    "srcs": [
     "sdk/typescript/src/lib.rs",
+    "sdk/typescript/src/projection.rs",
     "sdk/typescript/src/trust.rs"
    ],
    "testonly": false,

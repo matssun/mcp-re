@@ -4874,6 +4874,7 @@ supported_by = [
   "unit://sdk_typescript.notification_delivery",
   "unit://sdk_typescript.trust_anchor_completeness",
   "unit://sdk_typescript.post_close_emission",
+  "unit://sdk_typescript.native_binding",
 ]
 depends_on = []
 

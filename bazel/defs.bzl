@@ -216,7 +216,8 @@ def nt_rust_test(
             test_data.append(label)
 
     test_compile_data = list(compile_data)
-    test_rustc_flags = list(rustc_flags)
+    # A `select()` of flags is passed through whole: it cannot be copied into a list.
+    test_rustc_flags = rustc_flags if type(rustc_flags) == "select" else list(rustc_flags)
 
     skip_args = (
         ["--skip=" + t for t in skip_tests] +

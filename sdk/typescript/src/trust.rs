@@ -71,3 +71,67 @@ pub(crate) fn root_resolver(
     };
     Ok(move |kid: &str, slot: SignerSlot, now: i64| anchor.resolve_issuer(kid, slot, now))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::root_resolver;
+    use super::PinnedIssuer;
+    use mcp_re_client_core::ResolverOutcome;
+    use mcp_re_client_core::SignerSlot;
+    use mcp_re_core::SigningKey;
+
+    const NOW: i64 = 1_000;
+
+    type Setter = fn(&mut PinnedIssuer, String);
+
+    fn issuer(retired_until: Option<f64>) -> PinnedIssuer {
+        let key = SigningKey::from_seed_bytes(&[7u8; 32]);
+        PinnedIssuer {
+            key_id: "root-1".to_owned(),
+            pubkey_b64url: key.public_key().to_b64url(),
+            role: "server".to_owned(),
+            trust_domain: "example.com".to_owned(),
+            subject: "did:example:server-1".to_owned(),
+            retired_until,
+        }
+    }
+
+    fn resolves(resolve: &impl Fn(&str, SignerSlot, i64) -> ResolverOutcome, now: i64) -> bool {
+        matches!(
+            resolve("root-1", SignerSlot::Response, now),
+            ResolverOutcome::Resolved(_)
+        )
+    }
+
+    #[test]
+    fn an_empty_issuer_field_is_refused_by_name() {
+        let named: [(&str, Setter); 4] = [
+            ("issuerKeyId", |i, v| i.key_id = v),
+            ("issuerRole", |i, v| i.role = v),
+            ("issuerTrustDomain", |i, v| i.trust_domain = v),
+            ("issuerSubject", |i, v| i.subject = v),
+        ];
+        for (name, set) in named {
+            for blank in ["", "  "] {
+                let mut pinned = issuer(None);
+                set(&mut pinned, blank.to_owned());
+                let Err(refusal) = root_resolver(pinned) else {
+                    panic!("{name} = {blank:?} must be refused");
+                };
+                assert_eq!(
+                    refusal.reason,
+                    format!("invalid issuer identity: {name} is empty")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_retired_root_resolves_through_its_deadline_and_not_after() {
+        let retired = root_resolver(issuer(Some(NOW as f64))).expect("a retired root builds");
+        assert!(resolves(&retired, NOW));
+        assert!(!resolves(&retired, NOW + 1));
+        let current = root_resolver(issuer(None)).expect("a current root builds");
+        assert!(resolves(&current, NOW + 1_000_000));
+    }
+}

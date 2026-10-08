@@ -1,4 +1,12 @@
+load("//bazel:defs.bzl", "nt_rust_test")
 load("//bazel/napi:defs.bzl", "nt_napi_addon")
+
+# A test binary is not loaded by Node, so the N-API symbols the crate references are never
+# called; they are left unresolved at link time, as the addon leaves them for its host.
+NAPI_TEST_LINK_FLAGS = select({
+    "@platforms//os:macos": ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"],
+    "@platforms//os:linux": ["-C", "link-arg=-Wl,--unresolved-symbols=ignore-all"],
+})
 
 package(default_visibility = ["//visibility:public"])
 
@@ -21,6 +29,26 @@ nt_napi_addon(
     srcs = glob(["src/**/*.rs"]),
     crate_root = "src/lib.rs",
     proc_macro_deps = ["@crates_mcp_re//:napi-derive"],
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:napi",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# The binding's own unit tests: trust-anchor construction, whole-second time input and the
+# verdict projection. The test binary links the crate with napi's symbols left to the host
+# process, the way the addon is loaded; no test calls into N-API.
+nt_rust_test(
+    name = "native_binding_test",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "mcp_re_sdk_core",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = ["@crates_mcp_re//:napi-derive"],
+    rustc_flags = NAPI_TEST_LINK_FLAGS,
     deps = [
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",

@@ -13561,3 +13561,37 @@ expect_red = [
   "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::every_format_control_is_a_hazard_and_ordinary_text_is_not",
   "//mcp-re-proxy:proxy_unit_test#audit_record::scalar::tests::the_format_control_table_is_exact_at_every_range_edge",
 ]
+
+[[probe]]
+id = "M567-the-typescript-binding-refuses-an-empty-issuer-identity"
+unit = "sdk_typescript.native_binding"
+theorem = "THM-0095"
+conjunct = "the native binding refuses an empty issuer identity by name instead of pinning an empty principal"
+note = "r12 step 7 re-review. `root_resolver` refuses an issuer whose key id, role, trust domain or subject is empty or whitespace, because the core compares the pinned principal with the credential's by equality and an empty pin would match an empty claim. The weakening makes the refusal unreachable; the issuer-field test must go red."
+path = "sdk/typescript/src/trust.rs"
+anchor = """
+        if value.trim().is_empty() {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "//sdk/typescript:native_binding_test#trust::tests::an_empty_issuer_field_is_refused_by_name",
+]
+
+[[probe]]
+id = "M568-the-typescript-binding-does-not-read-silence-as-not-executed"
+unit = "sdk_typescript.native_binding"
+theorem = "THM-0095"
+conjunct = "an execution member the receipt did not state is reported as not stated, never as not executed"
+note = "r12 step 7 re-review. The verdict projection copies the execution contract's members verbatim. The weakening fills an absent `execution_status` with `not_executed`, the read that makes a post-dispatch refusal look retry-safe; the projection test that expects an absent member to stay absent must go red."
+path = "sdk/typescript/src/projection.rs"
+anchor = """
+        execution_status: execution.execution_status,
+"""
+weakening = """
+        execution_status: execution.execution_status.or_else(|| Some("not_executed".to_owned())),
+"""
+expect_red = [
+  "//sdk/typescript:native_binding_test#projection::tests::an_absent_execution_member_stays_absent_in_the_projection",
+]

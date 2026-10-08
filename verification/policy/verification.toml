@@ -5699,6 +5699,34 @@ tested_symbols = [
   "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > fails closed when one byte is appended to the recorded body",
 ]
 
+# THE TYPESCRIPT SDK'S NATIVE BINDING IS SHIPPED CODE ON THE PATH FROM A VERIFIED RESULT TO THE
+# APPLICATION, AND THEREFORE OWNED. It is a Rust crate (`//sdk/typescript:native`), so the unit is
+# a Rust-ecosystem unit whose battery is a Bazel `rust_test` over the crate; the TypeScript units
+# beside it (`sdk_typescript.*`) keep their vitest batteries.
+[[unit]]
+id = "sdk_typescript.native_binding"
+class = "V0"
+description = "THE TYPESCRIPT SDK'S NATIVE BINDING PASSES THE TRANSMITTED BYTES AND THE CALLER'S TRUST INPUTS TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT. `verify_response` / `verify_accepted_202` build the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — build the delegation policy and denylist from the caller's values, hand the request the caller TRANSMITTED to the core unchanged, refuse a time or skew that is not a whole in-range number of seconds instead of saturating it, and project the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is rethrown under its wire code. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime or the napi marshalling of arguments, or about what the TypeScript layer does with the projected verdict (the sdk_typescript.* units)."
+paths = [
+  "sdk/typescript/src/lib.rs",
+  "sdk/typescript/src/projection.rs",
+  "sdk/typescript/src/trust.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://sdk_typescript/native_binding/anchor_policy_and_projection",
+  "mutation://sdk_typescript/native_binding/anchor_policy_and_projection",
+]
+tested_symbols = [
+  "//sdk/typescript:native_binding_test#trust::tests::an_empty_issuer_field_is_refused_by_name",
+  "//sdk/typescript:native_binding_test#trust::tests::a_retired_root_resolves_through_its_deadline_and_not_after",
+  "//sdk/typescript:native_binding_test#tests::a_time_that_is_not_whole_seconds_is_refused",
+  "//sdk/typescript:native_binding_test#projection::tests::an_absent_execution_member_stays_absent_in_the_projection",
+  "//sdk/typescript:native_binding_test#projection::tests::a_rejection_is_not_reported_as_a_success",
+]
+
 # THE WHOLE RECORDED-SESSION BATTERY WAS UNREGISTERED. `transport_replay.test.ts` refuses
 # one RECORDED delegated session six ways — untrusted root, stale epoch, wrong audience,
 # revoked key, appended byte, and the rejection receipt — and not one of its fifteen controls
@@ -9979,15 +10007,15 @@ tested_symbols = [
 
 
 # ---------------------------------------------------------------------------
-# The KMS Ed25519 protocol seam — ADR-MCPS-028 §D / ADR-MCPRE-063, registered 2026-09-06
+# The KMS Ed25519 protocol seam — ADR-MCPS-028 §D / ADR-MCPRE-063
 # ---------------------------------------------------------------------------
 #
-# Item 3 of the ranked remainder is the keysources: 3 of 17 files owned in this area, with
-# 108 controls between them. This registers the ONE authority in it that is a sealed owner
-# rather than a provider adapter — the provider-agnostic seam where a network client's bytes
-# become typed operands, and where every produced signature is re-verified before it is
-# emitted. `gcp_kms_keysource.rs` (2 660 lines, 39 controls), `aws_kms_keysource.rs` and
-# `aws_sts.rs` are the adapters BENEATH it and stay unowned; they are their own slice.
+# This unit is the ONE authority in the keysource area that is a sealed owner rather than a
+# provider adapter — the provider-agnostic seam where a network client's bytes become typed
+# operands, and where every produced signature is re-verified before it is emitted.
+# `gcp_kms_keysource.rs`, `aws_kms_keysource.rs` and `aws_sts.rs` are the adapters BENEATH it
+# and belong to the units `proxy.gcp_kms_adapter`, `proxy.aws_kms_adapter` and
+# `proxy.aws_sts_credentials`.
 #
 # THE MODULE STATES ITS OWN OPERATIONAL TEST, which is why this is a theorem and not a
 # registration of three type definitions: "delete every length check elsewhere and an

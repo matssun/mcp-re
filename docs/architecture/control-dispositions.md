@@ -4434,9 +4434,9 @@ clause and its two `durable_file.rs` controls stay here.
 **Carrier:** `sdk/typescript/src/lib.rs`: `whole_seconds` at the napi boundary.
 **Statement.** *Every JS time or clock-skew input (`created`, `expires`, `now`, `maxClockSkew`) crosses the napi boundary only if it is finite, whole and within the exactly representable integer range of an f64; `Infinity`, `NaN`, a fractional value or an out-of-range value is refused with an error rather than converted by a saturating cast.*
 **If false.** `Infinity` becomes `i64::MAX`, an unbounded clock skew, and `NaN` becomes 0, so a stale or future-dated response verifies as fresh.
-**Likely owner:** none; NP-012 states that the shipped artifact implements the profile, not what it does with an unrepresentable input.
+**Likely owner:** `sdk_typescript.native_binding`, a supporting unit of THM-0095; its `a_time_that_is_not_whole_seconds_is_refused` test is a Bazel `rust_test` control.
 **Severity:** `high`.
-**Root relationship.** Beside NP-012: the TypeScript binding's input boundary, which no theorem states.
+**Root relationship.** The TypeScript binding's input boundary, owned by `sdk_typescript.native_binding` under THM-0095.
 **Recorded:** 2026-10-03, round-12 remediation of findings 57ac9594c01178bd, 79d16e40e00198e7, 9503efa53570820a.
 
 ## NP-229 — an operator's connection limit is the bound hyper enforces on the wire, or the argv refuses it
