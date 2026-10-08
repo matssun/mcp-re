@@ -56,12 +56,22 @@ $$
 O =
 Commit(S', Effects)
 \;|\;
-Refuse(Reason)
+Refuse(S', Reason, Effects)
 \;|\;
 Await(S', Pending)
 $$
 
 A security-relevant operation should not have an implicit fourth class of outcome.
+
+This forces questions such as:
+
+- Does failure mutate state?
+- Is retry distinguishable from refusal?
+- Are external effects committed before or after state?
+- Can an incomplete effect increase authority?
+- What must be persisted before `Commit` is considered complete?
+
+The precise outcome algebra may evolve, but it should remain closed.
 
 ### 2.1 Pending effects are state
 
@@ -76,15 +86,19 @@ A security-relevant outstanding external effect, such as a signature requested f
 
 A wait with genuinely no security-relevant outstanding effect may leave the state unchanged ($S' = S$). That is the exception, and the machine records why the wait is state-neutral.
 
-This forces questions such as:
+### 2.2 Refusal may carry state and effects
 
-- Does failure mutate state?
-- Is retry distinguishable from refusal?
-- Are external effects committed before or after state?
-- Can an incomplete effect increase authority?
-- What must be persisted before `Commit` is considered complete?
+A refusal is not necessarily state-neutral. A refusal may legitimately:
 
-The precise outcome algebra may evolve, but it should remain closed.
+- consume replay or other one-shot state;
+- record a security-relevant monotonic failure;
+- burn a capability or token;
+- create security-relevant audit or evidence state;
+- perform another explicitly modelled fail-closed effect.
+
+The ordinary refusal is the special case $S' = S$ with no effects.
+
+The invariant is **not** that a refusal never changes security state. It is that the resulting state and effects are exactly those the refusal transition permits, that they do not increase authority, and that they do not perform the operation that was refused.
 
 ## 3. Recursive refinement
 

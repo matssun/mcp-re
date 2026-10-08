@@ -24,7 +24,7 @@ The target is not "prove every function".
 
 The target is:
 
-> Every security-relevant behavior of every accepted MCP-RE configuration is owned by an explicit semantic model and is connected to a security obligation whose leaves terminate in machine-checked proof, structural enforcement, executable evidence, or an explicit external assumption, each admissible for the obligation it discharges (§3.1).
+> Every security-relevant behavior of every accepted MCP-RE configuration is owned by an explicit semantic model and is connected to a security obligation whose leaves terminate in machine-checked proof, structural enforcement or executable evidence that establishes them, or in an explicit external assumption that MCP-RE relies on without establishing, each admissible for the obligation it discharges (§3.1).
 
 No security-relevant behavior should remain unclassified.
 
@@ -42,10 +42,10 @@ $$
 \forall c \in AcceptedConfigurations,\;
 \forall r \in ReachableExecutions(c),\;
 \forall o \in SecurityObligations(c,r),\;
-Satisfied(o)
+Discharged(o)
 $$
 
-### 3.1 Satisfaction is admissibility-checked
+### 3.1 Discharge is admissibility-checked
 
 Evidence classes are **not interchangeable**. A passing test does not discharge a universally quantified claim; an external premise cannot absorb behavior MCP-RE itself implements; a structural gate says that a path does not exist, not that the path which does exist is correct.
 
@@ -55,15 +55,23 @@ $$
 Requirement(o) \in \{Formal,\ Structural,\ Executable,\ External,\ Hybrid\}
 $$
 
-and satisfaction requires both valid evidence and an admissible evidence class:
+An obligation is **discharged** in one of two ways, which are kept distinct:
 
 $$
-Satisfied(o)
-\iff
-\exists e:\ Valid(e,o) \land Class(e) \in Admissible(Requirement(o))
+Discharged(o) \iff Established(o) \lor AssumedExternally(o)
 $$
 
-A `Hybrid` requirement names its parts (for example: a formal model property, plus a structural closure that no production path bypasses the proved operation), and is satisfied only when every part is satisfied by evidence admissible for that part.
+- $Established(o)$: there is valid evidence of a class admissible for $Requirement(o)$ that MCP-RE itself produces (proof, structure, or execution):
+
+$$
+Established(o) \iff \exists e:\ Valid(e,o) \land Class(e) \in Admissible(Requirement(o)) \setminus \{External\}
+$$
+
+- $AssumedExternally(o)$: $Requirement(o) = External$ and a current, explicit external premise states $o$. MCP-RE relies on the premise; it does not establish it.
+
+An externally assumed proposition is never reported as established. A higher-level theorem that depends on such a premise is **verified relative to that premise**: its own reasoning and evidence are established, and its conclusion is conditional on the premise holding.
+
+A `Hybrid` requirement names its parts (for example: a formal model property, plus a structural closure that no production path bypasses the proved operation), and is discharged only when every part is discharged by evidence admissible for that part. If any part is assumed externally, the whole is discharged relative to that premise, not established.
 
 Three rules are fixed by this model:
 
@@ -86,7 +94,7 @@ is meaningful only if the obligation universe has itself been generated adequate
 Closure therefore requires **both**:
 
 1. **Generator coverage**: the candidate obligation set was produced independently by each of the generators listed in §8, and each generator's coverage of its own domain is recorded; and
-2. **Disposition**: every generated obligation has a terminal disposition (05 §5.2). There is no `accepted-risk` disposition: an obligation that remains applicable and unsatisfied remains open.
+2. **Disposition**: every generated obligation has a terminal disposition (05 §5.2). There is no `accepted-risk` disposition: an obligation that remains applicable and is not discharged remains open.
 
 This remains a relative, closed-world claim. It does not assert absolute completeness; it asserts that the declared generators were run, that their outputs were reconciled, and that nothing they produced is without a disposition.
 
@@ -304,6 +312,6 @@ The eventual claim should not be "MCP-RE is mathematically proven secure."
 
 A more defensible target is:
 
-> For the declared MCP-RE security model, every accepted security configuration, registered security transition, trust boundary, authority surface, failure/recovery path, and relevant composition is assigned to an explicit invariant; every invariant has current evidence of an admissible class, or a declared external assumption where the invariant concerns something outside MCP-RE; the obligation generators have been run over their domains; and repository gates reject production security behavior that escapes the registered model.
+> For the declared MCP-RE security model, every accepted security configuration, registered security transition, trust boundary, authority surface, failure/recovery path, and relevant composition is assigned to an explicit invariant; every invariant is established by current evidence of an admissible class, or is assumed by a declared external premise where the invariant concerns something outside MCP-RE, and is reported as assumed, not established; the obligation generators have been run over their domains; and repository gates reject production security behavior that escapes the registered model.
 
 That is the architectural destination this document set is intended to develop.

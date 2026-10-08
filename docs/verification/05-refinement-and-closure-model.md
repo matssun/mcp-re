@@ -15,7 +15,7 @@ For each machine:
 $$
 step : C \times S \times E \times A \rightarrow O
 \qquad
-O = Commit(S', Effects) \mid Refuse(Reason) \mid Await(S', Pending)
+O = Commit(S', Effects) \mid Refuse(S', Reason, Effects) \mid Await(S', Pending)
 $$
 
 `step` is **deterministic**: a total function of complete inputs (02 §1.1). Every observation the decision depends on, such as clock readings, signer and store results, entropy where its value matters, recovery input and relevant interleavings, is an event in $E$.
@@ -34,7 +34,7 @@ $$
 s_{k} =
 \begin{cases}
 S' & \text{if } step([c], s_{k-1}, e_k, a_k) = Commit(S', \_) \\
-s_{k-1} & \text{if the outcome is } Refuse(\_) \\
+S' & \text{if the outcome is } Refuse(S', \_, \_) \\
 S' & \text{if the outcome is } Await(S', \_)
 \end{cases}
 $$
@@ -86,7 +86,7 @@ $$
 where $Corresponds$ requires the following.
 
 - **Commit.** If the semantic outcome is $Commit(S', Eff)$, then $\alpha(i') = S'$ and the implementation's security effects map under $\alpha_{Eff}$ to exactly $Eff$.
-- **Refuse.** If the semantic outcome is $Refuse(R)$, the implementation refuses with a reason mapping to $R$, and $\alpha(i') = \alpha(i)$ with no security effect.
+- **Refuse.** If the semantic outcome is $Refuse(S', R, Eff)$, the implementation refuses with a reason mapping to $R$, $\alpha(i') = S'$, and its security effects map under $\alpha_{Eff}$ to exactly $Eff$. The ordinary refusal has $S' = \alpha(i)$ and no effects. A refusal that consumes one-shot state, records a monotonic failure, burns a token or writes evidence does so because the refusal transition says so (02 §2.2), and the refusal transition's own obligations are that its state and effects do not increase authority and do not perform the refused operation.
 - **Await.** If the semantic outcome is $Await(S', P)$, then $\alpha(i') = S'$ and the implementation's outstanding work maps to $P$. Outstanding effects are part of what $\alpha$ reads.
 
 This is a forward simulation in which the implementation may only do what the semantics allows. It is a **safety** refinement: it bounds what the implementation can do. It does not show that the implementation eventually does anything. Liveness and bounded-progress obligations need their own evidence (§3.3).
@@ -130,10 +130,14 @@ Requirement(o) \in \{Formal,\ Structural,\ Executable,\ External,\ Hybrid\}
 $$
 
 $$
-Satisfied(o)
-\iff
-\exists e:\ Valid(e,o) \land Class(e) \in Admissible(Requirement(o))
+Discharged(o) \iff Established(o) \lor AssumedExternally(o)
 $$
+
+$$
+Established(o) \iff \exists e:\ Valid(e,o) \land Class(e) \in Admissible(Requirement(o)) \setminus \{External\}
+$$
+
+$AssumedExternally(o)$ holds when $Requirement(o) = External$ and a current, explicit external premise states $o$. The two are reported separately: an externally assumed proposition is **assumed**, never **established**, and a theorem that depends on it is verified **relative to** that premise (01 §3.1). For a `Hybrid` obligation, if any part is assumed externally, the whole is discharged relative to that premise.
 
 | requirement | admissible evidence | not admissible |
 |---|---|---|
@@ -141,7 +145,7 @@ $$
 | `Structural` | compiler/type-system enforcement; a gate that fails on the forbidden construct and is shown live by a falsifier that turns it red | a gate with no falsifier; a convention |
 | `Executable` | tests or probes run in the build/feature lane where the property exists, with mutation evidence that they observe the clause | a lane that compiles the test to zero cases; a test of a different lane |
 | `External` | a registered premise about something outside MCP-RE's implementation boundary, reviewed at its current text | anything about MCP-RE-owned behavior |
-| `Hybrid` | each named part satisfied by evidence admissible for that part | one part standing in for another |
+| `Hybrid` | each named part discharged by evidence admissible for that part | one part standing in for another |
 
 **Exhaustive finite checking** is admissible `Formal` evidence only when all of the following hold:
 
@@ -195,23 +199,26 @@ Let $N$ be the set of theorems, premises and obligations.
 
 An edge's graph is determined by its use, not its name (03 §3.3).
 
-### 4.2 Currency is controlled by the logical graph
+### 4.2 Two local axes, one composed verdict
 
-For each axis $X \in \{Review,\ Evidence\}$:
+The two assurance axes are **local** to each node:
 
-$$
-Current_X(v)
-\iff
-OwnCurrent_X(v) \land \forall u:\ (u \rightarrow v) \in E_L \Rightarrow Current_X(u)
-$$
+- $ReviewCurrent(v)$: the exact proposition and the semantic material reviewed for $v$ are current. The review digest covers the claim, premises, semantic sources, selected tests and proved symbols.
+- $EvidenceEstablished(v)$: the current evidence for $v$'s **own** supporting units, refinement and proof surface is established. The evidence digest adds the toolchain, the policy and execution.
 
-$OwnCurrent_X(v)$ compares $v$'s own digest on that axis against what was approved or established. The review digest covers the claim, premises, semantic sources, selected tests and proved symbols. The evidence digest adds the toolchain, the policy and execution.
+Neither axis propagates. A child's stale evidence does not make the parent's own evidence stale, and reporting it that way would describe the parent's evidence falsely.
 
-The logical graph alone controls dependency propagation: $Current_X$ flows upward only along $E_L$. Traceability edges do not become logical dependencies. Semantically relevant traceability and correspondence information may still be part of $OwnCurrent_X(v)$ through $v$'s fingerprint: changing which implementation path refines a transition, for example, requires correspondence re-review of the theorems concerned, with no new dependency edge. Which traceability information is semantically relevant in this sense is part of open question Q9 (§9).
+The logical DAG propagates the **final verdict**:
 
 $$
-CurrentlyVerified(v) \iff Current_{Review}(v) \land Current_{Evidence}(v)
+CurrentlyVerified(v) \iff ReviewCurrent(v) \land EvidenceEstablished(v) \land \forall u \in LogicalDeps(v):\ CurrentlyVerified(u)
 $$
+
+where $LogicalDeps(v) = \{u \mid (u \rightarrow v) \in E_L\}$.
+
+A dependency change can still move $ReviewCurrent(v)$ directly, but only through $v$'s own review digest: where the dependency's claim, or other semantically relevant information about the dependency, is part of what was reviewed for $v$, changing it moves $v$'s digest.
+
+The logical graph alone controls dependency propagation. Traceability edges do not become logical dependencies. Semantically relevant traceability and correspondence information may still be part of $v$'s own review or evidence digest: changing which implementation path refines a transition, for example, requires correspondence re-review of the theorems concerned, with no new dependency edge. Which traceability information is semantically relevant in this sense is open question Q9 (§9).
 
 ## 5. Obligation generation and closure
 
@@ -235,14 +242,27 @@ The outputs are **reconciled**. Duplicates are merged. An obligation found by on
 
 At closure, each obligation has a terminal disposition. Legitimate terminal dispositions include:
 
-- **Satisfied** (§3.1), by proof or other admissible evidence, by structural discharge, or by an explicit `External` premise where the obligation concerns something outside MCP-RE;
+- **Discharged** (§3.1): **established** by proof, structure or other admissible evidence, or **assumed externally** by a current explicit premise where the obligation concerns something outside MCP-RE. The two are recorded and reported separately;
 - **Superseded**, by another obligation that covers it;
 - **Disproved / non-defect**, with the reason the obligation does not hold as a requirement or the reported defect does not exist;
 - **Architectural constraint** that changes the declared guarantee, so that the obligation no longer applies to the guarantee as declared;
 - **Excluded** from the model's declared scope, explicitly;
 - **NotSecurityRelevant**, with a reviewed reason.
 
-**There is no `accepted-risk` disposition.** An unsatisfied security obligation inside the declared MCP-RE security model cannot reach terminal closure by being accepted. An obligation that remains applicable and unsatisfied remains **open**, and `Open` is not a terminal disposition.
+**Guarantee- and scope-changing dispositions are owner decisions.** `Architectural constraint` and `Excluded` are terminal only when an explicit owner-ratified decision changes the declared architecture, guarantee or scope. An implementation or evaluation agent may not grant them. Before either is terminal:
+
+1. the authoritative guarantee, architectural constraint, threat model or declared scope is updated;
+2. the owner decision and the changed text are linked from the disposition;
+3. the obligation generators affected by the change are rerun (§5.1);
+4. any new obligation the constraint or exclusion creates remains visible and is itself disposed.
+
+An architectural constraint may narrow the guarantee truthfully. It may not state that an applicable obligation is accepted but unsatisfied. An exclusion removes something from the model only by explicitly changing the declared scope; it is never an unrecorded exception.
+
+The same owner-ratification requirement applies to `NotSecurityRelevant` when it would remove a surface or property that was previously part of the declared security model.
+
+This is what prevents these categories from becoming a renamed `accepted-risk`.
+
+**There is no `accepted-risk` disposition.** An undischarged security obligation inside the declared MCP-RE security model cannot reach terminal closure by being accepted. An obligation that remains applicable and is not discharged remains **open**, and `Open` is not a terminal disposition.
 
 ### 5.3 Closure condition
 
@@ -326,14 +346,16 @@ Having a model and having proofs is not enough. A semantic machine counts as **m
 2. its semantic machine is defined: $C$, $S$, $E$, $A$, $O$, transitions, failure, recovery, rollback and concurrency, and observations where confidentiality applies;
 3. the production implementation mapping is complete;
 4. there are zero unclassified security-relevant production sites;
-5. every generated obligation is disposed (§5.2), with evidence admissible for its requirement;
+5. every generated obligation has a terminal disposition (§5.2), and every discharged obligation is discharged by evidence admissible for its requirement, with externally assumed obligations reported as assumed;
 6. every implementation mismatch is resolved, or the model is explicitly amended with a reason;
 7. the refinement obligation (§2.2) is established for every mapped transition; a mapping without refinement does not count;
 8. structural bypass closure is in place, and each closure gate is shown live by a falsifier;
 9. the relevant configuration classes are covered (§7);
 10. failure, recovery, rollback and concurrency are addressed by obligations, not only by tests of the happy path;
-11. the required composition edges with neighbouring machines are established (§6), or recorded as the neighbour's open obligation;
-12. every theorem in the machine is current on both axes.
+11. every required composition obligation with neighbouring machines is established (§6);
+12. every theorem in the machine is $CurrentlyVerified$ (§4.2).
+
+A machine that meets items 1–10 and 12 for its own obligations while a required composition obligation (item 11) is still open is **LOCALLY_MIGRATED / COMPOSITION_OPEN**. That is a descriptive state, not migration. The open composition work may belong to the neighbouring machine, but the unresolved theorem still prevents either machine from being called **MIGRATED**. That name is reserved for a machine whose required composition contracts are established.
 
 Migration is a state that can be lost. A change that moves a digest or adds an unmapped site returns the machine to non-migrated until it is re-established.
 

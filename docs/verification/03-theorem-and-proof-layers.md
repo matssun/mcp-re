@@ -127,7 +127,7 @@ Edges that participate in **establishing** a theorem, and therefore in **invalid
 
 This graph **must be acyclic**. A cycle is a circular argument.
 
-It is also the graph that **controls currency**. When a child theorem's claim, premises or evidence change, every theorem reachable upward along logical edges is no longer current until re-reviewed or re-established. Nothing outside this graph moves a theorem's review or evidence state.
+It is also the graph that **propagates the verification verdict**. A theorem is currently verified only if it is review-current, its own evidence is established, and every logical dependency is itself currently verified (§10). When a child stops being currently verified, every theorem reachable upward along logical edges stops being currently verified with it, without its own review or evidence axis being reported as stale.
 
 ### 3.2 Traceability / semantic relationship graph
 
@@ -187,7 +187,7 @@ Every leaf must terminate in an acceptable category:
 - executable evidence where proof is inappropriate;
 - explicit current external assumption.
 
-There should be no unexplained leaves.
+There should be no unexplained leaves. A leaf in the external-assumption category is **assumed**, not established: the theorems above it are verified relative to that premise.
 
 Being in an acceptable category is necessary but not sufficient. Each leaf must also be **admissible** for the obligation it discharges (01 §3.1): its evidence class must be one that the obligation's `Requirement` admits. A `Hybrid` obligation expands into one leaf per named part, each checked against its own part. A leaf that is valid evidence of the wrong class (a test standing in for a universal claim, a premise standing in for MCP-RE's own behavior) is an unexplained leaf.
 
@@ -290,10 +290,10 @@ Then require:
 
 $$
 \forall o \in \mathcal{O},\quad
-\exists e:\ Valid(e,o) \land Class(e) \in Admissible(Requirement(o))
+Discharged(o)
 $$
 
-or another terminal disposition (`05-refinement-and-closure-model.md` §5.2). An obligation that remains applicable and unsatisfied is open; it is never closed as accepted risk.
+where $Discharged(o)$ means established by admissible evidence, or assumed externally by a current explicit premise where the obligation is genuinely external (01 §3.1), or $o$ has another terminal disposition (`05-refinement-and-closure-model.md` §5.2). An obligation that remains applicable and is not discharged is open; it is never closed as accepted risk.
 
 Unknown obligations are not allowed at closure. As 01 §3.2 states, that condition has meaning only when each generator has been run over its domain: closure requires generator coverage **and** disposition, not disposition alone.
 
@@ -336,12 +336,16 @@ A theorem may have:
 and should be presented as currently verified only if:
 
 $$
-CURRENTLY\_VERIFIED
+CURRENTLY\_VERIFIED(v)
 =
-REVIEW\_CURRENT
+REVIEW\_CURRENT(v)
 \land
-EVIDENCE\_ESTABLISHED
+EVIDENCE\_ESTABLISHED(v)
+\land
+\forall u \in LogicalDeps(v):\ CURRENTLY\_VERIFIED(u)
 $$
+
+The two axes are local to $v$. `REVIEW_CURRENT(v)` says the exact proposition and semantic material reviewed for $v$ are current. `EVIDENCE_ESTABLISHED(v)` says the evidence for $v$'s own supporting units, refinement and proof surface is established. Dependencies compose only at the final verdict.
 
 Semantic review should depend on:
 
@@ -360,7 +364,7 @@ Evidence establishment should additionally depend on:
 
 Toolchain churn should generally force evidence re-establishment, not automatic semantic re-review.
 
-Both axes propagate along the logical dependency DAG only (§3.1): a child that stops being review-current or evidence-established makes its logical ancestors non-current on the same axis. Admissibility (01 §3.1) is part of review, not of evidence: whether a class of evidence is acceptable for a claim is a semantic judgment, and a change to an obligation's requirement is a change to what was reviewed.
+Neither axis propagates. A child whose evidence is stale makes its logical ancestors not currently verified, but does not make the ancestors' own evidence stale, and they are not reported that way. A dependency change can move a parent's `REVIEW_CURRENT` directly only through the parent's own review digest, where the dependency's claim or other semantically relevant information about it is part of what was reviewed. Admissibility (01 §3.1) is part of review, not of evidence: whether a class of evidence is acceptable for a claim is a semantic judgment, and a change to an obligation's requirement is a change to what was reviewed.
 
 ## 11. End state
 

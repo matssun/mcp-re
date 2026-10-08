@@ -207,7 +207,7 @@ The phases below are a recommendation, not a binding plan. Each phase ends with 
 
 **P5 — Structural sealing.** Make the bypass paths found in P1 mechanically impossible or gate-detectable.
 
-**P6 — Composition.** Establish the cross-machine invariants and ordering contracts with neighbouring machines (signer lifecycle, credential validity, admission).
+**P6 — Composition.** Establish the cross-machine invariants and ordering contracts with neighbouring machines (signer lifecycle, credential validity, admission). Until every required composition obligation is established, the pilot machines are at most **LOCALLY_MIGRATED / COMPOSITION_OPEN**, even where the open work belongs to a neighbour. **MIGRATED** is reached only at the end of P6 (05 §8).
 
 **The pilot is allowed to falsify the working model.** It is an experiment on the model, not a demonstration of it. If P0–P2 show that the semantic form, the determinism choice, the evidence classes, or the two-graph split do not fit real code, the result is an amended model, and that result is as valuable as a confirmation. The documents in this directory should be read with that in mind.
 
@@ -217,13 +217,13 @@ The pilot's machines are complete when they meet the **migrated** criterion in `
 
 1. every production behavior maps to the semantic machine;
 2. every registered transition has generated obligations;
-3. every generated obligation has a disposition;
+3. every generated obligation has a terminal disposition (05 §5.2);
 4. implementation mismatch has been refactored or model amended;
 5. relevant Lean/Verus/structural evidence passes;
 6. no production state mutation bypasses the registered transition surface;
 7. configuration classes are explicit;
 8. failure/recovery/rollback/concurrency are represented;
-9. cross-machine dependencies are expressed as composition theorems;
+9. cross-machine dependencies are expressed as composition theorems, and every required one is established;
 10. mutation/falsification demonstrates that important clauses are actually observed by the proof package;
 11. every obligation's evidence is admissible for its requirement (01 §3.1), not merely present;
 12. the pilot has produced a written account of where the working model held and where it was amended.
