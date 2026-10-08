@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:be9ae37c315b9f2c72c97a64162273761821ff8e59890e0e9cbebe4b5338450d"
+  },
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0006-ruling-36-s5-step-7 (docs/security/owner-approvals-2026-10-08.jsonl, entry-text sha256 e1ba540b2aa91fc05f03e2abe69f44db03dad52d115c4467e31f467818cba8bf), which signs this entry's current text. Authority: Ruling 36 §5 (owner 2026-10-07) as dictated: add unit://http_profile.admission_currency to the scope; the rendered entry text was checked against the dictated change (diff against the entry at 5867a864 contains that change only); record written at Ruling 40 step 7",
+  "reviewed_fingerprint": "sha256:be9ae37c315b9f2c72c97a64162273761821ff8e59890e0e9cbebe4b5338450d",
+  "reviewer": "mats@sundvall.name",
+  "subject": "ASM-0006"
+}

@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:26f2de75c39022f40138018a60a1e636b2b2535b985275e68b7cc5e39ce58375"
+  },
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0002-ruling-36-s1-step-7 (docs/security/owner-approvals-2026-10-08.jsonl, entry-text sha256 2132b1aa3c688bcb667a6338ca37d2f621708ec3906fc249eb4befefc48d3b9b), which signs this entry's current text. Authority: Ruling 36 §1 (owner 2026-10-07): groups 1–4 signed off; text byte-identical to the Ruling 35 assumption-closure packet at 5867a864 (entry-text sha256 2132b1aa3c688bcb667a6338ca37d2f621708ec3906fc249eb4befefc48d3b9b equals the entry at that commit); record written at Ruling 40 step 7",
+  "reviewed_fingerprint": "sha256:26f2de75c39022f40138018a60a1e636b2b2535b985275e68b7cc5e39ce58375",
+  "reviewer": "mats@sundvall.name",
+  "subject": "ASM-0002"
+}

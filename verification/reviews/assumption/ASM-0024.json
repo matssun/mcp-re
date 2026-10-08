@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:7978ee52ad5d1ec5f372e3d7d62ef7f33249715db25ece64a1e15aecfd1f4b77"
+  },
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0024-ruling-36-s7-step-7 (docs/security/owner-approvals-2026-10-08.jsonl, entry-text sha256 906886cd261058eb0f12437f5cfdc5ec9ebc93ee22056cdc6bc0d64fb1b2b88d), which signs this entry's current text. Authority: Ruling 36 §7 (owner 2026-10-07) as dictated: narrow the scope now to the units that depend on it; the rendered entry text was checked against the dictated change (diff against the entry at 5867a864 contains that change only); record written at Ruling 40 step 7",
+  "reviewed_fingerprint": "sha256:7978ee52ad5d1ec5f372e3d7d62ef7f33249715db25ece64a1e15aecfd1f4b77",
+  "reviewer": "mats@sundvall.name",
+  "subject": "ASM-0024"
+}
