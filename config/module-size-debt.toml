@@ -782,10 +782,12 @@ status = "unreviewed"
 # decomposition run.
 [[debt]]
 path = "mcp-re-http-profile/src/scitt/receipt/parse.rs"
-baseline_prod_loc = 209
+baseline_prod_loc = 232
 baseline_sha = "99ff012"
 status = "reviewed-exception"
 review_ref = "EX-017 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 209
+growth_ref = "EX-017 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/materializing_runtime/mod.rs"

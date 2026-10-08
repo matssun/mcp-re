@@ -2904,6 +2904,32 @@ grants nothing to the file or crate, and expires with the same decomposition obl
 inside `mcp-re-proxy`'s clippy-debt count, so it needs no attribute.
 
 
+### EX-017 growth authorization — `mcp-re-http-profile/src/scitt/receipt/parse.rs`, `209 -> 232`
+
+```text
+growth-authorization: mcp-re-http-profile/src/scitt/receipt/parse.rs 209 -> 232
+```
+
+**Authority:** Ruling 40 step 6 round 3, owner, 2026-10-08.
+
+**Occasioned by:** two SCITT receipt-parse refusals ordered under Ruling 36, each a bounded
+correction and neither a theorem weakening:
+
+- `read_inclusion_proof` refuses any trailing octets after the inclusion proof, so the whole
+  supplied slice must be consumed;
+- `inclusion_proof_bytes` refuses a repeated key anywhere in the `vdp` map at the MCP-RE parse
+  boundary, through `refuse_repeated_key`.
+
+The parser is one decode sequence with no seam a local extraction would follow, and neither
+refusal is delegated to `coset` or `ciborium`. The growth is 23 production lines, measured:
+209 before, 232 after.
+
+**It authorizes this pair and nothing beyond it.** 232 is the ceiling: further growth needs
+its own record, and the authorization is spent when it merges. It triggers no refactor and no
+return to 209 during the remediation campaign.
+
+---
+
 ## EX-018 — `mcp-re-proxy/src/config_state/transport.rs` — **census complete, disposition: ACTION REQUIRED, no exception sought**
 
 The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit (finding
