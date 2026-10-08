@@ -38,18 +38,14 @@
 //! # What reaches the degraded fork, and what does not
 //!
 //! Only a store that did not ANSWER — a connect failure, or a `GET` [`reply`] classes as
-//! unanswered (a dropped, refused or timed-out connection, or a server stating it can answer
-//! nothing right now) — is [`AdmissionSourceError::Unavailable`], which the serving path routes to
-//! the §5.2 degraded fork: served only if the deployment opted in, and only within P.
+//! unanswered (a dropped, refused or timed-out connection, or a server answering nothing right
+//! now) — is [`AdmissionSourceError::Unavailable`], routed to the §5.2 degraded fork within P.
 //!
 //! A store that answered with something this deployment will not act on — absent, malformed,
-//! wrongly signed, wrongly issued, about another workload, or past the currentness budget —
-//! is a definitive negative (`AnsweredAs::NoRecord` or `AnsweredAs::Refused`). Routing those to the degraded fork would serve the
-//! caller on its own assertion, so corrupting a `revoked` record would be a cheaper
-//! un-revoke than issuing a new admission.
-//!
-//! A store that rejects this deployment's credentials has answered too: it is a
-//! configuration failure that fails closed, not an authority that is temporarily unreachable.
+//! wrongly signed, wrongly issued, about another workload, past the currentness budget, or
+//! rejecting this deployment's credentials — is a definitive negative (`AnsweredAs::NoRecord`
+//! or `AnsweredAs::Refused`). Routing those to the degraded fork would serve the caller on its
+//! own assertion, so corrupting a `revoked` record would be a cheaper un-revoke.
 
 use redis::aio::ConnectionManager;
 
