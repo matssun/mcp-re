@@ -3046,3 +3046,82 @@ every RFC 8259 text.
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0084"
+description = "After MCP-RE has successfully completed `sync_all` on a newly created manifest-floor marker file and successfully completed `sync_all` on the directory containing it, the host filesystem and storage preserve that marker and its contents across process or host failure."
+justification = """
+THM-0121 says a manifest version the client has accepted and recorded is not lost to a power
+loss. `persist` (`mcp-re-client-proxy/src/manifest_floor.rs`) creates the marker, calls `sync_all`
+on the file, then calls `sync_all` on the directory containing it, and reports success only after
+both have returned. That ORDER, and that the directory sync is also made when the marker already
+exists, are this project's and are tested (`an_equal_version_record_still_establishes_durability`,
+`an_already_existing_marker_still_syncs_the_directory`). What a `sync_all` that returned success
+guarantees — that the marker and its directory entry survive a crash of the process or the host —
+is the filesystem's and the device's, and nothing here can establish it: a filesystem mounted
+with write barriers off, or a device that acknowledges a cache flush it did not perform, returns
+success and loses the marker.
+
+It stops being acceptable if the manifest-floor directory is placed on storage whose `sync_all`
+does not survive host failure, or if `persist` is ever changed to report success before both
+syncs have returned.
+"""
+scope = [
+  "unit://client.manifest_floor",
+  "boundary://boundary.manifest_floor_filesystem",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 step 6 (owner ruling on THM-0121, Option A)"
+review_requirement = "Owner review if the floor's durable-record step changes, or if the floor directory may be placed on storage without a durable `sync_all`."
+premise_class = "external-boundary"
+boundary_owner = """
+The host kernel and the filesystem and device holding the manifest-floor directory, across
+`sync_all` on a marker file and on its directory: once both have returned success the marker and
+its contents persist across a process or host failure.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0085"
+description = "When MCP-RE decodes input through `ciborium` as a CBOR value, or through `coset` as a COSE_Sign1, and the decode succeeds, the decoded CBOR values correspond to the values the input bytes encode, and the decoded protected headers, unprotected headers, payload and signature are those the input bytes represent, with the protected and unprotected headers kept distinct. The `Sig_structure` that `coset` builds from such a decoded COSE_Sign1 for a signature check is the RFC 9052 section 4.4 encoding over the protected-header bytes exactly as received, the external AAD supplied and the payload."
+justification = """
+THM-0041 reads a Signed Statement and a Receipt off the wire through `coset::CoseSign1` and
+`ciborium`, and then reasons about what is in them: the algorithm and the claims it reads come
+from the PROTECTED header, a receipt's position commitment comes from the protected header, and
+its inclusion proof from the unprotected one. That the decoded structure is the one the bytes
+encode, with the two headers not mixed, is the libraries' and nothing here establishes it.
+
+The second sentence is for one conjunct: the Signed Statement's own COSE `Sig_structure` verified
+under a key resolved for its issuer kid, and the same for the receipt's signature. MCP-RE does not
+construct those signed bytes. `verify_cose_sign1_with_payload` hands `coset` a verifier callback and
+`CoseSign1::verify_signature` / `verify_detached_signature` build the `Sig_structure` that is passed
+to it. MCP-RE chooses the key, the algorithm check (`require_alg`) and, for a detached receipt, the
+payload it re-derived.
+
+Every refusal MCP-RE owns is NOT in this premise and is tested here: a non-empty or unknown `crit`,
+an `iss` that is not the signing `kid`, a second occurrence of a CWT claim, trailing octets after
+the statement's payload and after an inclusion proof, a repeated key in the `vdp` map, an unsupported
+verifiable data structure, a leaf index outside the tree, and a root that is not a tree hash.
+
+It stops being acceptable if SCITT evidence is decoded through another library, or if the signed
+structure is ever built by this project instead of by `coset`.
+"""
+scope = [
+  "unit://http_profile.scitt_statement_attribution",
+  "unit://http_profile.scitt_receipt_shape",
+  "unit://http_profile.scitt_algorithm_agreement",
+  "unit://http_profile.scitt_position_commitment",
+  "boundary://boundary.cose_cbor",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 step 6 (owner ruling on the coset/ciborium premise)"
+review_requirement = "Owner review on any change to the `coset` or `ciborium` dependency, or to how SCITT evidence is decoded or its signed structure is built."
+premise_class = "external-boundary"
+boundary_owner = """
+The `ciborium` and `coset` crates, across a successful decode of CBOR input and of a COSE_Sign1,
+and across the construction of the `Sig_structure` for a signature check from a decoded COSE_Sign1.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+

@@ -3736,6 +3736,8 @@ tested_symbols = [
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::receipt::parse::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::receipt::tests::a_leaf_index_outside_the_tree_is_refused",
   "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::receipt::parse::tests::a_critical_position_parameter_that_is_absent_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::receipt::parse::tests::an_inclusion_proof_followed_by_trailing_octets_is_refused",
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::receipt::parse::tests::a_vdp_map_with_a_repeated_key_is_refused",
 ]
 
 # PURE RFC 9162 TREE MATHEMATICS, and the one proposition here a prover could take. M72

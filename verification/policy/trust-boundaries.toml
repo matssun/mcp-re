@@ -430,5 +430,28 @@ kind = "foreign-dependency"
 paths = [
   "mcp-re-http-profile/src/envelope/request.rs",
 ]
-beyond = "Whether the parser accepts exactly the RFC 8259 JSON texts and, for a text without duplicate member names, reports the members and values the text writes."
+beyond = "Whether a body the parser accepts is an RFC 8259 JSON text and, for a text without duplicate member names, the value it returns represents the objects, arrays and scalars the text encodes."
 max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.manifest_floor_filesystem"
+description = "Durable storage of the client's manifest-floor directory: what a successful `sync_all` on a marker file and on its directory establishes across a process or host failure."
+kind = "environment"
+paths = [
+  "mcp-re-client-proxy/src/manifest_floor.rs",
+]
+beyond = "Whether a `sync_all` that returned success leaves the marker file and its directory entry on stable storage. A filesystem mounted without write barriers, or a device that acknowledges a flush it did not perform, returns success and loses the marker."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.cose_cbor"
+description = "CBOR and COSE decoding of SCITT evidence, as implemented by the `ciborium` and `coset` dependencies, and the construction of the `Sig_structure` for a signature check."
+kind = "foreign-dependency"
+paths = [
+  "mcp-re-http-profile/src/scitt/cose_key/verify.rs",
+  "mcp-re-http-profile/src/scitt/receipt/parse.rs",
+  "mcp-re-http-profile/src/scitt/statement/parse.rs",
+]
+beyond = "Whether a successful decode returns the values, headers, payload and signature the input bytes encode, with the protected and unprotected headers kept distinct, and whether the `Sig_structure` handed to a signature check is the RFC 9052 section 4.4 encoding over the bytes as received."
+max_class_without_assumption = "V0"
+

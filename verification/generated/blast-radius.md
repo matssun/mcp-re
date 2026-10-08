@@ -544,3 +544,5 @@ attestations this view cannot see.
 | ASM-0081 | description, justification, scope or mechanism | proxy.delegated_epoch_label | assumption review |
 | ASM-0082 | description, justification, scope or mechanism | proxy.kms_endpoint_authority, proxy.outbound_destination | assumption review |
 | ASM-0083 | description, justification, scope or mechanism | http_profile.request_envelope | assumption review |
+| ASM-0084 | description, justification, scope or mechanism | client.manifest_floor | assumption review |
+| ASM-0085 | description, justification, scope or mechanism | http_profile.scitt_algorithm_agreement, http_profile.scitt_position_commitment, http_profile.scitt_receipt_shape, http_profile.scitt_statement_attribution | assumption review |

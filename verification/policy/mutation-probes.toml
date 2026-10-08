@@ -13444,3 +13444,41 @@ weakening = """
 expect_red = [
   "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::reply::tests::a_rejected_credential_is_an_answer_and_not_an_outage",
 ]
+
+[[probe]]
+id = "M561-scitt-an-inclusion-proof-with-trailing-octets-is-read-as-its-prefix"
+unit = "http_profile.scitt_receipt_shape"
+theorem = "THM-0041"
+conjunct = "the receipt parsed as an RFC 9942 section 5.2.1 receipt: the inclusion proof is the whole of the octets the receipt carries for it"
+note = "r12 step 6. The weakening drops the check that the decode consumed the whole inclusion-proof slice, so a valid proof followed by octets is read as its prefix; the trailing-octets test must go red."
+path = "mcp-re-http-profile/src/scitt/receipt/parse.rs"
+anchor = """    if !unread.is_empty() {
+        return Err(HttpProfileError::MalformedEvidence(
+            "scitt inclusion proof trailing octets",
+        ));
+    }
+"""
+weakening = """    if false {
+        return Err(HttpProfileError::MalformedEvidence(
+            "scitt inclusion proof trailing octets",
+        ));
+    }
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::receipt::parse::tests::an_inclusion_proof_followed_by_trailing_octets_is_refused",
+]
+
+[[probe]]
+id = "M562-scitt-a-vdp-map-with-a-repeated-key-is-read-by-its-first-entry"
+unit = "http_profile.scitt_receipt_shape"
+theorem = "THM-0041"
+conjunct = "the receipt parsed as an RFC 9942 section 5.2.1 receipt: a verifiable-data-proof map that names a key twice has no single reading and is refused"
+note = "r12 step 6. The weakening drops the repeated-key refusal, so the first of two inclusion-proof entries is read silently; the repeated-key test must go red."
+path = "mcp-re-http-profile/src/scitt/receipt/parse.rs"
+anchor = """    refuse_repeated_key(vdp)?;
+"""
+weakening = """    let _ = refuse_repeated_key;
+"""
+expect_red = [
+  "//mcp-re-http-profile:mcp_re_http_profile_test#scitt::receipt::parse::tests::a_vdp_map_with_a_repeated_key_is_refused",
+]
