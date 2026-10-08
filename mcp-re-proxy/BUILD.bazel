@@ -48,6 +48,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-064 Slice 5: the §7 admission gate's collaborators, decomposed out of the
     # serving pipeline — a deployment posture, not a stage.
     "src/admission_enforcer/mod.rs",
+    "src/admission_enforcer/authority.rs",
     "src/admission_enforcer/degraded_window.rs",
     "src/admission_enforcer/enforcement.rs",
     "src/admission_enforcer/facet.rs",

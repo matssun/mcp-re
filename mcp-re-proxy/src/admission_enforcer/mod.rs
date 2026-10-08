@@ -21,6 +21,8 @@ use mcp_re_http_profile::VerifiedMcpRequest;
 use crate::admission_source::AsyncAdmissionSource;
 use crate::http_profile_serve::AdmissionAuthorityResolver;
 
+#[cfg(feature = "redis_replay")]
+mod authority;
 /// How long a replica may serve on last-known state while the authority is unreachable.
 mod degraded_window;
 mod enforcement;
@@ -30,6 +32,8 @@ mod refusal_class;
 mod replica_history;
 mod statement;
 
+#[cfg(feature = "redis_replay")]
+pub(crate) use authority::fixed_authority_resolver;
 pub use enforcement::AdmissionEnforcement;
 pub use facet::AdmissionFacet;
 pub(crate) use refusal::AdmissionRefusal;

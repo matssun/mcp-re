@@ -334,10 +334,8 @@ pub(crate) fn admission_currency(
     // the authority that says whether it still is, so the assertion and the authoritative
     // record are verified under the same configured key — a second resolver here would be a
     // second trust root wearing the first one's name.
-    let resolve_authority: crate::http_profile_serve::AdmissionAuthorityResolver = {
-        let (kid, key) = (kid.clone(), key.clone());
-        Arc::new(move |presented: &str| (presented == kid).then(|| key.clone()))
-    };
+    let resolve_authority =
+        crate::admission_enforcer::fixed_authority_resolver(kid.clone(), key.clone());
     let source = handle
         .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(
             url,

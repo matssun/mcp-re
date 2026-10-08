@@ -2761,6 +2761,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -3211,6 +3212,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -3661,6 +3663,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -4111,6 +4114,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -4583,6 +4587,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -5064,6 +5069,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -5548,6 +5554,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -5998,6 +6005,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -6446,6 +6454,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -6934,6 +6943,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -7382,6 +7392,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -7837,6 +7848,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",
@@ -8283,6 +8295,7 @@
    "package": "mcp-re-proxy",
    "root": "mcp-re-proxy/src/lib.rs",
    "srcs": [
+    "mcp-re-proxy/src/admission_enforcer/authority.rs",
     "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
     "mcp-re-proxy/src/admission_enforcer/enforcement.rs",
     "mcp-re-proxy/src/admission_enforcer/facet.rs",

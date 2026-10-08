@@ -261,6 +261,11 @@ admissionCurrency:
   # The kid of the admission AUTHORITY whose assertions this boundary accepts.
   authorityKid: ""
   # That authority's Ed25519 public key, base64url, no padding.
+  #
+  # The authority is fixed for the lifetime of a running proxy process. Changing,
+  # rotating or revoking it (authorityKid or authorityPubkey) governs a replica's
+  # admission decisions only once that replica is restarted or redeployed; a running
+  # replica keeps resolving the kid and key it started with.
   authorityPubkey: ""
   # The shared authoritative record. Same scheme rule as replay.redisUrl and for the
   # same reason — this hop decides whether a caller is still admitted, so an
