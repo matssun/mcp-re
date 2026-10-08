@@ -3015,15 +3015,17 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0083"
-description = "`serde_json` parses a byte string to a `Value` exactly when it is an RFC 8259 JSON text, and for a text with no duplicate member name returns a `Value` holding exactly the members and values the text writes."
+description = "When `serde_json::from_slice::<Value>` succeeds on a request body, the body is an RFC 8259 JSON text, and for a text with no duplicate object member name the returned `Value` represents the object, array and scalar values that text encodes."
 justification = """
 THM-0083 refuses a body unless it is a legal JSON-RPC 2.0 request, and establishes the
 outstanding id from that one validation. Every clause after the first reads the body through
 `serde_json::from_slice::<Value>`. The FIRST clause is this project's and is not part of this
 premise: `reject_unrepresentable_json` refuses a duplicate member name, on the decoded form
 `serde_json` keys on, before `serde_json` is asked anything — because `serde_json` resolves a
-duplicate to one winner. What remains trusted is that, for a text with no duplicate, the parse
-accepts JSON and nothing else and reports the members, strings and numbers the text writes.
+duplicate to one winner. What remains trusted is one direction only: when the parse succeeds,
+the body was a JSON text, and for a text with no duplicate the `Value` returned represents the
+objects, arrays and scalars the text encodes. It is not trusted that every RFC 8259 text is
+accepted: a refusal of a legal text is a refusal, which the envelope's clauses treat as one.
 
 It stops being acceptable if the request envelope is read through another parser, or if the
 representability check stops running first.
@@ -3037,9 +3039,10 @@ introduced_by = "r12 RERE-RATIFICATION §4b P-8 (Ruling 40 step 4)"
 review_requirement = "Owner review on any change to the JSON parsing dependency, or to the order in which the envelope's clauses are asked."
 premise_class = "external-boundary"
 boundary_owner = """
-The `serde_json` crate, across `from_slice::<Value>` on a request body: it succeeds exactly for
-RFC 8259 JSON texts, and for a text without duplicate member names the returned `Value` holds the
-members and values the text writes.
+The `serde_json` crate, across `from_slice::<Value>` on a request body: when it succeeds, the
+body is an RFC 8259 JSON text, and for a text without duplicate member names the returned `Value`
+represents the object, array and scalar values the text encodes. It does not promise to accept
+every RFC 8259 text.
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"

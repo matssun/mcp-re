@@ -155,9 +155,10 @@ impl RevocationTier {
                  is consulted on every verification with no positive-trust caching, but \
                  learns of a key removed from --trust only at the next re-read (see \
                  store-change-cadence), so the window is R while every re-read succeeds \
-                 and 5 x R at worst (up to 300s at the 60s cadence ceiling); a per-request \
-                 store round-trip and a hard availability dependency (store unavailability \
-                 fails closed); NOT proven zero-window"
+                 and 5 x R at worst (up to 300s at the 60s cadence ceiling), each plus the \
+                 durations of the re-reads involved; a per-request store round-trip and a \
+                 hard availability dependency (store unavailability fails closed); NOT \
+                 proven zero-window"
             }
             RevocationTier::Push { .. } => {
                 "revocation window bounded by the --trust re-read cadence R with \
@@ -166,8 +167,9 @@ impl RevocationTier {
                  expiry within the bounded window T, and an eviction re-resolves against \
                  the store, which learns of a key removed from --trust only at the next \
                  re-read (see store-change-cadence), so the window is R + T while every \
-                 re-read succeeds and 5 x R + T at worst; NOT zero-window (the reference \
-                 channel does not prove reliable ordering/delivery)"
+                 re-read succeeds and 5 x R + T at worst, each plus the durations of the \
+                 re-reads involved; NOT zero-window (the reference channel does not prove \
+                 reliable ordering/delivery)"
             }
         }
     }
@@ -288,6 +290,7 @@ mod tests {
         let push = RevocationTier::Push { t_secs: 60 }.guarantee();
         assert!(!push.contains("near-zero"));
         assert!(push.contains("5 x R + T at worst"));
+        assert!(push.contains("durations of the re-reads involved"));
         assert!(push.contains("bounded-T fallback"));
         assert!(push.contains("NOT zero-window"));
         assert!(push.contains("store-change-cadence"));
@@ -298,6 +301,7 @@ mod tests {
         let live = RevocationTier::Live.guarantee();
         assert!(!live.contains("near-zero"));
         assert!(live.contains("5 x R at worst (up to 300s"));
+        assert!(live.contains("durations of the re-reads involved"));
         assert!(live.contains("every verification"));
         assert!(live.contains("fails closed"));
         assert!(live.contains("store-change-cadence"));

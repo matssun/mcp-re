@@ -8,7 +8,8 @@
 //!
 //! While re-reads fail, the reloader keeps the last-good store for up to its failure budget
 //! of cadences, so the worst case is budget x R + T (budget x R for `Live`), with R + T the
-//! bound while every re-read succeeds.
+//! bound while every re-read succeeds; each is stated plus the durations of the re-reads
+//! involved, because a cycle's sleep starts only when its read completes.
 //!
 //! The composition is stated as arithmetic here because every other surface prints the two
 //! numbers side by side and leaves the composition to a preposition, which reads as *the
@@ -101,8 +102,8 @@ pub(in crate::trust_plane) fn delivered_revocation_window(
             format!(
                 "worst case {worst}s = {budget} x R {r}s (the reloader keeps the last-good \
                  store across {tolerated} failed re-reads and fails closed on the {budget}th; \
-                 this tier caches no positive trust), plus each re-read's own duration; \
-                 R = {r}s while every re-read succeeds"
+                 this tier caches no positive trust); R = {r}s while every re-read succeeds; each \
+                 plus the durations of the re-reads involved"
             )
         }
         RevocationTier::BoundedCache { t_secs } | RevocationTier::Push { t_secs } => {
@@ -112,8 +113,8 @@ pub(in crate::trust_plane) fn delivered_revocation_window(
                 "worst case {worst}s = {budget} x R {r}s + T {t_secs}s (the reloader keeps the \
                  last-good store across {tolerated} failed re-reads and fails closed on the \
                  {budget}th, and the reload swaps the store but evicts nothing already cached, \
-                 so a cached entry outlives the swap by a further T), plus each re-read's own \
-                 duration; R + T = {healthy}s while every re-read succeeds"
+                 so a cached entry outlives the swap by a further T); R + T = {healthy}s while \
+                 every re-read succeeds; each plus the durations of the re-reads involved"
             )
         }
     }
@@ -155,6 +156,10 @@ mod tests {
                 "got {window}"
             );
             assert!(window.contains("R + T = 90s"), "got {window}");
+            assert!(
+                window.contains("durations of the re-reads involved"),
+                "got {window}"
+            );
         }
         let live = delivered_revocation_window(&RevocationTier::Live, plan);
         assert!(
