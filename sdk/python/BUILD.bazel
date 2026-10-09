@@ -8,9 +8,11 @@ load("//bazel/pyo3:defs.bzl", "nt_pyo3_extension")
 # A test binary is not loaded by an interpreter, so the CPython symbols the crate references
 # are never called; they are left unresolved at link time, as the extension leaves them for its
 # host.
+# Linux binds lazily: a symbol bound at load time would stop the process before any test runs,
+# while a call into an unresolved symbol still ends the process with a symbol lookup error.
 PYO3_TEST_LINK_FLAGS = select({
     "@platforms//os:macos": ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"],
-    "@platforms//os:linux": ["-C", "link-arg=-Wl,--unresolved-symbols=ignore-all"],
+    "@platforms//os:linux": ["-C", "link-arg=-Wl,--unresolved-symbols=ignore-all", "-C", "relro-level=partial", "-C", "link-arg=-Wl,-z,lazy"],
 })
 
 package(default_visibility = ["//visibility:public"])
