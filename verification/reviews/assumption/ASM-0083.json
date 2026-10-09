@@ -1,10 +1,10 @@
 {
   "axis": "assumption",
   "components": {
-    "assumption_entry": "sha256:83a762615680560156718f40577fd9e23e9a7358873ba222c3ca2bb4d1988390"
+    "assumption_entry": "sha256:db0883a85371116eca5d1c25a23f5eb07b1323910b3131b396d9d51918e3bfe4"
   },
-  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0083-ruling-40-step-6-step-7 (docs/security/owner-approvals-2026-10-08.jsonl, entry-text sha256 5321c3057391bd9f960257bd609fb84d795fae8c818247513d8c762cbfe3f109), which signs this entry's current text. Authority: Ruling 40 step 6 ratified by the owner at 56aa0799, 2026-10-08, step 7 authorization",
-  "reviewed_fingerprint": "sha256:83a762615680560156718f40577fd9e23e9a7358873ba222c3ca2bb4d1988390",
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0083-step-7-round-3-4 (docs/security/owner-approvals-2026-10-09.jsonl, entry-text sha256 fb5955f840a33d86d2bb31e18a90f01759ab8c1fc05afe24f7c617d21ec41e6d), which signs this entry's current text. Authority: owner ruling, step 7 round 3/4, 2026-10-09.",
+  "reviewed_fingerprint": "sha256:db0883a85371116eca5d1c25a23f5eb07b1323910b3131b396d9d51918e3bfe4",
   "reviewer": "mats@sundvall.name",
   "subject": "ASM-0083"
 }

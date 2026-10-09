@@ -2,13 +2,45 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:55b0e7920cde5eadfb5f316ed36d00befbd4dc733c97a19da3f458e2052db976",
+    "theorem_claim": "sha256:88c16c64b83bcdcba23841562342973488d44cb4733c7140378d43e57c3d0a23",
     "theorem_dependencies": {},
     "theorem_id": "THM-0062",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "OWNER SPECIFICATION REVIEW EVENT, r11 Part A (the ten-row owner packet), 2026-09-16.\nRecorded under the r11 closure mandate's AFK review authority on an explicit owner ruling,\ntranscribed verbatim in work/r11-campaign/RULINGS-OWNER-10.md. This is a CLAIM CORRECTION:\nthe registry is brought to what the code already does, and no implementation was weakened.\n\nRULING (row 1, R11-355, filed high / adjudicated medium): ACCEPT the correction; the code is\nright.\n\nWHAT MOVED: the `statement`. It enumerated the states in which the signer yields nothing and\nended \"...and when its snapshot lock is poisoned\".\n\nWHY THAT WAS FALSE. `DelegatedServerSigner::current` recovers a poisoned read guard with\n`unwrap_or_else(|poisoned| poisoned.into_inner())` (delegated_server_signer/mod.rs:209-212)\nand then applies only `now < a.exp` (mod.rs:213-216). The protected value is one\n`Option<Arc<..>>` swapped whole, so no partially mutated invariant can become visible and a\npoisoned lock yields exactly the verdict a healthy one yields. The theorem's own registered\ncontrol asserted the opposite of the theorem: it asserted `signer.current(NOW).is_some()`\nand `seconds_to_expiry(NOW) == Some(300)` under a genuinely poisoned lock. The module note at\nmod.rs:109-116 argues FOR recovery at length, so the code is deliberate and the text was the\ndefect.\n\nWHY RECOVERY IS THE SAFER DESIGN, and why this does not weaken the claim. Failing closed on\npoison would let one unrelated panic anywhere in the process permanently retire this\nreplica's signing \u2014 a self-inflicted outage triggerable by any bug in any other subsystem.\nThe statement now says terminal retirement DOMINATES every later read and publication, that\npoison is recovered because the protected snapshot is whole-value state whose invariant is\npreserved across unwind, and that recovery overrides neither terminal retirement nor\nexpiration. Every state in which the signer yields nothing is unchanged except the one that\nnever existed.\n\nTAKEN WITH IT: the control was renamed from\n`a_poisoned_snapshot_lock_fails_closed_and_still_recovers` to\n`a_poisoned_snapshot_lock_is_recovered_and_retirement_still_dominates`, which is what its\nbody has always asserted. The old name is what made the false conjunct look supported at a\nglance.\n\nMEASURED AND UNCHANGED: the contract packet's G4. The row as filed asked for it to be\nreworded; the adjudication read the source and ruled otherwise \u2014 \"fails closed rather than\npanicking inside a request future\" reads as *the fail-closed decision is still made from what\nthe guard holds, without a panic*, and G4's second clause already says the replica can retire\nand re-publish. `security_consequence` and `scope` needed no change; neither mentions poison.",
-  "reviewed_fingerprint": "sha256:8be4d487a8b4cc605a0078677b27493ae302127df6d57b484a3e2b4a9ab15a54",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0068": "sha256:09ceb771c46907b7c6912c005ca198ca24f8495d400f34c76448a803199b2c57"
+    },
+    "supporting_semantics": {
+      "proxy.delegated_signing_credential": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:5865838ef5c936a80ee35ad03380a050a9f294ca6cb91294f36c63d81944b288",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:90fe102df5a033af84d8bc9e1b47143cb9b299f0b0596180dc480a0c40de37f6",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:6b242e5080711d6d8c198364d0fc1400358bc1454261541e615e007961e05c72",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:c9935a952d51f9dac5b847ca5d4340b67e087846cede57132904c16cacae8516",
+        "test_selection": "sha256:66b1d9e22458cccabd161e2931e94b4dfb07cbf0e48bb09c428630350e7a9ec2",
+        "test_sources": "sha256:598bae3a2279b7805c8c451885acfc1f7f69684757cb23feeab4837eacf2452f",
+        "trusted_assumptions": "sha256:85d3927b433937a847ab13926d9b24d483cf7997690e693d5d45ff63c0d95bb5",
+        "unit_id": "sha256:599237ee9ef9e7732f5aae703296c209118f40559e1f4751c0a814d072b70aca"
+      }
+    },
+    "theorem_claim": "sha256:88c16c64b83bcdcba23841562342973488d44cb4733c7140378d43e57c3d0a23",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:4b1a2fd26b657d9e0d63e7fd6355b234de00788a36f64191c8e95ce78e3ad046",
+  "reviewed_fingerprint": "sha256:e87e43867b5c6882c43d636703e6d7cc860808cd62d2e4fb060a8a46b6a8f5b9",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0062"
 }

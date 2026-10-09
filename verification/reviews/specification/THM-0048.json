@@ -9,7 +9,41 @@
     "theorem_id": "THM-0048",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "OWNER SPECIFICATION REVIEW EVENT, r11 Part A (the ten-row owner packet), 2026-09-16.\nRecorded under the r11 closure mandate's AFK review authority on an explicit owner ruling,\ntranscribed verbatim in work/r11-campaign/RULINGS-OWNER-10.md. This is a CLAIM CORRECTION:\nthe registry is brought to what the code already does, and no implementation was weakened.\n\nRULING (row 2, R11-593, filed high / adjudicated medium): OPTION A. Do NOT reopen live\ntrust-anchor rotation merely to make the old theorem prose true.\n\nWHAT MOVED: `statement`, `security_consequence` and `scope`.\n\nWHY THE OLD TEXT WAS FALSE. It claimed \"a rebuild with withdrawn trust advances the epoch and\nstops resumption\". Anchors are immutable for a listener's lifetime, and `bind_resumption`\nhands `republish` the epoch the store already holds (tls_listener_state/mod.rs:218-221), so\n`SharedTlsAuthEpoch::store` always returns `None` and the change branch never fires on any\nbuild path. The registered control called `EpochBoundSessionStore::republish` DIRECTLY with a\ndifferent anchor set (auth_epoch.rs:399-407) \u2014 a store-level capability no listener path\nreaches \u2014 and no control in the packet would have failed had `republish` been deleted from\n`bind_resumption` entirely. The claim also contradicted its own premise: THM-0103's scope\nalready says this theorem \"must never be read as establishing that a production listener's\nepoch ADVANCES when its anchors change, which nothing in the tree establishes\", and the\nowner's module table warns \"Proposition 1 must never be read as evidence for proposition 2.\"\n\nWHY OPTION A. ADR-MCPRE-062, superseding ADR-MCPRE-055 (#598), chose the immutable-listener\nreplacement/restart model deliberately, and the code implements that choice. Making the code\nmatch the prose would have reopened live anchor rotation to satisfy a sentence.\n\nTHE CORRECTED CLAIM. The statement now says a replacement listener and session-cache boundary\ndoes not carry resumption authority across the replacement when the epoch differs: a\ndifferent anchor set is a different state with its own empty cache, while a rebuild that\nrepublishes the same trust keeps its cache. The consequence is bounded to ACROSS THE\nREPLACEMENT \u2014 true under the replacement model and false if read as covering a live listener.\nThe scope states explicitly that nothing here establishes a live listener's epoch advancing,\nnames cache NON-CONTINUITY as the real safety property, and records the operator obligation:\nchanging the trust-anchor set requires listener replacement or restart for the new trust\nepoch to become authoritative. That obligation is stated and proved by nothing, and a reader\nmust not take this claim as relieving it.\n\nTHE EVIDENCE RULING. The control was renamed to\n`republishing_a_different_epoch_supersedes_the_stores_sessions` and carries a note saying it\nis a claim about the STORE \u2014 THM-0103's subject \u2014 and about no listener. `proxy.tls_listener_state`\nsupports both theorems, so the name is the mechanism that keeps the two propositions apart;\na control must not be left standing as evidence for a claim whose production path it cannot\nobserve.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G6.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0049": "sha256:0677d9d4bd28708115eb18419ce386ad958db35d17a8d69a009473eac681f7cb"
+    },
+    "supporting_semantics": {
+      "proxy.listener_state_assembly": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:02046d42e6809036e9de7bebed9fa0896145af81056d5733dbd1d30f88d63d8e",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:f9a578debd9f73cd05fc500a164c90b01a3ca14de3df2b21ee29618f2b3f1112",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:d09a21b82b04940e9fdc215bd3400b78f4a576ebe4bdc7888b1160eb4dde19ce",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:c8f861f72a7cf26cd3d86c8d99447dd99fb96796662b1a60f76dee646ff42e57",
+        "test_selection": "sha256:a7dc9356ad6f2b8e697d86c1d7096d591477d485e5612bd89868830490ee90ea",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:d170893f73fb9da46048328fbffcce827e610cb36ce2e149b73821cf17379cd3",
+        "unit_id": "sha256:be570388cde51f4722b2cdb3ff63585020ca16da4ac80189a4eee5935667bf7e"
+      }
+    },
+    "theorem_claim": "sha256:049f2adfca414ae077799a432e3fcf0ac008b32a46dfef78371eda667802b370",
+    "theorem_dependencies": {
+      "THM-0103": "sha256:f98dfc0ee9efbc48c90ecfd6a0a40c31f3a10817e5b5f80c6d19f387530e399f"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:a671be47efaf1036bd541b767936448a5fc5f53f3618b516eb263198872570e1",
   "reviewed_fingerprint": "sha256:36d8b72301e9dacf16480f987b6331c2d9a2601fcc78b67e1e0ec0c7fa7383d8",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0048"

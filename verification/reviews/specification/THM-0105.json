@@ -2,13 +2,43 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:ceb7c82d46330e83a3a81ff5aef3d1aa2c5ad4447bad37e70c41152206714fe0",
+    "theorem_claim": "sha256:33f32704181859ae59f69c5dc89c4aa29fbd65a0f005facc14b88ed3ede8e70c",
     "theorem_dependencies": {},
     "theorem_id": "THM-0105",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "SPECIFICATION REVIEW RECORDED UNDER THE OWNER'S AFK MANDATE, extended by the ruling of 2026-09-06 which names the replay-store seam the next target and sets its terms: measure the shipping AsyncAtomicReplayStore composition directly; do not cite dormant L1FastRejectStore composition as though it were deployed; exclude dormant machinery honestly; register the smallest owner; add only the missing controls needed to distinguish the claim; create a subordinate theorem only if a useful security proposition emerges from the measured seam. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint. THE PROPOSITION THAT DID NOT EMERGE, and why it is not stated: a theorem over exactly-one-Fresh under concurrency would restate at the reference L2 what THM-0092 governs at the gate and what ASM-0040 and ASM-0041 carry for the backends a deployment actually selects. app.rs refuses any tier whose store declares SingleProcessReference, so a claim proved only inside InMemoryAsyncAtomicReplayStore would govern no deployment. NOT STATED. THE PROPOSITION THAT DID: retention is a shared bounded resource on every backend, and only the in-memory reference has a local set of its own to bound \u2014 Redis retention is a server-side SET NX PX TTL and etcd's is a per-key lease. The tier's ledger above the seam is therefore the ONLY bound governing the deployments that ship, and one signature-valid peer must not be able to deny replay protection to every other signer on the replica. That is a security proposition and it is measured. DORMANCY EXCLUDED HONESTLY. l1_fast_reject.rs is excluded from the unit's paths on the precedent by which trust_plane/window_policy.rs is excluded from proxy.trust_plane_runtime, and the async_replay_test battery \u2014 the named CI release gate for the section 4 cross-core replay race \u2014 is NOT cited at all, because all five of its controls construct an L1FastRejectStore and therefore measure a two-tier architecture no deployment runs. The L1's own never-Fresh invariant stays a documented property of dormant code, claimed by nothing. FIFTEEN CONTROLS EXISTED AND WERE NAMED BY NO UNIT, so what they measured was evidence for nothing; registering them is most of this slice. TWO CONJUNCTS WERE TRUE AND UNMEASURED and each is a deletable line, so each gained a control and a probe. Every pre-existing control presents ONE key per actor, so a tier charging key.signer instead of key.principal satisfied all fifteen \u2014 and enrolling keys is cheap, so that defect hands one subject a fresh budget per key. And only CANCELLATION was measured on the unsettled-charge path, never an ERROR, so releasing on every non-Fresh exit, the exact defect charge.rs documents, went undetected. Probes M121, M122 and M123 red-verified on this tree. OUTSIDE EVERY ROOT'S CLOSURE, deliberately and on THM-0012's precedent. THM-0092 requires that an unestablished replay state does not dispatch; it does not require the account that decides WHICH actor gets to establish one. An edge asserted for tidiness would move that root's fingerprint and every ancestor's for support the root does not need. NO CLAIM IS WIDENED AND NO ASSUMPTION IS ADDED: the claim is per replica and says so, it restates neither ASM-0040 nor ASM-0041, it says nothing about the unowned Redis and etcd adapters, nothing about the sync twins in shared_replay.rs and replay_tier.rs, and it is not a liveness claim. The fingerprint was recomputed on the tree after the last edit and equals the value above. Reviewed tree: assurance/async-replay-retention on main af582442.",
-  "reviewed_fingerprint": "sha256:259d868c82a894487b6f7d1dfdc6b75ecb06fe5493b137e8e68af6ee8128ec27",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {},
+    "supporting_semantics": {
+      "proxy.async_replay_retention": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:4f27199bc6ce1adb2d72ab19b33e12d1b70b0cffbe4f1f2caca598ab480420e1",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:efa6e1a0ce7e96a4f7c1f543d93b44e0ae57afcf780a76f1952f2569a5b8ae1a",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:85353029aeed8d0dcbbce712889c74f6261a242fdad8fc3292eabc544764299a",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:d9c32f84199d02b923c5a527473a57a4167255ce9024cd8321777855d662dec3",
+        "test_selection": "sha256:a04c9271607a34190f4c492e96be154300b3bc100d604c26990ee7cd7a239997",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "unit_id": "sha256:5753a850c5665f70de1478d1020ba768e61c31f27c9f31c814dd6856bda99b59"
+      }
+    },
+    "theorem_claim": "sha256:33f32704181859ae59f69c5dc89c4aa29fbd65a0f005facc14b88ed3ede8e70c",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:356fedcae0a215dcde27f1f9f5e8ce94f2d1e281d7f077ff846e0a5889d7dbfd",
+  "reviewed_fingerprint": "sha256:e1957ae2ee389723992009216268470fd47a404c587c8f072d2bcda1eda06220",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0105"
 }

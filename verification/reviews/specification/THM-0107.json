@@ -2,13 +2,46 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:4a8db4c007a744541de12ef5789ae6f17fd5e8b40489f210543883c8394fbcc6",
+    "theorem_claim": "sha256:e7818393a04f5a56981b9f7025ba890c099b1cbd38c36f042170fc9636111518",
     "theorem_dependencies": {},
     "theorem_id": "THM-0107",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner ratification of 2026-10-04, OWNER-RULINGS.md Ruling 13 (bounded ratification of the sign-offs), recorded in docs/security/owner-approvals-2026-10-04.jsonl as owner-signature:replay-sync-stores-retired, sha256 8bd63c8aef3860e280ccb7df93ad461b3c3673e2b5ea02737b39f71567f754fb: delete the sync Redis/Etcd atomic stores, retarget their e2e/race tests onto the async stores, port shared-property unit tests; THM-0106/THM-0107 statements shrink to the async battery (revoke conjunct removed; lease shared per retain-until instant, never revoked, expired never reused). Re-sign THM-0106/0107. The statement's revoke paragraph (THE LEASE A REPLAY DID NOT USE IS GIVEN BACK) is removed; the lease sentence now reads that a lease is shared per retain-until instant, is never revoked, and an expired lease is never reused; and the per-operation deadline applies to every POST rather than to 'the three POSTs', the third having been the revoke. Measured against the text at the approval's baseline (0d699f37), those are the only changes. Since the previous review (259e3cfd) the statement had also gained the declared replica-clock-divergence padding in THE LEASE IS BOUNDED (6e86fb53, ASM-0061), present at that baseline, which is the text this ratification re-signs. The security consequence and the scope are unchanged since the previous review. Previously reviewed at sha256:fbf1a39969ce85d2cd130245855e92c7ad7f35ba6dbfcf7ec04ee386180a9704.",
-  "reviewed_fingerprint": "sha256:f2bb2329e451a80882e0875c6715970f5cb28718db7cd8b072b66f0be2546f95",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0058": "sha256:fff9a2a758bc5584c20f742e36f0e381f3d98ea0a8f3aa2e5e070e7ad2c14fba",
+      "ASM-0061": "sha256:9db43ba6aef4232082adf137d014330c9f0b1ba5c02dcad7c07be9e4f58c4c4f"
+    },
+    "supporting_semantics": {
+      "proxy.etcd_replay_adapter": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:aa35c17fbc56ed6ecf581deee28141e2e97afdda97692a1a7c7331ad621b0b4f",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:5409700ef234d93c41e5341974b0d745773b860181b3517246387df813259e5f",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:72f13cb26da31f81d0ff1b05d30c0b99cb95e2cd8d59b4c5dbe1a92e4e2b8911",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:d9be999494aa810203d0febc755d6cd61825d1db7997bad816725072ff0a1ebe",
+        "test_selection": "sha256:3182f163b452caef81462361cd320c5641dcae63160d81b46b0cdb3be553c4ac",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:ab4ed1ba16cf2bd9a1fc093ea0eabd985678d4cb07b460672fee6da56f4bf48e",
+        "unit_id": "sha256:fe170a6d38708fa6c80b2e16f0c9f7a4c46088cdfe55cb25c321cec03aef9422"
+      }
+    },
+    "theorem_claim": "sha256:e7818393a04f5a56981b9f7025ba890c099b1cbd38c36f042170fc9636111518",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:8a3972fdec0128659bd21df284c453b151f6741cdadd13a09297c675160e0e07",
+  "reviewed_fingerprint": "sha256:1ff5880d37d5f3d436e628e459a38cb1fecd0ccfd5a3920d41c12763353df7ec",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0107"
 }

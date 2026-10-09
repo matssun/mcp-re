@@ -2,13 +2,53 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:bb4066095b8e280d4797c175443960231475a71ad74e31ead9746c81087d8dfb",
+    "theorem_claim": "sha256:9731600990c04413380bca8db1cf16e6621206c0fe2220cae9690acb2fd91999",
     "theorem_dependencies": {},
     "theorem_id": "THM-0004",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "CLAIM RE-AFFIRMATION, recorded under owner ruling R11-1. WHAT MOVED: `scope` only. The statement, security consequence, owner and review requirement are BYTE-IDENTICAL. The scope previously said the theorem \"does not establish that that state is itself current, nor that the authority behind it is the right authority to trust\" and left it there \u2014 that was O-9, recorded as a permanent OUT_OF_SCOPE boundary. R11-1 rules that it is no longer permanent, so the paragraph now names THM-0129 as the sibling that establishes the first half about the same state, and states why the two are separate results rather than one: broadening this theorem to cover both would put the store's integrity and the currency comparison behind ONE fingerprint, so a defect in either would be invisible while the other's controls stayed green. WHAT THIS REVIEW ACKNOWLEDGES: a previously disclaimed gap is now covered by a neighbouring result, and this theorem's own responsibility is unchanged and unwidened. Its remaining exclusions \u2014 the degraded path, the assertion's authenticity and freshness under ASM-0012, whether the configured authority is the right one to trust \u2014 are untouched. NOT ACKNOWLEDGED: any strengthening of this theorem's own evidence class, which is unchanged.",
-  "reviewed_fingerprint": "sha256:6de58408312c7dea9b858f0e1118b0652cf7436bc2334033cff41df2dd645eba",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G1_G10.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0005": "sha256:82bd1f22ce442b87e04c17e487d6be2ddf03459856abf52595f133a8b6e54a09",
+      "ASM-0006": "sha256:be9ae37c315b9f2c72c97a64162273761821ff8e59890e0e9cbebe4b5338450d",
+      "ASM-0011": "sha256:2c830d2ea7131ee07331f1a7e3963550cff54f058aa49f8921ac36db0e0b43a3",
+      "ASM-0012": "sha256:43605c32f6eed93a4dd089ed2c97043df7f3464e0174916355c3f64fb4435a00",
+      "ASM-0013": "sha256:cf517d9a0f793c819a381db66675db2669a52908b4d275a207dbd4df3451c930",
+      "ASM-0014": "sha256:783df9bfbffe9f51155223c55f30383c76ae617f8763c357a7f4bd6c2002f3cd",
+      "ASM-0045": "sha256:f95cc5de78b3951882642cae4cddb697c1911270e8b6f8d5b9e0b01ee5728f32",
+      "ASM-0046": "sha256:26d794f2ef1ef75a76fdd9867a63e7b6602707b2be1da819fbc3af868009d5cd",
+      "ASM-0057": "sha256:1d3ae653d74840978d081331f33cb8ed82e4a7c2dadc73271093ba144a140cbd"
+    },
+    "supporting_semantics": {
+      "http_profile.admission_currency": {
+        "class": "sha256:096337596d2af6a702151ef6cc897e2f3cd597b839435134b40ee3776607cacc",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:27c4aa21ec726789b14de509e34ebb4cfe428bdb49f998ad11a352443ad6f2c0",
+        "exported_contracts": "sha256:74d7b60a05951f41b1da2ecd15dcf7a6fb9379a9e86f65c5ec55dc8c377445e0",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:3739e545912816fb04703b937073a527e730f9bbdc13a602c15c076f9d90405e",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:b936c3802ed26b088982c8c4063475917bf9ff0ec7c638e424275e4c13794ddb",
+        "proof_dependencies": "sha256:adc302e2370a93718a2484bf2db91510c6b88e5b4c8529dbc8ea9386d23a2f9d",
+        "proved_symbols": "sha256:5aa28d51ac7f90dfeaace11c259fd5668462779ffdf25ad9d53bb619893609cf",
+        "source_inputs": "sha256:84ea54d1f16bc4b9b36f3c8ea16a3568c12f1319fe0be490d6eb25a4da127b63",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:8dd60bf10a1f8e422af615436756320b9e6cb3dd95b15a63b50bce5bc499873f",
+        "test_selection": "sha256:e5a79e681e26a2a152025eb93c49d27169a0cac7bb57d43a131498b32c231d1f",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:cf35e32974c325478ef42ea68801bc5b8fd604cca6d90ababb3f04597cd50b39",
+        "unit_id": "sha256:7cc358791ee49ddd98b610ea660f5199320f6e0de9e5c7fb8916b409b5614c37"
+      }
+    },
+    "theorem_claim": "sha256:9731600990c04413380bca8db1cf16e6621206c0fe2220cae9690acb2fd91999",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:d674dc10fb68f4fa68e4559219020dc4bdd7688beccca79625dcd8774abce79f",
+  "reviewed_fingerprint": "sha256:159cb32ef80b077028b7c113871408cac6fd85da123e28047eca989462e15b42",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0004"
 }

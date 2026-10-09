@@ -7,7 +7,39 @@
     "theorem_id": "THM-0103",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "SPECIFICATION REVIEW RECORDED UNDER THE OWNER'S AFK MANDATE OF 2026-09-06 (backlog item 5, 'TLS propositions already governed by #581/#598'), by the implementing agent as routine owner-review maintenance \u2014 not a transcription of a ruling naming this fingerprint. Both issues are HITL and stay open for the owner's specification review; this record is the artefact that review reads. #581 ROW 1, PHRASED AT THE STORE AS #598 REQUIRES. #598 records that within a production listener the trusted client-CA set is immutable, so the authentication epoch is a CONSTRUCTION-TIME CONSTANT and the publication's change branch has never fired outside a test; it warns that #581 must not state a formally tidy but operationally false composition theorem, and that the claim must be phrased strictly at the store level. It is. The scope says in terms that nothing here establishes that a production listener's epoch ADVANCES, names ADR-MCPRE-062 (superseding ADR-055) as having settled the lifecycle by choosing the immutable-listener model, and points at THM-0048's cache NON-CONTINUITY as the safety property across an anchor change. THE RESUMED WITNESS IS PART OF THE CLAIM ON PURPOSE: a store that silently never resumed would satisfy every refusal conjunct while withdrawing the property ADR-055 exists to provide, so both directions are witnessed against real rustls handshakes rather than against a HashMap. COMPOSITION: THM-0048 now depends_on THM-0103, because THM-0048's clause 'a rebuild with withdrawn trust advances the epoch and stops resumption' USES the store's contract; the root THM-0077 picks it up transitively rather than by a second direct edge. EVIDENCE COMPLETENESS: five controls in auth_epoch::tests existed and were named by no unit (the epoch is a property of the anchor SET, the domain string, both publication-change directions) and are registered now \u2014 a control the fingerprint does not carry is not evidence. Probes M116-M118. NOT DONE, and outside this mandate: retiring or re-scoping ADR-055's dormant live-epoch machinery, which is #598's remaining scope and is a redesign. The fingerprint was recomputed on the tree before this record was written and equals the value above. Reviewed tree: assurance/tls-propositions stacked on #820 head 18bd34de.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0049": "sha256:0677d9d4bd28708115eb18419ce386ad958db35d17a8d69a009473eac681f7cb"
+    },
+    "supporting_semantics": {
+      "proxy.epoch_bound_session_store": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:f614fd31f0ac6832924558e99f9edf23971fe2e3fd074ec1fd68968d272e3ad1",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:054c69a521216a05fb5cc3da6266c47a8e081bf35108a546ee4c6cbeb0f8d31a",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:14a420b1b04121618ad2fdb1d306bd6631af584936f3fdc50ed1b8edfe26942c",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:fc9acaf7a8b971d0b395bdabd46d236b62690eb916f4ff1236a0d7a6af48a463",
+        "test_selection": "sha256:eede17e307518e0e31a6df0bd9b4bde4fde9bf4e55a401b756333b2710cfd464",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:d170893f73fb9da46048328fbffcce827e610cb36ce2e149b73821cf17379cd3",
+        "unit_id": "sha256:a3508b33712091c0a4dee2c8b2bf2f690918f774eaa9031b6b1893ea0a9c35b1"
+      }
+    },
+    "theorem_claim": "sha256:f98dfc0ee9efbc48c90ecfd6a0a40c31f3a10817e5b5f80c6d19f387530e399f",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:a4a3e95eab75207855d5bb487b9bbde7374ef2ffdb1f3700040a592c2a686245",
   "reviewed_fingerprint": "sha256:9855fe8152cefc4d7d6e12446a8afaa805875d29976fcb1a5fc98b2c3e376a57",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0103"

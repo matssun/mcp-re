@@ -2,13 +2,43 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:4838af03a51c26d17191574ae1dab1646a2f7c5420aa7f4c87f48fec4d0cd39d",
+    "theorem_claim": "sha256:12f8ee2e626a7dca02868e436c19227e798215c3a0d5a7051094043f215e2050",
     "theorem_dependencies": {},
     "theorem_id": "THM-0047",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner ratification of 2026-10-05, OWNER-RULINGS.md Ruling 16.1, recorded in docs/security/owner-approvals-2026-10-04.jsonl as owner-signature:thm-0047-one-way-nominal-separation, sha256 42aa70d33a34c3018358c4485e8b2c5d2fd5219236cb667625c9363a0b42f057. The statement and scope are the owner's text verbatim (line-wrapped only); title, security consequence, severity, owner and support are unchanged. The ratification was conditional on three checks reproducing at 72574a40, and they did: no From/Into/TryFrom (or AsRef/Borrow) impl and no Deref from any weaker verification product to a stronger one anywhere in the tree; no field or public accessor of a weaker product that yields a stronger one (the only floor-to-full assembly, VerifiedMcpResponse::from_block, is pub(crate) and is the full verification path itself). This SUPERSEDES the review of 2026-08-31 at sha256:4065de58…: that wording ('representations private to their own modules') was false at its approval baseline and on the current implementation — every field of CryptographicFloorVerifiedRequest and VerifiedMcpRequest is pub — so the owner's earlier approval could not make it true.",
-  "reviewed_fingerprint": "sha256:8b003c234362d9c9ecb4a621d804d11307e76ae33d1c80505eb3c29dca144107",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G2.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {},
+    "supporting_semantics": {
+      "http_profile.verifier_result_separation": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:11367cbeafd094904552d7c934e3899a6e8ea758b330f0bf673f51618e621fd3",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:dee4282eaf72ed560a4a09521163bf8a745592275c7500284747c098d8e5358b",
+        "structural_probes": "sha256:95275b12f44018dd309e34b1fb3b25c9b9ee0e294a4739c59fc46c63d44ca5ce",
+        "test_evidence_definition": "sha256:75e11adfb3d3bf40787f37463a75570ea98368fff94398d0167d4eb4f2794202",
+        "test_selection": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "unit_id": "sha256:3a30e2857c0faa08561bdc1562c8bf5123743b2001dbef34b04b4c52fff02115"
+      }
+    },
+    "theorem_claim": "sha256:12f8ee2e626a7dca02868e436c19227e798215c3a0d5a7051094043f215e2050",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:f04c3893293d0a9c4aa4b858214c0f94265e212d849f90870ddd92982cee1e15",
+  "reviewed_fingerprint": "sha256:7808e17b474a557bdc80a78520262ecf75022147e59b3ce78daef8b9c1d92862",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0047"
 }

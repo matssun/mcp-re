@@ -2,13 +2,43 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:7268a3e5f122492c784fe562a456a54cdd8a8d5e5890c33124837ccb02de1914",
+    "theorem_claim": "sha256:ac2d4cb3a06802a917154f8414b82e28546e3168e186a953900b25b2096b92f9",
     "theorem_dependencies": {},
     "theorem_id": "THM-0070",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Consequence narrowed to the modeled collector lifetime. Queue, drop, ordering and drain-timeout loss are explicit and represented; durability across process failure is explicitly not claimed, and tail loss when the process disappears stays outside scope exactly as the theorem already said.",
-  "reviewed_fingerprint": "sha256:c09edc926379dc1817b58be06ea042570247d318592959b9cc55a8d01c29fa0b",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G9.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {},
+    "supporting_semantics": {
+      "proxy.audit_delivery": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:5865838ef5c936a80ee35ad03380a050a9f294ca6cb91294f36c63d81944b288",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:223b3a5e09c3aa20406f027c09d2241493c601306c5e73f402775588fe393b86",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:c3c7844793dd3d11de772e5bbfd17c5cb366697d0fd17e102a802e771e67b809",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:bbd3c9523321a9fa3a033efc75a1cc45305c1704e4d92487a733d061d50f9124",
+        "test_selection": "sha256:3422d6a4917ed1777c131f6fbf4a835eb3cf8a398026a667a48ddc6996203fe5",
+        "test_sources": "sha256:598bae3a2279b7805c8c451885acfc1f7f69684757cb23feeab4837eacf2452f",
+        "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "unit_id": "sha256:bfb569fa6b0eeba0c71cbd82b66cbb8a6704abc42998257351c18d30a0b19b1c"
+      }
+    },
+    "theorem_claim": "sha256:ac2d4cb3a06802a917154f8414b82e28546e3168e186a953900b25b2096b92f9",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:d351e42af9442de0e385932a964d1ba61e5d5ea74761083479a2784dfbe94bf7",
+  "reviewed_fingerprint": "sha256:dd38b842fb857af412fae0c08d241373fd6f7dcec05c3ac7802ca72b7e5269e1",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0070"
 }

@@ -199,11 +199,13 @@ the rest of the system cannot represent.
 """
 direct_consequence_severity = "medium"
 scope = """
-The two halves are established differently and a reviewer must not look for one conjunct.
-The range half is the postcondition. Totality is discharged by the absence of a
-precondition together with the prover's panic-freedom obligation, not by an ensures
-clause. The theorem says nothing about which grammar variants are accepted beyond that
-what is accepted is in range.
+The two halves are established differently and a reviewer must not look for one conjunct. The
+range half is the postcondition. Totality is discharged by the absence of a precondition
+together with the prover's panic-freedom obligation, not by an ensures clause, except inside
+`parse_fixed_digits`, which is `external_body` under ASM-0001: its body uses only `get` and
+checked arithmetic, so its freedom from panic rests on that construction and its tests, not on
+the prover. The theorem says nothing about which grammar variants are accepted beyond that what
+is accepted is in range.
 
 It does not establish that every instant in the range is REACHABLE by some accepted
 timestamp — only that nothing outside it is. The two endpoints specifically are reachable,
@@ -287,17 +289,17 @@ the R-SEAL test asks whether the check could be deleted and still leave an inval
 unconstructible: it could not, because there was no check — there was nothing to compare.
 
 `AuthoritativeAdmission` now carries its subject, and `AuthoritativeAdmission::new` — which
-cannot be called without naming the workload — is its only construction anywhere the value
-is consumed. The seal is `#[non_exhaustive]` rather than private fields, and here that binds
-every actual consumer: all of them are in `mcp-re-proxy`, where the struct literal is
-refused outright. The fields stay public because Verus does not accept an
-`external_type_specification` over a datatype with non-public ones, and the postcondition
-carrying the subject conjunct is this theorem's primary evidence; reading a field cannot
-produce an illegal value, and construction is what is closed. So the id in the value is the
-id the adapter looked up: the
-Redis source builds it from the key it read the record under and files a published record
-under the record's own subject, and the in-memory source keys its map by the same. There is
-no longer a pair of operands that could disagree.
+cannot be called without naming the workload — is its only construction anywhere the value is
+consumed. The seal is `#[non_exhaustive]` rather than private fields, and here that binds every
+actual consumer: all of them are in `mcp-re-proxy`, where the struct literal is refused
+outright. The fields stay public because Verus does not accept an `external_type_specification`
+over a datatype with non-public ones, and the postcondition carrying the subject conjunct is
+this theorem's primary evidence; reading a field cannot produce an illegal value, and
+construction is what is closed. So the id in the value is the id the adapter looked up: the
+Redis source builds it from the key it read the record under and files a published record under
+the record's own subject, and the in-memory test source, which files a record under whatever id
+its caller names, is held to the same read-side subject comparison. There is no longer a pair
+of operands that could disagree.
 
 The claim remains about ONE enforcement decision. It does not establish that the store's
 key is the workload's true name, nor that a compromised authority publishes true records —
@@ -337,9 +339,11 @@ record is read later than `iat + budget + skew`.
 security_consequence = """
 A party that obtains write access to the shared admission store, and does not hold the
 admission signing authority, can delete state, corrupt it and make it unreachable — all of
-which this deployment survives by failing closed. It cannot move a workload from revoked
-back to admitted, change a generation or status undetectably, answer for one workload with
-another's record, or keep a revoked workload in service by restoring the bytes from before
+which this deployment survives by failing closed, or, where it opted into degraded mode, by
+serving for at most P after the authority last answered (THM-0132). A record the store returns
+that cannot be read as a string is an answer, not an outage. It cannot move a workload from
+revoked back to admitted, change a generation or status undetectably, answer for one workload
+with another's record, or keep a revoked workload in service by restoring the bytes from before
 its revocation. The authority's power to revoke is restored by the passage of the declared
 budget rather than by anyone noticing.
 
@@ -382,7 +386,7 @@ supported_by = [
   "unit://proxy.admission_state_source",
   "unit://proxy.admission_record_addressing",
 ]
-depends_on = ["THM-0004"]
+depends_on = ["THM-0132"]
 
 [[theorem]]
 id = "THM-0005"
@@ -394,8 +398,9 @@ A LIVE verdict implies the authoritative current-state relation held — the sta
 this workload, at the bound generation, and admitted.
 
 A DEGRADED CANDIDATE verdict implies the authoritative state was unreachable, that the
-deployment policy explicitly allows degraded mode, and that the assertion the caller
-presented satisfies the assertion-level freshness rules. It is not permission to serve.
+deployment policy explicitly allows degraded mode, and that the presented assertion was issued
+no more than the degraded propagation bound plus the clock-skew tolerance before `now`. It is
+not permission to serve.
 """
 security_consequence = """
 No default deployment can reach a degraded admission; serving on a last-known snapshot is
@@ -417,7 +422,9 @@ stateful admission enforcer, which holds a monotonic window over its own success
 converts a candidate into a serve only while that window is unexhausted; it is registered
 under `unit://proxy.admission_currency_gate` and not here.
 
-Says nothing about assertion authenticity or freshness of the JWS itself (ASM-0012).
+The assertion's own `[nbf, exp]` window, the verifier's staleness budget and the not-ahead
+`iat` rule are THM-0053's — established on the test lane, because `verify_admission_assertion`
+is opaque to this proof under ASM-0012. This theorem proves only the P-age conjunct.
 """
 owner = "http_profile.admission_currency"
 review_requirement = "Owner security-specification review"
@@ -464,9 +471,10 @@ credential form cannot be laundered through the wrong check.
 """
 direct_consequence_severity = "high"
 scope = """
-Does not establish that the digest matches the presented credential: the comparison's
-meaning is a statement about SHA-256 and is outside this proof cone under ASM-0018.
-"Verified" here means correctly typed and in opaque-digest form.
+Does not establish what a digest match means about the credential: `compare` is proved to
+return Ok exactly when the binding's digest equals `sha256_b64url` of the supplied bytes, and
+that function's cryptographic meaning is ASM-0018 (EXTERNAL) and ASM-0037. "Verified" here
+means correctly typed and in opaque-digest form.
 """
 owner = "http_profile.artifact_typing"
 review_requirement = "Owner security-specification review"
@@ -502,9 +510,9 @@ verified, and adding a registry type does not quietly widen what verification co
 """
 direct_consequence_severity = "high"
 scope = """
-Structural over the dispatch relation, and inherits THM-0007's exclusion: it does not
-establish that any digest matched its credential (ASM-0018), nor that the supplied material
-is the credential the peer actually holds.
+Structural over the dispatch relation, and inherits THM-0007's exclusion: it does not establish
+what a digest match means about the credential beyond equality of the encoded digest (ASM-0018,
+ASM-0037), nor that the supplied material is the credential the peer actually holds.
 
 It says which branch a verified binding took; it says nothing about what a decision
 document AUTHORIZES. Digest correspondence is one link — authority trust, actor and action
@@ -1226,10 +1234,12 @@ depends_on = ["THM-0023"]
 id = "THM-0025"
 title = "Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point"
 statement = """
-Every inhabitant of Ed25519PublicKeyValue was interpreted from bytes that are exactly the
-canonical RFC 8410 Ed25519 SubjectPublicKeyInfo encoding — the fixed twelve-byte
-id-Ed25519 header followed by exactly thirty-two key bytes — and its projected point is
-those thirty-two bytes.
+Every inhabitant of Ed25519PublicKeyValue carries thirty-two bytes that are the point of
+exactly one canonical RFC 8410 Ed25519 SubjectPublicKeyInfo encoding — the fixed twelve-byte
+id-Ed25519 header followed by exactly thirty-two key bytes. An inhabitant is produced either by
+interpreting bytes that are exactly that encoding, whose projected point is then those
+thirty-two bytes, or by `for_point` from a thirty-two-byte point, which yields exactly the
+value interpreting that point's canonical encoding would.
 
 Acceptance is decided by that exact match alone. The general SubjectPublicKeyInfo parse
 runs only after the match has already failed, and only to choose which of three refusals to
@@ -1342,11 +1352,10 @@ DelegatedCertResolver::materialize, which establishes credential/key corresponde
 (THM-0026) over the very credential chain and signer it then moves into the resolver, and
 retains the resulting facts as a private construction witness.
 
-The construction closure is what carries the claim. The assembling constructor is private
-and requires a CredentialKeyCorrespondenceFacts value that no caller can produce, so there
-is no path from independently supplied credential and signer material to a resolver that
-skips the relation — and no window in which a caller holds facts about one pair and
-material from another, because the facts are never returned to a caller at all.
+The construction closure is what carries the claim. The assembling constructor is private and
+requires a `CredentialKeyCorrespondenceFacts` value; its one caller passes the facts it has
+just established over those same operands, so facts about one pair can never be joined to
+material from another.
 
 The listener's handshake-signature budget is installed unchanged and is not derived from
 the credential.
@@ -1744,14 +1753,20 @@ operation, so the facts reported cannot be about another relationship's certific
 chain-form worker is private to the authority, and publishing it would be a second entrance
 letting a caller evaluate certificates no relationship ever presented.
 
-The ADMITTED SET IS UNCHANGED from the implementation this replaces. What is new is that the
-five facts production computed and discarded are now distinguishable, and that the
-STRENGTH ASYMMETRY between them is preserved rather than repaired:
+The ADMITTED SET is the one the implementation this replaces admitted, narrowed in one respect:
+an issuer that shares its name with its own issuer but is not signed by its own key — a
+key-rollover intermediate — is held to its validity window rather than exempted, as path
+building holds it. What is new is that the five facts production computed and discarded are now
+distinguishable, and that the STRENGTH ASYMMETRY between them is preserved rather than
+repaired:
 
   leaf validity window   runs whenever ANY control is configured — never fused to the ceiling
   leaf span ceiling      only where a ceiling is configured
   leaf revocation        `admits`: an empty index admits, otherwise Revoked AND Unknown refuse
-  issuer validity window self-issued certificates exempt; unparseable refused
+  issuer validity window self-signed certificates exempt — subject equals issuer AND the
+                         signature verifies under the certificate's own key; a
+                         self-issued certificate signed by another key is held to its
+                         window; unparseable refused
   issuer revocation      EXPLICIT `Revoked` only — `Unknown` admits
 
 The issuer/leaf revocation asymmetry is deliberate and is carried, not corrected: whether a
@@ -1921,9 +1936,13 @@ Neither operand can be fabricated, which is what makes the relation worth taking
 peer descends from a mechanism adapter's acceptance over a real handshake (THM-0028, THM-0030,
 THM-0031). The subject's representation and constructor are private to the binding module and
 its one producer is the request adapter, a CHILD of that module — so a caller cannot assert a
-subject any more than it can assert a peer. The historical operand, `TransportIdentity`, was a
-public struct with public fields and a total constructor, and the one control where the old
-comparison passed built its input from `actor_id()` so the comparison could not fail.
+subject any more than it can assert a peer. The adapter's operand is a `VerifiedMcpRequest`,
+which no crate but the verifier's can write (structural probes S52/S53); a holder of a real
+product can still assign its public fields, and on the serving path the product travels only
+behind the shared reference THM-0051's carrier holds. The historical operand,
+`TransportIdentity`, was a public struct with public fields and a total constructor, and the
+one control where the old comparison passed built its input from `actor_id()` so the comparison
+could not fail.
 
 An ABSENT channel peer refuses. A configured binding claims every served request is bound, and
 an absence does not satisfy that claim.
@@ -1967,7 +1986,7 @@ supported_by = [
   "unit://proxy.request_peer_binding",
   "unit://proxy.transport_binding_application",
 ]
-depends_on = ["THM-0031", "THM-0033"]
+depends_on = ["THM-0031", "THM-0033", "THM-0051", "THM-0047"]
 
 # ---------------------------------------------------------------------------
 # MCPRE-146 / #582 — the four unstated trust properties
@@ -2145,13 +2164,14 @@ title = "The composition root consumes trust as owner projections and re-reads n
 statement = """
 After layer A has classified a deployment, the composition root reads from
 `ValidatedDeployment::config()` only fields on a pinned inventory of ORDINARY validated
-parameters — ones whose value, changing while every owner state stays unchanged, cannot
-change a security-sensitive decision or effect.
+parameters — coordinates and locators that no owner classifies, each recorded with the sentence
+saying what it addresses and which owner or plane decides what it means. None of them selects a
+posture.
 
-No trust field is on that inventory. The trust locator, the revocation tier, the reload
-cadence and the epoch coordinates all left it when they acquired owners, so trust reaches
-materialization only as `TrustDocumentSource`, `TrustRevocationState` and the `TrustPlan`
-that composes them.
+No REQUEST-SIGNER trust field is on that inventory. The trust locator, the revocation tier, the
+reload cadence and the epoch coordinates all left it when they acquired owners, so trust
+reaches materialization only as `TrustDocumentSource`, `TrustRevocationState` and the
+`TrustPlan` that composes them.
 
 The evidence is a source-text inventory checked against the file it describes, and its own
 detection is part of what is measured: the guard includes a control that a NEW raw read would
@@ -2193,12 +2213,12 @@ title = "An accepted PDP decision was authenticated under a key the trust seam r
 statement = """
 If `verify_authorization_decision` returns Ok, then the presented document is a well-formed
 compact JWS; its protected header carries the profile's `typ` and `alg` and no others; the
-header's kid and the claims' issuer kid are the same kid; the signature verified under the
-key the AUTHORIZATION trust seam resolved for that kid; the claims name this evidence
-profile; the claims' audience contains one of this enforcement point's own audiences; `now`
-lies inside `[nbf - skew, exp + skew)` with `exp` strictly after `nbf`; the decision was not
-issued in the future beyond the skew; and its age does not exceed this deployment's own
-decision-age cap.
+header's kid and the claims' issuer kid are the same kid; the signature verified under the key
+the AUTHORIZATION trust seam resolved for that kid; the claims name this evidence profile; the
+claims' audience contains one of this enforcement point's own audiences; `now` lies inside
+`[nbf - skew, exp + skew)` with `exp` strictly after `nbf`; the decision was not issued in the
+future beyond the skew; and its age does not exceed this deployment's own decision-age cap plus
+its clock-skew tolerance.
 
 A `Deny` decision satisfies all of this and returns Ok. It is a statement the authority
 made, and refusing it here would make *the authority denied* indistinguishable from *the
@@ -2321,6 +2341,11 @@ It establishes registration on A SERVICE whose key was resolved. It does NOT est
 the service is honest, that its log is append-only, that the entry is unique, or anything
 about the log's current state — this is offline verification, and none of those properties
 is checkable without the log.
+
+It does not judge the transparency-service key's lifecycle: a resolved key is used whatever its
+validity window or revocation status. That a receipt's key was acceptable when the receipt was
+accepted is the caller's, judged with `TransparencyKeyLifecycle::admits_at` at its trusted
+current time, and is not established here.
 
 It says nothing about the CALL the statement describes: that the retained evidence is the
 evidence the statement was made about is THM-0042, a separate proposition over a separate
@@ -2604,8 +2629,10 @@ compile error rather than a silently weaker check.
 direct_consequence_severity = "high"
 scope = """
 This is a one-way nominal-separation claim, not an unconstructibility claim. The request
-products `CryptographicFloorVerifiedRequest` and `VerifiedMcpRequest` retain public fields, so
-values can be assembled by hand. Possession provenance is addressed separately by THM-0051.
+products `CryptographicFloorVerifiedRequest` and `VerifiedMcpRequest` retain public fields for
+Verus and are `#[non_exhaustive]`: no crate but `mcp-re-http-profile` can write one by struct
+expression (structural probes S52/S53), and a holder of a real value can still assign its
+fields. Possession provenance is addressed separately by THM-0051.
 """
 owner = "http_profile.verifier_result_separation"
 review_requirement = "Owner security-specification review"
@@ -2703,12 +2730,13 @@ depends_on = []
 
 [[theorem]]
 id = "THM-0050"
-title = "Distinct verification keys cannot feasibly be made to share a keyid"
+title = "A keyid resolves to at most one verification key"
 statement = """
-Under the accepted SHA-256 collision-resistance premise (ASM-0037), no computationally
-feasible adversary can cause two distinct enrolled verification keys with distinct canonical
-RFC 7638 JWK representations to resolve to the same keyid, so resolving a keyid through the
-trust seam selects at most one key against any adversary the premise covers.
+Resolving a keyid through the trust seam selects at most one key: the trust document
+refuses a duplicate `key_id` at load, and enrolment keys a verification key by the
+operator-declared `key_id`. Where a keyid is derived as the RFC 7638 thumbprint, ASM-0037
+makes two distinct keys deriving one keyid computationally infeasible; this deployment does
+not require that derivation.
 """
 security_consequence = """
 A signer cannot be brought to acceptance under a keyid that resolves to another party's key,
@@ -2716,31 +2744,28 @@ which is what would let one enrolled actor's signature be attributed to another.
 """
 direct_consequence_severity = "critical"
 scope = """
-Computational selector injectivity only, and deliberately not a mathematical one. SHA-256 is
-not injective — it maps an unbounded domain onto 256 bits, so colliding keys EXIST. What is
-claimed is that none can be exhibited by an adversary the premise covers, which is the
-strongest true form of this proposition and the form ASM-0037 states.
+The single-valued resolution is structural and needs no primitive. A request signer is
+resolved by `key_id` alone, so the trust document refuses a second entry under a `key_id`
+already enrolled — for the same signer and for another one alike — rather than letting the
+last write win; that refusal holds whatever the key ids are, operator-chosen or derived.
 
-The claim decomposes into exactly two halves, and the REVIEW UNITS are split along that
-seam so the halves cannot be confused. THM-0055 is the MCP-RE-owned half and is owned by
-`http_profile.keyid`, a unit carrying NO primitive assumption: distinct admitted verification
-keys have distinct canonical thumbprint preimages, and the digest encoding merges nothing.
-ASM-0037 is the primitive half and is scoped to `http_profile.keyid_selector` — this claim's
-own unit — and to `boundary.crypto_primitives`. Two units over one file, because there are
-two propositions with two different trusted bases; a single unit would make collision
-resistance a premise of THM-0055, which is backwards, since the derivation half is proved
-without assuming anything about the digest and saying so is most of its value.
-
-Neither ASM-0028 nor ASM-0023 was widened to reach it: second-preimage resistance and
-collision resistance are different propositions, and ASM-0023's declining to assume the
-construction's separation properties stands unchanged.
+The derived-keyid half is computational selector injectivity, and deliberately not a
+mathematical one. SHA-256 is not injective — it maps an unbounded domain onto 256 bits, so
+colliding keys EXIST. What ASM-0037 states is that none can be exhibited by an adversary it
+covers. THM-0055 is the MCP-RE-owned half and is owned by `http_profile.keyid`, a unit
+carrying NO primitive assumption: distinct admitted verification keys have distinct
+canonical thumbprint preimages, and the digest encoding merges nothing. ASM-0037 is the
+primitive half and is scoped to `http_profile.keyid_selector` — this claim's own unit — and
+to `boundary.crypto_primitives`. Neither ASM-0028 nor ASM-0023 was widened to reach it:
+second-preimage resistance and collision resistance are different propositions, and
+ASM-0023's declining to assume the construction's separation properties stands unchanged.
 
 It does not establish that the seam answers for any particular keyid, that the key it returns
 is trusted for its slot, or that the enrolment set is correct.
 """
 owner = "http_profile.keyid_selector"
 review_requirement = "Owner security-specification review; re-review on any change to the keyid digest algorithm"
-supported_by = ["unit://http_profile.keyid_selector"]
+supported_by = ["unit://http_profile.keyid_selector", "unit://proxy.trust_document_interpretation"]
 depends_on = ["THM-0055"]
 
 [[theorem]]
@@ -2763,17 +2788,18 @@ Possession provenance across the serving pipeline. It does not restate what the 
 established (THM-0015) or that the products are type-separated (THM-0047); it is the joint
 those two explicitly exclude.
 
-The mechanism is a self-tested source-text gate,
-`scripts/serving_product_provenance_gate.py`: the assembly calls the verification stage
-exactly once and builds exactly one carrier, the stage hands its product to
-`ExchangeProgress::establish` so the machine learns it ran, the carrier has no public field,
-and no production module of `mcp-re-proxy` constructs the product. That is EVIDENCE and not
-unconstructibility, and the reason it cannot be a type is recorded rather than worked around:
-`VerifiedMcpRequest` keeps PUBLIC fields because the Verus obligation on
-`prepare_http_dispatch` reads `verified.request_block` as a field so the prover can relate
-the obligation to the value, and `#[verifier::external_type_specification]` refuses a
-non-public field. A proved postcondition outranks a seal. So this claim holds for the serving
-path of this crate and says nothing about a product another crate fabricates.
+The mechanism is a self-tested source-text gate, `scripts/serving_product_provenance_gate.py`:
+the assembly calls the verification stage exactly once and builds exactly one carrier, the
+stage hands its product to `ExchangeProgress::establish` so the machine learns it ran, the
+carrier has no public field, and no production module of `mcp-re-proxy` constructs the product.
+That is EVIDENCE and not unconstructibility, and the reason it cannot be a type is recorded
+rather than worked around: `VerifiedMcpRequest` keeps PUBLIC fields because the Verus
+obligation on `prepare_http_dispatch` reads `verified.request_block` as a field so the prover
+can relate the obligation to the value, and `#[verifier::external_type_specification]` refuses
+a non-public field. A proved postcondition outranks a private-field seal; the type is instead
+`#[non_exhaustive]`, so no other crate can write one (structural probes S52/S53). This claim
+holds for the serving path of this crate; what the gate adds is that no stage there substitutes
+a product for the one the verification returned.
 """
 owner = "proxy.dispatch_commitment"
 review_requirement = "Owner security-specification review"
@@ -2820,8 +2846,10 @@ title = "A presented admission assertion is authentic, in its window, and for th
 statement = """
 The admission assertion an enforcement point acts on verified under a key resolved for its
 issuer through the trust seam, carries the required credential type and algorithm, names this
-profile and an audience this enforcement point answers to, and the instant of the call lies
-inside both its own [nbf, exp] window and the verifier's own staleness budget.
+profile and an audience this enforcement point answers to, was not issued ahead of the
+verifier's clock by more than the verifier's clock-skew tolerance, and the instant of the call
+lies inside both its own `[nbf, exp]` window and the verifier's own staleness budget, each
+widened by that tolerance.
 """
 security_consequence = """
 An admission verdict cannot rest on an assertion another party minted, on one carrying a
@@ -2971,14 +2999,14 @@ depends_on = []
 
 [[theorem]]
 id = "THM-0057"
-title = "A client's trust anchors are the ones the current signed manifest published"
+title = "A client's anchors loaded through the manifest loader are the ones the current signed manifest published"
 statement = """
-Anchors are released only from a manifest whose signature verified under a trusted signer
-kid that the signature itself covers, whose profile is this one, and whose version is not
-below the monotone floor — a floor that rises on load and cannot be read as zero when it
-cannot be read at all. The manifest's own deadline travels with the anchors it published and
-outranks every root inside it, so an expired document resolves nothing, and the revocation
-half is carried by the same authority as the resolution half.
+Anchors the manifest loader releases come only from a manifest whose signature verified under a
+trusted signer kid that the signature itself covers, whose profile is this one, and whose
+version is not below the monotone floor — a floor that rises on load and cannot be read as zero
+when it cannot be read at all. The manifest's own deadline travels with the anchors it
+published and outranks every root inside it, so an expired document resolves nothing, and the
+revocation half is carried by the same authority as the resolution half.
 """
 security_consequence = """
 A client cannot be moved back onto a superseded trust picture by replaying an older signed
@@ -2989,9 +3017,12 @@ storage fails, where anchors are withheld rather than released against an unknow
 direct_consequence_severity = "critical"
 scope = """
 Establishes what the document says and for how long. It does not establish that a response
-verified under one of these anchors is an answer to this request (THM-0058, THM-0059), that
-the publisher's key management is sound, or that a revocation list is complete — only that
-an identifier it names cannot resolve.
+verified under one of these anchors is an answer to this request (THM-0058, THM-0059), that the
+publisher's key management is sound, or that a revocation list is complete — only that an
+identifier it names cannot resolve.
+
+A hand-pinned anchor set (the SDK bindings' single pinned root) is not a manifest picture: it
+carries no document deadline and no floor, by construction.
 """
 owner = "client.trust_manifest_lifecycle"
 review_requirement = "Owner security-specification review"
@@ -3033,11 +3064,12 @@ depends_on = ["THM-0016", "THM-0019", "THM-0057"]
 id = "THM-0059"
 title = "An unbound receipt is never a success and never another request's answer"
 statement = """
-A response verified without a request binding is reported as unbound and is never classified
-as a success, and there is no path on which a failed bound verification is retried as an
-unbound one. A preflight receipt is accepted as being about this call only when it commits to
-the digest of the bytes this client sent; one about another request, and one about no request
-at all, answer nothing.
+A response verified without a request binding is reported as unbound and is never classified as
+a success: a success is verified bound or not at all, and only a REJECTION receipt that fails
+bound verification is tried as a preflight-unbound one, and is then reported unbound. A
+preflight receipt is accepted as being about this call only when it commits to the digest of
+the bytes this client sent; one about another request, and one about no request at all, answer
+nothing.
 """
 security_consequence = """
 A pre-parse receipt cannot be replayed as the answer to a request, and a response that could
@@ -3183,11 +3215,11 @@ configured cadence, and whose anchors are WITHDRAWN once the manifest in force h
 own `expires_at` with no newer document accepted.
 """
 security_consequence = """
-A deployed client cannot outlive the trust picture an org published. The refresh cycle is the
-only place anchors are withdrawn on expiry and nothing on the request path consults that
-expiry, so a serving path that omitted the start would verify under a lapsed manifest for as
-long as the process ran — with every control over the refresher itself still passing, because
-none of them asks whether the artifact an operator runs starts one.
+A deployed client cannot keep trusting a root an org has since revoked or retired: the
+refresh cycle is the only place a newer manifest reaches a running client. Without it, a
+revocation published in a later document never takes effect, and the client trusts the
+superseded picture until that picture's own deadline — the controls over the refresher itself
+all still passing.
 """
 direct_consequence_severity = "high"
 scope = """
@@ -3237,12 +3269,12 @@ that lands afterwards. Terminal retirement dominates every later read and public
 issuance failure serves the still-valid key and then fails closed at its expiry rather than
 extending it, and the retry schedule never sleeps past a still-valid key.
 
-The snapshot is whole-value state — one `Option<Arc<..>>` swapped entire — so no partially
-mutated invariant can become visible and a poisoned snapshot lock is RECOVERED rather than
-treated as a retirement. Recovery yields exactly the verdict a healthy lock yields and
-overrides neither terminal retirement nor expiration: it is the reads above that decide,
-never the lock's poison bit. A signer that failed closed on poison would let one unrelated
-panic anywhere in the process retire this replica's signing for its lifetime.
+The snapshot is whole-value state — one `Snapshot` (empty, active or terminally retired)
+replaced entire — so no partially mutated invariant can become visible and a poisoned snapshot
+lock is RECOVERED rather than treated as a retirement. Recovery yields exactly the verdict a
+healthy lock yields and overrides neither terminal retirement nor expiration: it is the reads
+above that decide, never the lock's poison bit. A signer that failed closed on poison would let
+one unrelated panic anywhere in the process retire this replica's signing for its lifetime.
 """
 security_consequence = """
 A response cannot be signed under a credential the deployment no longer holds, under one
@@ -3293,7 +3325,7 @@ unit rather than part of this claim.
 owner = "proxy.response_signing"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.response_signing", "unit://proxy.delegated_signing_credential", "unit://http_profile.delegated_signing_custody"]
-depends_on = ["THM-0062"]
+depends_on = []
 
 [[theorem]]
 id = "THM-0064"
@@ -3308,10 +3340,11 @@ cannot start without is not built, and a state carries no neighbour's material.
 security_consequence = """
 Where a deployment selects non-exporting custody, this authority materializes no
 process-readable export path for the signing key: what the process receives is a signing
-CAPABILITY and a public identity, never a private signing seed, so there is no key in memory
-or on disk for this authority to have leaked. And a consumer asking whether the key may be
-read here cannot get a different answer by asking which mechanism it is, because the
-projection names none.
+CAPABILITY and a public identity, never a private signing seed, so there is no key in memory or
+on disk for this authority to have leaked. And a consumer asking whether the key may be read
+here cannot get a different answer by asking which mechanism it is, because the exposure
+projection names none. The state's other projection, `material()`, names the mechanism only so
+materialization can build its key source, and no exposure decision is taken from it.
 
 It does NOT claim that the external KMS, HSM or token itself honours non-exportability. That
 is the provider's property, it is outside this boundary, and the scope below says so.
@@ -3411,11 +3444,11 @@ depends_on = ["THM-0037"]
 id = "THM-0067"
 title = "The composition root re-reads no owner's security semantics from the request"
 statement = """
-Every field the composition root still reads directly from the validated deployment request
-is a pinned ordinary parameter — one whose value changing, with every owner state unchanged,
-cannot change a security-sensitive decision or effect — and each is recorded with the
-sentence saying why. The inventory is checked against the file it describes in both
-directions, so a new raw read fails and a field that acquired an owner must leave the list.
+Every field the composition root still reads directly from the validated deployment request is
+a pinned ordinary parameter — a coordinate or locator that no owner classifies — and each is
+recorded with the sentence saying what it addresses and who decides what it means. The
+inventory is checked against the file it describes in both directions, so a new raw read fails
+and a field that acquired an owner must leave the list.
 """
 security_consequence = """
 After layer A classifies a deployment, no post-validation consumer can reach back past an
@@ -3453,20 +3486,17 @@ against a service whose key came from one place and whose profile expectations c
 another — the pairing that lets a receipt satisfy a position profile the pinned service never
 declared.
 
-Conditional on that provenance, deliberately. `ResolvedTransparencyService::stated` is a
-legitimate second provenance and is retained: the in-process prototype log and the conformance
-corpus have no pin to resolve from, and deleting it to make this consequence unconditional
-would remove a supported use to improve the wording of a claim.
+In a product build `stated` does not exist; `pinned` is the only producer.
 """
 direct_consequence_severity = "high"
 scope = """
 It establishes the PROVENANCE of a pinned service, not that a deployment pinned one.
 `verify_receipt_offline` takes the service as a `Fn(&str) -> Option<ResolvedTransparencyService>`
-seam, and `stated` is a legitimate second provenance — the in-process prototype log is one,
-with no pin to resolve from. Against a seam a private field only forces a constructor taking
-the same arguments with the same absence of checking, so what these fields buy is that every
-producer is NAMED, not that the illegal pairing is unconstructible. Whether a given
-deployment's resolver is backed by a pin is deployment wiring and is not established here.
+seam. In a product build `pinned` is the only producer of that value; `stated`, which takes
+the key and both profiles as separate arguments, exists only under test and the
+`pre_052_fixtures` feature, for the in-process prototype log and the conformance corpus.
+Whether a given deployment's resolver is backed by a pin is deployment wiring and is not
+established here.
 """
 owner = "http_profile.scitt_service_pin"
 review_requirement = "Owner security-specification review"
@@ -3487,13 +3517,18 @@ depends_on = []
 id = "THM-0069"
 title = "A security record states each authority's outcome in that authority's own coordinate"
 statement = """
-Every request record states an authorization outcome — not configured, authorized, or
-refused — and a response record carries none, because there is nothing after the dispatch for
-a policy to have decided. The Core verdict and the authorization verdict occupy separate
-coordinates on one record and neither can be read as the other: an unconfigured deployment
-is not rendered as an authorized one, a policy denial's token goes in the authorization
-coordinate, the two authorization refusal arms stay distinguishable, and the arm reached
-before any policy ran imports no policy vocabulary at all.
+Every request record states an authorization outcome — not configured, authorized, or refused —
+and a response record carries none, because there is nothing after the dispatch for a policy to
+have decided. The Core verdict and the authorization verdict occupy separate coordinates on one
+record and neither can be read as the other: an unconfigured deployment is not rendered as an
+authorized one, a policy denial's token goes in the authorization coordinate, the two
+authorization refusal arms stay distinguishable, and the arm reached before any policy ran
+imports no policy vocabulary at all.
+
+The §7 admission authority's outcome is a third coordinate on every request record — not
+reached, not configured, live-confirmed, degraded or refused, with its refusal class when it
+refused — never expressed in the Core or authorization vocabulary; a response record carries
+none.
 """
 security_consequence = """
 A reader of the record cannot be shown *a policy permitted this* where none was deployed,
@@ -3523,12 +3558,14 @@ depends_on = ["THM-0046"]
 id = "THM-0070"
 title = "The record stream is honest about what reached it"
 statement = """
-Every emitted record carries a sequence number and the collector preserves emission order.
-A full queue drops rather than blocking the caller, the drop count is reported without a
-following record to carry it, an unattributed flood cannot consume the headroom an
-attributed record needs, and concurrent offers at the ceiling admit only the remaining
-slots. A drain that timed out is a distinct outcome from one that completed, and the
-outcome that is unknown is its own case.
+Every emitted record carries its position — a sequence number within a named run of the
+process — and the collector preserves emission order. A full queue drops rather than
+blocking the caller, the drop count is reported without a following record to carry it, an
+unattributed flood cannot consume the headroom an attributed record needs, and concurrent
+offers at the ceiling admit only the remaining slots. A drain is either acknowledged with no
+failed write — and then every record handed to the writer before it has reached the stream —
+or its outcome is UNKNOWN: a drain that timed out, could not be enqueued, or followed a
+failed write. An unknown drain is never reported as a completed one, nor as a loss.
 """
 security_consequence = """
 Within the modeled collector lifetime, an auditor cannot be shown a record stream that
@@ -3584,8 +3621,10 @@ enumerates them.
 The AUDIT-VOCABULARY authority the refusal carries, not every authority that participated.
 `RefusalCause` closes over the two vocabularies represented at this boundary — Core-owned and
 Authorization-owned — and admission, the transport binding, the continuation plane and the
-replay tier all reach the record through one of those rather than by adding a third. Where an
-authorization verdict applies it occupies its own coordinate, which is what stops a policy
+replay tier all reach `RefusalCause` through one of those rather than by adding a third
+vocabulary. Admission additionally states its own outcome in a separate record coordinate
+(THM-0069), which is a statement beside the refusal's provenance, not a third provenance. Where
+an authorization verdict applies it occupies its own coordinate, which is what stops a policy
 denial being recorded as a Core verdict.
 
 Within the MODELED audit path. Durability is THM-0070's boundary and is not widened here.
@@ -3626,11 +3665,11 @@ Where verification runs through a pin-projected resolver, an auditor cannot be s
 from a log that pin does not describe, and cannot be shown one that satisfies a position
 profile the pinned service never declared.
 
-It says nothing about a verification performed through a `stated` resolver, which is a
-supported non-pin provenance for prototype and conformance use. `verify_receipt_offline` takes
-its service through a `Fn(&str) -> Option<ResolvedTransparencyService>` seam, so which
-provenance backs a given call is deployment wiring — and no production wiring was invented to
-make this claim unconditional.
+In a product build `stated` does not exist, so every resolver a deployment wires returns
+pin-projected services; which pin backs a given call is deployment wiring. It does not judge
+the transparency-service key's lifecycle: a resolved key is used whatever its validity window
+or revocation status, and that a receipt's key was acceptable when the receipt was accepted is
+the caller's (THM-0041).
 """
 direct_consequence_severity = "high"
 scope = """
@@ -3731,7 +3770,7 @@ about the chain being trusted.
 owner = "proxy.signing_role_separation"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.signing_role_separation", "unit://proxy.signing_credential_provenance"]
-depends_on = ["THM-0049", "THM-0025", "THM-0027"]
+depends_on = ["THM-0025", "THM-0027"]
 
 [[theorem]]
 id = "THM-0074"
@@ -3898,18 +3937,7 @@ It does not establish that the deployment was right to trust an anchor.
 owner = "client.response_binding_disposition"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://client.response_binding_disposition", "unit://client.response_signer_authorization"]
-depends_on = [
-  "THM-0058", "THM-0059", "THM-0057", "THM-0060", "THM-0061", "THM-0084",
-  # Ratified 2026-09-07, dependency closure only: the statement and the security
-  # consequence are untouched. THM-0126 owns the step from a genuinely verified reply
-  # to a terminal, continuation or refusal outcome, and THM-0127 owns the composition
-  # step that makes the deployable actually maintain the trust configuration whose
-  # semantics THM-0057 and THM-0120 establish. Without the first, an unclassifiable
-  # verified result could become a completed answer without violating the old closure;
-  # without the second, the refresher could stay correct while the deployable stopped
-  # starting it. Neither is outside this root's published consequence.
-  "THM-0126", "THM-0127",
-]
+depends_on = ["THM-0058", "THM-0059", "THM-0057", "THM-0061", "THM-0084", "THM-0126", "THM-0127"]
 
 [[theorem]]
 id = "THM-0077"
@@ -4061,8 +4089,9 @@ depends_on = [
 id = "THM-0078"
 title = "Refusal is terminal, and no refusal-side effect reads as success"
 statement = """
-If an inbound exchange fails to establish a required pre-dispatch obligation, it reaches a
-declared refusal terminal before backend dispatch, and cannot fall through into a success-path
+If an inbound exchange fails to establish a required pre-dispatch obligation, it is answered by
+an exchange-owned refusal exit before backend dispatch, under the retry contract the exchange
+machine derives from how far the exchange had got, and cannot fall through into a success-path
 dispatch or a success response.
 
 WHERE AN EXCHANGE EXISTS, every refusal-side effect — signed refusal evidence, audit and
@@ -4132,9 +4161,9 @@ title = "Distinct signed exchanges have distinct replay keys"
 statement = """
 The replay five-tuple — profile id, signature label, actor id, audience hash, nonce — is
 pre-serialized onto the core cache's three slots with a separator that cannot appear in any
-component, so equality of the composite slots holds exactly when the full five-tuple is
-equal; every component discriminates; and a key admitted once is reported as a replay
-thereafter.
+component, so equality of the composite slots holds exactly when the full five-tuple is equal;
+every component discriminates; and a key admitted once is reported as a replay until its
+retain-until instant has passed.
 """
 security_consequence = """
 Evidence produced under a different profile, a different signature role, a different actor or
@@ -4661,6 +4690,8 @@ member the receipt did not carry is not invented for it. A LOCAL failure — a t
 deadline, a cancellation, a local I/O or signing failure — is reported as a local and
 ambiguous failure under the SDK's own prefix: never as `not_executed`, never as retry-safe,
 and never as a wire code the peer did not send.
+
+The native binding between the Python layer and the core is part of that claim: it hands the core the request bytes the exchange transmitted without change, builds the pinned root anchor and the delegation policy from the values the application supplied — refusing an empty issuer identity rather than pinning an empty principal — and reports the core's outcome field for field, so a rejection is never reported as a success and an execution member the receipt did not state is reported as not stated.
 """
 security_consequence = """
 An application driving MCP through this SDK cannot be handed another exchange's answer, an
@@ -4694,14 +4725,7 @@ exchange signed — which is why that is now the statement's first sentence and 
 THM-0058/THM-0059 are now premises instead of being silently relied on. The system promise is
 unchanged; what changed is that it names the mechanism that keeps it.
 
-THE PyO3 BINDING IS NOT COVERED. `sdk/python/src/lib.rs` builds the pinned root resolver, the
-delegation policy and the revocation list, calls the core, and projects the core's verdict
-into the object this claim's execution-honesty leaf reports verbatim. It is in no unit's
-paths, so it is outside every fingerprint and outside every proposition, and it holds no
-tests of its own. This claim therefore ASSUMES the projection is faithful rather than
-establishing it — recorded as a review obligation, not waved past. Until it is discharged,
-the closure below establishes what the Python layer does with a verdict, not that the verdict
-object says what the core decided.
+THE NATIVE BINDING IS INSIDE IT. `sdk_python.native_binding` owns what the PyO3 binding does with the values it is handed and with the core's verdict. That `pyo3` delivers the caller's `bytes`, `str`, `int` and `list` arguments to it as the caller passed them (or refuses the call), and returns its result as it produced it, a field left `None` arriving as `None`, is a premise of the claim, ASM-0088, and not something this unit establishes.
 
 CONCURRENCY AND THROUGHPUT ARE OUTSIDE IT. The exchange bound is a resource ceiling, and a
 difference from the TypeScript member there changes nothing about authenticity, correlation
@@ -4794,7 +4818,7 @@ supported_by = [
 # `depends_on` WAS EMPTY AND THAT WAS FALSE: the SDK's whole cryptographic argument is
 # `mcp_re_client_core`'s. THM-0126 is deliberately excluded — the PyO3 binding derives that
 # fact independently rather than consuming it, which is the packet's P2-D.
-depends_on = ["THM-0058", "THM-0059", "THM-0060", "THM-0061"]
+depends_on = ["THM-0058", "THM-0059", "THM-0061"]
 
 
 [[theorem]]
@@ -4805,16 +4829,22 @@ For the shipped TypeScript SDK, an application is not handed, as this call's ans
 response from another exchange or signer, or one that verified only unbound — and is not led
 to repeat a side effect by reading silence as *it did not run*.
 
-Every reply is taken from the correlation entry the request created, and a reply binding to
-nothing outstanding, arriving late, or repeating one already answered is refused rather than
-delivered; concurrent exchanges each receive their own. A response is accepted only under a
-complete configured trust anchor — an incomplete one is refused at construction rather than
-defaulted — and only outside the revocation denylist, whose shape is checked so a bare string
-cannot spread into a per-character list. A notification is delivered only against a signed
-acknowledgement. A verified reply that is not a JSON-RPC response to this request is refused
-rather than dispatched. What the application is told about execution is what the receipt
-said: a post-dispatch rejection carries the contract it stated, a receipt that stated none is
-given none, and a local failure travels under the SDK's own prefix.
+The verdict this SDK acts on was computed by the audited core over the exact request bytes this
+exchange signed and transmitted; nothing is re-derived or re-serialized for the verifier, so
+what THM-0058 and THM-0059 establish about a verdict is established about THIS transmission.
+Each exchange is one signed POST, and its reply is taken from the correlation entry its own
+request created; `CorrelationStore` refuses, at its own API, a reply binding to nothing
+outstanding, one arriving late, and one repeating a reply already answered, and concurrent
+exchanges each receive their own. A response is accepted only under a complete configured trust
+anchor — an incomplete one is refused at construction rather than defaulted — and only outside
+the revocation denylist, whose shape is checked so a bare string cannot spread into a
+per-character list. A notification is delivered only against a signed acknowledgement. A
+verified reply that is not a JSON-RPC response to this request is refused rather than
+dispatched. What the application is told about execution is what the receipt said: a
+post-dispatch rejection carries the contract it stated, a receipt that stated none is given
+none, and a local failure travels under the SDK's own prefix.
+
+The native binding between the TypeScript layer and the core is part of that claim: it hands the core the request bytes the exchange transmitted without change, builds the pinned root anchor and the delegation policy from the values the application supplied — refusing an empty issuer identity, and any time or skew that is not a whole number of seconds, rather than pinning an empty principal or saturating — and reports the core's outcome field for field, so a rejection is never reported as a success and an execution member the receipt did not state is reported as not stated.
 """
 security_consequence = """
 The same consequence as the Python member, over an independently implemented boundary — and
@@ -4830,6 +4860,8 @@ direct_consequence_severity = "critical"
 scope = """
 It is one MEMBER of a root family. THM-0076 is the Rust member and THM-0094 the Python one,
 and none establishes anything about the others.
+
+THE NATIVE BINDING IS INSIDE IT. `sdk_typescript.native_binding` owns what the binding does with the values it is handed and with the core's verdict. That `napi` delivers the caller's `Buffer`, string, number and array arguments to it as the caller passed them, and returns its result as it produced it, a member left `None` arriving absent, is a premise of the claim, ASM-0087, and not something this unit establishes.
 
 CONCURRENCY AND THROUGHPUT ARE OUTSIDE IT, and the exclusion is a decision rather than an
 omission: `send_notification_verified()` running outside the concurrency bound its Python
@@ -4877,7 +4909,7 @@ supported_by = [
   "unit://sdk_typescript.post_close_emission",
   "unit://sdk_typescript.native_binding",
 ]
-depends_on = []
+depends_on = ["THM-0058", "THM-0059", "THM-0061"]
 
 [[theorem]]
 id = "THM-0091"
@@ -5101,10 +5133,12 @@ depends_on = []
 id = "THM-0085"
 title = "Every exchange-owned refusal reaches the audit boundary, typed, before it is answered"
 statement = """
-Every exchange-owned production refusal served by the MCP-RE serving path passes through one
-funnel, which dispatches to exactly two emitters; each emitter takes the typed `RefusalCause`
-and asks it for its Core-verdict and authorization-facet projections rather than rendering
-one; and each records at the audit boundary BEFORE the refusal response is minted.
+Every exchange-owned production refusal served by the MCP-RE serving path is minted by one
+of exactly two emitters — the signed-refusal constructor is visible only inside the
+`receipt` module and they are its only callers — and each emitter takes the typed
+`RefusalCause`, asks it for its Core-verdict and authorization-facet projections rather
+than rendering one, and records at the audit boundary BEFORE the refusal response is
+minted.
 """
 security_consequence = """
 A refusal cannot be served without the record of it having already been offered to the audit
@@ -5219,9 +5253,10 @@ A second verified actor who knows the open leg's public evidence handles cannot 
 the victim's retained handles, so it cannot complete a human-approval round trip that was not
 its own. A refused or transiently-failed read cannot destroy a live approval either.
 
-The consequence is about an actor reaching the store THROUGH this proxy. One that can write
-the keyspace directly needs no victim's handles — it plants its own — and that is ASM-0047's,
-not this claim's.
+The consequence is about an actor reaching the store THROUGH this proxy. A principal that can
+write the keyspace directly is outside it: this claim says nothing against that principal
+creating, replacing or deleting continuation-store entries, and confining that access is
+ASM-0047's, not this claim's.
 """
 direct_consequence_severity = "critical"
 scope = """
@@ -5239,22 +5274,13 @@ request-time absence is attributed between the caller and the deployment, is THM
 This claim observes its own `ContinuationPlane` state and consumes no proposition from
 either.
 
-That paragraph previously read "the store is OPPORTUNISTIC ... an unavailable shared tier
-does not refuse startup — the deployment announces its absence and serves — and an answer
-leg that needs a correlated continuation fails closed at the binding". Both halves described
-behaviour the tree no longer has: the capability has a dedicated selector
-(`--continuation-control-redis-url`), a selected capability is never silently downgraded,
-and a deployment-side absence is refused before admission as a fact about the DEPLOYMENT
-rather than at the binding as a fact about the caller. The claim itself did not move — it is
-about keying and the non-consuming read — so what is corrected is the reason given for a
-boundary that was always correctly drawn.
-
 THE PROVENANCE IS COMPOSED, NOT LOCAL, and the composition is named because the alternative is
 to imply a stronger local fact than exists. THM-0051 establishes that the product the serving
 path carries is the one THIS exchange's verification returned, and THM-0014 — inside THM-0051's
 own closure — that the actor in it was resolved through the trust seam. What
 `unit://proxy.continuation_key_provenance` measures is the remaining step: that both legs
-supply that product's actor projection to the key and nothing else, defended by probe M88.
+supply that product's actor projection to the key and nothing else, defended by probe
+`M88-the-key-operand-is-the-carried-products-actor`.
 
 No type makes this true by construction, and none is claimed to. `ResolvedActor` is
 deliberately unsealed and legitimately constructible through the resolver seam, so a projection
@@ -5267,16 +5293,17 @@ address one entry is a statement about the DIGEST, and rests on SHA-256 second-p
 resistance, registered for this unit alone as ASM-0060. It is deliberately not ASM-0028's
 (whose scope is the six digest-equals-bytes propositions) and not collision resistance.
 
-WHAT "REACHABLE" QUANTIFIES OVER: requests that reach this proxy. Every path by which an
-entry is read or removed through MCP-RE derives its key from the resolved actor, and that is
-the whole of what is measured. A party with direct WRITE access to the `mcp-re:cont:`
-keyspace falls outside the quantifier — it does not reach the victim's entry, it creates its
-own under a key derived from its own actor, and the answer leg's digest equality then holds
-against bytes this fleet never produced. That premise is ASM-0047, registered rather than
-argued, because the reading the title would otherwise invite — that the entry is unreachable
-full stop — is one no deployment can support. ASM-0048 carries the rest of what the store
-contributes: the `DEL` count that makes removal one-shot across replicas, and the `PX` expiry
-that bounds an unanswered approval's life.
+WHAT "REACHABLE" QUANTIFIES OVER: requests that reach this proxy, through MCP-RE's own
+interface. Every path by which an entry is read or removed through MCP-RE derives its key from
+the resolved actor, and that is the whole of what is measured. A principal with direct WRITE
+access to the `mcp-re:cont:` keyspace is not constrained to use that actor-derived key API:
+direct creation, replacement and deletion of continuation-store entries are outside the
+quantified interface, and this theorem makes no claim against them. That boundary is ASM-0047,
+registered rather than argued, because the reading the title would otherwise invite — that the
+entry is unreachable full stop — is one no deployment can support. ASM-0048 carries the rest of
+what the store contributes: that the create and consume scripts execute atomically at the
+primary and reply truthfully — the consume reply that makes removal one-shot across replicas,
+and the expiry that bounds an unanswered approval's life.
 
 It says nothing about what an acknowledged write durably establishes, and nothing about the
 continuation binding itself, which is `mcp-re-http-profile`'s.
@@ -5435,15 +5462,16 @@ says how fast a change to `--trust` reaches the snapshot — that is the reload 
 an operator setting, and the delivered window `R + T` printed at startup is that cadence
 composed with this claim, not this claim.
 
-Nothing about the epoch counter. Not that an `INCR` is observed, not that it is observed
-within any interval, not that an observed change is a revocation: over an unchanged snapshot
-a flush re-caches the same key under the same deadline. How a flush event is PRODUCED from a
-read of the shared store is `proxy.trust_epoch_source`'s, carries ASM-0044, and is outside
-this closure — this claim is true whether or not any other connection ever sees the write.
-Nothing about Redis, etcd, or any shared store; nothing about cross-replica convergence or a
-common trust-document state; and no ordering between a request-cache invalidation and the
-delegated-signing plane's retirement of its epoch, which reads the same counter for a
-different decision and is not related to this one by anything in the tree.
+Nothing about the epoch counter. Not that an advance (`mcp-re-proxy trust-epoch advance`) is
+observed, not that it is observed within any interval, not that an observed change is a
+revocation: over an unchanged snapshot a flush re-caches the same key under the same deadline.
+How a flush event is PRODUCED from a read of the shared store is `proxy.trust_epoch_source`'s,
+carries ASM-0044, and is outside this closure — this claim is true whether or not any other
+connection ever sees the write. Nothing about Redis, etcd, or any shared store; nothing about
+cross-replica convergence or a common trust-document state; and no ordering between a
+request-cache invalidation and the delegated-signing plane's retirement of its epoch, which
+reads the same counter for a different decision and is not related to this one by anything in
+the tree.
 
 `T` is measured against the clock the cache was given. Production injects the system clock,
 so the cache crosses `boundary.clock`; no agreement with any peer's clock is claimed, and a
@@ -5595,46 +5623,62 @@ statement = """
 For one replica whose trust plane re-reads `--trust` on a cadence `R` (`TrustReloadPlan::Every`)
 under a tier with positive-cache lifetime `T` (`T = 0` for the live tier):
 
-The reload worker reads the document again no later than `R` after the previous cycle
-completed, for as long as it is running: each cycle is one halt-aware sleep of exactly `R`
-followed by one read, and the worker runs from materialization until halt, panic, or the
-plane's drop. A successful cycle swaps the snapshot the resolver and the signer directory
-answer from, atomically and together, before the next request is resolved.
+The reload worker runs from materialization until halt, panic, or the plane's drop. Each cycle
+is one halt-aware sleep of `R`, counted from the previous cycle's completion, followed by one
+read of the document; the first sleep starts when the worker is spawned, after the startup
+read. A successful cycle swaps the snapshot the resolver and the signer directory answer from,
+atomically and together, before the next request is resolved. A read's duration is not bounded
+here: a cycle completes when its read does.
 
-Consequently a `(signer, key_id)` absent from the document a successful cycle reads at
-instant `t` is served by that replica at no instant later than `t + T` (THM-0097), and a key
-removed from the bytes at the path at instant `w` is absent from the first successful read
-that starts after `w`, which starts no later than `w + R` while cycles succeed. While cycles
-fail, the snapshot in force is the last successful read's for at most five consecutive
-failures, after which the resolver refuses (THM-0097); so the exposure is at most `R + T`
-while reads succeed, at most `5R + T` across a failing stretch, and closed thereafter.
+For a key removed from the bytes at the path at instant `w`, let `d0` be the duration of the
+read that was already in flight at `w` and had opened the document before `w` (zero if there
+was none), and `d1` the duration of the read that installs the removal. A read that opens the
+document at or after `w` reads the removal; a read in flight at `w` that opened it earlier
+finishes with the old bytes, and the next sleep starts only then. So the first read to open the
+document at or after `w` begins no later than `w + R + d0`, and while every cycle after `w`
+succeeds the snapshot omits the key no later than `w + R + d0 + d1`; the key is served at no
+instant later than that plus `T` (THM-0097: an entry cached before the swap outlives it by at
+most `T`).
 
-The interval the startup transcript prints as the delivered revocation window is exactly
-this arithmetic: `R + T` for the caching tiers, `R` for the live tier, and `UNBOUNDED` when
-no cadence is configured — in which case the snapshot is the startup read for the process's
-lifetime and nothing here bounds anything.
+A failed read keeps the last-good snapshot, for at most four consecutive failures. The fifth
+consecutive failure, and equally the passage of `6R` since the last successful swap with no
+further success (the failure budget measured in time, plus one cadence for the read in flight),
+make the resolver refuse, outside every cache (THM-0097). So, whatever the outcomes of the
+reads, the key is served at no instant later than `w + d0 + 6R + T`; where the failures run to
+refusal it is served at no instant later than the refusal, which is no later than `w + d0 + 6R`
+and does not carry `T`; and with exactly four slow failures before the installing read the bound
+is `w + d0 + 5R + T` plus the durations of those five reads.
+
+The delivered revocation window the startup transcript prints states the two bounds of this
+arithmetic: `R + T` (`R` for the live tier) while every re-read succeeds and `5R + T` (`5R`) as
+the worst case, each plus the durations of the re-reads involved, and `UNBOUNDED` when no cadence
+is configured — in which case the snapshot is the startup read for the process's lifetime and
+nothing here bounds anything.
 """
 security_consequence = """
 An operator who removes a key from `--trust` can read the worst-case time until this replica
 stops verifying under it from the line the replica printed at startup, and that line is
-arithmetic over the two values the deployment chose rather than a promise the runtime may
-or may not keep: the cadence is the sleep the loop performs, the cache lifetime is
-THM-0097's window, and a reload that silently stopped does not extend the window — it closes
+arithmetic over the two values the deployment chose, plus the durations of the re-reads it
+names, rather than a promise the runtime may or may not keep: the cadence is the sleep the loop
+performs, the cache lifetime is THM-0097's window, and a reload that silently stopped or
+hangs does not extend the window — within six cadences of the last successful read it closes
 the resolver. A deployment with no cadence is told, in the same place, that removal does
 nothing until restart.
 """
 direct_consequence_severity = "medium"
 scope = """
-ONE replica, its own clock (`boundary.monotonic_clock` for the sleep and the cache deadline).
+ONE replica, its own clock (`boundary.monotonic_clock` for the sleep; the cache deadline is read from the cache's clock, which advances at least as fast as the monotonic clock and which a wall-clock step can only raise, so it can shorten `T` and never lengthen it — THM-0097).
 The bytes at the path at read time are the input: nothing here says when an operator's
 write reaches the path — a ConfigMap remount, a volume sync or a file copy is outside the
 replica — so `w` is the instant the new bytes are readable at the path, not the instant the
 operator saved them. Nothing about the epoch counter or the push tier's flush, which can only
 shorten the exposure and never lengthens it (THM-0097). Nothing about the read itself beyond
 its success or failure; what an accepted document means is THM-0098's. Not a liveness
-claim about requests: that a key still enrolled is served is not stated. The read's own
-duration is not modelled — a read that takes longer than `R` delays the next cycle by that
-much. Nothing cross-replica: the fleet's exposure is each replica's, and the replicas' `w`
+claim about requests: that a key still enrolled is served is not stated. The duration of a read is a
+parameter of the bound, not a bounded quantity: a read that never returns is not a bounded
+delay, it is the silence that the six-cadence success bound turns into refusal. Scheduling
+delay of the worker thread beyond its wake-up deadline is not modelled; the sleep ends when
+the monotonic clock reaches its deadline, checked at least every 50 ms. Nothing cross-replica: the fleet's exposure is each replica's, and the replicas' `w`
 differ. Executable and structural, class V0.
 """
 owner = "proxy.trust_reload_cadence"
@@ -5644,7 +5688,7 @@ depends_on = ["THM-0097"]
 
 [[theorem]]
 id = "THM-0101"
-title = "An emitted exchange transition corresponds to the work that justifies it, except the six the assembly owns"
+title = "An emitted exchange transition corresponds to the work that justifies it, except the three the assembly owns and the success tail the publication owns"
 statement = """
 For the serving assembly — `handle` and its region functions — and the exchange machine it
 drives:
@@ -5652,49 +5696,52 @@ drives:
 Every `ExchangeEvent` the machine learns of reaches it in one of exactly two ways. A
 STAGE-OWNED event travels inside an `Established<T>`: the carrier is constructed at the site
 the stage's work returned its product, has no public field and no reader other than
-`ExchangeProgress::establish`, and is `#[must_use]`, so the assembly cannot obtain the
-product without the machine advancing the event in the same step and cannot discard the
-product without a warning the build refuses. An ASSEMBLY-OWNED event is stated by a direct
-`advance` in the serving path, and the set of events stated that way is exactly the six
-inventoried with the reason no stage's success could carry each: `BackendDispatched`,
-`ContinuationRetired`, `ContinuationNotRequired`, `EvidenceRetained`,
-`TerminalResponseServed`, `OpenLegResponseServed`.
+`ExchangeProgress::establish` and `establish_terminal`, which delegates to it, and is
+`#[must_use]`, so the assembly cannot obtain the product without the machine advancing the
+event in the same step and cannot discard the product without a warning the build refuses. An
+ASSEMBLY-OWNED event is stated by a direct `advance` in the serving path, and the set of events
+stated that way is exactly the three inventoried with the reason no stage's success could carry
+each: `BackendDispatched`, `ContinuationRetired`, `ContinuationNotRequired`. The success tail —
+`EvidenceRetained`, then `TerminalResponseServed` or `OpenLegResponseServed` — is advanced only
+by `ExchangeProgress::publish`, after `may_publish` has checked the same tail, and the serving
+path advances none of them itself.
 
 The two sets are disjoint: no event a stage establishes is also advanced by the serving path,
-so no stage's fact is stated twice or remembered beside the carrier. The assembly-owned set
-is measured in both directions — an advance naming an event outside the six, and a listed
-event the serving path no longer advances, are each a failing control — so a deleted
-assembly-owned `advance` is detected, not merely forbidden.
+so no stage's fact is stated twice or remembered beside the carrier. The assembly-owned set is
+measured in both directions — an advance naming an event outside the three, and a listed event
+the serving path no longer advances, are each a failing control — so a deleted assembly-owned
+`advance` is detected, not merely forbidden.
 
 Legality is THM-0043's: every advance, by either route, is checked against the relation in
 every build and latches an anomaly when refused. What this theorem adds is that for the
 stage-owned events the machine's state implies the stage's product was obtained, and for the
-six it names, and only those, the correspondence rests on the assembly's own statement.
+three it names, and only those, the correspondence rests on the assembly's own statement.
 """
 security_consequence = """
-The machine's record of which stages ran is not a bookkeeping object procedural code
-remembers to update: a served exchange cannot reach a later stage's product — a verified
-request, an admitted actor, a signed reply, a recorded continuation leg — with the machine
-still saying the stage did not run, so every refusal's retry contract, derived from that
-machine (THM-0081), is derived from a state at least as far along as the work actually got.
-The one residue where the correspondence is asserted rather than carried is enumerated and
-justified, so a reviewer knows exactly which six transitions to read by hand.
+The machine's record of which stages ran is not a bookkeeping object procedural code remembers
+to update: a served exchange cannot reach a later stage's product — a verified request, an
+admitted actor, a signed reply, a recorded continuation leg — with the machine still saying the
+stage did not run, so every refusal's retry contract, derived from that machine (THM-0081), is
+derived from a state at least as far along as the work actually got. The one residue where the
+correspondence is asserted rather than carried is enumerated and justified, so a reviewer knows
+exactly which three transitions to read by hand.
 """
 direct_consequence_severity = "high"
 scope = """
 The serving assembly under `http_profile_serve/` and the carrier in `exchange_state.rs`,
-production halves only. The six assembly-owned transitions are EXCLUDED from the
-correspondence claim: that the dispatch, the two continuation facts, retention and the two
-terminals are stated at the right moment is the assembly's own statement, read by hand, and
-this theorem says only that those six are the whole residue and that removing one is
-detected. Not stated: that a stage's work is correct (each stage's own theorem), that the
-relation is complete (THM-0043), or that a refusal carries the right disposition (THM-0081).
+production halves only. The three assembly-owned transitions are EXCLUDED from the
+correspondence claim: that the dispatch and the two continuation facts are stated at the right
+moment is the assembly's own statement, read by hand, and this theorem says only that those
+three are the whole residue and that removing one is detected. The publication tail's
+correspondence is the cross-machine invariant's (`exchange_publication`). Not stated: that a
+stage's work is correct (each stage's own theorem), that the relation is complete (THM-0043),
+or that a refusal carries the right disposition (THM-0081).
 
 `Established` is constructible anywhere in the crate; the claim is not that a wrong carrier is
-unconstructible but that every carrier in the serving path is built at its stage's success
-site (source-measured, listed in the packet) and that nothing but `establish` can open one
-(structural). Source-text evidence, recorded as evidence: deleting the battery leaves a
-reintroduced `advance` compiling. Class V0.
+unconstructible but that every carrier in the serving path is built at its stage's success site
+(source-measured, listed in the packet) and that nothing but `establish`, and
+`establish_terminal` which delegates to it, can open one (structural). Source-text evidence,
+recorded as evidence: deleting the battery leaves a reintroduced `advance` compiling. Class V0.
 """
 owner = "proxy.exchange_transition_ownership"
 review_requirement = "Owner security-specification review"
@@ -5735,14 +5782,15 @@ transcript can report a window the configuration contradicts.
 direct_consequence_severity = "high"
 scope = """
 The CONFIGURED relation and the two consumers that read it, nothing about the runtime that
-enforces it. The bound on a live connection's age is enforced in
-`async_serve/connection.rs` (a graceful shutdown at `max_connection_age`) and the per-request
-re-check of the leaf's validity and span is THM-0032's; that a connection is in fact closed
-at the configured age is an OBLIGATION this theorem names and does not establish — that
-code has no test and belongs to no unit, and it lives in the `async_serve` feature lane, so
-the default-feature targets say nothing about it. The claim "a connection cannot
-outlive the credential that authenticated it" is therefore stated here at the level of the
-values a deployment chose, not at the level of the socket.
+enforces it. The bound on a live connection's age is enforced in `async_serve/connection.rs`: a
+graceful shutdown at `max_connection_age`, and the connection cut after `drain_grace`; the
+per-request re-check of the leaf's validity and span is THM-0032's. The unit test
+`a_stalled_response_write_is_cut_after_the_age_bound_and_the_grace` exercises the enforcement,
+but it is dispositioned as its own proposition (NP-257) and claimed by no unit of this theorem.
+That a connection is in fact closed at the configured age is therefore evidence OUTSIDE this
+theorem's closure, not part of it. The claim "a connection cannot outlive the credential that
+authenticated it" is stated here at the level of the values a deployment chose, not at the
+level of the socket.
 
 Not a claim about the certificate's own validity window (THM-0032, per request), about
 revocation (THM-0054, THM-0032), or about resumption (THM-0048). An auxiliary claim outside
@@ -5847,8 +5895,8 @@ still being written holds the count above zero.
 
 THE DRAIN WAITS ON THAT COUNT, BOUNDED. It signals the drain, then polls while the count is
 non-zero and returns when the count reaches zero OR the grace deadline passes, whichever comes
-first. A grace that cannot be turned into an instant makes the drain decline to start rather
-than park process exit behind a deadline it cannot enforce.
+first. A grace that cannot be turned into an instant makes the drain signal and then decline to
+wait, rather than park process exit behind a deadline it cannot enforce.
 
 WHAT THE GRACE LEAVES BEHIND MAY BE CANCELLED. When the drain returns, the core's runtime is
 dropped and a task still suspended at an await point is cancelled there. That await point may
@@ -5961,10 +6009,10 @@ the safe answer, is an OUTAGE manufactured by one authenticated actor.
 
 The account is where it is for a measured reason. Of the three backends, only the in-memory
 reference holds a local set it could bound: Redis retention is a server-side `SET NX PX` TTL
-and etcd's is a per-key lease, so neither has anything of its own to budget — and a
-production startup refuses any tier whose store self-reports the single-process reference
-class. A bound implemented inside a backend would therefore govern no shipping deployment.
-This one sits above the seam and governs all of them.
+and etcd's is a lease shared by the nonces retained to one instant, so neither has anything of
+its own to budget — and a production startup refuses any tier whose store self-reports the
+single-process reference class. A bound implemented inside a backend would therefore govern no
+shipping deployment. This one sits above the seam and governs all of them.
 
 The kept-charge rule closes a total bypass rather than a rounding error. If a charge were
 returned whenever the store did not answer `Fresh`, a peer that aborts its connection after
@@ -5985,20 +6033,22 @@ composed at THM-0092, which owns the gate. Nothing here restates either premise 
 the two mechanisms.
 
 NOTHING ABOUT THE DEPLOYABLE ADAPTERS' OWN BEHAVIOUR. `async_redis_store.rs` and
-`async_etcd_store.rs` belong to no unit; the honest reason this account sits above the seam
-is precisely that neither bounds anything locally.
+`async_etcd_store.rs` are the adapter units `proxy.redis_replay_adapter` and
+`proxy.etcd_replay_adapter` (THM-0106, THM-0107); neither bounds anything locally, which is the
+honest reason this account sits above the seam.
 
-NOTHING ABOUT THE SYNC TWINS. `shared_replay.rs` and `replay_tier.rs` are a separate
-composition with a separate battery; the async path is the architecture (ADR-MCPRE-051 §4).
+NOTHING ABOUT THE SYNC `SharedReplayCache`: the async tier reuses its store-key function, error
+type and staleness predicate, but its retention is not this account's; the async path is the
+architecture (ADR-MCPRE-051 §4).
 
 NOTHING ABOUT THE DORMANT L1. `L1FastRejectStore` is defined and DORMANT — the async replay
 store is established at `replay_plane/backends.rs` and handed over by
-`replay_plane/materialized.rs`, nothing outside `async_replay_test` constructs an L1, and no
-configuration surface selects one. It is excluded from the owning unit's paths, and the
-`async_replay_test` battery is NOT cited here: two of its five controls construct an L1 and
-the other three drive the reference L2 behind a double declaring the accepted durability
-class, so that battery cannot back a claim about the composition that ships. The L1's own
-never-`Fresh` invariant stays a documented property of dormant code, claimed by nothing.
+`replay_plane/materialized.rs`, no production path constructs an L1, and no configuration
+surface selects one. It is excluded from the owning unit's paths, and the `async_replay_test`
+battery is NOT cited here: two of its five controls construct an L1 and the other three drive
+the reference L2 behind a double declaring the accepted durability class, so that battery
+cannot back a claim about the composition that ships. The L1's own never-`Fresh` invariant
+stays a documented property of dormant code, claimed by nothing.
 
 NOT A LIVENESS CLAIM. It says an unfunded insert is refused, never that a funded one
 succeeds; and it says nothing about how many entries a deployment should size its ceiling
@@ -6026,13 +6076,14 @@ is a server string rather than a token this code chose. **A policy it could not 
 refused too**: an empty reply, an error, a renamed `CONFIG` — an unverifiable policy is not
 evidence of a safe one.
 
-THE WINDOW IS A WINDOW. The `PX` TTL is the retention horizon plus the declared replica clock divergence
-bound, minus `now` read from the store's OWN clock, never an absolute epoch, and it clamps to a
-minimal value rather than going negative when the instant has already passed. The padding is what
-makes the window safe for a replica whose clock runs ahead of a correct one: the record is kept to
-the verifier's horizon in true time for every clock within the declared bound, and that the actual
-divergence is within the bound is ASM-0061. An already-stale `retain_until` is refused BEFORE Redis
-is touched, judged on the unpadded horizon.
+THE WINDOW IS A WINDOW. The `PX` TTL is the retention horizon plus the declared replica clock
+divergence bound, minus `now` read from the adapter's clock — the replica's system clock held
+back by the declared divergence bound — never an absolute epoch, and it clamps to a minimal
+value rather than going negative when the instant has already passed. The padding is what makes
+the window safe for a replica whose clock runs ahead of a correct one: the record is kept to
+the verifier's horizon in true time for every clock within the declared bound, and that the
+actual divergence is within the bound is ASM-0061. An already-stale `retain_until` — one at or
+before that held-back clock, i.e. past the padded horizon — is refused BEFORE Redis is touched.
 
 THE DECLARED TIER IS ENFORCED, NOT AUDITED. Where `REDIS_WAIT_QUORUM` is selected, a fresh
 insert is followed by `WAIT`, and an acknowledgement shortfall FAILS CLOSED — it does not
@@ -6102,20 +6153,23 @@ two racing inserts cannot both observe the key absent: `succeeded` is `Fresh`, a
 not-`succeeded` is `Replay`.
 
 THE LEASE IS BOUNDED, AND IS A WINDOW. The lease TTL is the retention horizon plus the declared
-replica clock divergence bound, minus `now` on the store's OWN clock, clamped to a minimal value
-rather than going negative, so a replica whose clock runs ahead of a correct one still keeps the
-record to the verifier's horizon in true time (the bound being true is ASM-0061). A recorded nonce
-self-expires at that padded horizon even if the proxy dies. An already-stale `retain_until`
-is refused with NO etcd call at all. Nonces retained to the same instant share one lease, so
-the outstanding-lease count grows with the freshness window rather than with request volume;
-a lease is never revoked, and an expired lease is never reused.
+replica clock divergence bound, minus `now` read from the adapter's clock — the replica's
+system clock held back by the declared divergence bound — clamped to a minimal value rather
+than going negative, so a replica whose clock runs ahead of a correct one still keeps the
+record to the verifier's horizon in true time (the bound being true is ASM-0061). A recorded
+nonce self-expires at that padded horizon even if the proxy dies. An already-stale
+`retain_until` is refused with NO etcd call at all. Nonces retained to the same instant share
+one lease, so the outstanding-lease count grows with the freshness window rather than with
+request volume; a lease is never revoked, and an expired lease is never reused.
 
 FAIL CLOSED, AND BOUNDED. A lease id that is missing, zero or unparseable is refused. Every
-transport, status, parse or TIMEOUT outcome is `Unavailable`. The per-operation deadline is
-clamped at BOTH ends and applies to every POST, because an awaited future
-that never completes holds its request and its admission slot forever — a black-holed
-endpoint would otherwise consume the whole `--max-in-flight` budget without a single invalid
-request being sent.
+transport, status, parse or TIMEOUT outcome is `Unavailable`, except that a transaction refused
+under a reused pooled lease is retried once under a lease this store grants itself; the retry's
+answer is the store's answer, and no error is ever reported `Fresh`. The per-operation deadline
+is clamped at BOTH ends and applies to every POST, because an awaited future that never
+completes holds its request and its admission slot forever — a black-holed endpoint would
+otherwise consume the whole `--max-in-flight` budget without a single invalid request being
+sent.
 """
 security_consequence = """
 This is the negative direction THM-0092's consequence needs from a DEPLOYED backend rather
@@ -6219,7 +6273,10 @@ the case it exists for.
 direct_consequence_severity = "critical"
 scope = """
 THE SEAM, NOT THE PROVIDERS. `gcp_kms_keysource.rs`, `aws_kms_keysource.rs` and `aws_sts.rs`
-are the adapters BENEATH this seam and belong to no unit; nothing here establishes that any
+are the adapters BENEATH this seam; THM-0116 (`proxy.aws_kms_adapter`, `proxy.gcp_kms_adapter`,
+`proxy.pkcs11_adapter`) and THM-0117 (`proxy.aws_sts_credentials`,
+`proxy.gcp_metadata_token_lifetime`, `proxy.aws_web_identity_credential_exchange`) own them, and
+nothing here establishes that any
 of them speaks its provider's protocol correctly, selects the right key, or reaches the
 endpoint a deployment intended. What is established is that whatever they return crosses this
 boundary only as a typed value the seam could construct, and only after verifying.
@@ -6229,10 +6286,9 @@ property and the trait's shape — this trait never asks for a private key — n
 proved here.
 
 NOT A CLAIM ABOUT THE FAILURE PATH. How a failed remote-signer call is classified, and
-whether it arms the handshake-path throttle, is `remote_signer_call`'s authority. It has no
-unit, it is gated on `any(aws_kms_keysource, gcp_kms_keysource)` — the shape that makes a
-single-feature lane silent about the other — and it is recorded as a named gap rather than
-absorbed here.
+whether it arms the handshake-path throttle, is `remote_signer_call`'s authority, owned by
+THM-0115 (`proxy.remote_signer_call_aws` and `proxy.remote_signer_call_gcp`, each compiled
+under its own non-default feature lane).
 
 The public-key rule itself is NOT implemented here: what makes a blob a legal Ed25519 public
 key is a property of the key representation with its own owner under ADR-MCPRE-063 Slice 2,
@@ -6248,7 +6304,7 @@ roots consume is `proxy.delegated_signing_credential`'s.
 owner = "proxy.kms_ed25519_seam"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.kms_ed25519_seam"]
-depends_on = []
+depends_on = ["THM-0025"]
 
 [[theorem]]
 id = "THM-0109"
@@ -6591,8 +6647,9 @@ id = "THM-0113"
 title = "An attestation is checked against the bytes it was issued over, and says which binding it established"
 statement = """
 `attest_chain` loads the retained hops, reconstructs the chain, issues a Signed Statement over
-the resulting evidence commitment, and then verifies that statement against the reconstruction
-it was issued over — on EVERY record, including one whose reconstruction has no verified hop.
+the resulting evidence commitment, and then checks the commitment that statement carries
+against the reconstruction it was issued over — on EVERY record, including one whose
+reconstruction has no verified hop.
 
 What it returns is the statement AND the reconstruction AND the correspondence the self-check
 established, never the statement alone. A caller therefore holds the chain verdict and the
@@ -6787,9 +6844,9 @@ id = "THM-0117"
 title = "An acquired credential is never used past the lifetime its issuer stated, and a lifetime that cannot be read is not a long one"
 statement = """
 A credential acquired from AWS STS or from the GCE/GKE metadata server carries the expiry its
-issuer stated, and that expiry is never extended: neither by the reuse floor that keeps an
-unreadable one from being re-exchanged on every call, nor by a stated value beyond the real
-session ceiling, which is truncated to it.
+issuer stated, and that expiry is never extended as measured by this host's wall clock: neither
+by the reuse floor that keeps an unreadable one from being re-exchanged on every call, nor by a
+stated value beyond the real session ceiling, which is truncated to it.
 
 An expiry that CANNOT be read — absent, unparseable, or a lifetime the issuer did not
 establish — is treated as already expired, never as unlimited. The credential is still reused
@@ -6821,7 +6878,10 @@ permitted to do, which role it assumes, or whether the assumed role is least-pri
 
 NOT A CLAIM ABOUT THE ISSUER. That the issuer's stated expiry is honest, and that the token it
 returns is the one it minted, are the provider's; what is established is that this
-implementation never reads more lifetime out of an answer than the answer states.
+implementation never reads more lifetime out of an answer than the answer states. That the
+host's wall clock is not behind true time by more than the refresh margin these sources keep is
+ASM-0076: a clock stepped back further lets a credential be presented past its true expiry,
+where the provider refuses it.
 
 WHERE THE TOKEN IS SENT is a conjunct of the AWS unit and not of the metadata one: a projected
 web-identity token handed to a re-pointed STS endpoint is a credential leak, and it is refused
@@ -6865,13 +6925,6 @@ The key is the verified triple `(signer, audience, nonce)`: the same nonce under
 signer, or presented to a different audience, is fresh, and an entry becomes admissible again
 only after its retain-until instant has passed.
 
-The PRINCIPAL is not part of that key and must not be read as if it were. It is the identity a
-retained entry is CHARGED to, which is a different question with a different answer: `signer`
-carries the keyid so two keys of one subject never collapse onto one replay key, while a budget
-charged per key would hand a subject one allowance per key it holds — routine during rotation,
-and in a fleet issuing a client key per replica. Two nonces alike under one signer and audience
-are the same entry however they are accounted.
-
 Every failure the reference cache owns is an error VALUE and not a panic — a poisoned lock and
 the entry ceiling both refuse as an outage, and a clone of a poisoned cache admits nothing.
 
@@ -6906,10 +6959,10 @@ and is stated by its owner rather than measured here.
 
 NOT A RETENTION BOUND, AND NOT A BUDGET. What is established is that an entry is readmitted
 only after its retain-until instant; whether the caller computed that instant from the right
-clock is the caller's. What a principal may OCCUPY is the async tier's, which is why
-`ReplayKey::principal` reaches `Charge::reserve` and is deliberately absent from
-`composite_replay_key`. This claim is about which requests collide, not about who pays for
-the collision space.
+clock is the caller's. The principal a retained entry is charged to is not part of this seam:
+`mcp_re_http_profile::replay::ReplayKey` derives it beside the triple
+(`http_profile.replay_key`) and the async tier charges it (THM-0105). This claim is about which
+requests collide, not about who pays for the collision space.
 
 Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 """
@@ -7007,11 +7060,12 @@ title = "The rollback floor only rises, and a floor that has been pushed too hig
 statement = """
 The manifest version floor is a DIRECTORY of one empty marker per accepted version, and the
 floor is the maximum of those names. Recording a version creates a marker; reading takes the
-max. The set only ever grows, so the floor is monotone BY CONSTRUCTION rather than by a
-comparison someone performs: two concurrent writers create different names and cannot
-collide, a late writer recording a lower version cannot lower the maximum, and there is no
-lock to leak if a process dies mid-update. Each marker is `sync_all`ed and followed by a
-directory fsync, so a power loss does not lose it.
+max. Markers are only ever added, except that a successful record prunes markers strictly below
+the version it has just made durable; neither can lower the maximum, so the floor is monotone
+BY CONSTRUCTION rather than by a comparison someone performs: two concurrent writers create
+different names and cannot collide, a late writer recording a lower version cannot lower the
+maximum, and there is no lock to leak if a process dies mid-update. Each marker is `sync_all`ed
+and followed by a directory fsync, so a power loss does not lose it.
 
 An empty directory reads as zero, which is the honest meaning of *this verifier has never
 accepted a manifest*. An operator-declared BOOTSTRAP minimum is the floor's lower bound
@@ -7128,9 +7182,9 @@ The deployable client's local listener holds an in-flight ceiling whose slot is 
 every exit: a refused claim releases it, and a worker that PANICS returns it too. A zero
 ceiling admits nothing.
 
-A request's route is named by its path — a nested or empty path names none — and any other
-path reaches the default route only where one is configured. The host must be a loopback
-literal or `localhost`, and the content type must be JSON.
+A request's route is named by its path — a nested or empty path names none — and any other path
+reaches the default route only where one is configured. Only a request admitted under THM-0091's
+admission contract reaches this pipeline.
 
 Reads and writes are bounded, so a peer that never reads hits the write deadline. A verified
 reply that announces a PAUSE is rendered as a pause, never as a finished call. The response
@@ -7144,8 +7198,8 @@ worker panic.
 
 A path guessed onto a route sends a request to an audience it does not name, and the audience
 is what the signature binds; a default route reached by a path that names none would do that
-silently. The host and content-type guards are what keep a browser or a non-loopback peer from
-driving the operator's signing identity.
+silently. The host and content-type guards that keep a browser page from driving the operator's
+signing identity are THM-0091's; this pipeline sits behind them and restates none of them.
 
 A pause rendered as a finished call reports a call that has NOT run as one that has, which is
 the same class of error the execution contract exists for, at the last hop before the local
@@ -7171,7 +7225,7 @@ Executable, class V0, measured in the default Bazel lane (`bazel test //...`).
 owner = "client.local_serving_pipeline"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://client.local_serving_pipeline"]
-depends_on = []
+depends_on = ["THM-0091"]
 
 [[theorem]]
 id = "THM-0124"
@@ -7393,11 +7447,13 @@ refusal or a digest-plus-marker, never a silent cut.
 
 The `dropped={n}` warning line is outside the claim. It is prose that opens with a
 `key=value`, not a record, and its one value is a `u64`.
+
+The generated format-control table is pinned to Unicode 16.0.0; changing the Unicode data/version regenerates and re-reviews this evidence surface.
 """
 owner = "proxy.audit_text_rendering"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.audit_text_rendering"]
-depends_on = ["THM-0069"]
+depends_on = []
 
 [[theorem]]
 id = "THM-0131"
@@ -7566,13 +7622,15 @@ depends_on = []
 id = "THM-0134"
 title = "The RFC 9421 wire surface is closed, and refuses rather than normalises"
 statement = """
-This profile parses and composes the RFC 9421 surface under a CLOSED, ORDERED component set and
-a CLOSED, ORDERED parameter set. A covered component outside the set, a signature parameter
-outside the set, a duplicated component or parameter, a reordering of either, a non-canonical
-RFC 8941 form, a value carrying CRLF, a string parameter RFC 8941 cannot carry, and a `;req`
-component on a request signature each fail closed as malformed evidence. Quoting and escaping do
-not merge adjacent members: a semicolon inside a quoted value does not split parameters and an
-escaped quote in a neighbouring member does not absorb it. The signature base is exactly the
+This profile parses and composes the RFC 9421 surface under a CLOSED component set, each member
+named at most once and covered in the order the signer declared, and a CLOSED, ORDERED
+parameter set. A covered component outside the set, a signature parameter outside the set, a
+duplicated component or parameter, a reordering of the parameters, a non-canonical RFC 8941
+form, a value carrying CRLF, a string parameter RFC 8941 cannot carry, and a `;req` component
+on a request signature each fail closed as malformed evidence; a covered-component list
+reordered after signing changes the signature base and fails verification. Quoting and escaping
+do not merge adjacent members: a semicolon inside a quoted value does not split parameters and
+an escaped quote in a neighbouring member does not absorb it. The signature base is exactly the
 covered components in exactly their declared order, with derived components resolved from the
 message and the method carried verbatim; a nonce the profile cannot carry is never emitted
 rather than being truncated. The closure is not vacuous: canonical order, ordinary string

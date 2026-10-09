@@ -64,17 +64,16 @@ graph BT
     THM_0047["THM-0047<br/>The verifier's assurance products are not substitutable"]
     THM_0048["THM-0048<br/>Every listener obtains its whole security posture through one listener state"]
     THM_0049["THM-0049<br/>Every illegal cross-owner configuration combination is refused at layer A"]
-    THM_0050["THM-0050<br/>Distinct verification keys cannot feasibly be made to share a keyid"]
+    THM_0050["THM-0050<br/>A keyid resolves to at most one verification key"]
     THM_0051["THM-0051<br/>The pipeline holds, at dispatch, the verification product of this very exchange"]
     THM_0052["THM-0052<br/>A dispatched body was released by the decision a configured policy produced"]
     THM_0053["THM-0053<br/>A presented admission assertion is authentic, in its window, and for this audience"]
     THM_0054["THM-0054<br/>Every production listener denies unknown client revocation status"]
     THM_0055["THM-0055<br/>The keyid derivation introduces no collisions of its own"]
     THM_0056["THM-0056<br/>The posture that claims nothing is produced only where no policy is configured"]
-    THM_0057["THM-0057<br/>A client's trust anchors are the ones the current signed manifest published"]
+    THM_0057["THM-0057<br/>A client's anchors loaded through the manifest loader are the ones the current signed manifest published"]
     THM_0058["THM-0058<br/>A client accepts a response only under a signer its trust configuration authorizes"]
     THM_0059["THM-0059<br/>An unbound receipt is never a success and never another request's answer"]
-    THM_0060["THM-0060<br/>The client's clock skew is bounded at construction and read once"]
     THM_0061["THM-0061<br/>A receipt that says nothing is not a receipt that says nothing ran"]
     THM_0062["THM-0062<br/>A response-signing credential exists only while a valid delegated key does"]
     THM_0063["THM-0063<br/>A signed response never advertises validity its credential does not authorize"]
@@ -106,12 +105,13 @@ graph BT
     THM_0092["THM-0092<br/>A request whose replay state was not established does not dispatch"]
     THM_0093["THM-0093<br/>An answer leg that needs a continuation does not proceed unbound"]
     THM_0094["ROOT — THM-0094<br/>The shipped Python SDK accepts only an answer to its own request"]
+    THM_0095["ROOT — THM-0095<br/>The shipped TypeScript SDK accepts only an answer to its own request"]
     THM_0096["THM-0096<br/>The runtime installs exactly the continuation capability its plan names"]
     THM_0097["THM-0097<br/>A replica serves no request-signer binding outside its snapshot's authority window"]
     THM_0098["THM-0098<br/>A replica's trust snapshot is the slot-wise interpretation of one accepted trust document"]
     THM_0099["THM-0099<br/>The production actor resolver answers its Request-slot selector from the deployment's trust document"]
     THM_0100["THM-0100<br/>A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints"]
-    THM_0101["THM-0101<br/>An emitted exchange transition corresponds to the work that justifies it, except the six the assembly owns"]
+    THM_0101["THM-0101<br/>An emitted exchange transition corresponds to the work that justifies it, except the three the assembly owns and the success tail the publication owns"]
     THM_0102["THM-0102<br/>A validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window"]
     THM_0103["THM-0103<br/>The epoch-bound session store resumes a session under the epoch that tagged it, and under no other"]
     THM_0106["THM-0106<br/>The Redis replay backend refuses a server that may drop a nonce, and turns every non-answer into an outage"]
@@ -125,7 +125,6 @@ graph BT
     THM_0126["THM-0126<br/>A verified reply is not a completed call"]
     THM_0127["THM-0127<br/>The deployable's serving path always runs an anchor refresher"]
     THM_0129["THM-0129<br/>Authoritative admission state is authenticated and bounded-current"]
-    THM_0130["THM-0130<br/>One logical audit record renders to exactly one physical record, recoverably"]
     THM_0131["THM-0131<br/>The client-revocation posture states what this replica is enforcing now"]
     THM_0132["THM-0132<br/>A replica serves on last-known admission state for at most P after the authority last answered"]
     THM_0007 --> THM_0008
@@ -155,6 +154,8 @@ graph BT
     THM_0032 --> THM_0033
     THM_0031 --> THM_0034
     THM_0033 --> THM_0034
+    THM_0047 --> THM_0034
+    THM_0051 --> THM_0034
     THM_0035 --> THM_0036
     THM_0035 --> THM_0037
     THM_0035 --> THM_0038
@@ -175,7 +176,6 @@ graph BT
     THM_0057 --> THM_0058
     THM_0020 --> THM_0059
     THM_0022 --> THM_0059
-    THM_0062 --> THM_0063
     THM_0021 --> THM_0065
     THM_0022 --> THM_0065
     THM_0037 --> THM_0066
@@ -187,7 +187,6 @@ graph BT
     THM_0085 --> THM_0071
     THM_0025 --> THM_0073
     THM_0027 --> THM_0073
-    THM_0049 --> THM_0073
     THM_0003 --> THM_0074
     THM_0004 --> THM_0074
     THM_0005 --> THM_0074
@@ -222,7 +221,6 @@ graph BT
     THM_0057 --> THM_0076
     THM_0058 --> THM_0076
     THM_0059 --> THM_0076
-    THM_0060 --> THM_0076
     THM_0061 --> THM_0076
     THM_0084 --> THM_0076
     THM_0126 --> THM_0076
@@ -270,13 +268,16 @@ graph BT
     THM_0087 --> THM_0093
     THM_0058 --> THM_0094
     THM_0059 --> THM_0094
-    THM_0060 --> THM_0094
     THM_0061 --> THM_0094
+    THM_0058 --> THM_0095
+    THM_0059 --> THM_0095
+    THM_0061 --> THM_0095
     THM_0066 --> THM_0099
     THM_0097 --> THM_0099
     THM_0098 --> THM_0099
     THM_0097 --> THM_0100
     THM_0043 --> THM_0101
+    THM_0025 --> THM_0108
     THM_0046 --> THM_0111
     THM_0088 --> THM_0113
     THM_0089 --> THM_0116
@@ -285,12 +286,11 @@ graph BT
     THM_0121 --> THM_0120
     THM_0061 --> THM_0126
     THM_0120 --> THM_0127
-    THM_0004 --> THM_0129
-    THM_0069 --> THM_0130
+    THM_0132 --> THM_0129
     THM_0054 --> THM_0131
     THM_0005 --> THM_0132
     classDef root stroke-width:3px;
-    class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078,THM_0094 root;
+    class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078,THM_0094,THM_0095 root;
 ```
 
 ## Component 2
@@ -335,18 +335,18 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0091["ROOT — THM-0091<br/>The sidecar signs only for a request its ingress policy admitted"]
-    classDef root stroke-width:3px;
-    class THM_0091 root;
+    THM_0060["THM-0060<br/>The client's clock skew is bounded at construction and read once"]
 ```
 
 ## Component 7
 
 ```mermaid
 graph BT
-    THM_0095["ROOT — THM-0095<br/>The shipped TypeScript SDK accepts only an answer to its own request"]
+    THM_0091["ROOT — THM-0091<br/>The sidecar signs only for a request its ingress policy admitted"]
+    THM_0123["THM-0123<br/>An admitted local request cannot leak its slot, cannot be guessed onto a route, and a pause is never rendered as a finished call"]
+    THM_0091 --> THM_0123
     classDef root stroke-width:3px;
-    class THM_0095 root;
+    class THM_0091 root;
 ```
 
 ## Component 8
@@ -430,28 +430,28 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0123["THM-0123<br/>An admitted local request cannot leak its slot, cannot be guessed onto a route, and a pause is never rendered as a finished call"]
+    THM_0124["THM-0124<br/>A declared binding commits to what the verifier will digest, or the deployment does not start"]
 ```
 
 ## Component 20
 
 ```mermaid
 graph BT
-    THM_0124["THM-0124<br/>A declared binding commits to what the verifier will digest, or the deployment does not start"]
+    THM_0125["THM-0125<br/>A request a verifier could not bind is refused before it is sent, and a notification is not a request with no id"]
 ```
 
 ## Component 21
 
 ```mermaid
 graph BT
-    THM_0125["THM-0125<br/>A request a verifier could not bind is refused before it is sent, and a notification is not a request with no id"]
+    THM_0128["THM-0128<br/>The civil-date conversion is total on the domain its caller can supply"]
 ```
 
 ## Component 22
 
 ```mermaid
 graph BT
-    THM_0128["THM-0128<br/>The civil-date conversion is total on the domain its caller can supply"]
+    THM_0130["THM-0130<br/>One logical audit record renders to exactly one physical record, recoverably"]
 ```
 
 ## Component 23

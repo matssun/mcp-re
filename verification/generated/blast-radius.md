@@ -282,7 +282,7 @@ attestations this view cannot see.
 | unit://proxy.trust_cache_entry_addressing | source, contracts or evidence | THM-0097 | _no consumer_ |
 | unit://proxy.trust_composition_root | source, contracts or evidence | THM-0038, THM-0067, THM-0077 | _no consumer_ |
 | unit://proxy.trust_configuration_state_sole_producer | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
-| unit://proxy.trust_document_interpretation | source, contracts or evidence | THM-0098 | _no consumer_ |
+| unit://proxy.trust_document_interpretation | source, contracts or evidence | THM-0050, THM-0098 | _no consumer_ |
 | unit://proxy.trust_document_locator | source, contracts or evidence | THM-0036 | _no consumer_ |
 | unit://proxy.trust_epoch_source | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.trust_plan | source, contracts or evidence | THM-0037, THM-0066 | _no consumer_ |
@@ -331,7 +331,7 @@ attestations this view cannot see.
 | THM-0001 | statement, consequence, scope or review requirement | specification review | THM-0014, THM-0021, THM-0022 |
 | THM-0002 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0003 | statement, consequence, scope or review requirement | specification review | THM-0074 |
-| THM-0004 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0129 |
+| THM-0004 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0005 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0077, THM-0132 |
 | THM-0006 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0007 | statement, consequence, scope or review requirement | specification review | THM-0008, THM-0015 |
@@ -351,7 +351,7 @@ attestations this view cannot see.
 | THM-0022 | statement, consequence, scope or review requirement | specification review | THM-0017, THM-0020, THM-0059, THM-0065, THM-0075 |
 | THM-0023 | statement, consequence, scope or review requirement | specification review | THM-0024 |
 | THM-0024 | statement, consequence, scope or review requirement | specification review | THM-0029 |
-| THM-0025 | statement, consequence, scope or review requirement | specification review | THM-0026, THM-0073 |
+| THM-0025 | statement, consequence, scope or review requirement | specification review | THM-0026, THM-0073, THM-0108 |
 | THM-0026 | statement, consequence, scope or review requirement | specification review | THM-0027 |
 | THM-0027 | statement, consequence, scope or review requirement | specification review | THM-0073 |
 | THM-0028 | statement, consequence, scope or review requirement | specification review | THM-0029, THM-0030, THM-0032 |
@@ -373,29 +373,29 @@ attestations this view cannot see.
 | THM-0044 | statement, consequence, scope or review requirement | specification review | THM-0078 |
 | THM-0045 | statement, consequence, scope or review requirement | specification review | THM-0052, THM-0074, THM-0078 |
 | THM-0046 | statement, consequence, scope or review requirement | specification review | THM-0069, THM-0071, THM-0078, THM-0081, THM-0085, THM-0111 |
-| THM-0047 | statement, consequence, scope or review requirement | specification review | THM-0051 |
+| THM-0047 | statement, consequence, scope or review requirement | specification review | THM-0034, THM-0051 |
 | THM-0048 | statement, consequence, scope or review requirement | specification review | THM-0054, THM-0077 |
-| THM-0049 | statement, consequence, scope or review requirement | specification review | THM-0073, THM-0077 |
+| THM-0049 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 | THM-0050 | statement, consequence, scope or review requirement | specification review | THM-0074 |
-| THM-0051 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0087 |
+| THM-0051 | statement, consequence, scope or review requirement | specification review | THM-0034, THM-0074, THM-0087 |
 | THM-0052 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0053 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0054 | statement, consequence, scope or review requirement | specification review | THM-0077, THM-0131 |
 | THM-0055 | statement, consequence, scope or review requirement | specification review | THM-0050 |
 | THM-0056 | statement, consequence, scope or review requirement | specification review | THM-0052 |
 | THM-0057 | statement, consequence, scope or review requirement | specification review | THM-0058, THM-0076, THM-0120 |
-| THM-0058 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0094 |
-| THM-0059 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0094 |
-| THM-0060 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0094 |
-| THM-0061 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0094, THM-0126 |
-| THM-0062 | statement, consequence, scope or review requirement | specification review | THM-0063, THM-0075, THM-0082 |
+| THM-0058 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0094, THM-0095 |
+| THM-0059 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0094, THM-0095 |
+| THM-0060 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0061 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0094, THM-0095, THM-0126 |
+| THM-0062 | statement, consequence, scope or review requirement | specification review | THM-0075, THM-0082 |
 | THM-0063 | statement, consequence, scope or review requirement | specification review | THM-0075, THM-0078 |
 | THM-0064 | statement, consequence, scope or review requirement | specification review | THM-0077, THM-0082 |
 | THM-0065 | statement, consequence, scope or review requirement | specification review | THM-0075 |
 | THM-0066 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0077, THM-0099 |
 | THM-0067 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 | THM-0068 | statement, consequence, scope or review requirement | specification review | THM-0072 |
-| THM-0069 | statement, consequence, scope or review requirement | specification review | THM-0071, THM-0078, THM-0085, THM-0130 |
+| THM-0069 | statement, consequence, scope or review requirement | specification review | THM-0071, THM-0078, THM-0085 |
 | THM-0070 | statement, consequence, scope or review requirement | specification review | THM-0071 |
 | THM-0071 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0072 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
@@ -417,7 +417,7 @@ attestations this view cannot see.
 | THM-0088 | statement, consequence, scope or review requirement | specification review | THM-0078, THM-0113 |
 | THM-0089 | statement, consequence, scope or review requirement | specification review | THM-0077, THM-0090, THM-0116 |
 | THM-0090 | statement, consequence, scope or review requirement | specification review | THM-0077 |
-| THM-0091 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0091 | statement, consequence, scope or review requirement | specification review | THM-0123 |
 | THM-0092 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0093 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0094 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
@@ -458,7 +458,7 @@ attestations this view cannot see.
 | THM-0129 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0130 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0131 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
-| THM-0132 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0132 | statement, consequence, scope or review requirement | specification review | THM-0129 |
 | THM-0133 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0134 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 

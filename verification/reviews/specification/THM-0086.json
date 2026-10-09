@@ -7,7 +7,37 @@
     "theorem_id": "THM-0086",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "CLAIM RE-AFFIRMATION, recorded under the owner's AFK mandate for the r11 closure campaign (owner ruling R11-2). WHAT MOVED: one symbol path in the statement, `replay_plane::materialize` -> `replay_plane::MaterializedReplay::materialize`. The producer moved onto the owner type when `MaterializedReplay`'s representation was made private to `replay_plane::materialized`; the free function it replaced had the same signature and the same single call site. WHAT DID NOT MOVE: the proposition, word for word after that one path \u2014 the established tier is the selected one, paired with the posture the plan declared; a self-declared volatile single-process tier cannot be handed over; a backend this build lacks is refused by name. `security_consequence`, `scope`, `owner` and `review_requirement` are BYTE-IDENTICAL. WHAT THIS REVIEW ACKNOWLEDGES: that the refusal named in the statement is now STRUCTURAL as well as procedural \u2014 the illegal pairing is unconstructible outside the owner module rather than refused by the only producer that happens to exist. That is strictly more evidence for the same claim, not a wider claim, so the statement is unchanged in consequence. NOT ACKNOWLEDGED: any new proposition about what an acknowledged write to the established tier durably establishes; the scope paragraph excluding it is unchanged.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G3_G4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {},
+    "supporting_semantics": {
+      "proxy.replay_materialization": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:321ae85524d0bffc35023d9a41198599359f5d4929f36d30ff7f9ae6ce5d3332",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:e1aaf493c644febfd3102303e276de9fa6efa8a4a654ffd2bf32ae4f18ffbf08",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:6a9e1b9b5fe35fe8ac13dda3f12a2dd8ed513ebd4f5e1f8712ee66a0b1bf7801",
+        "test_selection": "sha256:329d79252b72931628767a71877d5796378c54b1b4806df5a16be1849fbd38ee",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "unit_id": "sha256:e998fb123a4e7f2e133f9ea5543b49256981ef7617670dcecab3b859878059c9"
+      }
+    },
+    "theorem_claim": "sha256:8fea6f6254d34ef27b12cc45879aeb6a3e696bb85cc4a4de4c1f8b2cb2df0ae7",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:e53c1367373a4829d2a77a4bc9d11491645bcceeea7f3c8cd1a9ddabdf1a8e79",
   "reviewed_fingerprint": "sha256:dbd5a9b589552f5154ea4a3ab32b01074a99c53ae158fb97f4521ba06ba50352",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0086"

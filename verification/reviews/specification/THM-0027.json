@@ -2,16 +2,71 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:938d91ba4de4499350969c94e0a841a6f599f9f8608ef35c46fe341f79b915da",
+    "theorem_claim": "sha256:65f58a84d9940e79c63cd8b0eecc1f3778c0c331ef915d3ad4d6f7cd7dfa190a",
     "theorem_dependencies": {
-      "THM-0025": "sha256:842f2d7c83658f810f1beaa1e5feac028eedab8234b8f418c5fe9e64129ca54e",
+      "THM-0025": "sha256:4e0aaacbf4e1f4333bf8926c5f2cdaf8a8effdb67bbcfbb25c79db3540cf6cdc",
       "THM-0026": "sha256:120750929aa1f77dd3432379326cf55c92a72da3986378a9df5663d5a2e0d585"
     },
     "theorem_id": "THM-0027",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "OWNER SPECIFICATION REVIEW EVENT, r11 Part A (the ten-row owner packet), 2026-09-16.\nRecorded under the r11 closure mandate's AFK review authority on an explicit owner ruling,\ntranscribed verbatim in work/r11-campaign/RULINGS-OWNER-10.md. This is a CLAIM CORRECTION:\nthe registry is brought to what the code already does, and no implementation was weakened.\n\nRULING (row 4): ACCEPT the replacement. Scope-only; `statement` and `security_consequence`\nare unchanged.\n\nSOURCE: not an R11 row. Surfaced by fixing R11-598 / R11-370.\n\nWHAT MOVED: one paragraph of `scope`. It disclaimed \"an arbitrary `ResolvesServerCert`\nsupplied to `TlsListenerSecurityState::build_delegated_resolver_config`\" and said \"That\nescape hatch exists for custody arrangements MCP-RE does not model\".\n\nWHY THAT WAS WRONG, descriptively. `build_delegated_resolver_config` became PRIVATE in\na50d4070 (#886, closing R11-594). Its only caller is `build_delegated_config`, which goes\nthrough `validated_delegated_resolver` -> `DelegatedCertResolver::materialize` \u2014 the\ncorrespondence gate, with the listener's own budget. The paragraph disclaimed a route that no\nlonger exists, so it was vacuous; worse, it told a reader an unsupported public route into\ndelegated serving is available, which is the opposite of true. The R11-594 adjudication\nflagged this prose as needing a re-read once the second half was fixed.\n\nTHE CORRECTED SCOPE says positively that within the API this crate publishes,\ndelegated-resolver materialization has no route that bypasses the validated correspondence\ngate \u2014 `build_delegated_resolver_config` is private and its one caller goes through\n`materialize`, and the handshake signing key's constructor is reachable only inside\n`crate::delegated_tls`. It then keeps the true boundary explicitly outside the claim: that is\na fact about what this crate PUBLISHES, not unconstructibility, because\n`rustls::sign::SigningKey` and `RawEd25519TlsSigner` are public traits and an embedder\nwriting its own resolver is outside this claim exactly as before.\n\nWHY THE OLD TEXT WAS NOT MERELY HARMLESS. \"The escape hatch exists for custody arrangements\nMCP-RE does not model\" is the kind of sentence a future author reads as permission to reopen\none. Historical permission text is not preserved because a hatch used to exist.",
-  "reviewed_fingerprint": "sha256:de6907c5993e5439fe27992b3bc1e34a33f962e2eeaf8187c1b462b3d1f4e8d5",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0039": "sha256:8324d3eb8ddda22cd78002c195251fa0c1187e21fcb64a188e11ab3929ec3452"
+    },
+    "supporting_semantics": {
+      "proxy.delegated_resolver_materialization": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:02046d42e6809036e9de7bebed9fa0896145af81056d5733dbd1d30f88d63d8e",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:1fd5b792b288e34e19abfca55707001256ae74ec9024b9eb48e9786cd2afbf66",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:154bb20a0a325ada9db27cbd44c551f8c63eb2569d1d2c0e7d9c0b2c23e2fdfb",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:cbc85540b3574ce87098ddc800d2a81e486cc552fdba8a2077b2c11ae6dbbfa9",
+        "test_selection": "sha256:f274eb10bd9fb967e8ece843fc5723b7ab2873b438c61303a8b6c65a59d8d670",
+        "test_sources": "sha256:2ac5135af2aacf059a5454e8a181a06af5bae67d0fcb1da90f7ded2f3bef1517",
+        "trusted_assumptions": "sha256:ea04bac3e57984e21938ae8d0a31eaac287778229db190bbcc95d11f94b3a5f2",
+        "unit_id": "sha256:6804edd3ee08cef30b80b0de4f5b2ebc54332141977634dc7fd4c120b882288c"
+      },
+      "proxy.delegated_resolver_materialization_sole_producer": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:f614fd31f0ac6832924558e99f9edf23971fe2e3fd074ec1fd68968d272e3ad1",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:f7b2026a0241340421e9eee7d1a9c7f2334f4082a0f182625722533711cba4a2",
+        "structural_probes": "sha256:89d27437b92a1f38efbf80f3bba00a1c19ae433eb3ad58444dfac87648d96a82",
+        "test_evidence_definition": "sha256:e38ed590b4e0aff0489c830c64afc2501f24a60d59e8d247924e31b73fe6b2fd",
+        "test_selection": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "unit_id": "sha256:d6e69f7b6b08045d1f563ccc2ec0c8759898a1d19d2638fe40843e08674d6c69"
+      }
+    },
+    "theorem_claim": "sha256:65f58a84d9940e79c63cd8b0eecc1f3778c0c331ef915d3ad4d6f7cd7dfa190a",
+    "theorem_dependencies": {
+      "THM-0025": "sha256:4e0aaacbf4e1f4333bf8926c5f2cdaf8a8effdb67bbcfbb25c79db3540cf6cdc",
+      "THM-0026": "sha256:120750929aa1f77dd3432379326cf55c92a72da3986378a9df5663d5a2e0d585"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:efd4db76c400a15b1bc70ebfa01a5f8a6419691056d69f650566f190db3517bc",
+  "reviewed_fingerprint": "sha256:faec59e583744094ecf8211cf8d49171e08a0f416cd131d25c4f50a539bd2a50",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0027"
 }

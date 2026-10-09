@@ -30,7 +30,7 @@ about the boundary.
 | boundary.filesystem | environment | V0 | ASM-0078 | THM-0045, THM-0088 |
 | boundary.http_client | foreign-dependency | V0 | ASM-0082 | THM-0089, THM-0090 |
 | boundary.inner_server_channel | deployment-topology | V0 | ASM-0050, ASM-0051 | _no theorem_ |
-| boundary.json_parser | foreign-dependency | V0 | ASM-0083 | THM-0083, THM-0098 |
+| boundary.json_parser | foreign-dependency | V0 | ASM-0083 | THM-0050, THM-0083, THM-0098 |
 | boundary.libc | ffi | V0 | _no premise_ | _no theorem_ |
 | boundary.manifest_floor_filesystem | environment | V0 | ASM-0084 | THM-0121 |
 | boundary.monotonic_clock | environment | V0 | ASM-0079 | THM-0069, THM-0097, THM-0098, THM-0100, THM-0132 |

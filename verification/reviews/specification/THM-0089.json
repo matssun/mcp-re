@@ -7,7 +7,39 @@
     "theorem_id": "THM-0089",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-09-02, given as BATCH 2A of the batched owner-review frontier over the exact review object returned for this theorem at commit b983ff14. This is the theorem's FIRST owner specification review; there is no earlier record and no inherited approval. The ruling approves four propositions: that the theorem establishes agreement between the human-readable endpoint authority and the URL parser's machine interpretation; that userinfo and ambiguous or encoded authority spellings cannot smuggle a different host; that the plaintext-scheme exception is decided only after the authority interpretation has been validated; and that the rule is owned by `KmsEndpoint` rather than remembered independently at each credential-egress caller. The owner explicitly accepted the non-claim as a non-claim: this theorem does NOT establish the final network address reached after DNS or address resolution, and does not establish that the provider was the deployment's correctly selected provider; that composition belongs elsewhere. The approval was made conditional on immediate remeasurement; the fingerprint was recomputed at b983ff14 before this record was written and equals the value the owner named. `theorem_dependencies` is empty because the theorem is a leaf, so this approval is over its own claim text alone.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0082": "sha256:5ee7d9a67c783381ca0d134050cbf0b2a2bf225412bbaa21b2c40927f01fe219"
+    },
+    "supporting_semantics": {
+      "proxy.kms_endpoint_authority": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:34fb4dfb2b0c2af6f4ca702b13dcb529bdec0648624304e2f16e9a77279b70ea",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:7c925460ed42fade1f0f8a5d7b09823981283bcfcc3e4176e3c848d3cf484dc8",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:8f5a5106beac5f21d97de67aaeb605edb14c8d4b1847afe021d5753a49687a33",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:d08894d0d3a7eed56474f71766faac5a7831b424eb5ac2c02dcef99960ee2431",
+        "test_selection": "sha256:684b7fad2f554d06d66f782a3f52da761c74b96c3e85b38d3584bf3e4d6945f2",
+        "test_sources": "sha256:2ac5135af2aacf059a5454e8a181a06af5bae67d0fcb1da90f7ded2f3bef1517",
+        "trusted_assumptions": "sha256:2ba838c415493a955677ea89856614466b73a3eff24f8fa9d8802c49a34c0acf",
+        "unit_id": "sha256:85ce049d49c995c9adf4afa8552e7a276a070525649af164d495b3bfcec0d81d"
+      }
+    },
+    "theorem_claim": "sha256:5f08ed31d860d3ef9a71836edf1b0bff9ea496a89e74dae727eb4baff757fad8",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:d4b09d408f11c4d80de9e586ab9e91e72558b63f4061089c918326cc2e2a6c42",
   "reviewed_fingerprint": "sha256:e72c8e86f82919aa6ff4b0e74981dfdd72fe41bb0147193e8bddc1b0d297d4c3",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0089"
