@@ -5699,6 +5699,33 @@ tested_symbols = [
   "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > fails closed when one byte is appended to the recorded body",
 ]
 
+# THE PYTHON SDK'S NATIVE BINDING IS SHIPPED CODE ON THE PATH FROM A VERIFIED RESULT TO THE
+# APPLICATION, AND THEREFORE OWNED. It is a Rust crate (`//sdk/python:_core`), so the unit is a
+# Rust-ecosystem unit whose battery is a Bazel `rust_test` over the crate; the Python units beside
+# it (`sdk_python.*`) keep their pytest batteries.
+[[unit]]
+id = "sdk_python.native_binding"
+class = "V0"
+description = "THE PYTHON SDK'S NATIVE BINDING PASSES THE TRANSMITTED BYTES AND THE CALLER'S TRUST INPUTS TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT. `verify_response` / `verify_accepted_202` build the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — build the delegation policy and denylist from the caller's values, hand the request the caller TRANSMITTED to the core unchanged, and project the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is rethrown under its wire code. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the interpreter, about PyO3's delivery of arguments and return value beyond the premise ASM-0088 states, or about what the Python layer does with the projected verdict (the sdk_python.* units)."
+paths = [
+  "sdk/python/src/lib.rs",
+  "sdk/python/src/projection.rs",
+  "sdk/python/src/trust.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://sdk_python/native_binding/anchor_and_projection",
+  "mutation://sdk_python/native_binding/anchor_and_projection",
+]
+tested_symbols = [
+  "//sdk/python:native_binding_test#trust::tests::an_empty_issuer_field_is_refused_by_name",
+  "//sdk/python:native_binding_test#trust::tests::a_retired_root_resolves_through_its_deadline_and_not_after",
+  "//sdk/python:native_binding_test#projection::tests::an_absent_execution_member_stays_absent_in_the_projection",
+  "//sdk/python:native_binding_test#projection::tests::a_rejection_is_not_reported_as_a_success",
+]
+
 # THE TYPESCRIPT SDK'S NATIVE BINDING IS SHIPPED CODE ON THE PATH FROM A VERIFIED RESULT TO THE
 # APPLICATION, AND THEREFORE OWNED. It is a Rust crate (`//sdk/typescript:native`), so the unit is
 # a Rust-ecosystem unit whose battery is a Bazel `rust_test` over the crate; the TypeScript units
@@ -5706,7 +5733,7 @@ tested_symbols = [
 [[unit]]
 id = "sdk_typescript.native_binding"
 class = "V0"
-description = "THE TYPESCRIPT SDK'S NATIVE BINDING PASSES THE TRANSMITTED BYTES AND THE CALLER'S TRUST INPUTS TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT. `verify_response` / `verify_accepted_202` build the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — build the delegation policy and denylist from the caller's values, hand the request the caller TRANSMITTED to the core unchanged, refuse a time or skew that is not a whole in-range number of seconds instead of saturating it, and project the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is rethrown under its wire code. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime or the napi marshalling of arguments, or about what the TypeScript layer does with the projected verdict (the sdk_typescript.* units)."
+description = "THE TYPESCRIPT SDK'S NATIVE BINDING PASSES THE TRANSMITTED BYTES AND THE CALLER'S TRUST INPUTS TO THE AUDITED CORE AND REPORTS ITS VERDICT WITHOUT RESTATING IT. `verify_response` / `verify_accepted_202` build the pinned root anchor from the issuer values the caller supplied — an empty or whitespace issuer field is refused by name, a retired root is judged at the caller's `now` through the core's own `TrustedIssuerSet` — build the delegation policy and denylist from the caller's values, hand the request the caller TRANSMITTED to the core unchanged, refuse a time or skew that is not a whole in-range number of seconds instead of saturating it, and project the verified outcome field for field: success or rejection, bound or unbound, and the four execution-contract members verbatim, an absent one staying absent. Every refusal the core makes is rethrown under its wire code. Says nothing about whether the core's verdict is right (THM-0058/THM-0059/THM-0061), about the Node runtime, about napi's delivery of arguments and return value beyond the premise ASM-0087 states, or about what the TypeScript layer does with the projected verdict (the sdk_typescript.* units)."
 paths = [
   "sdk/typescript/src/lib.rs",
   "sdk/typescript/src/projection.rs",

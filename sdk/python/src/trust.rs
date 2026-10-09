@@ -59,3 +59,76 @@ pub(crate) fn root_anchor(
         None => TrustedIssuerSet::new().with_current(root),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::root_anchor;
+    use super::PinnedIssuer;
+    use mcp_re_client_core::DelegatedResponseTrust;
+    use mcp_re_client_core::ResolverOutcome;
+    use mcp_re_client_core::SignerSlot;
+    use mcp_re_client_core::TrustedIssuerSet;
+    use mcp_re_core::SigningKey;
+
+    const NOW: i64 = 1_000;
+
+    fn anchor(
+        issuer: &PinnedIssuer<'_>,
+        retired_until: Option<i64>,
+    ) -> Result<TrustedIssuerSet, String> {
+        let key = SigningKey::from_seed_bytes(&[7u8; 32]).public_key();
+        root_anchor(issuer, key, retired_until)
+    }
+
+    fn pinned<'a>(
+        key_id: &'a str,
+        role: &'a str,
+        domain: &'a str,
+        subject: &'a str,
+    ) -> PinnedIssuer<'a> {
+        PinnedIssuer {
+            key_id,
+            role,
+            trust_domain: domain,
+            subject,
+        }
+    }
+
+    fn resolves(set: &TrustedIssuerSet, now: i64) -> bool {
+        matches!(
+            set.resolve_issuer("root-1", SignerSlot::Response, now),
+            ResolverOutcome::Resolved(_)
+        )
+    }
+
+    #[test]
+    fn an_empty_issuer_field_is_refused_by_name() {
+        let named = [
+            ("issuer_key_id", 0),
+            ("issuer_role", 1),
+            ("issuer_trust_domain", 2),
+            ("issuer_subject", 3),
+        ];
+        for (name, index) in named {
+            for blank in ["", "  "] {
+                let mut fields = ["root-1", "server", "example.com", "did:example:server-1"];
+                fields[index] = blank;
+                let issuer = pinned(fields[0], fields[1], fields[2], fields[3]);
+                let Err(refusal) = anchor(&issuer, None) else {
+                    panic!("{name} = {blank:?} must be refused");
+                };
+                assert_eq!(refusal, format!("invalid issuer identity: {name} is empty"));
+            }
+        }
+    }
+
+    #[test]
+    fn a_retired_root_resolves_through_its_deadline_and_not_after() {
+        let issuer = pinned("root-1", "server", "example.com", "did:example:server-1");
+        let retired = anchor(&issuer, Some(NOW)).expect("a retired root builds");
+        assert!(resolves(&retired, NOW));
+        assert!(!resolves(&retired, NOW + 1));
+        let current = anchor(&issuer, None).expect("a current root builds");
+        assert!(resolves(&current, NOW + 1_000_000));
+    }
+}

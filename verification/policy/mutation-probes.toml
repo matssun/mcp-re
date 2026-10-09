@@ -13595,3 +13595,37 @@ weakening = """
 expect_red = [
   "//sdk/typescript:native_binding_test#projection::tests::an_absent_execution_member_stays_absent_in_the_projection",
 ]
+
+[[probe]]
+id = "M569-the-python-binding-refuses-an-empty-issuer-identity"
+unit = "sdk_python.native_binding"
+theorem = "THM-0094"
+conjunct = "the native binding refuses an empty issuer identity by name instead of pinning an empty principal"
+note = "r12 step 7 re-review. `root_anchor` refuses an issuer whose key id, role, trust domain or subject is empty or whitespace, because the core compares the pinned principal with the credential's by equality and an empty pin would match an empty claim. The weakening makes the refusal unreachable; the issuer-field test must go red."
+path = "sdk/python/src/trust.rs"
+anchor = """
+        if value.trim().is_empty() {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "//sdk/python:native_binding_test#trust::tests::an_empty_issuer_field_is_refused_by_name",
+]
+
+[[probe]]
+id = "M570-the-python-binding-does-not-read-silence-as-not-executed"
+unit = "sdk_python.native_binding"
+theorem = "THM-0094"
+conjunct = "an execution member the receipt did not state is reported as not stated, never as not executed"
+note = "r12 step 7 re-review. The verdict projection copies the execution contract's members verbatim. The weakening fills an absent `execution_status` with `not_executed`, the read that makes a post-dispatch refusal look retry-safe; the projection test that expects an absent member to stay absent must go red."
+path = "sdk/python/src/projection.rs"
+anchor = """
+        execution_status: execution.execution_status,
+"""
+weakening = """
+        execution_status: execution.execution_status.or_else(|| Some("not_executed".to_owned())),
+"""
+expect_red = [
+  "//sdk/python:native_binding_test#projection::tests::an_absent_execution_member_stays_absent_in_the_projection",
+]

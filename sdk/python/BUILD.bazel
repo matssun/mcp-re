@@ -1,8 +1,17 @@
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("//bazel:defs.bzl", "nt_rust_test")
 load("@rules_python//python:packaging.bzl", "py_wheel")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
 load("//bazel/pyo3:defs.bzl", "nt_pyo3_extension")
+
+# A test binary is not loaded by an interpreter, so the CPython symbols the crate references
+# are never called; they are left unresolved at link time, as the extension leaves them for its
+# host.
+PYO3_TEST_LINK_FLAGS = select({
+    "@platforms//os:macos": ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"],
+    "@platforms//os:linux": ["-C", "link-arg=-Wl,--unresolved-symbols=ignore-all"],
+})
 
 package(default_visibility = ["//visibility:public"])
 
@@ -24,6 +33,26 @@ nt_pyo3_extension(
     crate_root = "src/lib.rs",
     module_name = "mcp_re_sdk._core",
     deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# The binding's own unit tests: trust-anchor construction and the verdict projection. The test
+# binary links the crate with CPython's symbols left to the host process; no test calls into
+# the interpreter.
+nt_rust_test(
+    name = "native_binding_test",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "_core",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    rustc_flags = PYO3_TEST_LINK_FLAGS,
+    deps = [
+        "@rules_rust_pyo3//private:current_rust_pyo3_toolchain",
+        "@rules_python//python/cc:current_py_cc_headers",
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
         "@crates_mcp_re//:serde",

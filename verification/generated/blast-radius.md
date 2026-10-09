@@ -301,6 +301,7 @@ attestations this view cannot see.
 | unit://sdk_python.exchange_binding | source, contracts or evidence | THM-0094 | _no consumer_ |
 | unit://sdk_python.execution_report | source, contracts or evidence | THM-0094 | _no consumer_ |
 | unit://sdk_python.local_failure_provenance | source, contracts or evidence | THM-0094 | _no consumer_ |
+| unit://sdk_python.native_binding | source, contracts or evidence | THM-0094 | _no consumer_ |
 | unit://sdk_python.nonce_floor | source, contracts or evidence | THM-0094 | _no consumer_ |
 | unit://sdk_python.notification_delivery | source, contracts or evidence | THM-0094 | _no consumer_ |
 | unit://sdk_python.reply_envelope | source, contracts or evidence | THM-0094 | _no consumer_ |
@@ -548,3 +549,5 @@ attestations this view cannot see.
 | ASM-0084 | description, justification, scope or mechanism | client.manifest_floor | assumption review |
 | ASM-0085 | description, justification, scope or mechanism | http_profile.scitt_algorithm_agreement, http_profile.scitt_derived_root, http_profile.scitt_position_commitment, http_profile.scitt_receipt_shape, http_profile.scitt_statement_attribution | assumption review |
 | ASM-0086 | description, justification, scope or mechanism | proxy.credential_currency | assumption review |
+| ASM-0087 | description, justification, scope or mechanism | sdk_typescript.native_binding | assumption review |
+| ASM-0088 | description, justification, scope or mechanism | sdk_python.native_binding | assumption review |

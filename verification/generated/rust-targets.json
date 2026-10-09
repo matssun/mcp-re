@@ -9069,9 +9069,30 @@
    "root": "sdk/python/src/lib.rs",
    "srcs": [
     "sdk/python/src/lib.rs",
+    "sdk/python/src/projection.rs",
     "sdk/python/src/trust.rs"
    ],
    "testonly": false,
+   "verus_deps": []
+  },
+  "//sdk/python:native_binding_test": {
+   "crate": "",
+   "crate_name": "_core",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core"
+   ],
+   "features": [],
+   "kind": "rust_test",
+   "manual": false,
+   "package": "sdk/python",
+   "root": "sdk/python/src/lib.rs",
+   "srcs": [
+    "sdk/python/src/lib.rs",
+    "sdk/python/src/projection.rs",
+    "sdk/python/src/trust.rs"
+   ],
+   "testonly": true,
    "verus_deps": []
   },
   "//sdk/typescript:native_binding_test": {

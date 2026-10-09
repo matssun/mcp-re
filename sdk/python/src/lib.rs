@@ -10,7 +10,9 @@
 //! raw seed (software custody), and `sign_request_with_signer` takes only a sign
 //! callback, so the private key never enters the SDK (non-exporting custody).
 
+mod projection;
 mod trust;
+use projection::project_verdict;
 use trust::root_anchor;
 use trust::PinnedIssuer;
 
@@ -734,40 +736,17 @@ fn verify_response(
     // success. (An unsigned / direct-root / forged answer never reaches here: it fails
     // verify_delegated_response above and is raised as an error.)
     let ev = verified.verified();
-    let (outcome, wire_code, bound, execution) = match verified.outcome() {
-        mcp_re_client_core::DelegatedOutcome::Success => (
-            "success".to_owned(),
-            None,
-            true,
-            mcp_re_client_core::ExecutionContract::default(),
-        ),
-        mcp_re_client_core::DelegatedOutcome::Rejection {
-            wire_code,
-            execution,
-        } => (
-            "rejection".to_owned(),
-            wire_code.clone(),
-            ev.is_bound(),
-            execution.clone(),
-        ),
-    };
     // The response evidence handle (D_irr): the answer leg binds to it. Read from the
     // VERIFIED response evidence, never from unverified bytes.
-    let resp_digest = ev.response_signature_base_digest().clone();
-    Ok(PyVerifyResult {
-        ok: true,
-        server_keyid: ev.accepted_signer().identity.keyid.clone(),
-        outcome,
-        wire_code,
-        bound,
-        execution_status: execution.execution_status,
-        retry_safety: execution.retry_safety,
-        continuation_status: execution.continuation_status,
-        retention_status: execution.retention_status,
-        resp_evidence_digest_alg: resp_digest.digest_alg().to_owned(),
-        resp_evidence_digest_value: resp_digest.digest_value().to_owned(),
+    let resp_digest = ev.response_signature_base_digest();
+    Ok(project_verdict(
+        &ev.accepted_signer().identity.keyid,
+        verified.outcome(),
+        ev.is_bound(),
+        resp_digest.digest_alg(),
+        resp_digest.digest_value(),
         request_state,
-    })
+    ))
 }
 
 #[pymodule]

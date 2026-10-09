@@ -3175,3 +3175,73 @@ only when the certificate's signature verifies under the certificate's own subje
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0087"
+description = "When `napi` invokes an exported `#[napi]` function of the TypeScript native binding, each `Buffer`, string, number and array argument arrives as the JavaScript caller passed it, and the object the function returns, or the error it raises, reaches the caller with each member and message as the function produced it, a member left `None` arriving absent."
+justification = """
+THM-0095 says what an application is handed, and the application receives it through `napi`:
+the request bytes the exchange transmitted go in as a `Buffer`, the caller's trust inputs go in as
+strings, numbers and arrays, and the verdict comes back as an object. The binding does everything
+it owns before and after that layer: it passes the received bytes to the audited core unchanged,
+builds the anchor and policy from the received values, and fills `VerifyResultJs` field for field
+with an execution member the receipt did not state left `None`. That the bytes it received are the
+bytes the caller passed, and that the object it built is the object the caller reads, is `napi`'s.
+
+What stays this project's and is tested here: the refusal of an empty issuer identity, the
+refusal of a time that is not whole seconds, the judgement of a retired root at the caller's
+`now`, and the projection (`an_absent_execution_member_stays_absent_in_the_projection`,
+`a_rejection_is_not_reported_as_a_success`). This premise says nothing about the Node runtime,
+about `napi` correctness in general, or about what the TypeScript layer does with the object.
+
+It stops being acceptable if the binding converts a value itself before handing it to the core, or
+returns a type whose conversion this premise does not cover.
+"""
+scope = ["unit://sdk_typescript.native_binding", "boundary://boundary.napi_marshalling"]
+owner = "mats@sundvall.name"
+introduced_by = "r12 step 7 (owner ruling on native marshalling)"
+review_requirement = "Owner review on any change to the napi dependency, or to a type the binding takes or returns across the N-API boundary."
+premise_class = "external-boundary"
+boundary_owner = """
+The pinned `napi` and `napi-derive` crates, across an exported `#[napi]` function: the `Buffer`,
+string, number and array arguments arrive as passed, and the returned object or raised error
+reaches the caller as produced, a member left `None` arriving absent.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0088"
+description = "When `pyo3` invokes a `#[pyfunction]` of the Python native binding, each `bytes`, `str`, `int` and `list` argument arrives as the Python caller passed it, or the call is refused before the function runs, and the `#[pyclass]` value the function returns, or the exception it raises, reaches the caller with each field and message as the function produced it, a field left `None` arriving as `None`."
+justification = """
+THM-0094 says what an application is handed, and the application receives it through `pyo3`: the
+request bytes the exchange transmitted go in as `bytes`, the caller's trust inputs go in as `str`,
+`int` and `list`, and the verdict comes back as a `PyVerifyResult`. The binding does everything it
+owns before and after that layer: it passes the received bytes to the audited core unchanged,
+builds the anchor and policy from the received values, and fills the result field for field with an
+execution member the receipt did not state left `None`. That the bytes it received are the bytes
+the caller passed, and that the object it built is the object the caller reads, is `pyo3`'s. A
+value that does not fit its Rust parameter (an `int` beyond `i64`) is refused by `pyo3` before the
+function runs; the premise relies on that refusal and on nothing converting the value instead.
+
+What stays this project's and is tested here: the refusal of an empty issuer identity, the
+judgement of a retired root at the caller's `now`, and the projection
+(`an_absent_execution_member_stays_absent_in_the_projection`,
+`a_rejection_is_not_reported_as_a_success`). This premise says nothing about the interpreter, about
+`pyo3` correctness in general, or about what the Python layer does with the object.
+
+It stops being acceptable if the binding converts a value itself before handing it to the core, or
+returns a type whose conversion this premise does not cover.
+"""
+scope = ["unit://sdk_python.native_binding", "boundary://boundary.pyo3_marshalling"]
+owner = "mats@sundvall.name"
+introduced_by = "r12 step 7 (owner ruling on native marshalling)"
+review_requirement = "Owner review on any change to the pyo3 dependency, or to a type the binding takes or returns across the PyO3 boundary."
+premise_class = "external-boundary"
+boundary_owner = """
+The pinned `pyo3` crate, across a `#[pyfunction]`: the `bytes`, `str`, `int` and `list` arguments
+arrive as passed or the call is refused, and the returned `#[pyclass]` value or raised exception
+reaches the caller as produced, a field left `None` arriving as `None`.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

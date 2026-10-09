@@ -4772,6 +4772,7 @@ supported_by = [
   "unit://sdk_python.nonce_floor",
   "unit://sdk_python.notification_delivery",
   "unit://sdk_python.trust_anchor_completeness",
+  "unit://sdk_python.native_binding",
 ]
 # `depends_on` was EMPTY, and that was false. The Python SDK's whole cryptographic argument
 # is the audited core's: `verify_delegated_response` decides binding, trust, revocation,

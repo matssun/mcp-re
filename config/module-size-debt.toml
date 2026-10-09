@@ -306,7 +306,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "sdk/python/src/lib.rs"
-baseline_prod_loc = 794
+baseline_prod_loc = 767
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

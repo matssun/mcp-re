@@ -456,3 +456,26 @@ paths = [
 beyond = "Whether a successful decode returns the values, headers, payload and signature the input bytes encode, with the protected and unprotected headers kept distinct, and whether the `Sig_structure` handed to a signature check is the RFC 9052 section 4.4 encoding over the protected-header bytes exactly as received, the external AAD passed to the library and the payload passed to the library."
 max_class_without_assumption = "V0"
 
+[[boundary]]
+id = "boundary.napi_marshalling"
+description = "Delivery of JavaScript arguments to, and of the returned value from, an exported `#[napi]` function of the TypeScript native binding, as implemented by the `napi` and `napi-derive` dependencies."
+kind = "foreign-dependency"
+paths = [
+  "sdk/typescript/src/lib.rs",
+  "sdk/typescript/src/projection.rs",
+  "sdk/typescript/src/trust.rs",
+]
+beyond = "Whether the `Buffer`, string, number and array a JavaScript caller passed reach the function as passed, and whether the object the function returned, with an absent member kept absent, and an error it raised reach the caller as produced."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.pyo3_marshalling"
+description = "Delivery of Python arguments to, and of the returned value from, a `#[pyfunction]` of the Python native binding, as implemented by the `pyo3` dependency."
+kind = "foreign-dependency"
+paths = [
+  "sdk/python/src/lib.rs",
+  "sdk/python/src/projection.rs",
+  "sdk/python/src/trust.rs",
+]
+beyond = "Whether the `bytes`, `str`, `int` and `list` a Python caller passed reach the function as passed, and whether the `#[pyclass]` value the function returned, with a `None` member kept `None`, and an exception it raised reach the caller as produced."
+max_class_without_assumption = "V0"
