@@ -633,9 +633,9 @@ identifier; it is trusted with the rest of the comparator.
 scope = ["unit://http_profile.continuation_binding", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
-review_requirement = "Owner review; discharge requires a proof about the digest construction itself, i.e. crossing boundary.crypto_primitives."
+review_requirement = "Owner review on any change to `RequestEvidenceDigest::matches_labeled` or to its trusted Verus specification."
 premise_class = "review-obligation"
-discharging_event = { kind = "owner-event", statement = "A proof about the labeled-digest construction itself is admitted, which crosses boundary.crypto_primitives. Nothing short of that discharges it." }
+discharging_event = { kind = "owner-event", statement = "`RequestEvidenceDigest::matches_labeled` is proved, with the labeled digest left uninterpreted, to satisfy its comparator contract: a true answer implies the handle names the profile's digest algorithm and its digest value equals labeled_digest(label, bytes). No property of the digest construction is claimed." }
 affected_contracts = ["contract://http_profile/block/continuation_verify"]
 sites = [
   "mcp-re-http-profile/src/evidence/digest.rs#RequestEvidenceDigest::matches_labeled",
@@ -3021,7 +3021,7 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0083"
-description = "When `serde_json::from_slice` succeeds on a byte string, whether into a `Value` or into a type deriving `serde::Deserialize`, the byte string is an RFC 8259 JSON text, and for a text with no duplicate object member name a returned `Value`, or a value deserialized into a type deriving `serde::Deserialize`, holds the object, array and scalar values that text encodes (a member the type names holds the text's value for that member)."
+description = "When `serde_json::from_slice` succeeds on a byte string into a `Value`, the byte string is an RFC 8259 JSON text, and for a text with no duplicate object member name the returned `Value` holds the object, array and scalar values that text encodes. When `serde_json::from_slice` succeeds on a byte string into the trust document's `Vec<RawEntry>` (`mcp-re-proxy/src/trust_document.rs`), the byte string is an RFC 8259 JSON text, and each named field of each `RawEntry` (`signer`, `key_id`, `public_key`, `slots`) holds the JSON member value from which it was deserialized."
 justification = """
 THM-0083 refuses a body unless it is a legal JSON-RPC 2.0 request, and establishes the
 outstanding id from that one validation. Every clause after the first reads the body through
@@ -3033,10 +3033,14 @@ the body was a JSON text, and for a text with no duplicate the `Value` returned 
 objects, arrays and scalars the text encodes. It is not trusted that every RFC 8259 text is
 accepted: a refusal of a legal text is a refusal, which the envelope's clauses treat as one.
 
-The operator's trust document is read through the typed form, `serde_json::from_slice` into a
-struct deriving `serde::Deserialize` (THM-0098), and the same soundness fact is what it relies
-on, together with its fidelity: a document the parse accepts is a JSON text, and for a text with no duplicate member name the decoded strings and values are the ones the text wrote, which is what binds each key id to the signer that wrote it. Its refusals of a member written twice and of
-an unknown member are `serde_derive` behaviour pinned by this project's own tests
+The operator's trust document is read through the typed form, `serde_json::from_slice` into
+`Vec<RawEntry>` (THM-0098), and only that one type: it relies on the same soundness fact, together
+with fidelity for that representation. A document the parse accepts is a JSON text, and the
+strings and values placed in `signer`, `key_id`, `public_key` and `slots` are the ones the text
+wrote for those members, which is what binds each key id to the signer that wrote it. Nothing is
+claimed for any other type that derives `serde::Deserialize`. The refusals of a member written
+twice, of an unknown member, of an unknown slot and of `slots` that is not an array are this
+project's, pinned by its own tests
 (`a_duplicated_member_is_refused_rather_than_read_last_wins`,
 `an_unknown_member_is_refused_rather_than_ignored`, `an_unknown_slot_is_refused_rather_than_ignored`,
 `slots_must_be_an_array_when_present`); they are not part of this premise.
@@ -3054,11 +3058,12 @@ introduced_by = "r12 RERE-RATIFICATION §4b P-8 (Ruling 40 step 4)"
 review_requirement = "Owner review on any change to the JSON parsing dependency, or to the order in which the envelope's clauses are asked."
 premise_class = "external-boundary"
 boundary_owner = """
-The `serde_json` crate, across `from_slice` on a byte string, into a `Value` or into a type deriving
-`serde::Deserialize`: when it succeeds, the byte string is an RFC 8259 JSON text, and for a text
-without duplicate member names a returned `Value`, or a value deserialized into such a type, holds the
-object, array and scalar values the text encodes (a member the type names holds the text's value for
-that member). It does not promise to accept every RFC 8259 text.
+The `serde_json` crate, across `from_slice` on a byte string. Into a `Value`: when it succeeds, the byte
+string is an RFC 8259 JSON text, and for a text without duplicate member names the returned `Value`
+holds the object, array and scalar values the text encodes. Into the trust document's
+`Vec<RawEntry>`: when it succeeds, the byte string is an RFC 8259 JSON text, and each named field of
+each `RawEntry` holds the JSON member value from which it was deserialized. It does not promise to
+accept every RFC 8259 text, and nothing is claimed for any other type.
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
