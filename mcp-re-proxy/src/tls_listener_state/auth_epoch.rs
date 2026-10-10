@@ -11,9 +11,9 @@
 //! an issuer and serial already extracted from the leaf). CHAIN BUILDING is not, and
 //! cannot be cheaply — it is the ECDSA work that dominates a full handshake.
 //!
-//! So resumption is gated on a digest of the inputs chain building depends on. Resume
-//! only while that digest is unchanged; on any change, the stored session stops being a
-//! shortcut and the peer takes a full handshake against the current trust.
+//! So resumption is gated on a digest of the inputs chain building depends on: a session
+//! resumes only when its tag equals the listener's epoch. Under ADR-MCPRE-062 model A the
+//! epoch is fixed for the life of the listener state — the client-CA set is read once.
 //!
 //! # What the epoch covers, and what it deliberately does not
 //!
@@ -26,13 +26,12 @@
 //! refused on its next request whether or not the session resumed — invalidating
 //! sessions would buy nothing. Meanwhile a CRL is routinely re-signed on the
 //! `--client-crl-reload-secs` cadence with an unchanged revoked set: hashing its bytes
-//! would move the epoch on every reload, and because TLS 1.3 has no renegotiation an
-//! epoch change is connection-fatal. That is a fleet-wide teardown every reload
-//! interval — strictly worse than refusing resumption outright.
+//! would give every reload's rebuild a different epoch, and every stored session would
+//! stop resuming each reload interval — strictly worse than refusing resumption outright.
 //!
-//! With CRL data excluded the epoch moves only when an operator changes trusted CAs:
-//! rare, deliberate, and exactly the event on which an old authentication result must
-//! stop being honoured.
+//! With CRL data excluded, a different epoch means a different trusted-CA set, which under
+//! model A is a different listener state: a restart with its own empty session cache, so
+//! no session stored under a withdrawn CA can reach it.
 //!
 //! # Why a digest and not a counter
 //!
@@ -175,9 +174,9 @@ impl SharedTlsAuthEpoch {
 ///
 /// The store OUTLIVES any one `ServerConfig`. A rebuild — the `--client-crl-reload-secs`
 /// cadence is the one that happens in a running process — installs THIS store again and
-/// republishes the epoch computed from that rebuild's trust inputs, so the cache the
-/// fleet filled survives the reload. Under model A that epoch is the same value every
-/// time; the tag comparison is defence in depth beneath cache non-continuity.
+/// republishes the epoch the store already holds (`TlsListenerState::bind_resumption`),
+/// so the cache the fleet filled survives the reload. Under model A no rebuild changes
+/// the epoch; the tag comparison is defence in depth beneath cache non-continuity.
 #[derive(Debug)]
 pub(super) struct EpochBoundSessionStore {
     epoch: Arc<SharedTlsAuthEpoch>,
@@ -332,12 +331,29 @@ mod tests {
         }
     }
 
-    /// The domain separator is part of the digest's identity, not decoration: `v1` and
-    /// `v2` define different functions of the same anchors. Pinning it here means a future
-    /// change to what the epoch covers cannot silently reuse the current domain.
+    /// Pins the digest's definition against a vector computed independently of this code:
+    /// SHA-256 over the length-delimited domain, the anchor count, and the sorted,
+    /// deduplicated SHA-256 of each anchor. A change to what the epoch hashes moves the
+    /// value and needs a new `EPOCH_DOMAIN`.
     #[test]
     fn the_epoch_domain_names_the_current_definition() {
-        assert_eq!(EPOCH_DOMAIN, b"mcp-re/tls-auth-epoch/v2");
+        const GOLDEN: [u8; 32] = [
+            0x14, 0x53, 0x11, 0xdc, 0x09, 0x5d, 0x9f, 0x47, 0xfa, 0x4b, 0xd3, 0x8d, 0x32, 0xd4,
+            0x50, 0x49, 0x6d, 0x21, 0xd5, 0xef, 0xa6, 0x2d, 0x64, 0x8f, 0xd9, 0x73, 0x39, 0x9d,
+            0xcd, 0xe6, 0x26, 0xc5,
+        ];
+        const EMPTY: [u8; 32] = [
+            0xa7, 0x54, 0x4e, 0xbc, 0xbb, 0x03, 0xd7, 0x48, 0xd5, 0x1d, 0x64, 0x28, 0x70, 0xf7,
+            0x17, 0x8b, 0x50, 0x90, 0xcb, 0x6e, 0x93, 0x9a, 0x66, 0x4d, 0xc1, 0xc0, 0xe7, 0x73,
+            0x5e, 0x8e, 0x22, 0xb4,
+        ];
+        let epoch = TlsAuthEpoch::compute(&[anchor(2), anchor(1), anchor(2)]);
+        assert_eq!(
+            *epoch.as_bytes(),
+            GOLDEN,
+            "the epoch digest no longer matches its v2 definition: a change to what it hashes needs a new EPOCH_DOMAIN"
+        );
+        assert_eq!(*TlsAuthEpoch::compute(&[]).as_bytes(), EMPTY);
     }
 
     #[test]
@@ -410,6 +426,29 @@ mod tests {
         assert_eq!(store.republish(second), Some(first));
         assert_eq!(*store.epoch(), second);
         assert_eq!(store.take(b"key"), None);
+    }
+
+    #[test]
+    fn a_stored_value_too_short_to_carry_a_tag_is_refused_and_evicted() {
+        let inner = ServerSessionMemoryCache::new(64);
+        let epoch = Arc::new(SharedTlsAuthEpoch::new(TlsAuthEpoch::compute(&[anchor(1)])));
+        let store = EpochBoundSessionStore::new(Arc::clone(&epoch), inner.clone());
+        inner.put(
+            b"ok".to_vec(),
+            [epoch.load().as_bytes().as_slice(), b"session"].concat(),
+        );
+        assert_eq!(store.get(b"ok"), Some(b"session".to_vec()));
+
+        inner.put(b"short".to_vec(), vec![0u8; 31]);
+        assert_eq!(store.get(b"short"), None);
+        assert_eq!(
+            inner.get(b"short"),
+            None,
+            "a value too short to carry a tag must be evicted"
+        );
+
+        inner.put(b"short".to_vec(), vec![0u8; 31]);
+        assert_eq!(store.take(b"short"), None);
     }
 
     #[test]

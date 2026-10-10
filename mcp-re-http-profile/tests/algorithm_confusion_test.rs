@@ -48,20 +48,32 @@ fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
 /// `alg`, so a rewrite breaks the signature), but a signer who genuinely commits
 /// to a false algorithm claim.
 fn signed_declaring(alg: &str) -> HttpRequest {
-    let body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec();
+    let body =
+        br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
     let mut r = HttpRequest {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
         headers: vec![
             ("Content-Type".into(), "application/json".into()),
             ("Content-Digest".into(), content_digest_sha256(&body)),
+            ("Mcp-Method".into(), "tools/call".into()),
+            ("Mcp-Name".into(), "read".into()),
+            ("MCP-Protocol-Version".into(), "2026-07-28".into()),
         ],
         body,
     };
-    let comps: Vec<CoveredComponent> = ["@method", "@target-uri", "content-digest", "content-type"]
-        .iter()
-        .map(|n| CoveredComponent::new(n))
-        .collect();
+    let comps: Vec<CoveredComponent> = [
+        "@method",
+        "@target-uri",
+        "content-digest",
+        "content-type",
+        "mcp-method",
+        "mcp-name",
+        "mcp-protocol-version",
+    ]
+    .iter()
+    .map(|n| CoveredComponent::new(n))
+    .collect();
     let params = SignatureParams {
         created: Some(CREATED),
         expires: Some(EXPIRES),

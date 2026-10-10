@@ -12,13 +12,13 @@
 //!
 //! `Mcp-Method` and `Mcp-Name` carry the same values and are far easier to read. They are
 //! routing hints, and MCP-RE never trusts one for a security decision. The reason is not
-//! fastidiousness — they *need not agree with the body*. The MCP transport contract that
-//! makes `Mcp-Name` mandatory for `tools/call` / `resources/read` and requires it to match
-//! `params.name` is `Unconstrained` by default, becoming `Enforced` only when a deployment
-//! declares a protocol version.
+//! fastidiousness — a header is a routing claim, and the body is what the signature protects.
+//! The MCP transport contract that makes `Mcp-Name` mandatory for `tools/call` /
+//! `resources/read` and requires it to match `params.name` refuses a disagreeing header
+//! before authorization runs, in every deployment.
 //!
-//! So a coordinate read from a header would make authorization semantics depend on whether
-//! an unrelated transport-consistency policy happened to be switched on: the same signed
+//! So a coordinate read from a header would make authorization semantics depend on the
+//! transport-consistency policy rather than on the signed body: the same signed
 //! request would be authorized against one action with the contract enforced, and against a
 //! header-chosen action without it. The contract exists to stop a header and a body
 //! disagreeing in front of a human or a router. It is not what makes the coordinate
@@ -48,7 +48,7 @@
 //! state, and a policy that cares denies it.
 
 use mcp_re_core::McpReError;
-use mcp_re_http_profile::mcp_name_source::mcp_name_source;
+use mcp_re_http_profile::mcp_name_source::McpMethodTarget;
 use mcp_re_http_profile::VerifiedMcpRequest;
 use serde_json::Value;
 
@@ -63,8 +63,7 @@ use serde_json::Value;
 /// currency, and it would hide a malformed request inside a legitimate one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorizationTarget {
-    /// This operation names no target. `tools/list`, `initialize`, and everything else
-    /// whose authority is the method alone.
+    /// The protocol table lists this operation as naming no target.
     NotApplicable,
     /// The signed body named this tool or resource.
     Named(String),
@@ -73,10 +72,12 @@ pub enum AuthorizationTarget {
     /// Not refused here — whether that is a legal MCP request is the transport contract's
     /// question. Reported so a policy can decline to match it.
     Absent,
+    /// The protocol table does not list this operation; no decision matches it.
+    Unknown,
 }
 
 impl AuthorizationTarget {
-    /// The named target, or `None` for both of the other states.
+    /// The named target, or `None` for every other state.
     ///
     /// A convenience for a policy that treats *no target* and *target absent* alike. One
     /// that does not must match on the variants — which is why this is not the only way to
@@ -84,7 +85,7 @@ impl AuthorizationTarget {
     pub fn named(&self) -> Option<&str> {
         match self {
             AuthorizationTarget::Named(t) => Some(t),
-            AuthorizationTarget::NotApplicable | AuthorizationTarget::Absent => None,
+            Self::NotApplicable | Self::Absent | Self::Unknown => None,
         }
     }
 }
@@ -178,9 +179,11 @@ pub fn interpret_authorization_action(
     let Some(operation) = body.get("method").and_then(Value::as_str) else {
         return Err(AuthorizationActionRefusal::NoOperation);
     };
-    let target = match mcp_name_source(operation) {
-        None => AuthorizationTarget::NotApplicable,
-        Some(source) => match body.get("params").and_then(|p| source.extract(p)) {
+    let params = body.get("params");
+    let target = match McpMethodTarget::of(operation) {
+        McpMethodTarget::NoTarget => AuthorizationTarget::NotApplicable,
+        McpMethodTarget::Unknown => AuthorizationTarget::Unknown,
+        McpMethodTarget::Named(source) => match params.and_then(|p| source.extract(p)) {
             Some(named) => AuthorizationTarget::Named(named.to_owned()),
             None => AuthorizationTarget::Absent,
         },
@@ -198,13 +201,29 @@ mod tests {
     use super::interpret_authorization_action;
     use super::AuthorizationActionRefusal;
     use super::AuthorizationTarget;
+    use super::VerifiedAuthorizationAction;
+    use crate::authorization::action_harness::covering_unverifiable;
     use crate::authorization::action_harness::verified_over;
+
+    /// The action read from `body` as signed: the body the authority is handed is the one
+    /// the signature covers.
+    fn read_signed(body: &[u8]) -> Result<VerifiedAuthorizationAction, AuthorizationActionRefusal> {
+        let signed = verified_over(body);
+        interpret_authorization_action(&signed.verified, &signed.body)
+    }
+
+    /// The action read from a body the verifier refuses to cover, through a product
+    /// re-pointed at it: this authority's own refusal, which nothing upstream lets reach it.
+    fn read_unverifiable(
+        body: &[u8],
+    ) -> Result<VerifiedAuthorizationAction, AuthorizationActionRefusal> {
+        interpret_authorization_action(&covering_unverifiable(body), body)
+    }
 
     #[test]
     fn the_coordinate_is_read_from_the_signed_body() {
         let body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#;
-        let verified = verified_over(body);
-        let action = interpret_authorization_action(&verified, body).expect("reads");
+        let action = read_signed(body).expect("reads");
         assert_eq!(action.operation(), "tools/call");
         assert_eq!(action.target().named(), Some("read"));
     }
@@ -215,18 +234,26 @@ mod tests {
         // match neither, and must be able to tell them apart when it wants to.
         let listing = br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
         assert_eq!(
-            interpret_authorization_action(&verified_over(listing), listing)
-                .expect("reads")
-                .target(),
+            read_signed(listing).expect("reads").target(),
             &AuthorizationTarget::NotApplicable
         );
         let nameless = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}"#;
         assert_eq!(
-            interpret_authorization_action(&verified_over(nameless), nameless)
-                .expect("reads")
-                .target(),
+            read_unverifiable(nameless).expect("reads").target(),
             &AuthorizationTarget::Absent
         );
+    }
+
+    #[test]
+    fn a_method_outside_the_protocol_table_yields_an_unknown_target() {
+        for body in [
+            &br#"{"jsonrpc":"2.0","id":1,"method":"completion/complete","params":{"name":"x"}}"#[..],
+            &br#"{"jsonrpc":"2.0","id":1,"method":"x-vendor/deploy"}"#[..],
+        ] {
+            let action = read_signed(body).expect("reads");
+            assert_eq!(action.target(), &AuthorizationTarget::Unknown);
+            assert_eq!(action.target().named(), None);
+        }
     }
 
     #[test]
@@ -235,7 +262,7 @@ mod tests {
         // question. Refusing it here would make an unauthorized deployment start rejecting
         // requests because of authorization.
         let nameless = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}"#;
-        assert!(interpret_authorization_action(&verified_over(nameless), nameless).is_ok());
+        assert!(read_unverifiable(nameless).is_ok());
     }
 
     #[test]
@@ -245,7 +272,7 @@ mod tests {
         let signed = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#;
         let other = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete"}}"#;
         assert_eq!(
-            interpret_authorization_action(&verified_over(signed), other),
+            interpret_authorization_action(&verified_over(signed).verified, other),
             Err(AuthorizationActionRefusal::BodyIsNotTheSignedBody)
         );
     }
@@ -254,7 +281,7 @@ mod tests {
     fn resources_read_names_its_target_under_a_different_key() {
         let body =
             br#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"f://x"}}"#;
-        let action = interpret_authorization_action(&verified_over(body), body).expect("reads");
+        let action = read_signed(body).expect("reads");
         assert_eq!(action.target().named(), Some("f://x"));
     }
 
@@ -262,12 +289,12 @@ mod tests {
     fn a_signed_body_that_is_not_json_and_one_with_no_method_are_different_facts() {
         let junk = b"not json at all";
         assert_eq!(
-            interpret_authorization_action(&verified_over(junk), junk),
+            read_unverifiable(junk),
             Err(AuthorizationActionRefusal::BodyIsNotJson)
         );
         let no_method = br#"{"jsonrpc":"2.0","id":1}"#;
         assert_eq!(
-            interpret_authorization_action(&verified_over(no_method), no_method),
+            read_unverifiable(no_method),
             Err(AuthorizationActionRefusal::NoOperation)
         );
     }

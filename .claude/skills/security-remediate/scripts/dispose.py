@@ -22,14 +22,17 @@ It also moves two checks from prose into code:
     duplicate closures. A number derived from the record cannot disagree with it.
 
 Package contract (the evaluator writes this, then runs this script once):
-  disposed[]  {id, status, [reason], [duplicate_of], [cluster], [ruling], [issue], [method]}
-              status: false-positive | accepted-risk | superseded | wontfix | duplicate
+  disposed[]  {id, status, [reason], [duplicate_of], [premise], [cluster], [ruling], [issue], [method]}
+              status: false-positive | premise | superseded | duplicate
                       (terminal) or escalated | needs-senior-eval (blocking)
               `reason` — one line — is required ONLY where someone acts on it:
               escalated / needs-senior-eval (a question for the human or the
-              senior tier) and false-positive / accepted-risk (irreversible; the
+              senior tier) and false-positive / premise (irreversible; the
               only trace if the call was wrong). A duplicate says it with
-              `duplicate_of`; superseded / wontfix need nothing.
+              `duplicate_of`; a premise names its registered ASM in `premise`;
+              superseded needs nothing. A real defect is never closed here: it
+              is ordered as work, or escalated.
+              `accepted-risk` / `wontfix` are refused: they are not dispositions.
   work[]      {id, anchor, change, accept, standard, [finding_ids]}
               `id` is a finding id, or a work id with `finding_ids` naming the
               findings it discharges
@@ -55,18 +58,18 @@ import progress  # noqa: E402
 from _persist import exclusive, read_jsonl  # noqa: E402
 
 from file_findings import ACTIONABLE  # noqa: E402
-TERMINAL = {"false-positive", "accepted-risk", "superseded", "wontfix", "duplicate"}
+TERMINAL = {"false-positive", "premise", "superseded", "duplicate"}
 BLOCKING = {"escalated", "needs-senior-eval"}
 # Where a reason is read by another actor. Everywhere else it is output tokens
 # nobody consumes.
-REASONED = {"escalated", "needs-senior-eval", "false-positive", "accepted-risk"}
+REASONED = {"escalated", "needs-senior-eval", "false-positive", "premise"}
 # An escalation is the human's whole brief — question, what was checked, the
 # alternatives — so it gets room; every other reason is one line.
 REASON_MAX = {"escalated": 800}
 REASON_MAX_DEFAULT = 300
 # The can't-close rule, enforced where it is cheapest to enforce: a cheap tier may
 # act but not retire a finding behind an authoritative-sounding reason.
-CLOSES = {"false-positive", "accepted-risk"}
+CLOSES = {"false-positive", "premise"}
 
 
 def _covered(item: dict, actionable: set) -> list:
@@ -93,8 +96,16 @@ def validate(pkg: dict, rows: dict, path: str, tier: str) -> tuple[list, dict]:
         if fid not in actionable:
             errs.append("%s: not an actionable finding on this file (ledger status: %s)"
                         % (where, on_file.get(fid, {}).get("status", "NOT ON THIS FILE")))
-        if st not in TERMINAL | BLOCKING:
+        if st in ledger.REFUSED_STATUSES:
+            errs.append("%s: %r is not a disposition — order the fix as work, show it is not a "
+                        "defect, or escalate it" % (where, st))
+        elif st not in TERMINAL | BLOCKING:
             errs.append("%s: status %r is not one of %s" % (where, st, sorted(TERMINAL | BLOCKING)))
+        if st == "premise":
+            problem = ledger.closure_problem({"status": st, "premise": d.get("premise")},
+                                             ledger.registered_assumptions())
+            if problem:
+                errs.append("%s: %s" % (where, problem))
         if st in REASONED and not str(d.get("reason", "")).strip():
             errs.append("%s: %s needs a one-line `reason` — someone acts on it" % (where, st))
         if st == "duplicate":
@@ -211,6 +222,8 @@ def main() -> int:
             e["notes"] = _note(str(e.get("notes") or ""), a.attempt, a.tier, _reason(d))
             if d.get("duplicate_of"):
                 e["duplicate_of"] = str(d["duplicate_of"])
+            if d.get("premise"):
+                e["premise"] = str(d["premise"])
             if d.get("cluster"):
                 e["cluster_id"] = str(d["cluster"])
             if d.get("ruling"):

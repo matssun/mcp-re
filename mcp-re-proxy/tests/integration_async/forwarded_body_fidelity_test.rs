@@ -9,11 +9,12 @@
 //! on a body that differs from the one the signature covers, while every signature
 //! check upstream still passes — the alteration happens after verification.
 //!
-//! So the served path refuses those two shapes on the ORIGINAL bytes, at the
-//! request-envelope boundary — before admission burns a nonce, retires an approval or
+//! So the served path refuses those two shapes on the ORIGINAL bytes, at verification and
+//! the request-envelope boundary — before admission burns a nonce, retires an approval or
 //! writes a retention marker, and long before the re-serialization. What these tests assert
-//! is the mechanism: the recording inner backend must never be dispatched at all. The 400
-//! is checked too, because it says whose fault the refusal names.
+//! is the mechanism: the recording inner backend must never be dispatched at all. The 403
+//! is checked too: the evidence extraction refuses the body, so the request fails
+//! verification.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -42,7 +43,6 @@ use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
 use mcp_re_proxy::delegated_server_signer::DelegatedRotor;
-use mcp_re_proxy::delegated_server_signer::DelegatedServerSigner;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::http_profile_serve::HttpProfileProxy;
 
@@ -105,7 +105,7 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: AUDIENCE.into(),
         audience_hash: audience().audience_hash(),
-        trust_epoch: "epoch-1".into(),
+        trust_epoch: "epoch-1".parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
@@ -118,14 +118,16 @@ fn custody_cfg() -> CustodyConfig {
 type Seen = Arc<Mutex<Vec<Vec<u8>>>>;
 
 fn recording_inner(seen: Seen) -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        seen.lock().unwrap().push(forwarded.to_vec());
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            seen.lock().unwrap().push(forwarded.to_vec());
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 fn proxy(seen: Seen) -> HttpProfileProxy {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -135,10 +137,13 @@ fn proxy(seen: Seen) -> HttpProfileProxy {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue a delegated key");
     HttpProfileProxy::new_delegated(
         actor_resolver(),
@@ -258,9 +263,10 @@ async fn a_duplicate_member_name_is_never_forwarded() {
         "the inner server was dispatched with a body the re-serializer had already \
          collapsed to last-one-wins"
     );
-    // 400: the fault is in the request, and the refusal is taken at the request-envelope
-    // boundary before admission spends a nonce or an approval on it.
-    assert_eq!(out.status, 400, "refused, not served");
+    // 403: evidence extraction reads the body one way and refuses a duplicate member, so the
+    // request fails verification before the envelope boundary, and before admission spends a
+    // nonce or an approval on it.
+    assert_eq!(out.status, 403, "refused, not served");
 }
 
 /// A number the `f64` carrier cannot hold exactly. `1234567890123456789.5` comes back
@@ -278,7 +284,7 @@ async fn a_number_the_f64_carrier_rewrites_is_never_forwarded() {
         seen.lock().unwrap().is_empty(),
         "the inner server was dispatched with a rewritten number"
     );
-    assert_eq!(out.status, 400, "refused, not served");
+    assert_eq!(out.status, 403, "refused, not served");
 }
 
 /// The negative control. The refusal is narrow: an ordinary body — including one

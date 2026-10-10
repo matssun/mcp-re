@@ -14,9 +14,10 @@ use mcp_re_http_profile::ExecutionDisposition;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 
 use super::super::served;
+use super::super::signing_window;
 use super::super::signing_window::SigningWindow;
 use super::super::ServedHttpResponse;
 use super::ResponseSigning;
@@ -49,7 +50,7 @@ impl ResponseSigning {
         wire_code: &'static str,
         status: u16,
         now: i64,
-        bound: Option<&RequestEvidence>,
+        bound: Option<&RequestRoleEvidence>,
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     ) -> ServedHttpResponse {
@@ -63,35 +64,13 @@ impl ResponseSigning {
         // retired in between. Either way the window is derived once, by its owner.
         let window = match snapshot {
             Some(a) => SigningWindow::over(a, now, self.sig_ttl_secs),
-            None => SigningWindow::open(&self.signer, now, self.sig_ttl_secs),
+            None => signing_window::open(&self.signer, now, self.sig_ttl_secs),
         };
         let resp = match window {
             Some(w) => {
-                let (a, created, expires) = (w.key(), w.created(), w.expires());
                 let built = match bound {
-                    Some(ev) => build_delegated_rejection(
-                        request,
-                        ev,
-                        &reason,
-                        status,
-                        a.server_signer(),
-                        a.credential(),
-                        a.key(),
-                        a.delegated_kid(),
-                        created,
-                        expires,
-                    ),
-                    None => build_delegated_rejection_preflight(
-                        Some(request),
-                        &reason,
-                        status,
-                        a.server_signer(),
-                        a.credential(),
-                        a.key(),
-                        a.delegated_kid(),
-                        created,
-                        expires,
-                    ),
+                    Some(_) => build_delegated_rejection(request, &reason, status, &w),
+                    None => build_delegated_rejection_preflight(Some(request), &reason, status, &w),
                 };
                 built.unwrap_or_else(|_| unsigned_error(status, wire_code, execution))
             }

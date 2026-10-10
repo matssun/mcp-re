@@ -17,42 +17,50 @@ use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 
-/// Whether an IPv4 literal is a PUBLIC (fetchable) address — i.e. NOT loopback
-/// (127/8), private (10/8, 172.16/12, 192.168/16), link-local (169.254/16,
-/// covering the 169.254.169.254 cloud-metadata endpoint), unspecified (0.0.0.0),
-/// broadcast (255.255.255.255), or multicast (224/4). Pure.
+/// IPv4 `(network, mask)` pairs that are not globally reachable per the IANA
+/// special-purpose registry; the last entry covers multicast, the reserved 240/4
+/// block and the broadcast address.
+const NON_GLOBAL_V4: [(u32, u32); 14] = [
+    (0x0000_0000, 0xff00_0000), // 0.0.0.0/8
+    (0x0a00_0000, 0xff00_0000), // 10/8
+    (0x6440_0000, 0xffc0_0000), // 100.64/10 (CGNAT)
+    (0x7f00_0000, 0xff00_0000), // 127/8
+    (0xa9fe_0000, 0xffff_0000), // 169.254/16
+    (0xac10_0000, 0xfff0_0000), // 172.16/12
+    (0xc000_0000, 0xffff_ff00), // 192.0.0/24
+    (0xc000_0200, 0xffff_ff00), // 192.0.2/24
+    (0xc058_6300, 0xffff_ff00), // 192.88.99/24
+    (0xc0a8_0000, 0xffff_0000), // 192.168/16
+    (0xc612_0000, 0xfffe_0000), // 198.18/15
+    (0xc633_6400, 0xffff_ff00), // 198.51.100/24
+    (0xcb00_7100, 0xffff_ff00), // 203.0.113/24
+    (0xe000_0000, 0xe000_0000), // 224/3
+];
+
+/// Whether an IPv4 literal is a PUBLIC (fetchable) address: not within any range the
+/// IANA special-purpose registry marks as not globally reachable. Pure.
 pub(super) fn ipv4_is_public(v4: &Ipv4Addr) -> bool {
-    !(v4.is_loopback()
-        || v4.is_private()
-        || v4.is_link_local()
-        || v4.is_unspecified()
-        || v4.is_broadcast()
-        || v4.is_multicast())
+    let bits = u32::from(*v4);
+    !NON_GLOBAL_V4.iter().any(|(net, mask)| bits & mask == *net)
 }
 
-/// Whether an IPv6 literal is a PUBLIC (fetchable) address — i.e. NOT loopback
-/// (::1), unspecified (::), link-local (fe80::/10), multicast (ff00::/8), or
-/// unique-local (fc00::/7). IPv4-mapped/compatible embeddings are unwrapped and
-/// re-checked against the IPv4 rules so `::ffff:127.0.0.1` cannot bypass the guard.
-/// Pure.
+/// Whether an IPv6 literal is a PUBLIC (fetchable) address: only global unicast
+/// (2000::/3) outside the IANA special-purpose carve-outs. IPv4-mapped/compatible,
+/// NAT64 (64:ff9b::/96) and 6to4 (2002::/16) addresses deliver to the IPv4 address
+/// they embed and are judged by the IPv4 rules. Pure.
 pub(super) fn ipv6_is_public(v6: &Ipv6Addr) -> bool {
-    if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
-        return false;
-    }
-    // Unwrap an IPv4-mapped/compatible address and apply the IPv4 rules to it.
     if let Some(v4) = v6.to_ipv4() {
         return ipv4_is_public(&v4);
     }
-    let segs = v6.segments();
-    // Link-local fe80::/10.
-    if (segs[0] & 0xffc0) == 0xfe80 {
-        return false;
+    match v6.segments() {
+        [0x0064, 0xff9b, 0, 0, 0, 0, hi, lo] | [0x2002, hi, lo, ..] => {
+            let [a, b] = hi.to_be_bytes();
+            let [c, d] = lo.to_be_bytes();
+            ipv4_is_public(&Ipv4Addr::new(a, b, c, d))
+        }
+        [0x2001, 0x0000..=0x01ff | 0x0db8, ..] | [0x3fff, 0x0000..=0x0fff, ..] => false,
+        [first, ..] => first & 0xe000 == 0x2000,
     }
-    // Unique-local fc00::/7 (fc00:: and fd00::).
-    if (segs[0] & 0xfe00) == 0xfc00 {
-        return false;
-    }
-    true
 }
 
 /// Whether a RESOLVED IP address is a public (fetchable) address, reusing the
@@ -69,8 +77,8 @@ pub fn resolved_ip_is_public(ip: &IpAddr) -> bool {
 /// Whether `host` is safe to fetch from for an attacker-influenced URL: it is NOT
 /// syntactically malformed (no empty DNS label / trailing or doubled dot), NOT a
 /// literal non-public IP, and NOT the loopback name `localhost`. A literal IP is
-/// rejected when it is loopback, link-local, private (RFC 1918 / IPv6 ULA),
-/// unspecified, or multicast. A non-literal hostname (other than `localhost`) is
+/// rejected when it is not globally reachable per the IANA special-purpose
+/// registries (IPv6 is public only within 2000::/3). A non-literal hostname (other than `localhost`) is
 /// permitted at this layer. Pure (no DNS).
 pub(super) fn host_is_public(host: &str) -> bool {
     use IpAddr;
@@ -213,5 +221,61 @@ mod tests {
         assert_eq!(parse_inet_aton_ipv4("256.0.0.1"), None); // octet overflow
         assert_eq!(parse_inet_aton_ipv4("1.2.3.4.5"), None); // too many parts
         assert_eq!(parse_inet_aton_ipv4("4294967296"), None); // > u32::MAX
+    }
+
+    #[test]
+    fn non_global_special_purpose_space_is_never_public() {
+        let public = |s: &str| resolved_ip_is_public(&s.parse::<IpAddr>().unwrap());
+        for s in [
+            "100.64.0.1",
+            "100.100.100.200",
+            "0.0.0.1",
+            "192.0.0.1",
+            "192.0.2.1",
+            "192.88.99.1",
+            "198.18.0.1",
+            "198.51.100.1",
+            "203.0.113.1",
+            "240.0.0.1",
+            "255.255.255.255",
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "224.0.0.1",
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b::7f00:1",
+            "64:ff9b:1::1",
+            "2002:7f00:1::",
+            "2002:a9fe:a9fe::1",
+            "2001::1",
+            "2001:db8::1",
+            "3fff::1",
+            "100::1",
+            "fe80::1",
+            "fec0::1",
+            "fc00::1",
+            "fd00::1",
+            "ff02::1",
+        ] {
+            assert!(!public(s), "{s} must not be public");
+        }
+        for s in [
+            "8.8.8.8",
+            "1.1.1.1",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+            "2001:4860:4860::8888",
+            "2606:4700:4700::1111",
+        ] {
+            assert!(public(s), "{s} must be public");
+        }
+        assert!(!host_is_public("100.100.100.200"));
+        assert!(!host_is_public("0x64646464"));
+        assert!(host_is_public("8.8.8.8"));
     }
 }

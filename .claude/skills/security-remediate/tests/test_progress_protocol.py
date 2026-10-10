@@ -69,7 +69,7 @@ def test_close_carries_structural_duplicate_and_cluster() -> None:
     with tempfile.TemporaryDirectory() as td:
         log = os.path.join(td, "progress")
         _run("close", "--log", log, "--file", "a/b/c.py", "--id", "62a9229c11f3b961",
-             "--status", "accepted-risk", "--severity", "medium", "--attempt", "att-001",
+             "--status", "duplicate", "--severity", "medium", "--attempt", "att-001",
              "--duplicate-of", "0907afb94e8f36bf", "--cluster", "claim-criticality-scalars",
              "--reason", "same proposition seen through the conformance lens")
         rec = read_jsonl(log + ".jsonl")[0]

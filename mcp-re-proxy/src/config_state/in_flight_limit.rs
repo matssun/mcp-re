@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The admission-limit basis — `work/CONFIG-STATE-ATLAS.md` §H.2.
+//! The admission-limit basis — unit `proxy.in_flight_limit_basis`.
 //!
 //! Not a deployment machine: there is no posture here, no control that is on in one state
 //! and off in another. It is a RESOLVED FACT — layer A has answered which of two mutually
@@ -150,19 +150,25 @@ mod tests {
         classify(&config)
     }
 
-    /// Absence is a THIRD thing, not a synonym for the default value. The distinction is
-    /// the whole reason this type exists, so it is asserted on the request rather than
-    /// inferred from the basis it produces.
+    /// Absence is a THIRD thing, not a synonym for the default value: the default is
+    /// applied to absence alone, so a fleet-wide target that happens to equal the default
+    /// is still a fleet-wide target. A classifier that read "the default value" rather than
+    /// "nothing stated" would turn it into a per-core ceiling and multiply the fleet's
+    /// admission by its core count.
     #[test]
-    fn an_absent_limit_is_distinguishable_from_one_that_equals_the_default() {
-        assert_ne!(
-            InFlightLimitRequest::Unspecified,
-            InFlightLimitRequest::PerCore(n(DEFAULT_PER_CORE_IN_FLIGHT)),
-            "a request that cannot tell these apart is the defect this type removes"
-        );
+    fn the_default_is_applied_to_absence_and_never_to_a_value_that_equals_it() {
+        let default = InFlightLimitBasis::PerCore {
+            requests: n(DEFAULT_PER_CORE_IN_FLIGHT),
+        };
+        assert_eq!(basis_of(InFlightLimitRequest::default()), default);
         assert_eq!(
-            InFlightLimitRequest::default(),
-            InFlightLimitRequest::Unspecified
+            basis_of(InFlightLimitRequest::FleetTotal(n(
+                DEFAULT_PER_CORE_IN_FLIGHT
+            ))),
+            InFlightLimitBasis::FleetTotal {
+                requests: n(DEFAULT_PER_CORE_IN_FLIGHT)
+            },
+            "a stated fleet total equal to the default was read as the default"
         );
     }
 

@@ -202,6 +202,38 @@ def _cwd(eco, crate: str | None) -> Path:
     return REPO_ROOT if eco is RUST or crate is None else REPO_ROOT / crate
 
 
+#: How much of a failing run the evidence record keeps. Enough for a panic message and its
+#: location; bounded so one runaway test cannot make the record the size of its log.
+FAILURE_EXCERPT_LINES = 40
+
+
+def failure_excerpt(output: str, names: list[str]) -> str:
+    """What the runner said about the tests that did not pass.
+
+    A lane that records only `FAILED` keeps the verdict and discards the cause, and the
+    cause was then on one machine's disk and nowhere else — `proxy.pkcs11_adapter` failed on
+    dev1 that way and could not be diagnosed from the evidence. libtest prints each failure
+    as a `---- <name> stdout ----` block; those blocks are kept. A run that printed none (a
+    crash, a build failure, a runner that never reached the summary) keeps its tail instead.
+    """
+    lines = output.splitlines()
+    kept: list[str] = []
+    for name in names:
+        header = f"---- {name} stdout ----"
+        if header not in lines:
+            continue
+        start = lines.index(header)
+        end = start + 1
+        while end < len(lines) and not lines[end].startswith("---- ") and lines[end] != "failures:":
+            end += 1
+        kept += lines[start:end]
+    if not kept:
+        kept = lines[-FAILURE_EXCERPT_LINES:]
+    if len(kept) > FAILURE_EXCERPT_LINES:
+        kept = kept[:FAILURE_EXCERPT_LINES] + ["[... truncated]"]
+    return "\n".join(line.rstrip() for line in kept).strip()
+
+
 def run_selection(
     eco,
     crate: str | None,
@@ -282,11 +314,15 @@ def run_selection(
         # differs, the evidentiary standing does not. Either way the claimed battery did not
         # run to completion, so the unit has no test evidence from this target.
         detail = ", ".join(f"{name} ({observed.get(name, 'never ran')})" for name in missing)
-        return False, f"{target}: {len(missing)} of {len(paths)} declared test(s) did not pass: {detail}"
+        return False, (
+            f"{target}: {len(missing)} of {len(paths)} declared test(s) did not pass: {detail}"
+            f"\n--- runner output ---\n{failure_excerpt(proc.stdout, missing)}"
+        )
     if proc.returncode != 0:
         return False, (
             f"{target}: every declared test passed but the run exited {proc.returncode}; "
             "the target did not complete, so the battery's result is unknown"
+            f"\n--- runner output ---\n{failure_excerpt(proc.stdout, [])}"
         )
     return True, f"{target}: {len(paths)} passed"
 

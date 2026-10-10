@@ -129,10 +129,12 @@ the body is covered by RFC 9530 `Content-Digest`, which the RFC 9421 signature c
 `Mcp-Method` / `Mcp-Name` **headers are not** the coordinate — they are routing hints the proxy
 never trusts for a security decision.
 
-And they need not agree with the body. The MCP transport contract, which makes `Mcp-Name`
-mandatory for `tools/call` / `resources/read` and requires it to match `params.name`, is
-`Unconstrained` by default and only becomes `Enforced` when a deployment declares
-`--mcp-protocol-version`.
+The MCP transport contract makes `Mcp-Name` mandatory for every method the protocol table
+says names a target (`tools/call` and `prompts/get` → `params.name`; `resources/read`,
+`resources/subscribe` and `resources/unsubscribe` → `params.uri`), requires it to match, and
+refuses it on any other message. It is mandatory for every deployment (`--mcp-protocol-version`
+is a required flag), so a header that disagrees with the body is refused before authorization
+runs rather than reaching it.
 
 > **Law A-1.** The authorization action coordinate is read from the SIGNED BODY. The transport
 > contract exists to stop a header and a body disagreeing in front of a human or a router; it

@@ -133,21 +133,8 @@ fn leaf_identity_fields(leaf_der: &[u8]) -> Result<CertificateIdentityFields, Le
         _ => None,
     });
 
-    // The same distinction for the Common Name: no CN attribute is absence, and a CN
-    // whose string encoding the parser cannot represent is not.
-    let common_name = match certificate.subject().iter_common_name().next() {
-        None => FieldReadout::Read(None),
-        Some(cn) => match cn.as_str() {
-            Ok(value) => FieldReadout::Read(Some(value.to_string())),
-            Err(_) => FieldReadout::Uninterpretable,
-        },
-    };
-
-    Ok(CertificateIdentityFields::new(
-        uri_sans,
-        dns_sans,
-        common_name,
-    ))
+    // The subject Common Name is not an identity field, so it is not read at all.
+    Ok(CertificateIdentityFields::new(uri_sans, dns_sans))
 }
 
 /// Project one kind of general name out of a SAN readout, preserving unreadability.
@@ -177,7 +164,6 @@ mod tests {
         for policy in [
             CertificateIdentityPolicy::UriSan,
             CertificateIdentityPolicy::DnsSan,
-            CertificateIdentityPolicy::CommonNameLegacy,
         ] {
             assert_eq!(
                 CertificateChainEvidence::absent().interpret_identity(policy),
@@ -221,5 +207,84 @@ mod tests {
                 LeafIdentityRefusal::MalformedCertificate
             ))
         );
+    }
+
+    fn mint_der(params: rcgen::CertificateParams) -> Vec<u8> {
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("ed25519 key");
+        params
+            .self_signed(&key)
+            .expect("self-signed certificate")
+            .der()
+            .to_vec()
+    }
+
+    fn interpret(
+        der: &[u8],
+        policy: CertificateIdentityPolicy,
+    ) -> Result<super::CertificatePeerIdentityEvidence, CertificateIdentityRefusal> {
+        CertificateChainEvidence::from_leaf_der(der).interpret_identity(policy)
+    }
+
+    #[test]
+    fn a_duplicated_san_extension_in_real_der_refuses_as_uninterpretable_never_as_absent() {
+        let mut params = rcgen::CertificateParams::new(Vec::new()).expect("params");
+        params.subject_alt_names = vec![rcgen::SanType::URI(
+            "spiffe://example.org/peer".try_into().expect("uri"),
+        )];
+        assert!(
+            interpret(&mint_der(params.clone()), CertificateIdentityPolicy::UriSan).is_ok(),
+            "positive control: the single-SAN leaf interprets"
+        );
+
+        let mut content = vec![0x30u8, 0x13, 0x82, 0x11];
+        content.extend_from_slice(b"decoy.example.org");
+        params
+            .custom_extensions
+            .push(rcgen::CustomExtension::from_oid_content(
+                &[2, 5, 29, 17],
+                content,
+            ));
+        let der = mint_der(params);
+        for selected in [
+            CertificateIdentityPolicy::UriSan,
+            CertificateIdentityPolicy::DnsSan,
+        ] {
+            assert_eq!(
+                interpret(&der, selected),
+                Err(CertificateIdentityRefusal::Leaf(
+                    LeafIdentityRefusal::SelectedFieldUninterpretable { selected }
+                )),
+                "an unreadable SAN extension is not an absent SAN"
+            );
+        }
+    }
+
+    #[test]
+    fn a_common_name_the_parser_cannot_read_refuses_nothing_because_it_is_never_read() {
+        // The adapter reads no subject Common Name: a BMPString CN, which the parser cannot
+        // represent as a string, must leave every SAN policy exactly as a readable one would.
+        let with_cn = |value: rcgen::DnValue| {
+            let mut params = rcgen::CertificateParams::new(Vec::new()).expect("params");
+            params.subject_alt_names = vec![
+                rcgen::SanType::URI("spiffe://example.org/peer".try_into().expect("uri")),
+                rcgen::SanType::DnsName("peer.example.org".try_into().expect("dns")),
+            ];
+            let mut dn = rcgen::DistinguishedName::new();
+            dn.push(rcgen::DnType::CommonName, value);
+            params.distinguished_name = dn;
+            mint_der(params)
+        };
+        let bmp = with_cn(rcgen::DnValue::BmpString(
+            rcgen::string::BmpString::try_from("peer.example.org").expect("bmp"),
+        ));
+        for policy in [
+            CertificateIdentityPolicy::UriSan,
+            CertificateIdentityPolicy::DnsSan,
+        ] {
+            assert!(
+                interpret(&bmp, policy).is_ok(),
+                "an unreadable common name must not affect {policy:?}"
+            );
+        }
     }
 }

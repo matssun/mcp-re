@@ -24,6 +24,8 @@ pub struct HttpRequest {
     pub headers: Vec<(String, String)>,
     /// The body, empty for a request that has none.
     pub body: Vec<u8>,
+    /// The instant by which this exchange must have completed.
+    pub deadline: std::time::Instant,
 }
 
 /// What came back.

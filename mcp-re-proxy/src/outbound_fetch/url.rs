@@ -27,15 +27,20 @@ pub(super) fn scheme_is_allowed(url: &str) -> bool {
 /// Extract the host component (without port, without brackets for IPv6) from an
 /// `http`/`https` URL, using minimal parsing (no URL crate). Returns `None` if no
 /// authority is present. The authority is the run between `//` and the first `/`,
-/// `?`, or `#`; userinfo (`user@`) and the `:port` suffix are stripped; an IPv6
+/// `?`, `#`, or `\` (the client treats a backslash as a path separator); an authority
+/// carrying a byte a client strips, percent-decodes, or IDNA-maps (anything but ASCII
+/// graphic, and `%`) has no host this reader can vouch for and yields `None`; userinfo (`user@`) and the `:port` suffix are stripped; an IPv6
 /// literal in `[...]` is returned without its brackets. Pure.
 pub(super) fn host_of(url: &str) -> Option<String> {
     let after_scheme = url.split_once("://")?.1;
     // Authority ends at the first path/query/fragment delimiter.
     let authority = after_scheme
-        .split(['/', '?', '#'])
+        .split(['/', '?', '#', '\\'])
         .next()
         .unwrap_or(after_scheme);
+    if !authority.bytes().all(|b| b.is_ascii_graphic() && b != b'%') {
+        return None;
+    }
     // Drop any userinfo (everything up to and including the last '@').
     let hostport = match authority.rsplit_once('@') {
         Some((_userinfo, hp)) => hp,
@@ -163,5 +168,34 @@ mod tests {
         );
         assert!(scheme_is_allowed("https://a.example.com"));
         assert!(!scheme_is_allowed("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn a_backslash_ends_the_authority_where_the_client_ends_it() {
+        assert_eq!(
+            host_of("http://169.254.169.254\\@public.example.com/").as_deref(),
+            Some("169.254.169.254")
+        );
+        assert_eq!(
+            host_of("https://a.example.com\\x").as_deref(),
+            Some("a.example.com")
+        );
+    }
+
+    #[test]
+    fn an_authority_two_readers_could_read_differently_has_no_host() {
+        for url in [
+            "http://169.254.16\t9.254/",
+            "http://127.0.0.1\r\n/",
+            "http://169.254.169.254 /",
+            "http://%31%32%37%2E0%2E0%2E1/",
+            "http://\u{ff11}\u{ff12}\u{ff17}.0.0.1/",
+        ] {
+            assert_eq!(host_of(url), None, "{url:?}");
+        }
+        assert_eq!(
+            host_of("http://ocsp.example.com:80/a%20b").as_deref(),
+            Some("ocsp.example.com")
+        );
     }
 }

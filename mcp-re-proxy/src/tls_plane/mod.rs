@@ -22,30 +22,29 @@
 //!   every reload, because it would never fall out of force. Past `nextUpdate` the
 //!   verdict for that issuer is `Unknown`,
 //!   and unknown status is refused unconditionally — no CRL builder on either the handshake
-//!   or the per-request side takes a policy input at all. The online OCSP checker does
-//!   carry `soft_fail`; what keeps it from falsifying the second clause is THM-0013 (no
-//!   validated deployment enables online OCSP client revocation), not an absence. So a CRL nobody is refreshing
+//!   or the per-request side takes a policy input at all. Nor does the online OCSP checker;
+//!   THM-0013 (no validated deployment enables online OCSP client revocation) keeps it off
+//!   every validated deployment as well. So a CRL nobody is refreshing
 //!   converges on refusing that issuer's certificates rather than on admitting revoked
 //!   ones. The artifact bounds itself; the plane does not have to.
 //!
-//! That is why [`Drop`] here performs no security transition. It is a deliberate
-//! conclusion from the CRL's own semantics, not the absence of the question.
-//!
-//! Stated as the conditional it actually is:
+//! That is why [`Drop`] here performs no revocation transition. Two things are outside the
+//! conditional below: a deployment with no `--client-crl`, where it is vacuous, and the
+//! delegated TLS signing capability the snapshot holds on that path (`DelegatedCertResolver`
+//! over a `RawEd25519TlsSigner`). Both are bounded by `materialized_runtime`'s order instead:
+//! the fleet drains, every handshake with it, before any plane drops.
 //!
 //! > A TLS snapshot may outlive its `TlsPlane`
 //! >   ONLY BECAUSE its authorization-relevant validity is self-bounded,
 //! >   AND unknown revocation state cannot become admissible.
 //!
-//! Both clauses are load-bearing and both are enforced rather than assumed. The first is
-//! enforced by refusing a CRL with no `nextUpdate`, pinned by `tls`'s
-//! `crl_next_update_tests`; the second is pinned by `client_revocation`'s
+//! Both clauses are enforced, not assumed: the first by refusing a CRL with no `nextUpdate`
+//! (`tls`'s `crl_next_update_tests`), the second by `client_revocation`'s
 //! `an_expired_crl_refuses_its_issuer_rather_than_admitting_it` and its property control
-//! `unknown_status_is_refused_with_no_policy_input_that_could_admit_it`. The second clause
-//! is now structural rather than configured — no constructible index or verifier admits an
-//! unknown status. **Introducing an operator knob for unknown status means re-deriving
-//! this contract before the change lands** — with unknown admissible, a surviving snapshot
-//! becomes exactly the frozen authorization state `trust_plane` fails closed to avoid.
+//! `unknown_status_is_refused_with_no_policy_input_that_could_admit_it` — structurally, as
+//! no constructible index or verifier admits an unknown status. **An operator knob for
+//! unknown status means re-deriving this contract first**: with unknown admissible, a
+//! surviving snapshot is exactly the frozen state `trust_plane` fails closed to avoid.
 //!
 //! A failed reload keeps the last-good configuration, for the same reason
 //! `reloading_trust` does: a truncated file mid-write must not empty what is enforced.
@@ -77,7 +76,6 @@ pub struct TlsPlane {
     /// because a CRL posture without its own currency is a claim about a snapshot that may
     /// already have been superseded — which is what the write-once field it replaces was.
     currency: Arc<ClientRevocationCurrency>,
-    key_exposure: PrivateKeyExposure,
     /// Owns the CRL reload worker. Halted in [`Drop`]; see the module note on why no
     /// security transition accompanies it.
     workers: WorkerSet,
@@ -107,16 +105,6 @@ impl TlsPlane {
     /// startup posture did between the first successful reload and the process ending.
     pub(crate) fn revocation_currency(&self) -> Arc<ClientRevocationCurrency> {
         Arc::clone(&self.currency)
-    }
-
-    /// What may be believed about the handshake key this plane ESTABLISHED.
-    ///
-    /// Read by the serving runtime shape: a `NonExporting` signer blocks inside rustls'
-    /// synchronous `Signer::sign`, so each core needs a worker pool rather than the
-    /// single-threaded share-nothing default. Exposed as a fact because the material it
-    /// describes is moved into the reload worker.
-    pub fn key_exposure(&self) -> PrivateKeyExposure {
-        self.key_exposure
     }
 
     /// Number of workers this plane owns. For the lifecycle tests.
@@ -156,15 +144,19 @@ impl TlsPlane {
 
         let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         let halt = workers.halt();
-        workers.spawn("test crl reload", move || body(halt));
+        workers
+            .spawn("test crl reload", move || body(halt))
+            .expect("spawn test worker");
         TlsPlane {
-            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(server))),
+            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(
+                Arc::new(server),
+                PrivateKeyExposure::ProcessReadable,
+            )),
             revocation: None,
             currency: Arc::new(ClientRevocationCurrency::new(
-                ClientCrlEvidence::default(),
-                true,
+                ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
+                Some(300),
             )),
-            key_exposure: PrivateKeyExposure::ProcessReadable,
             workers,
         }
     }
@@ -182,9 +174,9 @@ impl TlsPlane {
 
 impl Drop for TlsPlane {
     fn drop(&mut self) {
-        // No security transition, unlike `trust_plane` and `signing_plane`: a CRL past its
-        // own `nextUpdate` yields `Unknown`, and unknown is refused unconditionally, so a
-        // snapshot nobody refreshes converges on refusing rather than on admitting.
+        // No revocation transition, unlike `trust_plane` and `signing_plane`: an unrefreshed
+        // CRL yields `Unknown`, which is refused; the signing capability the snapshot holds
+        // is bounded by the drain before this drop (see the module documentation).
         //
         // The posture is a different obligation from the transition, and it is not
         // discretionary. Once this plane retires, nothing re-reads the CRLs — so a replica
@@ -249,17 +241,20 @@ impl TlsPlane {
             ));
         }
         let crl_paths = plan.client_revocation.paths();
-        let crls = load_and_check_crls(crl_paths, startup_now_unix)?;
+        let crls = load_and_check_crls(crl_paths, &client_ca, startup_now_unix)?;
         // Cloned because the initial build below consumes the original; the reload
         // re-reads only the CRLs, never this.
         let reload_chain = server_chain.clone();
         let reload_crl_paths = crl_paths.to_vec();
-        let revocation = build_revocation_index(&crls)?;
+        let (revocation, publisher) = build_revocation_index(&crls)?;
 
         // Created once, before the first build, and handed to every later one: the trust
         // anchors, the session cache and the trust epoch survive a reload, and so does the
         // delegated handshake-signature bucket.
-        let rebuild_state = Arc::new(TlsListenerSecurityState::new(client_ca));
+        let rebuild_state = Arc::new(TlsListenerSecurityState::new(
+            client_ca,
+            plan.handshake_signing,
+        ));
 
         // The same construction a CRL reload performs, so the serving config a reload
         // installs cannot diverge from the one startup installed.
@@ -268,26 +263,24 @@ impl TlsPlane {
         // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
         // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
         // byte-identical to the static posture.
-        let snapshot = Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(
-            server_config,
-        )));
+        let (snapshot, config_publisher) =
+            config_snapshot::ServerConfigSnapshot::establish(Arc::new(server_config), established);
 
         let (workers, currency) = start_reload_worker(
             deployment,
             plan,
             material,
-            &snapshot,
+            config_publisher,
             reload_chain,
             reload_crl_paths,
-            revocation.clone(),
+            publisher,
             &rebuild_state,
             crls,
-        );
+        )?;
         Ok(TlsPlane {
             snapshot,
             revocation,
             currency,
-            key_exposure: established,
             workers,
         })
     }
@@ -401,7 +394,7 @@ pub(crate) fn fleet_crl_bound(
             format!("short-lived-cert only (exposure_window {window_secs}s); no client CRL")
         }
         CredentialCurrencyBound::PublicationRefresh { cadence_secs }
-            if maintenance == CrlMaintenance::Maintained =>
+            if matches!(maintenance, CrlMaintenance::Maintained { .. }) =>
         {
             format!(
                 "bounded {cadence_secs}s (the --client-crl-reload-secs cadence), enforced per \
@@ -430,20 +423,24 @@ mod handle_lifetime_tests {
     fn plane(config: Arc<rustls::ServerConfig>, observed: Arc<AtomicBool>) -> TlsPlane {
         let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
         let halt = workers.halt();
-        workers.spawn("test client CRL reload", move || {
-            while !halt.requested() {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            observed.store(true, Ordering::SeqCst);
-        });
+        workers
+            .spawn("test client CRL reload", move || {
+                while !halt.requested() {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                observed.store(true, Ordering::SeqCst);
+            })
+            .expect("spawn test worker");
         TlsPlane {
-            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(config)),
+            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(
+                config,
+                PrivateKeyExposure::ProcessReadable,
+            )),
             revocation: None,
             currency: Arc::new(ClientRevocationCurrency::new(
-                ClientCrlEvidence::default(),
-                true,
+                ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
+                Some(300),
             )),
-            key_exposure: PrivateKeyExposure::ProcessReadable,
             workers,
         }
     }
@@ -496,7 +493,10 @@ mod handle_lifetime_tests {
         {
             let plane = plane(test_server_config(), Arc::clone(&observed));
             currency = plane.revocation_currency();
-            assert_eq!(currency.maintenance(), CrlMaintenance::Maintained);
+            assert_eq!(
+                currency.maintenance(),
+                CrlMaintenance::Maintained { cadence_secs: 300 }
+            );
         }
         assert_eq!(
             currency.maintenance(),
@@ -549,6 +549,7 @@ mod custody_agreement_tests {
             custody,
             client_revocation: crate::config_state::test_support::crl_plan(&[], None),
             credential_window: crate::config_state::test_support::credential_window(3600, 300),
+            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
         }
     }
 
@@ -576,6 +577,104 @@ mod custody_agreement_tests {
         assert!(
             err.contains("delegated") && err.contains("exported-key"),
             "the refusal must name both sides: {err}"
+        );
+    }
+
+    /// The snapshot the plane serves carries the custody of the material it was built
+    /// from, so the serving runtime's shape is decided by the key the handshakes actually
+    /// sign with rather than by a flag supplied beside the snapshot.
+    #[test]
+    fn the_served_snapshot_carries_the_established_custody() {
+        let (chain, signer) = crate::delegated_tls::tests::corresponding_material();
+        let plane = TlsPlane::materialize(
+            &plan(crate::config_state::test_support::channel_custody_delegated_pkcs11("tls")),
+            TlsKeyMaterial::Delegated(signer),
+            chain.clone(),
+            chain,
+            0,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .expect("agreeing delegated custody over corresponding material materializes");
+        assert_eq!(
+            plane.snapshot().key_exposure(),
+            PrivateKeyExposure::NonExporting
+        );
+    }
+
+    /// Counts the signatures that actually reach a delegated signer.
+    struct CountingSigner {
+        inner: Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::delegated_tls::RawEd25519TlsSigner for CountingSigner {
+        fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, crate::KeyError> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.inner.sign_tls_ed25519(message)
+        }
+        fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, crate::KeyError> {
+            self.inner.tls_public_key_spki_der()
+        }
+    }
+
+    /// Whether the served config signs a fresh handshake: one ClientHello, processed.
+    fn server_signs_a_fresh_handshake(
+        served: &Arc<rustls::ServerConfig>,
+        server_cert: &rustls_pki_types::CertificateDer<'static>,
+    ) -> bool {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(server_cert.clone()).expect("trust the leaf");
+        let client = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        let name = rustls_pki_types::ServerName::try_from("delegated.example.org").expect("name");
+        let mut c = rustls::ClientConnection::new(Arc::new(client), name).expect("client");
+        let mut s = rustls::ServerConnection::new(Arc::clone(served)).expect("server");
+        let mut hello = Vec::new();
+        c.write_tls(&mut hello).expect("client hello");
+        s.read_tls(&mut hello.as_slice()).expect("server read");
+        s.process_new_packets().is_ok()
+    }
+
+    /// The operator's capacity is the bound the SERVED listener enforces, through the one
+    /// production path from plan to handshake: a plane materialized from a plan with a burst
+    /// of 2 lets two fresh handshakes reach the delegated signer and refuses every later one
+    /// without calling it. A plane that built its listener from a default capacity instead
+    /// would let all of them through.
+    #[test]
+    fn the_served_listener_enforces_the_plans_handshake_signing_capacity() {
+        let (chain, signer) = crate::delegated_tls::tests::corresponding_material();
+        let counting = Arc::new(CountingSigner {
+            inner: signer,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut plan =
+            plan(crate::config_state::test_support::channel_custody_delegated_pkcs11("tls"));
+        plan.handshake_signing =
+            crate::delegated_tls::HandshakeSignCapacity::new(1, 2).expect("in bounds");
+        let plane = TlsPlane::materialize(
+            &plan,
+            TlsKeyMaterial::Delegated(counting.clone()),
+            chain.clone(),
+            chain.clone(),
+            0,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .expect("agreeing delegated custody over corresponding material materializes");
+        let served = plane.snapshot().load();
+        let signed = (0..5)
+            .filter(|_| server_signs_a_fresh_handshake(&served, &chain[0]))
+            .count();
+        assert_eq!(signed, 2, "a burst of 2 admits two fresh handshakes");
+        assert_eq!(
+            counting.calls.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "a refused handshake must never reach the delegated signer"
         );
     }
 
@@ -654,7 +753,10 @@ mod trust_epoch_binding_tests {
     #[test]
     fn the_store_starts_under_the_epoch_of_the_planes_own_client_auth_inputs() {
         let anchors = vec![ca_der(), ca_der()];
-        let state = TlsListenerSecurityState::new(anchors.clone());
+        let state = TlsListenerSecurityState::new(
+            anchors.clone(),
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        );
         assert_eq!(
             *state.epoch(),
             TlsAuthEpoch::compute(&anchors),
@@ -674,10 +776,17 @@ mod trust_epoch_binding_tests {
     fn a_rebuild_republishes_the_epoch_of_the_anchor_set_the_plane_owns() {
         let anchors = vec![ca_der()];
         let (chain, material) = exported_credential();
-        let state = TlsListenerSecurityState::new(anchors.clone());
+        let state = TlsListenerSecurityState::new(
+            anchors.clone(),
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        );
 
         let first = material
-            .rebuild(chain.clone(), &ClientCrlEvidence::default(), &state)
+            .rebuild(
+                chain.clone(),
+                &ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
+                &state,
+            )
             .expect("initial build");
         assert!(first
             .session_storage
@@ -685,7 +794,11 @@ mod trust_epoch_binding_tests {
         let after_first = *state.epoch();
 
         material
-            .rebuild(chain, &ClientCrlEvidence::default(), &state)
+            .rebuild(
+                chain,
+                &ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
+                &state,
+            )
             .expect("rebuild");
         assert_eq!(
             *state.epoch(),
@@ -731,6 +844,7 @@ mod fleet_crl_bound_tests {
                 cert_lifetime_secs,
                 cert_lifetime_secs.min(300),
             ),
+            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
         }
     }
 
@@ -757,7 +871,7 @@ mod fleet_crl_bound_tests {
                 crate::config_state::test_support::crl_plan(&["/crl.pem"], Some(300)),
                 3600,
             ),
-            CrlMaintenance::Maintained,
+            CrlMaintenance::Maintained { cadence_secs: 300 },
         );
         assert!(bound.contains("bounded 300s"), "got: {bound}");
         assert!(

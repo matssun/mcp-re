@@ -116,6 +116,7 @@ impl TrustDocument {
         let raw: Vec<RawEntry> =
             serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
         let mut entries: Vec<TrustEntry> = Vec::with_capacity(raw.len());
+        let mut enrolled: HashMap<String, String> = HashMap::with_capacity(raw.len());
         for entry in raw {
             let RawEntry {
                 signer,
@@ -123,8 +124,8 @@ impl TrustDocument {
                 public_key,
                 slots,
             } = entry;
-            if let Some(prior) = entries.iter().find(|e| e.key_id == key_id) {
-                return Err(if prior.signer == signer {
+            if let Some(prior_signer) = enrolled.get(&key_id) {
+                return Err(if *prior_signer == signer {
                     format!(
                         "trust file: duplicate entry for {signer}#{key_id} (last-write-wins \
                          key substitution refused)"
@@ -134,12 +135,13 @@ impl TrustDocument {
                         "trust file: duplicate key_id {key_id} enrolled for {} and {signer}: a \
                          request signer is resolved by key_id alone, so the document is \
                          ambiguous (last-write-wins signer substitution refused)",
-                        prior.signer
+                        prior_signer
                     )
                 });
             }
             let key = VerificationKey::from_b64url(&public_key)
                 .map_err(|_| format!("trust entry {signer}#{key_id}: invalid public_key"))?;
+            enrolled.insert(key_id.clone(), signer.clone());
             entries.push(TrustEntry {
                 signer,
                 key_id,

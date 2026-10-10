@@ -19,6 +19,7 @@ use std::thread;
 use mcp_re_demo::DemoFixtureSpec;
 use mcp_re_demo::DemoFixtures;
 
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerOptions;
@@ -28,6 +29,15 @@ use mcp_re_transport::MtlsClient;
 
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::CertificateDer;
+
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(
+        std::time::Duration::from_secs(3600),
+        std::time::Duration::from_secs(300),
+    )
+    .expect("a legal credential window")
+}
 
 /// Parse a single-cert PEM into DER (used to feed the proxy server config + to
 /// assert chaining).
@@ -46,9 +56,12 @@ fn server_config(fx: &DemoFixtures) -> Arc<rustls::ServerConfig> {
         rustls_pki_types::PrivateKeyDer::from_pem_slice(fx.server_key_pem().as_bytes())
             .expect("server key");
     let client_ca = cert_der(fx.client_ca_pem());
-    let config = TlsListenerSecurityState::new(vec![client_ca])
-        .build_exported_key_config(vec![server_cert], server_key, Vec::new())
-        .expect("server config from fixture material");
+    let config = TlsListenerSecurityState::new(
+        vec![client_ca],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_exported_key_config(vec![server_cert], server_key, Vec::new())
+    .expect("server config from fixture material");
     Arc::new(config)
 }
 
@@ -64,7 +77,7 @@ fn matching_client_identity_round_trips_and_equals_signer() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, _id| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()
@@ -75,8 +88,8 @@ fn matching_client_identity_round_trips_and_equals_signer() {
     // Client config built ENTIRELY from the fixture PEM (the same bytes the demo
     // bin loads from `--client-cert-file` / `--client-key-file` / `--server-ca-file`).
     let tls = ClientTlsConfig::from_pem(
-        fx.client_cert_pem().as_bytes(),
-        fx.client_key_pem().as_bytes(),
+        fx.short_lived_client_cert_pem().as_bytes(),
+        fx.short_lived_client_key_pem().as_bytes(),
         fx.server_ca_pem().as_bytes(),
     )
     .expect("client tls config from fixture material");
@@ -109,9 +122,12 @@ fn mismatched_client_chains_to_the_same_ca_but_differs_from_signer() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     // The MISMATCHED client cert still chains to the configured client CA, so the
@@ -150,9 +166,12 @@ fn server_leaf_does_not_chain_to_the_client_ca() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     // Trust the CLIENT CA as the server root: the server leaf does not chain to

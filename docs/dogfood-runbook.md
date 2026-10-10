@@ -206,6 +206,7 @@ bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --bind 127.0.0.1:8600 \
   --audience did:example:server-1 \
   --server-signer did:example:server-1 \
+  --allow-example-fixtures \
   --server-key-id server-key-1 \
   --key-source file \
   --signing-key-seed   "$KEYDIR/signing.seed" \

@@ -14,22 +14,20 @@
 //! `CryptographicFloorVerifiedBoundResponse` — see [`super`] for why that containment would
 //! state something false.
 
-use mcp_re_core::McpReError;
-
 use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::body::extract_meta_block;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::ResponseRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::ids::RESPONSE_LABEL;
 use crate::message::reject_content_encoding;
 use crate::message::require_json_media_type;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
 use crate::sigbase::signature_base;
@@ -41,6 +39,7 @@ use crate::verify::floor::params::check_params;
 use crate::verify::floor::sf_dictionary::member_value;
 use crate::verify::floor::signature::signature_value_b64url;
 use crate::verify::floor::signature::verify_under;
+use crate::verify::floor::signature::SignedMessage;
 use crate::verify::floor::signature_input::parse_signature_input;
 
 use super::credential_chain::chain_to_root;
@@ -79,13 +78,12 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     // JSON mode (§3.4): the delegated path gets the same gate — a credential
     // chain to the root does not make a stream evidenceable.
     require_json_media_type(&response.headers, "response content-type")?;
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let headers = &response.headers;
+    let digest_header = required_header(headers, "content-digest", "response content-digest")?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
     // Signature-input parse + required components + params gate (keyid).
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = required_header(headers, "signature-input", "response signature-input")?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(
         &parsed.components,
@@ -130,7 +128,7 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &verified.delegated_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
@@ -138,9 +136,7 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     // The handle is OF the request this verification was given — see
     // `crate::verify::bound_request`.
     let bound = request_evidence_of(request)?;
-    if block.request_evidence.digest_alg != bound.digest_alg
-        || block.request_evidence.digest_value != bound.digest_value
-    {
+    if !bound.matches(&block.request_evidence) {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 
@@ -149,18 +145,26 @@ pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     // block's `server_signer`. That is why this path assembles the SHARED facts rather
     // than a `CryptographicFloorVerifiedBoundResponse`, whose meaning is "the presented
     // keyid was resolved through the trust seam" — false of every value here.
-    Ok(VerifiedDelegatedMcpResponse {
-        signature_facts: BoundResponseSignatureFacts {
+    Ok(VerifiedDelegatedMcpResponse::new(
+        BoundResponseSignatureFacts {
             accepted_signer: AcceptedResponseSigner {
                 identity: block.server_signer.clone(),
                 verification_key: verified.delegated_key,
             },
-            response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
+            response_signature_base_digest: ResponseRoleEvidence::from_signature_base(&base),
         },
-        request_evidence_agreement: block_agreement(bound, &block),
+        block_agreement(bound, &block),
         // C004b: the ROOT anchor the credential chained to — the stable coordinate,
         // unlike the ephemeral delegated kid. Not an `Option`: this product is only
         // reachable through a verified chain.
-        delegation_issuer_kid: verified.issuer_kid.clone(),
-    })
+        verified.issuer_kid.clone(),
+    ))
+}
+/// The single value of header `name`, or the evidence refusal naming `what` when it is absent.
+fn required_header<'a>(
+    headers: &'a [(String, String)],
+    name: &'static str,
+    what: &'static str,
+) -> Result<&'a str, HttpProfileError> {
+    single_header(headers, name)?.ok_or(HttpProfileError::MissingEvidence(what))
 }

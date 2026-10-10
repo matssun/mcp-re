@@ -231,7 +231,9 @@ The verifier's ten propositions are class **V0**: nothing above them may read as
 "a test battery passed". A passing battery is not, on its own, evidence that a production
 check is load-bearing — so every conjunct THM-0014 … THM-0022 names was probed by deleting or
 defanging exactly that check, re-running the declared battery, and observing which declared
-member goes red. **33 mutations, each turning at least one declared member red.**
+member goes red. **36 mutations, each turning at least one declared member red.** M69 and
+M70 are retired: each built the request handle out of the response block's own claim, which
+no longer compiles now that `RequestRoleEvidence` has one producer (structural probe S40).
 
 **They used to be thirty, over one unit.** ADR-MCPRE-068 Phase 1 split
 `http_profile.verifier_results` — 56 files, 73 controls, ten theorems — into one unit per
@@ -239,7 +241,10 @@ proposition, and the probes were already labelled with the theorem each attacks,
 re-partitioned them rather than rewriting them. The thirty-first is **M71**, THM-0017's first
 falsifier: the wide unit carried thirty probes, not one of them named THM-0017, and N1 —
 which accounts per unit — read the proposition as falsified on the strength of its
-neighbours.
+neighbours. M551–M555 make the freshness conjunct of each verify path load-bearing: each
+evaluates `check_params` at the message's own `created` instead of the verifying instant, and
+the path's stale-window control goes red. THM-0001's window property holds for a path only
+while that path asks `check_params` at the real `now`.
 
 The probes are **registered and executable**, not remembered:
 [`verification/policy/mutation-probes.toml`](../../../verification/policy/mutation-probes.toml)
@@ -398,7 +403,7 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 |---|---|---|---|
 | S01 | crate boundary | a cryptographic-floor bound response is not a fully verified response | `E0308` |
 | S02 | crate boundary | a delegated UNBOUND response is not a delegated BOUND one | `E0308` |
-| S03 | crate boundary | a delegation-authorized response is not a trust-seam-authorized one | `E0609` |
+| S03 | crate boundary | a delegation-authorized response is not a trust-seam-authorized one | `E0308` |
 | S05 | crate boundary | a cryptographic-floor verified REQUEST is not a fully verified request | `E0308` |
 | S04 | in-crate | no code outside `config_state::client_credential_window` can assemble a `ClientCredentialWindow` | `E0451` |
 | S06 | in-crate | no code outside `delegated_tls::resolver` can assemble a `DelegatedCertResolver` | `E0451` |

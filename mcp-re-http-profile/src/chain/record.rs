@@ -44,13 +44,10 @@ pub(super) fn link_to_predecessor(
         // assumed away: the alternative is indexing into the prefix.
         (_, Some(_), None) => Err(IncompleteReason::ContinuationDoesNotLink),
         (_, Some(c), Some(prev)) => {
-            let links = c.previous_request_evidence.digest_value
-                == prev.request_evidence.digest_value
-                && c.previous_request_evidence.digest_alg == prev.request_evidence.digest_alg
-                && c.input_required_response_evidence.digest_value
-                    == prev.response_evidence.digest_value
-                && c.input_required_response_evidence.digest_alg
-                    == prev.response_evidence.digest_alg;
+            let links = prev.request_evidence.matches(&c.previous_request_evidence)
+                && prev
+                    .response_evidence
+                    .matches(&c.input_required_response_evidence);
             if links {
                 Ok(())
             } else {
@@ -82,27 +79,18 @@ mod tests {
     use crate::chain::HopEvidence;
 
     fn evidence(request: &str, response: &str) -> HopEvidence {
-        let handle = |v: &str| crate::evidence::RequestEvidence {
-            digest_alg: "sha-256".into(),
-            digest_value: v.into(),
-        };
         HopEvidence {
-            request_evidence: handle(request),
-            response_evidence: handle(response),
+            request_evidence: crate::evidence::RequestRoleEvidence::from_signature_base(
+                request.as_bytes(),
+            ),
+            response_evidence: crate::evidence::ResponseRoleEvidence::from_signature_base(
+                response.as_bytes(),
+            ),
         }
     }
 
     fn continuation(request: &str, response: &str) -> crate::block::HttpContinuation {
-        let handle = |v: &str| crate::block::RequestEvidenceDigest {
-            digest_alg: "sha-256".into(),
-            digest_value: v.into(),
-        };
-        crate::block::HttpContinuation {
-            continuation_type: "mcp-mrt".into(),
-            previous_request_evidence: handle(request),
-            input_required_response_evidence: handle(response),
-            request_state_digest: handle("state"),
-        }
+        crate::block::HttpContinuation::build(request.as_bytes(), response.as_bytes(), b"state")
     }
 
     /// The hop that OPENS the record may not name a predecessor. A record whose first hop
@@ -136,6 +124,10 @@ mod tests {
         assert!(link_to_predecessor(&position, Some(&continuation("r0", "s0"))).is_ok());
         assert!(matches!(
             link_to_predecessor(&position, Some(&continuation("s0", "r0"))),
+            Err(IncompleteReason::ContinuationDoesNotLink)
+        ));
+        assert!(matches!(
+            link_to_predecessor(&position, Some(&continuation("s0", "s0"))),
             Err(IncompleteReason::ContinuationDoesNotLink)
         ));
         assert!(matches!(

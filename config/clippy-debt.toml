@@ -152,10 +152,12 @@ count = 0
 # 17 -> 15: R11-356 split `issue_if` into the three authorities it had grown — one approach
 # to the root, adopting what it issued, and holding off when it issued nothing publishable.
 # Two nesting sites went with the arms that moved out.
+# 11 -> 10: the MCP transport contract's `require_*` inputs, fixed true by the only
+# constructor, were deleted (dea1073e), and the unreachable arms they guarded with them.
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "excessive_nesting"
-count = 14
+count = 10
 
 [[debt]]
 crate = "mcp-re-http-profile"
@@ -179,30 +181,35 @@ count = 0
 # flavor alone still measures exactly the old baseline; every added site is in those modules,
 # and the deploy image ships the AWS/GCP KMS and Redis ones. MCPRE-176's zero held for the
 # default feature set only. The count is the measured one, pinned: it may only fall.
+# 32 -> 31: measured at e4faa23c, after the r12 fixes and the retired sync replay stores.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "arithmetic_side_effects"
-count = 35
+count = 31
 
 # 72 -> 71: R11-014 replaced the enforcer's `.map(|_| ())` tail, which discarded the
 # verdict, with a match on its two arms. The nesting site went with the discarded value.
 # 65 -> 92: the same measurement correction as `arithmetic_side_effects` above.
+# 83 -> 79: measured at e4faa23c, after the r12 fixes and the retired sync replay stores.
+# 79 -> 78: `RequestHeaders::parse` ends its iterator at the header terminator, so the
+# skip branch inside its loop is gone.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 92
+count = 78
 
-# 0 -> 4: the same measurement correction as `arithmetic_side_effects` above.
+# 0 -> 4: the same measurement correction as `arithmetic_side_effects` above; 1 -> 0 when
+# the trust-epoch reader's second, GET-based read path was folded into the one MGET read.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "expect_used"
-count = 4
+count = 0
 
 # 0 -> 21: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "indexing_slicing"
-count = 21
+count = 19
 
 # 0 -> 3: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]

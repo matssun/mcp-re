@@ -66,7 +66,9 @@ shown are the real defaults from that parser.
 | `--signing-key-seed`, `--tls-cert`, `--tls-key`, `--client-ca` | Key-material locations (paths for `file`, env-var names for `env`). |
 | `--trust` | Path to the JSON trust file (request signers + authorization issuers). |
 | `--target-uri <uri>` | **Required.** The URI a signed request must name. With `--audience` and `--route` it forms the audience TUPLE the verifier compares against, so it must equal what the client signs as `@target-uri` — not merely resemble it. |
+| `--mcp-protocol-version <version>` | **Required, repeatable.** Each occurrence adds an accepted `MCP-Protocol-Version` (for example `2026-07-28`). The MCP transport contract is mandatory: every request must carry `Mcp-Method` and `MCP-Protocol-Version`, `Mcp-Name` for every target-naming method (`tools/call`, `prompts/get`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`) must agree with the protected body and is refused on any other message, a bodyless GET or DELETE must carry `MCP-Protocol-Version` and no `Mcp-Method` or `Mcp-Name`, and a version outside the accepted set is refused. There is no way to run without it. |
 | `--trust-domain <domain>` | **Required.** The trust domain the server actor identity is scoped to. It must agree with what clients sign; a mismatch is an actor-resolution failure, not a warning. |
+| `--allow-example-fixtures` | Off by default. Acknowledges a fenced fixture run, and is the only way the shipped placeholders — `--trust-domain example.com` and a `did:example:` `--audience` or `--server-signer`, which every install that kept them would share — are accepted. The Helm chart renders it from `identity.allowExampleFixtures`. |
 | `--inner-http-url <url>` | The Streamable-HTTP inner MCP backend the PEP forwards to. **Required.** Repeat or comma-separate for a backend fleet (round-robin). |
 
 `--max-clock-skew` defaults to `300` seconds.
@@ -75,10 +77,11 @@ The worked example below is fed to the real parser by
 `mcp-re-proxy/tests/integration/documented_cli_test.rs`, so it cannot drift into a command line the
 proxy refuses to start with.
 
-Its identity values are **placeholders**: `did:example:server-1`, `example.com` and
-`epoch-1` are refused by name at Helm render time precisely so a real deployment cannot
-ship them. The CLI accepts them — nothing about them is malformed — which is why the
-chart, not the parser, is where that guard lives.
+Its identity values are this example's own, not the shipped placeholders. The chart's
+`did:example:` audience and signer and its `example.com` trust domain are refused by name both
+at Helm render time and by the proxy at startup, unless `--allow-example-fixtures`
+(`identity.allowExampleFixtures`) acknowledges a fenced fixture run. The chart's `epoch-1`
+trust-epoch placeholder is refused at render time.
 
 ### Inner plane (`http_inner.rs`)
 
@@ -98,12 +101,12 @@ stdio↔HTTP adapter (below).
 | Flag | Meaning |
 | --- | --- |
 | `--key-source file` (default) | Read material from files on disk. |
-| `--key-source env` | Read from environment variables. **Dev/CI only**, and it exists only in a build with the non-default `dev_env_key_source` cargo feature. A production build rejects `env` as an unknown `--key-source` value. |
 
-Environment variables are visible to the whole process tree and can leak via
-crash dumps, `ps e`, and `/proc/<pid>/environ` — so the option is a build-time
-decision rather than a runtime knob, and the build that has it warns loudly at
-startup. Use `file` with `0600` permissions in
+No key material is read from environment variables: the signing seed, TLS key and
+certificate, and client-CA anchors come only from files (or stay on a PKCS#11/KMS
+device), and `env` is refused as an unknown `--key-source` value. Environment variables
+are visible to the whole process tree and can leak via crash dumps, `ps e`, and `/proc/<pid>/environ`. Use `file` with
+`0600` permissions in
 production (the CLI warns if a key file is group/world-readable). A Cloud-KMS /
 PKCS#11-backed source keeps the signing key off-host — see the Transport
 Hardening Guide and the Helm chart's `keySource: gcpKms` path.
@@ -153,7 +156,7 @@ so.
 | Flag | Meaning |
 | --- | --- |
 | `--transport-binding exact` (default) | The authenticated mTLS peer identity must equal the resolved request actor's **subject** — i.e. the client leaf's SAN carries the `signer`, not the composite actor id. Rotating a signing key needs no certificate reissue. (Binding is mandatory — there is no `none` option; a decoupled channel↔signer posture is refused.) |
-| `--transport-identity-source uri_san` (default) / `dns_san` | Which client-cert field is the authoritative identity. (`cn_legacy` is refused.) |
+| `--transport-identity-source uri_san` (default) / `dns_san` | Which client-cert field is the authoritative identity. Any other value, including `cn_legacy`, is refused. |
 | `--max-client-cert-lifetime 1h` (default) | The v1 revocation posture. Accepts `1h`/`30m`/`3600` up to the 1h ceiling; `none`/`0` (disabled) and any value over the ceiling are refused. |
 
 ### Replay store (`shared_replay.rs`, `replay_tier.rs`)
@@ -165,10 +168,11 @@ not start — absence is a refusal, not a fall back to something weaker.
 
 | Flag | Meaning |
 | --- | --- |
-| `--replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>` | Redis `SET NX` + `WAIT`. Requires `--replay-redis-url`. |
+| `--replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>` | Redis `SET NX` + `WAIT`. Requires `--replay-redis-url`. `quorum` ≥ 1; `timeout_ms` in 1..=30000 — a larger value is refused, not clamped, since admission awaits the `WAIT`. |
 | `--replay-durability-tier linearizable` | A CP / linearizable store. Requires `--cpstore-etcd-endpoint`. |
 | `--replay-redis-url <url>` | Where admitted nonces live, for a Redis tier. Refused beside a linearizable tier. |
 | `--cpstore-etcd-endpoint <url>` | The CP store's endpoint. Refused without a linearizable tier. |
+| `--replay-clock-divergence-secs <n>` | How far two replicas' clocks may disagree, 0..=300 seconds (default 5). Every replay record is kept this much longer than the verifier's window, because the store expires a record on the writing replica's clock. |
 
 The two weaker tiers (`redis-async`, `single-store-fail-closed`) parse but are refused as
 deployment states: they carry a replay window the strict production posture does not
@@ -263,8 +267,8 @@ or an external stdio↔HTTP adapter exposing HTTP):
 # Port 8600 = mcp_re_proxy in config/ports.toml (reserved 8600-8699 band).
 bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --bind 127.0.0.1:8600 \
-  --audience did:example:server-1 \
-  --server-signer did:example:server-1 \
+  --audience did:web:server-1.mcp.example.com \
+  --server-signer did:web:server-1.mcp.example.com \
   --server-key-id server-key-1 \
   --delegated-trust-epoch epoch-1 \
   --key-source file \
@@ -274,7 +278,8 @@ bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --client-ca /etc/mcp-re/client-ca.pem \
   --trust /etc/mcp-re/trust.json \
   --target-uri https://mcp.example.com/mcp \
-  --trust-domain example.com \
+  --mcp-protocol-version 2026-07-28 \
+  --trust-domain mcp.example.com \
   --transport-binding exact \
   --transport-identity-source uri_san \
   --max-client-cert-lifetime 1h \

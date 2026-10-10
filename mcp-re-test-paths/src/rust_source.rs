@@ -20,41 +20,64 @@
 //! Under either shape a truncating guard stops scanning early and reports a clean pass over
 //! code it never read. That is the failure mode ADR-MCPRE-061 names: a green that measured
 //! nothing. `scripts/module_size_gate.py` already measures the same way for the same
-//! reason; this is that definition on the Rust side, so the two cannot drift.
+//! reason; this is the Rust-side definition of the same region rule.
 //!
 //! # The definition
 //!
-//! A **test region** opens at an attribute matching `^#[cfg(test` or `^#[cfg(all(test`
-//! and closes with the item that attribute introduces — a braced item at its matching
-//! close, a `;`-terminated item at that semicolon. Counting resumes immediately after.
-//! Everything outside every region is production.
+//! A **test region** opens at an attribute whose first cfg predicate is `test`, or whose
+//! first conjunct of `all(` is `test`, ending at a token boundary — `#[cfg(test)]` and
+//! `#[cfg(all(test, unix))]` open one; `#[cfg(test_util)]`, other orderings and
+//! `any(test, ...)` (which compiles into a feature build and is production) open none. The
+//! attribute is matched over CODE text, so a literal or comment can neither open nor close a
+//! region. A region closes with the item that attribute introduces — a braced item at its
+//! matching close, a `;`-terminated item at that semicolon. Counting resumes immediately
+//! after. Everything outside every region is production.
 
 mod brace_scan;
 
 use brace_scan::BraceScan;
 
-/// Whether `line` opens a test region.
+/// Whether `code` — a line with its literals and comments already removed — opens a test
+/// region.
 ///
-/// Both `#[cfg(test)]` and the `#[cfg(all(test, unix))]` family open one. Matching only the
-/// narrow spelling is what let `#[cfg(all(test, unix))]` modules be measured as production
-/// during an earlier census.
-fn opens_test_region(line: &str) -> bool {
-    let t = line.trim_start();
-    t.starts_with("#[cfg(test") || t.starts_with("#[cfg(all(test")
+/// `test` must be the whole first cfg predicate or the first conjunct of `all(`, and must end
+/// at a token boundary: `#[cfg(test)]` and `#[cfg(all(test, unix))]` open one, while
+/// `#[cfg(test_util)]` and `#[cfg(all(testing, unix))]` open none. Other orderings open none,
+/// and `any(test, ...)` deliberately opens none because it compiles into a feature build and
+/// is production.
+fn opens_test_region(code: &str) -> bool {
+    let Some(rest) = code.trim_start().strip_prefix("#[cfg(") else {
+        return false;
+    };
+    let rest = rest.strip_prefix("all(").unwrap_or(rest);
+    let Some(after) = rest.strip_prefix("test") else {
+        return false;
+    };
+    !after
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// The lines of `source`, 1-indexed, that lie outside every test region.
 ///
 /// The line numbers are kept because a guard that reports a violation has to be able to
 /// name where it is, and a filtered copy of the text cannot.
+///
+/// # Panics
+///
+/// When a test region opens and the source ends before it closes: the scan lost its place and
+/// must not report the file's tail as test code.
 #[must_use]
 pub fn production_lines(source: &str) -> Vec<(usize, &str)> {
     let lines: Vec<&str> = source.lines().collect();
     let mut kept: Vec<(usize, &str)> = Vec::new();
+    let mut scan = BraceScan::new();
     let mut i = 0usize;
     while i < lines.len() {
         let Some(line) = lines.get(i) else { break };
-        if !opens_test_region(line) {
+        let code = scan.feed(line);
+        if !opens_test_region(&code) {
             // `saturating_add`, not `+`: the line NUMBER is 1-indexed and `i` is bounded by
             // `lines.len()`, so overflow is unreachable — but "unreachable" is the sort of
             // claim ADR-MCPRE-061 §6.4 asks to be written down rather than assumed, and
@@ -63,26 +86,29 @@ pub fn production_lines(source: &str) -> Vec<(usize, &str)> {
             i = i.saturating_add(1);
             continue;
         }
-        i = end_of_region(&lines, i);
+        i = end_of_region(&lines, i, &code, &mut scan);
     }
     kept
 }
 
-/// The index just past the region opened at `start`.
+/// The index just past the region opened at `start`, whose line has already been fed to
+/// `scan` and emitted as `start_code`.
 ///
 /// Scans forward for the item's opening brace. An attributed item with no brace before a
 /// `;` — `#[cfg(test)] use super::*;` — is a single-line region and ends at that semicolon.
 ///
-/// The [`BraceScan`] is created once for the whole region rather than per line, because a
-/// literal that spans lines is exactly where a forgetful scan mis-counts.
-fn end_of_region(lines: &[&str], start: usize) -> usize {
+/// The [`BraceScan`] is the one the opener was decided with, so a literal that spans lines
+/// is exactly where a forgetful scan mis-counts and here it cannot.
+///
+/// # Panics
+///
+/// When `lines` ends before the region closes.
+fn end_of_region(lines: &[&str], start: usize, start_code: &str, scan: &mut BraceScan) -> usize {
     let mut depth: i64 = 0;
     let mut opened = false;
     let mut i = start;
-    let mut scan = BraceScan::new();
-    while i < lines.len() {
-        let Some(raw) = lines.get(i) else { break };
-        let code = scan.feed(raw);
+    let mut code = start_code.to_owned();
+    loop {
         let opens = i64::try_from(code.matches('{').count()).unwrap_or(i64::MAX);
         let closes = i64::try_from(code.matches('}').count()).unwrap_or(i64::MAX);
         depth = depth.saturating_add(opens).saturating_sub(closes);
@@ -96,14 +122,23 @@ fn end_of_region(lines: &[&str], start: usize) -> usize {
         if !opened && code.trim_end().ends_with(';') {
             return i;
         }
+        let Some(raw) = lines.get(i) else { break };
+        code = scan.feed(raw);
     }
-    i
+    panic!(
+        "test region opened at line {} never closed",
+        start.saturating_add(1)
+    );
 }
 
 /// `source` with every test region removed, blank lines standing in for the elided ones.
 ///
 /// Blanks rather than deletion so that a `contains` check over the result cannot join two
 /// production lines that were never adjacent, and so line counts stay comparable.
+///
+/// # Panics
+///
+/// When a test region opens and the source ends before it closes.
 #[must_use]
 pub fn production_half(source: &str) -> String {
     let kept: std::collections::BTreeMap<usize, &str> =
@@ -283,6 +318,29 @@ mod tests {
         let kept = production_lines(source);
         assert_eq!(kept.first().map(|(n, _)| *n), Some(1));
         assert_eq!(kept.last().map(|(n, _)| *n), Some(5));
+    }
+
+    #[test]
+    fn a_test_attribute_inside_a_literal_opens_no_region() {
+        let in_literal = "const T: &str = r#\"\n#[cfg(test)]\nmod x {\n\"#;\nfn after() {}\n";
+        assert!(production_half(in_literal).contains("fn after()"));
+        let in_comment = "/*\n#[cfg(test)]\nmod x {\n*/\nfn after() {}\n";
+        assert!(production_half(in_comment).contains("fn after()"));
+    }
+
+    #[test]
+    #[should_panic(expected = "never closed")]
+    fn an_unterminated_region_is_a_failure_not_a_test_tail() {
+        let _ = production_half("fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n");
+    }
+
+    #[test]
+    fn a_cfg_merely_prefixed_by_test_opens_no_region() {
+        let source = "#[cfg(test_util)]\nmod helper {\n    fn h() {}\n}\n#[cfg(all(testing, unix))]\nfn k() {}\nfn b() {}\n";
+        let half = production_half(source);
+        for kept in ["fn h()", "fn k()", "fn b()"] {
+            assert!(half.contains(kept), "{kept} was dropped");
+        }
     }
 
     #[test]

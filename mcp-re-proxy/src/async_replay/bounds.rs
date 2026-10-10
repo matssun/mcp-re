@@ -72,7 +72,7 @@ pub(super) const ASYNC_RESERVE_DIVISOR: usize = 5;
 ///
 /// Minting identities to shrink everyone's share is not free: `actor` is the PRINCIPAL
 /// the verifier resolved — an authenticated delegation credential rooted in a trust
-/// anchor, with the keyid deliberately excluded (see [`mcp_re_core::ReplayKey`]), so a
+/// anchor, with the keyid deliberately excluded (see [`mcp_re_http_profile::replay::ReplayKey`]), so a
 /// subject cannot present as several actors by holding several keys.
 ///
 /// Under pressure this is a fair share, which means an actor holding more than its

@@ -6,6 +6,21 @@
 //! the deployment is still entitled to act without one — a fact about the replica's recent
 //! history, not about any request.
 //!
+//! # One window per replica, deliberately
+//!
+//! The window is replica-wide: ANY answer from the authority, for any workload, restarts it.
+//! That is the declared P bound, and it is a choice. A replica whose store is reachable for
+//! some workloads and not for another keeps its window open for the unreachable one. A
+//! per-workload timer is the alternative that would be wrong: it would give every workload
+//! this replica has not yet seen a fresh window to start in during one outage, so the time the
+//! deployment may act without confirmation would grow with the number of distinct workloads
+//! that arrive, not with how long the authority has been unreachable.
+//!
+//! What can refresh it is bounded the other way: only a lookup issued for a request whose
+//! assertion was authenticated against the configured authority and the verifier-resolved
+//! presenter. A caller who has proved nothing cannot hold the window open by sending requests
+//! that cause reads.
+//!
 //! # What P has to bound, and what it must not
 //!
 //! R7-C093. The revocation channel IS the store, so during a store outage the assertion
@@ -87,11 +102,18 @@ impl DegradedWindow {
         }
     }
 
-    /// Has the authority been unreachable for longer than P (+ skew)?
+    /// Has the authority been unreachable for longer than P?
     ///
     /// True also when it has never been reachable, and whenever degraded mode is not
     /// enabled at all — in both cases there is no window to be inside of.
-    pub(super) fn exhausted(&self, policy: &AdmissionPolicy, now: Instant) -> bool {
+    ///
+    /// Judged at the instant of the decision, read here, so no caller can judge the window
+    /// against an earlier reading.
+    pub(super) fn exhausted(&self, policy: &AdmissionPolicy) -> bool {
+        self.exhausted_at(policy, Instant::now())
+    }
+
+    fn exhausted_at(&self, policy: &AdmissionPolicy, now: Instant) -> bool {
         if !policy.allow_degraded_mode {
             return true;
         }
@@ -101,14 +123,15 @@ impl DegradedWindow {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
         else {
             // Never reached: no last-known state to serve on, and this arm is the only
-            // thing that says so. It is NOT redundant with the comparison below — where
-            // `P + skew` saturates, `i64::MAX > i64::MAX` is false and a replica that never
-            // reached the authority would read as INSIDE a window it never earned. With the
-            // reading typed as `Option<Instant>` the corner is unrepresentable rather than
-            // guarded, which is why the guard is a `let-else` and not an `if`.
+            // thing that says so. Typing the reading as `Option<Instant>` leaves no sentinel
+            // instant for the comparison below to mistake for a window, hence the `let-else`.
             return true;
         };
-        now.saturating_duration_since(last) > window_of(policy)
+        let Some(window) = window_of(policy) else {
+            // A bound that is not positive is no window at all, at every elapsed time.
+            return true;
+        };
+        now.saturating_duration_since(last) > window
     }
 }
 
@@ -127,10 +150,14 @@ impl DegradedWindow {
 /// assertion-freshness and record-currentness comparisons inside `check_admission`.
 ///
 /// The policy carries seconds as `i64` because that is the wire vocabulary. A non-positive
-/// bound is no window at all rather than an enormous one, so a nonsense configuration
-/// cannot widen anything and no arithmetic wraps.
-fn window_of(policy: &AdmissionPolicy) -> Duration {
-    Duration::from_secs(u64::try_from(policy.degraded_propagation_bound).unwrap_or(0))
+/// bound is `None`, no window at all rather than an enormous or a zero-length one, so a
+/// nonsense configuration cannot widen anything, no arithmetic wraps, and no elapsed time —
+/// zero included — is inside it.
+fn window_of(policy: &AdmissionPolicy) -> Option<Duration> {
+    u64::try_from(policy.degraded_propagation_bound)
+        .ok()
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
 }
 
 #[cfg(test)]
@@ -160,7 +187,21 @@ mod tests {
     /// so startup is not a confirmation.
     #[test]
     fn a_replica_that_never_reached_the_authority_has_no_window() {
-        assert!(DegradedWindow::unearned().exhausted(&policy(60, 5, true), base()));
+        assert!(DegradedWindow::unearned().exhausted_at(&policy(60, 5, true), base()));
+    }
+
+    /// A bound that is not positive is no window: not even at the instant of the last read.
+    #[test]
+    fn a_non_positive_bound_is_no_window_even_at_zero_elapsed_time() {
+        let t0 = base();
+        let window = DegradedWindow::unearned();
+        window.record_read(t0);
+        for bound in [0, -1, i64::MIN] {
+            assert!(
+                window.exhausted_at(&policy(bound, 5, true), t0),
+                "a bound of {bound} must leave no window open at zero elapsed time"
+            );
+        }
     }
 
     /// An unbounded window does not entitle a replica that never earned one.
@@ -177,7 +218,7 @@ mod tests {
     #[test]
     fn an_unbounded_window_does_not_make_an_unearned_one_open() {
         assert!(
-            DegradedWindow::unearned().exhausted(&policy(i64::MAX, 60, true), base()),
+            DegradedWindow::unearned().exhausted_at(&policy(i64::MAX, 60, true), base()),
             "no bound, however large, entitles a replica that never reached the authority"
         );
     }
@@ -192,12 +233,12 @@ mod tests {
         let p = policy(60, 5, true);
 
         assert!(
-            !window.exhausted(&p, after(t0, 60)),
-            "inside P + skew the last-known state is still usable"
+            !window.exhausted_at(&p, after(t0, 60)),
+            "at exactly P the last-known state is still usable"
         );
         assert!(
-            window.exhausted(&p, after(t0, 61)),
-            "past P + skew an unreachable authority fails closed, however fresh the \
+            window.exhausted_at(&p, after(t0, 61)),
+            "past P an unreachable authority fails closed, however fresh the \
              assertion the caller presents"
         );
     }
@@ -214,7 +255,7 @@ mod tests {
         let window = DegradedWindow::unearned();
         window.record_read(after(t0, 1_000));
         window.record_read(t0);
-        assert!(!window.exhausted(&policy(60, 0, true), after(t0, 1_050)));
+        assert!(!window.exhausted_at(&policy(60, 0, true), after(t0, 1_050)));
     }
 
     /// A clock STEP moves nothing, which is the whole reason for the monotonic reading.
@@ -232,9 +273,9 @@ mod tests {
         // A policy whose skew allowance is enormous — the wall-clock vocabulary at its most
         // permissive — still does not make the elapsed measurement anything but elapsed.
         let p = policy(60, 5, true);
-        assert!(window.exhausted(&p, after(t0, 61)));
+        assert!(window.exhausted_at(&p, after(t0, 61)));
         assert!(
-            window.exhausted(&p, after(t0, 86_400)),
+            window.exhausted_at(&p, after(t0, 86_400)),
             "a day of outage is a day of outage whatever the wall clock did"
         );
     }
@@ -251,7 +292,7 @@ mod tests {
         let window = DegradedWindow::unearned();
         window.record_read(t0);
         assert!(
-            window.exhausted(&policy(60, 86_400, true), after(t0, 61)),
+            window.exhausted_at(&policy(60, 86_400, true), after(t0, 61)),
             "a day of skew tolerance must not buy a second of degraded serving"
         );
         assert_eq!(
@@ -267,17 +308,30 @@ mod tests {
         let t0 = base();
         let window = DegradedWindow::unearned();
         window.record_read(t0);
-        assert!(window.exhausted(&policy(3_600, 30, false), after(t0, 1)));
+        assert!(window.exhausted_at(&policy(3_600, 30, false), after(t0, 1)));
     }
 
-    /// A configuration the wire vocabulary admits and a `Duration` does not: the window is
-    /// zero rather than enormous, so a nonsense bound cannot widen anything.
+    /// A configuration the wire vocabulary admits and a `Duration` does not: there is no
+    /// window rather than an enormous one, so a nonsense bound cannot widen anything.
     #[test]
     fn a_negative_bound_is_no_window_rather_than_a_long_one() {
         let t0 = base();
         let window = DegradedWindow::unearned();
         window.record_read(t0);
-        assert_eq!(window_of(&policy(-1, 0, true)), Duration::ZERO);
-        assert!(window.exhausted(&policy(-1, 0, true), after(t0, 1)));
+        assert_eq!(window_of(&policy(-1, 0, true)), None);
+        assert!(window.exhausted_at(&policy(-1, 0, true), after(t0, 1)));
+    }
+
+    /// The window owns its judging instant: a lookup that took time cannot be judged
+    /// against a reading from before it.
+    #[test]
+    fn the_window_is_judged_at_the_instant_of_the_call() {
+        let window = DegradedWindow::unearned();
+        let read = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .expect("the monotonic clock has run for two seconds");
+        window.record_read(read);
+        assert!(window.exhausted(&policy(1, 0, true)));
+        assert!(!window.exhausted_at(&policy(1, 0, true), read));
     }
 }

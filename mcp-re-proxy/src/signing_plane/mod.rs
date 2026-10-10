@@ -9,8 +9,8 @@
 //! # What it owns, and what leaves it
 //!
 //! It owns the rotation worker and, inside it, the rotor and the trust-epoch watch. What
-//! leaves is one `Arc<DelegatedServerSigner>`, moved into the proxy. The root issuer never
-//! leaves: nothing outside this plane can mint.
+//! leaves is one `Arc<DelegatedServerSigner>`, moved into the proxy, which reads the snapshot
+//! and cannot change it. The root issuer never leaves: nothing outside this plane can mint.
 //!
 //! # A surviving signer must not keep signing
 //!
@@ -19,16 +19,17 @@
 //!
 //! The rotation worker is the ONLY thing that mints successors, and it is also the only
 //! thing that polls the shared trust epoch — the operator's cross-fleet kill switch
-//! (ADR-MCPRE-052 §7). Its panic path already retires the snapshot. Its CLEAN-STOP path
-//! did not, because before v0.16 a clean stop could not happen: the worker ran until the
-//! process exited. `WorkerSet`'s structural halt made one reachable, and a signer that
-//! outlived this plane would then go on signing off the last delegated key until its
-//! `exp`, with nobody left to observe an `INCR` — a frozen signing authority whose
-//! revocation channel is dead.
+//! (ADR-MCPRE-052 §7). A signer whose worker has stopped would go on signing off the last
+//! delegated key until its `exp`, with nobody left to observe an advance — a frozen signing
+//! authority whose revocation channel is dead. So the invariant is: **once maintenance of a
+//! signing key has stopped, no new signature is made under it.** Two things hold it:
 //!
-//! So [`Drop`] retires the snapshot BEFORE halting the worker. After this plane is gone
-//! the hot path fails closed (`delegated_signing_unavailable`) immediately rather than at
-//! `exp`, which is the honest posture: nothing is maintaining that key any more.
+//! * The worker follows THIS PLANE's lifetime, not the deployment's shutdown flag. A
+//!   shutdown drains the fleet first, and the drain still signs responses; the key stays
+//!   maintained, and the epoch poll alive, until the plane is dropped after the drain.
+//! * [`Drop`] retires the snapshot BEFORE halting the worker, and the worker's supervisor
+//!   retires it whenever the worker ends, so the hot path fails closed
+//!   (`delegated_signing_unavailable`) the moment nothing is maintaining the key.
 //!
 //! Note the asymmetry with `reloading_trust::SignerDirectory`, which deliberately keeps
 //! answering from its last snapshot after its plane is gone. A directory yields an
@@ -38,6 +39,7 @@
 use std::sync::Arc;
 
 use crate::delegated_server_signer::DelegatedServerSigner;
+use crate::delegated_server_signer::SigningRetirement;
 use crate::managed_worker::WorkerSet;
 
 /// Keeping a delegated key in force: when to mint the successor, and what a root outage
@@ -47,14 +49,23 @@ mod rotation;
 /// The break-glass half: what the shared trust epoch says, and what asking it costs.
 mod trust_epoch_advance;
 
+/// The shared trust-epoch counter as this plane reads it, and the repair of a regression.
+mod epoch_watch;
+use epoch_watch::DelegatedEpochWatch;
+
 /// Asking the root for a successor, and reading its answer honestly.
 mod mint_successor;
+
+/// The root issuer under a bound; `pub(crate)` for the issuer closure `delegated_wiring` builds.
+pub(crate) mod bounded_root_issuer;
 
 use rotation::spawn_delegated_rotation_task;
 
 /// Response-signing custody: the delegated snapshot and the worker that maintains it.
 pub struct SigningPlane {
     signer: Arc<DelegatedServerSigner>,
+    /// What [`Drop`] withdraws signing with; the rotor that publishes has moved onto the worker.
+    retirement: SigningRetirement,
     /// Owns the delegated rotation worker. Halted in [`Drop`] AFTER the snapshot is
     /// retired; the order is written out there rather than left to field position.
     workers: WorkerSet,
@@ -83,15 +94,30 @@ impl SigningPlane {
     pub(crate) fn for_teardown_test(
         body: impl FnOnce(crate::managed_worker::Halt) + Send + 'static,
     ) -> Self {
-        let signer = Arc::new(DelegatedServerSigner::new());
-        signer.publish(crate::delegated_wiring::test_support::issued_expiring_at(
-            crate::clock::now_unix() + 3600,
-            3,
-        ));
+        Self::for_teardown_test_with_rotor(move |halt, _rotor| body(halt))
+    }
+
+    /// The same, with the worker handed the rotor that published the key — as the
+    /// production worker is — for the tests of what a rotor may still do after teardown.
+    #[cfg(test)]
+    pub(crate) fn for_teardown_test_with_rotor(
+        body: impl FnOnce(crate::managed_worker::Halt, crate::delegated_wiring::ProdDelegatedRotor)
+            + Send
+            + 'static,
+    ) -> Self {
+        let rotor =
+            crate::delegated_wiring::test_support::published(crate::clock::now_unix() + 3600, 3);
+        let (signer, retirement) = (rotor.signer(), rotor.retirement());
         let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         let halt = workers.halt();
-        workers.spawn("test delegated rotation", move || body(halt));
-        SigningPlane { signer, workers }
+        workers
+            .spawn("test delegated rotation", move || body(halt, rotor))
+            .expect("spawn test worker");
+        SigningPlane {
+            signer,
+            retirement,
+            workers,
+        }
     }
 }
 
@@ -107,7 +133,7 @@ impl Drop for SigningPlane {
         //    PERMANENTLY, because step 2 does not stop the rotor instantly: it observes
         //    its halt only between cycles, so an in-flight mint could otherwise publish
         //    after this line and hand a signer that outlives this plane a fresh key.
-        self.signer.retire_permanently();
+        self.retirement.retire_permanently();
         // 2. Halt and reclaim. One worker, no cross-worker shutdown dependency, so
         //    `WorkerSet`'s termination semantics are the whole guarantee.
         self.workers.halt_and_reclaim();
@@ -122,52 +148,63 @@ impl SigningPlane {
     /// cannot issue the first delegated key, or a configured trust-epoch source cannot be
     /// read, this refuses to start.
     ///
-    /// `root_signer` is MOVED in — it is only borrowed earlier for TLS material and the
-    /// response public key. `deployment` is the caller's shutdown flag; the worker started
-    /// here stops on it, and also when this plane is dropped.
+    /// `roots` is MOVED in (borrowed earlier for TLS material); taking the witness rather
+    /// than a signer is what makes a plane over uncompared roles unconstructible. It takes
+    /// no shutdown flag: the worker started here stops only when this plane is dropped.
     pub fn materialize(
+        plan: &crate::startup_plan::SigningPlan,
+        roots: crate::capability_materialization::MaterializedSigningRoles,
+        startup_now_unix: i64,
+    ) -> Result<SigningPlane, String> {
+        Self::materialize_over(plan, roots, startup_now_unix)
+    }
+
+    /// The materialization over any root signer; reachable outside this module only through
+    /// [`SigningPlane::materialize`].
+    fn materialize_over(
         plan: &crate::startup_plan::SigningPlan,
         root_signer: impl crate::key_source::ResponseSigner + Send + 'static,
         startup_now_unix: i64,
-        deployment: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<SigningPlane, String> {
+        // Resolve the shared epoch BEFORE the custody exists: its first credential carries it.
+        let epoch_watch =
+            build_delegated_epoch_watch(&plan.epoch, plan.custody.trust_epoch.clone())?;
+        let mut minting = plan.clone();
+        if let Some(watch) = epoch_watch.as_ref() {
+            // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
+            // read yields no epoch verifiers can compare, so nothing is issued.
+            minting.custody.trust_epoch = watch.epoch().map_err(|_| {
+                "delegated-signing: --trust-epoch-redis-url is configured but the shared trust \
+                 epoch could NOT be read at startup; refusing to start rather than mint keys the \
+                 operator's kill switch cannot revoke (fail closed, ADR-MCPRE-052 §7)."
+                    .to_string()
+            })?;
+            eprintln!(
+                "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {:?}. \
+                 `mcp-re-proxy trust-epoch advance` moves every replica to the next label, and a \
+                 restarted replica resolves the SAME label as its peers; a raw INCR on the key is \
+                 not a supported advance.",
+                minting.custody.trust_epoch.label()
+            );
+        } else {
+            eprintln!(
+                "mcp-re-proxy: NO trust-epoch source is wired (--trust-epoch-redis-url): \
+                 delegated keys are minted under the bare base {:?}, which never advances; \
+                 short of a restart, a credential's exp is the only thing that ends it.",
+                plan.custody.trust_epoch.label()
+            );
+        }
         let crate::delegated_wiring::DelegatedSigningWiring {
             signer,
             mut rotor,
             window,
-        } = crate::delegated_wiring::build_delegated_signing(plan, root_signer);
-        // Resolve the shared trust epoch BEFORE the first key is minted, so the very
-        // first credential carries the globally comparable `<base>#<counter>` label
-        // rather than the bare base. Minting under the bare label is what let a
-        // restarted replica appear unrevoked to verifiers pinned past an `INCR`.
-        let epoch_watch =
-            build_delegated_epoch_watch(&plan.epoch, rotor.trust_epoch().to_string())?;
-        if let Some(watch) = epoch_watch.as_ref() {
-            // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
-            // read means we cannot produce an epoch verifiers can compare, so we must
-            // not issue at all. Refusing to start is the honest outcome — the previous
-            // behaviour was to start anyway with the switch wired to nothing.
-            let label = watch.current_label().ok_or_else(|| {
-                "delegated-signing: --trust-epoch-redis-url is configured but the shared trust \
-                 epoch could NOT be read at startup, so no credential can carry a comparable \
-                 epoch. Refusing to start rather than minting keys the operator's kill switch \
-                 cannot revoke (fail closed, ADR-MCPRE-052 §7)."
-                    .to_string()
-            })?;
-            eprintln!(
-                "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {label:?}. An \
-                 operator INCR moves every replica to the next label, so verifiers pinned to the \
-                 prior accepted-epoch set reject fleet-wide — and a restarted replica resolves \
-                 the SAME label as its peers."
-            );
-            rotor.set_trust_epoch_before_first_issue(label);
-        }
-        // Initial issuance MUST succeed before serving: the proxy never serves without
-        // an active delegated key (fail closed, ADR-MCPRE-052 §6).
-        rotor.rotate(startup_now_unix).map_err(|e| {
+        } = crate::delegated_wiring::build_delegated_signing(&minting, root_signer)?;
+        // Initial issuance MUST succeed before serving (fail closed, ADR-MCPRE-052 §6).
+        mint_successor::rotate_and_announce(&mut rotor, startup_now_unix).map_err(|_| {
             format!(
-                "delegated-signing: initial delegated key issuance FAILED at startup ({e:?}); \
-                 the root issuer must be available before serving (fail closed, ADR-MCPRE-052 §6)"
+                "delegated-signing: initial delegated key issuance FAILED at startup ({}); \
+                 the root issuer must be available before serving (fail closed, ADR-MCPRE-052 §6)",
+                mint_successor::issuance_failure(rotor.last_refusal())
             )
         })?;
         eprintln!(
@@ -175,100 +212,28 @@ impl SigningPlane {
              the request path; delegated key {window}. \
              Initial delegated key issued.",
         );
-        // Cold-path rotation worker: rotate within the overlap window before each key's
-        // exp so the KMS/root stays off the per-core serving runtimes. It also watches the
-        // shared trust-epoch counter and re-issues under a new epoch on an advance, so an
-        // operator `INCR` revokes the outstanding delegated keys across the fleet
-        // (ADR-MCPRE-052 §7).
-        let mut workers = WorkerSet::new(deployment);
-        spawn_delegated_rotation_task(
-            &mut workers,
-            rotor,
-            Arc::clone(&signer),
-            window.overlap(),
-            epoch_watch,
-        );
-        Ok(SigningPlane { signer, workers })
+        // Cold-path rotation worker: rotates within each key's overlap window and re-issues
+        // on a trust-epoch advance (ADR-MCPRE-052 §7). Its halt is this plane's alone, so
+        // it keeps the key maintained through the fleet drain.
+        let retirement = rotor.retirement();
+        let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        spawn_delegated_rotation_task(&mut workers, rotor, window.overlap(), epoch_watch)?;
+        Ok(SigningPlane {
+            signer,
+            retirement,
+            workers,
+        })
     }
 }
 
-/// ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5 (MCPRE-122): the cold-path delegated-key
-/// rotation thread. A single owner drives the rotor OFF the per-core serving runtimes,
-/// so the root issuer's blocking KMS/HSM calls never touch the request path. It wakes
-/// within the rotation-overlap window before the current key's `exp`, mints a
-/// successor, and republishes the hot-path snapshot; the fleet keeps signing off the
-/// current key until then (no gap). If issuance fails while the current key is still
-/// valid, serving continues until that key expires and THEN fails closed
-/// (ADR-MCPRE-052 §6) — never a stale-key extension or a direct-root fallback. The
-/// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
-/// A fresh random u64 from the OS CSPRNG for backoff jitter. On the (astronomically
-/// unlikely) CSPRNG failure, fall back to 0 (no jitter) rather than panicking the
-fn rotation_jitter() -> u64 {
+/// A fresh random u64 from the OS CSPRNG for backoff jitter. `None` on the (astronomically
+/// unlikely) CSPRNG failure, which the schedule takes as no jitter rather than panicking
+/// the rotation thread — the backoff still bounds the retry rate, only its dither is lost.
+fn rotation_jitter() -> Option<u64> {
     let mut b = [0u8; 8];
-    match getrandom::fill(&mut b) {
-        Ok(()) => u64::from_le_bytes(b),
-        Err(_) => 0,
-    }
+    getrandom::fill(&mut b).ok()?;
+    Some(u64::from_le_bytes(b))
 }
-/// The shared trust-epoch counter, watched by the delegated-rotation owner so an
-/// operator's `INCR <trust-epoch-key>` invalidates the outstanding epoch of delegated
-/// response keys across the fleet (ADR-MCPRE-052 §7). The RESPONSE-side counterpart to
-/// [`build_trust_epoch_channel`], which flushes the REQUEST-trust cache on the same
-/// advance. Read-only; a read error leaves the epoch unchanged (never advance on a
-/// transient blip).
-///
-/// What an advance does and does not do: it stops this fleet MINTING under the prior
-/// epoch. It does not reach credentials already issued under it — no verifier reads the
-/// counter, so `accepted_epochs` is static verifier configuration and a leaked
-/// credential stays verifiable until the verifiers are pointed at the new epoch
-/// (docs/spec/delegated-required-validation-matrix.md §C.1, "Operational consequence").
-/// The counter is therefore also a fleet availability dependency: anyone who can write
-/// the shared key can advance it and make every replica mint a label the currently
-/// configured verifiers reject.
-///
-/// The emitted label is ALWAYS `<base>#<counter>` — never the bare base label. That is
-/// what makes an operator `INCR` survive a replica restart: the label is derived purely
-/// from shared state, so every replica at counter `N` mints `<base>#N` regardless of
-/// when it started. The previous design compared the counter against a baseline read at
-/// *this process's* startup and emitted the bare base label while they matched, so a
-/// replica restarting after an `INCR` adopted the advanced value as its own baseline,
-/// never observed an advance, and kept minting an epoch verifiers still accepted — the
-/// kill switch was process-relative rather than durable.
-///
-/// `high_water` makes the emitted epoch monotone WITHIN a process: a read that goes
-/// backwards (store reset, failover to a stale replica, a reconnect landing on the
-/// wrong instance) is refused rather than rebased, so reconnection can never re-mint
-/// under an epoch a verifier has already stopped accepting. Across a restart the shared
-/// counter is the only authority, by construction — a store that loses its counter is a
-/// trust-store failure, not something a replica can detect locally.
-struct DelegatedEpochWatch {
-    reader: Box<dyn crate::trust_epoch::EpochReader>,
-    base_label: String,
-    high_water: std::sync::Mutex<Option<i64>>,
-}
-
-impl DelegatedEpochWatch {
-    /// The label to mint under, or `None` when the shared epoch cannot be established.
-    ///
-    /// `None` is FAIL CLOSED FOR MINTING: the caller must not issue a credential,
-    /// because it cannot produce an epoch verifiers can compare. It does not retire the
-    /// current key — the fleet keeps signing off it until its `exp` and the hot path
-    /// then fails closed on its own (ADR-MCPRE-052 §6). Crucially it is also not treated
-    /// as "no change": a blip must never be read as an advance, nor as permission to
-    /// mint under a stale label.
-    fn current_label(&self) -> Option<String> {
-        let counter = self.reader.read_epoch().ok()?;
-        let mut hw = self.high_water.lock().ok()?;
-        if matches!(*hw, Some(prev) if counter < prev) {
-            // Regression. Refuse rather than rebase: minting under the lower epoch
-            // would resurrect credentials the fleet's verifiers already reject.
-            return None;
-        }
-        *hw = Some(counter);
-        Some(format!("{}#{}", self.base_label, counter))
-    }
-}
-
 /// Build the delegated-signing trust-epoch watcher from the SHARED epoch plan (CF-09).
 ///
 /// The plan is an input, not something read from configuration here. This function and the
@@ -287,31 +252,28 @@ impl DelegatedEpochWatch {
 /// caller resolves the initial label and fails closed if it cannot. But a URL that cannot
 /// be parsed at all yields no watcher, and a `None` here is indistinguishable from "no
 /// source configured": minting would proceed under the bare `--delegated-trust-epoch`
-/// label with the `INCR` kill switch wired to nothing, which is the one thing an operator
+/// label with the trust-epoch kill switch wired to nothing, which is the one thing an operator
 /// who configured a URL has asked not to happen. So a malformed URL is a startup refusal
 /// on this plane's own terms, not a warning line and a silent downgrade.
 #[cfg(feature = "redis_replay")]
 fn build_delegated_epoch_watch(
     epoch: &crate::startup_plan::TrustEpochPlan,
-    base_label: String,
+    base: mcp_re_http_profile::custody::TrustEpoch,
 ) -> Result<Option<DelegatedEpochWatch>, String> {
     let Some(source) = epoch.networked_source()? else {
         return Ok(None);
     };
     match crate::trust_epoch::RedisEpochReader::connect_lazy(source.url(), source.key()) {
-        Ok(reader) => Ok(Some(DelegatedEpochWatch {
-            reader: Box::new(reader),
-            base_label,
-            high_water: std::sync::Mutex::new(None),
-        })),
+        Ok(reader) => Ok(Some(DelegatedEpochWatch::new(Box::new(reader), base))),
         Err(e) => {
             // Only a malformed URL reaches here (`Client::open` parses, it does not
             // connect), so this is a configuration error, not an outage.
             Err(format!(
                 "delegated-signing: --trust-epoch-redis-url is not a usable Redis URL ({}); \
                  refusing to start rather than minting delegated credentials under the bare \
-                 --delegated-trust-epoch label, which the operator's INCR kill switch cannot \
-                 revoke (fail closed, ADR-MCPRE-052 §7).",
+                 --delegated-trust-epoch label, which the trust-epoch kill switch \
+                 (`mcp-re-proxy trust-epoch advance`) cannot revoke (fail closed, \
+                 ADR-MCPRE-052 §7).",
                 e.0
             ))
         }
@@ -328,7 +290,7 @@ fn build_delegated_epoch_watch(
 #[cfg(not(feature = "redis_replay"))]
 fn build_delegated_epoch_watch(
     epoch: &crate::startup_plan::TrustEpochPlan,
-    _base_label: String,
+    _base: mcp_re_http_profile::custody::TrustEpoch,
 ) -> Result<Option<DelegatedEpochWatch>, String> {
     match epoch.unsupported_by_build() {
         Some(refusal) => Err(refusal),
@@ -388,16 +350,30 @@ mod trust_epoch_watch_tests {
             }
             Ok(self.0.value.load(Ordering::SeqCst))
         }
+        fn read_state(&self) -> Result<crate::trust_epoch::EpochState, EpochReadError> {
+            self.read_epoch()
+                .map(|counter| crate::trust_epoch::EpochState {
+                    counter,
+                    generation: None,
+                })
+        }
+    }
+
+    /// A store this replica may read but not write, so a regression stays refused here;
+    /// the repair is `epoch_watch`'s to test.
+    impl crate::trust_epoch::raise::EpochRaiser for CounterReader {
+        fn raise_past(&self, _mark: i64, _to: i64) -> Result<i64, EpochReadError> {
+            Err(EpochReadError("NOPERM".into()))
+        }
     }
 
     /// Start a replica's watch over the shared counter. Constructing a NEW watch over
     /// the SAME counter is exactly what a restart looks like: no carried-over state.
     fn replica(counter: &Arc<SharedCounter>) -> DelegatedEpochWatch {
-        DelegatedEpochWatch {
-            reader: Box::new(CounterReader(Arc::clone(counter))),
-            base_label: BASE.to_string(),
-            high_water: Mutex::new(None),
-        }
+        DelegatedEpochWatch::new(
+            Box::new(CounterReader(Arc::clone(counter))),
+            BASE.parse().expect("base"),
+        )
     }
 
     /// The label is derived purely from shared state, so it is globally comparable.
@@ -421,7 +397,7 @@ mod trust_epoch_watch_tests {
         assert_eq!(b.current_label(), a.current_label());
     }
 
-    /// THE INVARIANT (C007). An operator INCR must stay effective across a restart: the
+    /// THE INVARIANT (C007). An advance of the shared counter must stay effective across a restart: the
     /// restarted replica must NOT reinterpret the current counter as a fresh local
     /// baseline and resume minting a label verifiers treat as unrevoked.
     #[test]
@@ -435,19 +411,22 @@ mod trust_epoch_watch_tests {
         counter.incr();
         let after_incr = long_lived.current_label().expect("readable");
         assert_eq!(after_incr, "epoch-min#8");
-        assert_ne!(after_incr, before, "the INCR must change the minted label");
+        assert_ne!(
+            after_incr, before,
+            "the advance must change the minted label"
+        );
 
-        // A replica restarts: brand-new watch, no memory of the pre-INCR value.
+        // A replica restarts: brand-new watch, no memory of the pre-advance value.
         let restarted = replica(&counter);
         let after_restart = restarted.current_label().expect("readable");
 
         assert_eq!(
             after_restart, after_incr,
-            "a restarted replica must resolve the SAME post-INCR label as its peers"
+            "a restarted replica must resolve the SAME post-advance label as its peers"
         );
         assert_ne!(
             after_restart, before,
-            "a restart must NOT resurrect the pre-INCR epoch — that is the revocation \
+            "a restart must NOT resurrect the pre-advance epoch — that is the revocation \
              being defeated by a restart"
         );
     }
@@ -467,7 +446,7 @@ mod trust_epoch_watch_tests {
     }
 
     /// Reconnect after an outage resumes at the CURRENT shared value — including an
-    /// INCR that happened while this replica could not read.
+    /// advance that happened while this replica could not read.
     #[test]
     fn reconnect_after_an_outage_resumes_and_sees_missed_increments() {
         let counter = SharedCounter::new(1);
@@ -518,7 +497,7 @@ mod trust_epoch_watch_tests {
     }
 
     /// Issuance continues normally across the whole sequence the operator cares about:
-    /// steady state -> INCR -> outage -> reconnect -> restart.
+    /// steady state -> advance -> outage -> reconnect -> restart.
     #[test]
     fn full_sequence_increment_outage_restart_reconnect_continued_issuance() {
         let counter = SharedCounter::new(0);
@@ -574,20 +553,51 @@ mod epoch_watch_wiring_tests {
         TrustEpochPlan::redis(url, crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY)
     }
 
+    fn base() -> mcp_re_http_profile::custody::TrustEpoch {
+        "epoch-1".parse().expect("base")
+    }
+
     /// An operator who configured a kill switch must not get a replica that mints without
     /// one. A URL that cannot be turned into a reader previously became `None`, which is
     /// indistinguishable from "no source configured": the plane skipped its own
     /// fail-closed block and issued under the bare `--delegated-trust-epoch` label, which
-    /// no `INCR` can revoke, behind a single warning line. The only thing that refused was
+    /// no advance can revoke, behind a single warning line. The only thing that refused was
     /// the TRUST plane, in another file, and only because it happens to be materialized
     /// first.
+    ///
+    /// Runs in `//mcp-re-proxy:proxy_ext_unit_test`, the `redis_replay` lane, where the real
+    /// function is compiled.
+    #[cfg(feature = "redis_replay")]
     #[test]
     fn a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably() {
-        let Err(err) =
-            build_delegated_epoch_watch(&planned("http://127.0.0.1:6379"), "epoch-1".to_string())
+        let Err(err) = build_delegated_epoch_watch(&planned("http://127.0.0.1:6379"), base())
         else {
             panic!("a kill switch that cannot be wired must refuse the plane");
         };
+        assert!(
+            err.contains("--trust-epoch-redis-url"),
+            "the refusal must name the flag: {err}"
+        );
+        assert!(
+            err.contains("is not a usable Redis URL"),
+            "the refusal must come from the reader that could not be built: {err}"
+        );
+    }
+
+    /// A planned source in a build without `redis_replay` refuses on the build fact, not
+    /// on the URL. Measures the non-`redis_replay` form of `build_delegated_epoch_watch`
+    /// in `//mcp-re-proxy:proxy_unit_test`.
+    #[cfg(not(feature = "redis_replay"))]
+    #[test]
+    fn a_planned_source_this_build_cannot_read_refuses_instead_of_minting_unrevocably() {
+        let Err(err) = build_delegated_epoch_watch(&planned("redis://epoch-store.invalid"), base())
+        else {
+            panic!("a planned source this build cannot read must refuse the plane");
+        };
+        assert!(
+            err.contains("requires a build with the `redis_replay` feature"),
+            "the refusal must name the missing feature: {err}"
+        );
         assert!(
             err.contains("--trust-epoch-redis-url"),
             "the refusal must name the flag: {err}"
@@ -598,8 +608,7 @@ mod epoch_watch_wiring_tests {
     /// refusal.
     #[test]
     fn no_planned_epoch_source_is_still_accepted() {
-        match build_delegated_epoch_watch(&TrustEpochPlan::NoNetworkChannel, "epoch-1".to_string())
-        {
+        match build_delegated_epoch_watch(&TrustEpochPlan::NoNetworkChannel, base()) {
             Ok(None) => {}
             Ok(Some(_)) => panic!("no source must yield no watcher"),
             Err(e) => panic!("an unconfigured kill switch is not a misconfiguration: {e}"),
@@ -676,11 +685,32 @@ mod rotation_owner_tests {
         }
     }
 
+    /// A root that advertises one public key and signs with another.
+    struct MisadvertisingRoot;
+
+    impl ResponseSigner for MisadvertisingRoot {
+        fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
+            SigningKey::from_seed_bytes(&[34u8; 32]).sign_response(preimage)
+        }
+        fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
+            SigningKey::from_seed_bytes(&ROOT_SEED).response_public_key()
+        }
+    }
+
     /// A shared epoch that is never readable — an outage, or a counter that regressed.
     struct UnreadableEpoch;
 
     impl EpochReader for UnreadableEpoch {
         fn read_epoch(&self) -> Result<i64, EpochReadError> {
+            Err(EpochReadError("epoch store unreachable".into()))
+        }
+        fn read_state(&self) -> Result<crate::trust_epoch::EpochState, EpochReadError> {
+            Err(EpochReadError("epoch store unreachable".into()))
+        }
+    }
+
+    impl crate::trust_epoch::raise::EpochRaiser for UnreadableEpoch {
+        fn raise_past(&self, _mark: i64, _to: i64) -> Result<i64, EpochReadError> {
             Err(EpochReadError("epoch store unreachable".into()))
         }
     }
@@ -693,7 +723,7 @@ mod rotation_owner_tests {
                 profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
                 aud: "verifier-1".to_string(),
                 audience_hash: "aud-hash".to_string(),
-                trust_epoch: "epoch-1".to_string(),
+                trust_epoch: "epoch-1".parse().expect("epoch base"),
                 server_role: "server".to_string(),
                 server_trust_domain: "example.com".to_string(),
                 server_subject: "did:example:server".to_string(),
@@ -736,7 +766,8 @@ mod rotation_owner_tests {
         let mut wiring = build_delegated_signing(
             &plan(TrustEpochPlan::NoNetworkChannel),
             root(&offline, &calls),
-        );
+        )
+        .expect("the root states its key");
         wiring
             .rotor
             .rotate(now_unix())
@@ -753,10 +784,11 @@ mod rotation_owner_tests {
             "a DUE rotation that published no successor must count as a failure, or \
              nothing drives the backoff"
         );
-        assert!(
-            metrics.rotations_ok() <= 1,
+        assert_eq!(
+            metrics.rotations_ok(),
+            0,
             "no successor was ever minted, yet {} rotations were recorded as successful: \
-             the loop read a root outage as steady state and spun on the root issuer",
+             the loop read a root outage as steady state",
             metrics.rotations_ok()
         );
     }
@@ -770,7 +802,8 @@ mod rotation_owner_tests {
         let mut wiring = build_delegated_signing(
             &plan(TrustEpochPlan::NoNetworkChannel),
             root(&offline, &calls),
-        );
+        )
+        .expect("the root states its key");
         wiring
             .rotor
             .rotate(now_unix())
@@ -779,18 +812,15 @@ mod rotation_owner_tests {
         let signer = Arc::clone(&wiring.signer);
         // The root is HEALTHY throughout: the only thing that may stop a mint here is
         // the epoch refusal.
-        let watch = DelegatedEpochWatch {
-            reader: Box::new(UnreadableEpoch),
-            base_label: "epoch-1".to_string(),
-            high_water: std::sync::Mutex::new(None),
-        };
+        let watch =
+            DelegatedEpochWatch::new(Box::new(UnreadableEpoch), "epoch-1".parse().expect("base"));
         let rotor = drive_loop(wiring.rotor, Arc::clone(&signer), Some(watch));
 
         assert_eq!(
             rotor.root_invocations(),
             1,
             "the shared epoch was unreadable for the whole run, so nothing may be minted \
-             — a credential carrying no comparable epoch is one the operator's INCR \
+             — a credential carrying no comparable epoch is one the operator's advance \
              cannot revoke"
         );
         assert!(
@@ -799,16 +829,33 @@ mod rotation_owner_tests {
         );
     }
 
+    /// A root signing under a key it does not advertise is refused at startup exactly as an
+    /// offline one is, and the refusal says which of the two happened.
+    #[test]
+    fn a_startup_refusal_tells_an_offline_root_from_one_signing_under_another_key() {
+        let offline = Arc::new(AtomicBool::new(true));
+        let calls = Arc::new(AtomicU64::new(0));
+        let plan = plan(TrustEpochPlan::NoNetworkChannel);
+        let down = SigningPlane::materialize_over(&plan, root(&offline, &calls), now_unix())
+            .err()
+            .expect("an offline root issues nothing");
+        assert!(down.contains("(cause=root-unavailable: "), "{down}");
+        let broken = SigningPlane::materialize_over(&plan, MisadvertisingRoot, now_unix())
+            .err()
+            .expect("a credential the advertised key did not sign publishes nothing");
+        assert!(broken.contains("(cause=root-key-mismatch: "), "{broken}");
+        assert!(broken.contains("CONTRACT VIOLATION"), "{broken}");
+    }
+
     /// Startup is fail-closed on issuance: no active delegated key, no serving.
     #[test]
     fn materialize_refuses_when_the_root_cannot_issue_the_first_key() {
         let offline = Arc::new(AtomicBool::new(true));
         let calls = Arc::new(AtomicU64::new(0));
-        let err = SigningPlane::materialize(
+        let err = SigningPlane::materialize_over(
             &plan(TrustEpochPlan::NoNetworkChannel),
             root(&offline, &calls),
             now_unix(),
-            Arc::new(AtomicBool::new(false)),
         )
         .err()
         .expect("a proxy must not begin serving without an active delegated key");
@@ -828,11 +875,10 @@ mod rotation_owner_tests {
     fn materialize_publishes_a_usable_key_and_owns_one_rotation_worker() {
         let offline = Arc::new(AtomicBool::new(false));
         let calls = Arc::new(AtomicU64::new(0));
-        let plane = SigningPlane::materialize(
+        let plane = SigningPlane::materialize_over(
             &plan(TrustEpochPlan::NoNetworkChannel),
             root(&offline, &calls),
             now_unix(),
-            Arc::new(AtomicBool::new(false)),
         )
         .expect("a healthy root must establish signing custody");
         assert_eq!(plane.worker_count(), 1);
@@ -855,14 +901,13 @@ mod rotation_owner_tests {
         drop(listener);
         let offline = Arc::new(AtomicBool::new(false));
         let calls = Arc::new(AtomicU64::new(0));
-        let err = SigningPlane::materialize(
+        let err = SigningPlane::materialize_over(
             &plan(TrustEpochPlan::redis(
                 &format!("redis://127.0.0.1:{port}"),
                 crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY,
             )),
             root(&offline, &calls),
             now_unix(),
-            Arc::new(AtomicBool::new(false)),
         )
         .err()
         .expect("a kill switch that cannot be read must refuse the plane");
@@ -874,7 +919,7 @@ mod rotation_owner_tests {
             calls.load(Ordering::SeqCst),
             0,
             "the refusal must precede minting: a key issued here carries an epoch the \
-             operator's INCR cannot revoke"
+             operator's advance cannot revoke"
         );
     }
 }
@@ -883,13 +928,8 @@ mod rotation_owner_tests {
 mod handle_lifetime_tests {
     use super::*;
     use crate::clock::now_unix;
-    use mcp_re_http_profile::ActiveDelegatedKey;
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
-
-    fn active_key(exp: i64) -> ActiveDelegatedKey {
-        crate::delegated_wiring::test_support::issued_expiring_at(exp, 3)
-    }
 
     /// The signing child machine's terminal transition, staged through the REAL
     /// `SigningPlane::drop` (ADR-MCPRE-057 §5.2).
@@ -907,25 +947,15 @@ mod handle_lifetime_tests {
     /// advance can revoke.
     #[test]
     fn a_mint_completing_inside_the_drop_join_window_cannot_restore_signing() {
-        // The rotor cannot be handed the signer at construction — the plane that owns it
-        // does not exist yet — so the test passes it in once the plane is built. The
-        // rotor blocks on that handover, which is also what keeps it from publishing
-        // before the plane is dropped.
-        let (handover, awaiting) = std::sync::mpsc::channel::<Arc<DelegatedServerSigner>>();
-        let plane = SigningPlane::for_teardown_test(move |halt| {
-            let signer = awaiting
-                .recv()
-                .expect("the test hands the rotor its signer");
+        // The worker holds the rotor, as production's does, and mints once the owner has
+        // gone away: a successor under an advanced epoch, a fresh key and a fresh `exp`.
+        let plane = SigningPlane::for_teardown_test_with_rotor(move |halt, mut rotor| {
             while !halt.requested() {
                 std::thread::sleep(Duration::from_millis(2));
             }
-            // The mint that was already in flight when the owner went away now lands.
-            signer.publish(active_key(now_unix() + 3600));
+            let _ = rotor.advance_trust_epoch(2, now_unix());
         });
         let signer = plane.signer();
-        handover
-            .send(plane.signer())
-            .expect("the rotor is waiting for it");
         assert!(
             signer.current(now_unix()).is_some(),
             "a live plane must publish a usable delegated key"
@@ -955,7 +985,7 @@ mod handle_lifetime_tests {
     /// A signer that outlives its plane must STOP signing.
     ///
     /// Nothing is rotating that key any more, and nothing is polling the shared trust
-    /// epoch — so an operator `INCR` could not revoke it. Serving on until `exp` would be
+    /// epoch — so an operator's advance could not revoke it. Serving on until `exp` would be
     /// a signing authority whose kill switch is disconnected.
     ///
     /// Before v0.16 this could not arise: the rotation thread stopped only with the
@@ -991,16 +1021,18 @@ mod handle_lifetime_tests {
             let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
             let halt = workers.halt();
             let flag = Arc::clone(&observed);
-            workers.spawn("test delegated rotation", move || {
-                while !halt.requested() {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                flag.store(true, std::sync::atomic::Ordering::SeqCst);
-            });
-            let inner = Arc::new(DelegatedServerSigner::new());
-            inner.publish(active_key(now_unix() + 3600));
+            workers
+                .spawn("test delegated rotation", move || {
+                    while !halt.requested() {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                })
+                .expect("spawn test worker");
+            let rotor = crate::delegated_wiring::test_support::published(now_unix() + 3600, 3);
             let plane = SigningPlane {
-                signer: Arc::clone(&inner),
+                signer: rotor.signer(),
+                retirement: rotor.retirement(),
                 workers,
             };
             signer = plane.signer();

@@ -95,7 +95,8 @@ pub fn bound_decision_evidence(
     // The evidence form only. A reference binding is deliberately NOT a candidate here, so
     // it cannot be selected and then rejected downstream — it never enters.
     let mut candidates = block.artifact_bindings.iter().filter(|b| {
-        b.artifact_type == ArtifactType::PdpDecision && b.binding_type == BindingType::OpaqueDigest
+        b.artifact_type() == ArtifactType::PdpDecision
+            && b.binding_type() == BindingType::OpaqueDigest
     });
     let (Some(binding), None) = (candidates.next(), candidates.next()) else {
         return Err(DecisionEvidenceRefusal::NoSinglePairing);
@@ -104,12 +105,12 @@ pub fn bound_decision_evidence(
         Ok(()) => Ok(Some(BoundDecisionEvidence {
             document: document.to_owned(),
             identity: DecisionEvidenceIdentity::from_verified_binding(
-                &binding.digest_alg,
-                &binding.digest_value,
+                binding.digest_alg(),
+                binding.digest_value(),
             ),
         })),
         Err(PdpBindingRefusal::DigestMismatch) => Err(DecisionEvidenceRefusal::DigestMismatch),
-        Err(PdpBindingRefusal::NotTheEvidenceForm | PdpBindingRefusal::Malformed) => {
+        Err(PdpBindingRefusal::NotTheEvidenceForm) => {
             Err(DecisionEvidenceRefusal::NotTheEvidenceForm)
         }
     }
@@ -124,14 +125,13 @@ mod tests {
     use crate::authorization::action_harness::verified_over;
     use mcp_re_http_profile::ArtifactBinding;
     use mcp_re_http_profile::ArtifactType;
-    use mcp_re_http_profile::BindingType;
     use mcp_re_http_profile::VerifiedMcpRequest;
 
     const BODY: &[u8] = br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     const DECISION: &str = "aGVhZGVy.Y2xhaW1z.c2ln";
 
     fn with(bindings: Vec<ArtifactBinding>, decision: Option<&str>) -> VerifiedMcpRequest {
-        let mut v = verified_over(BODY);
+        let mut v = verified_over(BODY).verified;
         v.request_block.artifact_bindings = bindings;
         v.request_block.authorization_decision = decision.map(str::to_owned);
         v
@@ -142,13 +142,14 @@ mod tests {
     }
 
     fn linkage_binding_over(doc: &str) -> ArtifactBinding {
-        ArtifactBinding {
-            binding_type: BindingType::ReferenceDigest,
-            authorization_system_id: Some("urn:example:pdp".into()),
-            reference_scheme_id: Some("urn:example:scheme".into()),
-            reference_value: Some("decision-1".into()),
-            ..evidence_binding_over(doc)
-        }
+        ArtifactBinding::reference(
+            ArtifactType::PdpDecision,
+            evidence_binding_over(doc).digest_value(),
+            "urn:example:pdp",
+            "urn:example:scheme",
+            "decision-1",
+        )
+        .expect("a legal reference binding")
     }
 
     #[test]

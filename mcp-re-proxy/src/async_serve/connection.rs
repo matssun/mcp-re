@@ -23,12 +23,17 @@ use hyper_util::rt::TokioIo;
 use tokio_rustls::TlsAcceptor;
 
 use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
+use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::tls::ServerOptions;
 
 use super::core_admission::CoreAdmission;
-use super::http_limits::http_builder;
+use super::http_limits::{http_builder, idle_bound};
+use super::open_connection::OpenConnection;
 use super::request::handle_request;
 use super::AsyncRequestHandler;
+
+mod activity;
+use activity::ConnectionActivity;
 
 /// Serve ONE accepted TCP connection: handshake it, read what the handshake established,
 /// then run every request it carries under the operator's limits.
@@ -38,6 +43,7 @@ pub(super) async fn serve_connection<H: AsyncRequestHandler>(
     options: Arc<ServerOptions>,
     handler: Arc<H>,
     admission: CoreAdmission,
+    open: OpenConnection,
 ) -> std::io::Result<()> {
     let tls = establish_tls(tcp, acceptor, &options, &admission).await?;
     // THE ESTABLISHMENT BOUNDARY (ADR-MCPRE-063 Slice 4). `acceptor.accept` has
@@ -54,59 +60,88 @@ pub(super) async fn serve_connection<H: AsyncRequestHandler>(
     // THE ESTABLISHMENT BOUNDARY: `accept` succeeded (ADR-MCPRE-064 Slice 1).
     let peer_credential = Arc::new(verified_credential(tls.get_ref().1).ok());
 
-    // Read before `options` moves into the service closure below.
-    let max_connection_age = options.limits.max_connection_age;
-    let builder = http_builder(&options);
+    serve_established(tls, options, handler, admission, peer_credential, open).await
+}
 
-    let io = TokioIo::new(tls);
+/// Run hyper over an established stream until the peer, the age bound or the drain ends it.
+///
+/// Generic over the stream so the close sequence is exercised without a TLS handshake.
+async fn serve_established<I, H>(
+    stream: I,
+    options: Arc<ServerOptions>,
+    handler: Arc<H>,
+    admission: CoreAdmission,
+    peer_credential: Arc<Option<MechanismVerifiedCredentialEvidence>>,
+    mut open: OpenConnection,
+) -> std::io::Result<()>
+where
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    H: AsyncRequestHandler,
+{
+    // Read before `options` moves into the service closure below.
+    let max_connection_age = options.client_credential_window.connection_age();
+    let drain_grace = options.limits.drain_grace;
+    let idle = idle_bound(&options);
+    let builder = http_builder(&options);
+    let activity = Arc::new(ConnectionActivity::default());
+
+    let io = TokioIo::new(stream);
+    let counted = Arc::clone(&activity);
     let service = service_fn(move |req: Request<Incoming>| {
         let options = Arc::clone(&options);
         let handler = Arc::clone(&handler);
         let peer_credential = Arc::clone(&peer_credential);
         let admission = admission.clone();
-        async move { handle_request(req, options, handler, peer_credential, admission).await }
+        let in_flight = counted.begin();
+        async move {
+            let _in_flight = in_flight;
+            handle_request(req, options, handler, peer_credential, admission).await
+        }
     });
     // Serve every request on this connection (keep-alive / H2 multiplexed). A
     // connection-level error just ends this task; other connections are unaffected.
     //
+    // TWO things end a connection, and both are the same move: a graceful close, so
+    // in-flight requests finish and their responses are written and no new request is
+    // accepted, followed by a cut once `drain_grace` has passed. A peer that stops reading
+    // cannot hold its connection permit past the age bound plus `drain_grace`.
+    //
     // MAX CONNECTION AGE: the peer's certificate was validated — chain, CRL, validity
     // window — at the handshake and is never re-consulted on an established connection. At
-    // the age bound the connection is GRACEFULLY shut down: in-flight requests finish and
-    // no new ones are accepted, so a peer that never reconnects is not served indefinitely
-    // on one admission decision.
+    // the age bound the connection is shut down, so a peer that never reconnects is not
+    // served indefinitely on one admission decision.
     //
     // This bound alone does not force re-verification. A TLS 1.3 peer that resumes presents
     // a PSK and sends no CertificateVerify, so the reconnection re-runs no chain or CRL
     // check. Resumption tickets are bound to the trust-anchor epoch, so an anchor change
     // invalidates them; a CRL reload does not. Per-request revocation is what holds against
     // a revoked-but-resuming peer.
+    //
+    // IDLE: a connection carrying no request for the idle bound is closed the same way.
+    // HTTP/1 already bounds the gap between requests; this is what bounds it on HTTP/2,
+    // where a peer answering keep-alive PINGs would otherwise hold its permit to the age.
+    //
+    // THE DRAIN: on the core's shutdown the connection is shut down the same way, so a
+    // kept-alive connection stops admitting requests and one with a reply being written
+    // finishes it. The core's drain waits on this task, so it ends after the reply does.
     let conn = builder.serve_connection(io, service);
     tokio::pin!(conn);
-    match max_connection_age {
-        None => {
-            let _ = conn.await;
+    let age = tokio::time::sleep(max_connection_age);
+    tokio::pin!(age);
+    let idle = async {
+        match idle {
+            Some(bound) => activity.idle_for(bound).await,
+            None => std::future::pending().await,
         }
-        Some(age) => {
-            let deadline = tokio::time::sleep(age);
-            tokio::pin!(deadline);
-            let mut draining = false;
-            loop {
-                tokio::select! {
-                    result = conn.as_mut() => {
-                        let _ = result;
-                        break;
-                    }
-                    // `draining` disarms this arm after it fires once: the elapsed
-                    // sleep is immediately ready forever, so re-selecting it would
-                    // spin instead of letting the graceful close complete.
-                    _ = &mut deadline, if !draining => {
-                        draining = true;
-                        conn.as_mut().graceful_shutdown();
-                    }
-                }
-            }
-        }
+    };
+    tokio::select! {
+        _ = conn.as_mut() => return Ok(()),
+        () = &mut age => {}
+        () = idle => {}
+        () = open.draining() => {}
     }
+    conn.as_mut().graceful_shutdown();
+    let _ = tokio::time::timeout(drain_grace, conn.as_mut()).await;
     Ok(())
 }
 
@@ -156,4 +191,72 @@ async fn establish_tls(
     // signatures.
     drop(_handshake);
     Ok(tls)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::io::AsyncWriteExt;
+
+    use super::*;
+    use crate::config_state::ClientCredentialWindow;
+    use crate::tls::ServerLimits;
+
+    fn admission(options: &ServerOptions) -> CoreAdmission {
+        let pool = crate::async_fleet::CorePool::for_core(
+            crate::async_fleet::ShardDepth::stated(2),
+            crate::config_state::PrivateKeyExposure::ProcessReadable,
+        )
+        .expect("an exported key admits every depth");
+        CoreAdmission::for_core(options, pool.handshake_bound())
+    }
+
+    /// A peer that stops reading holds the connection only until the age bound plus the
+    /// grace window; the connection is then cut rather than awaited.
+    #[test]
+    fn a_stalled_response_write_is_cut_after_the_age_bound_and_the_grace() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let options = Arc::new(ServerOptions {
+                limits: ServerLimits {
+                    drain_grace: Duration::from_millis(200),
+                    ..ServerLimits::default()
+                },
+                ..ServerOptions::new(
+                    ClientCredentialWindow::new(
+                        Duration::from_secs(3600),
+                        Duration::from_millis(50),
+                    )
+                    .expect("a legal credential window"),
+                )
+            });
+            let admission = admission(&options);
+            let open = OpenConnection::accepted(&admission);
+            let handler = Arc::new(|_request| -> super::super::HandlerResponseFuture {
+                Box::pin(std::future::pending())
+            });
+            let (server, mut peer) = tokio::io::duplex(8);
+            // The peer sends its request and then never reads; the half stays open.
+            let peer_side = async {
+                peer.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+                    .await
+                    .expect("request written");
+                std::future::pending::<()>().await;
+            };
+            let served = tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::select! {
+                    result = serve_established(
+                        server, options, handler, admission, Arc::new(None), open,
+                    ) => result,
+                    () = peer_side => unreachable!("the peer side never completes"),
+                }
+            })
+            .await;
+            assert!(served.is_ok(), "the connection must be cut, not awaited");
+        });
+    }
 }

@@ -31,10 +31,9 @@ use mcp_re_core::SigningKey;
 use serde_json::Value;
 
 use crate::block::HttpResponseEvidenceBlock;
-use crate::block::RequestEvidenceDigest;
 use crate::body::insert_meta_block;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::message::HttpRequest;
@@ -59,7 +58,7 @@ use super::RejectionReason;
 pub fn sign_pre_052_direct_root_response_for_negative_test(
     response: &mut HttpResponse,
     request: &HttpRequest,
-    request_evidence: &RequestEvidence,
+    request_evidence: &RequestRoleEvidence,
     server_signer: &ActorIdentity,
     key: &SigningKey,
     key_id: &str,
@@ -70,10 +69,7 @@ pub fn sign_pre_052_direct_root_response_for_negative_test(
         profile: PROFILE_TAG.to_owned(),
         server_signer: server_signer.clone(),
         server_delegation: None,
-        request_evidence: RequestEvidenceDigest {
-            digest_alg: request_evidence.digest_alg.clone(),
-            digest_value: request_evidence.digest_value.clone(),
-        },
+        request_evidence: request_evidence.to_digest(),
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
     sign_pre_052_direct_root_response_base_for_negative_test(
@@ -155,6 +151,7 @@ mod tests {
     use super::build_pre_052_direct_root_rejection_for_negative_test as build_rejection;
     use crate::error::HttpProfileError;
     use crate::policy::VerifierPolicy;
+    use crate::rejection::pre_052_direct_root_verifier::verify_pre_052_direct_root_rejection_for_negative_test as verify_rejection;
     use crate::rejection::tests::client_key;
     use crate::rejection::tests::reason;
     use crate::rejection::tests::request;
@@ -163,7 +160,6 @@ mod tests {
     use crate::rejection::tests::CREATED;
     use crate::rejection::tests::EXPIRES;
     use crate::rejection::tests::NOW;
-    use crate::rejection::verify_signed_rejection;
     use crate::verifier::Verifier;
 
     #[test]
@@ -179,15 +175,15 @@ mod tests {
             EXPIRES,
         )
         .expect("build");
-        let verdict = verify_signed_rejection(
+        let verdict = verify_rejection(
             &rejection,
             Some(&req),
             &Verifier::new(&VerifierPolicy::default(), &resolver()),
             NOW,
         )
         .expect("verify");
-        assert_eq!(verdict.wire_code, "mcp-re.invalid_audience");
-        assert_eq!(verdict.status, 403);
+        assert_eq!(verdict, "mcp-re.invalid_audience");
+        assert_eq!(rejection.status, 403);
         // The body must carry Content-Digest + Signature (label mcp-re-response).
         assert!(rejection
             .headers
@@ -213,15 +209,15 @@ mod tests {
             EXPIRES,
         )
         .expect("build");
-        let verdict = verify_signed_rejection(
+        let verdict = verify_rejection(
             &rejection,
             None,
             &Verifier::new(&VerifierPolicy::default(), &resolver()),
             NOW,
         )
         .expect("verify");
-        assert_eq!(verdict.wire_code, "mcp-re.invalid_audience");
-        assert_eq!(verdict.status, 400);
+        assert_eq!(verdict, "mcp-re.invalid_audience");
+        assert_eq!(rejection.status, 400);
     }
 
     #[test]
@@ -240,7 +236,7 @@ mod tests {
         )
         .expect("build");
         // Bound to req_a; presenting it as the answer to req_b must fail.
-        let err = verify_signed_rejection(
+        let err = verify_rejection(
             &rejection,
             Some(&req_b),
             &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -267,7 +263,7 @@ mod tests {
         )
         .expect("build");
         rejection.body = br#"{"jsonrpc":"2.0","id":7,"error":{"code":-31000,"message":"LIES","data":{"mcp_re_error":{"wire_code":"mcp-re.expired_request"}}}}"#.to_vec();
-        let err = verify_signed_rejection(
+        let err = verify_rejection(
             &rejection,
             Some(&req),
             &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -292,7 +288,7 @@ mod tests {
             EXPIRES,
         )
         .expect("build");
-        let err = verify_signed_rejection(
+        let err = verify_rejection(
             &rejection,
             Some(&req),
             &Verifier::new(&VerifierPolicy::default(), &resolver()),

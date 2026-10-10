@@ -9,9 +9,9 @@
 //! **A per-socket timeout is not an aggregate one**, and the difference is the whole reason
 //! [`DeadlineStream`] exists. `set_read_timeout` bounds each INDIVIDUAL read, so a peer
 //! trickling one byte just under it resets the inactivity timer on every byte and can
-//! extend a phase — the TLS handshake, or the response read — without bound. That is
-//! slow-loris below the per-read threshold, and it evades the zero-byte-stall guard
-//! entirely. Both phases are therefore driven through a wall-clock deadline as well.
+//! extend a phase — the TLS handshake, the request write, or the response read — without
+//! bound. That is slow-loris below the per-read threshold, and it evades the zero-byte-stall
+//! guard entirely. All three phases are therefore driven through a wall-clock deadline as well.
 
 use std::io;
 use std::io::Read;
@@ -98,7 +98,7 @@ impl<S> DeadlineStream<S> {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     format!(
-                        "aggregate handshake deadline exceeded {:?} (slow-loris trickle)",
+                        "aggregate deadline exceeded {:?} (slow-loris trickle)",
                         self.timeout
                     ),
                 ));
@@ -197,4 +197,90 @@ pub(super) fn read_response_bounded<R: Read>(
         }
     }
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+    use std::time::{Duration, Instant};
+
+    struct OverReports;
+
+    impl Read for OverReports {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            Ok(buf.len().saturating_add(1))
+        }
+    }
+
+    struct RecordsReads {
+        called: bool,
+    }
+
+    impl Read for RecordsReads {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            self.called = true;
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn an_over_reporting_reader_is_refused_not_trusted() {
+        let read = read_response_bounded(&mut OverReports, 1 << 20, None, None);
+        assert!(matches!(read, Err(TransportError::MalformedResponse(_))));
+        let admitted = admit_chunk(&[0u8; 4], 5, 0, 100);
+        assert!(matches!(
+            admitted,
+            Err(TransportError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn a_total_past_usize_is_refused_as_too_large() {
+        let admitted = admit_chunk(&[0u8; 4], 4, usize::MAX, usize::MAX);
+        assert!(matches!(
+            admitted,
+            Err(TransportError::ResponseTooLarge { limit }) if limit == usize::MAX
+        ));
+    }
+
+    #[test]
+    fn the_ceiling_admits_exactly_max_bytes_and_refuses_one_more() {
+        let data = [7u8; 10];
+        let ok = read_response_bounded(&mut &data[..], 10, None, None);
+        assert!(matches!(ok, Ok(ref v) if v.len() == 10));
+        let over = read_response_bounded(&mut &data[..], 9, None, None);
+        assert!(matches!(
+            over,
+            Err(TransportError::ResponseTooLarge { limit: 9 })
+        ));
+    }
+
+    #[test]
+    fn an_elapsed_aggregate_deadline_refuses_before_reading() {
+        let mut stub = RecordsReads { called: false };
+        let read = read_response_bounded(
+            &mut stub,
+            1 << 20,
+            Some(Instant::now()),
+            Some(Duration::from_secs(1)),
+        );
+        assert!(matches!(read, Err(TransportError::Timeout(_))));
+        assert!(!stub.called);
+    }
+
+    #[test]
+    fn deadline_stream_fails_closed_once_the_deadline_has_passed() {
+        let mut expired = DeadlineStream::new(
+            &[1u8][..],
+            Some(Instant::now()),
+            Some(Duration::from_secs(1)),
+        );
+        let mut buf = [0u8; 1];
+        let err = expired.read(&mut buf).expect_err("deadline has passed");
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+
+        let mut open = DeadlineStream::new(&[1u8][..], None, None);
+        assert_eq!(open.read(&mut buf).expect("no deadline"), 1);
+    }
 }

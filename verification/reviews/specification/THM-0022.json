@@ -9,7 +9,69 @@
     "theorem_id": "THM-0022",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C3. APPROVED as prepared.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G2.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0005": "sha256:82bd1f22ce442b87e04c17e487d6be2ddf03459856abf52595f133a8b6e54a09",
+      "ASM-0006": "sha256:be9ae37c315b9f2c72c97a64162273761821ff8e59890e0e9cbebe4b5338450d",
+      "ASM-0009": "sha256:6593eafb0dd4f1777ff81088cfa6e536069125af700ba655cade97ae5dd34ccb",
+      "ASM-0010": "sha256:acc991555991408946c1e519002fa544db5aedaa680301d290ee7662b4951e11",
+      "ASM-0027": "sha256:67c173e4093e6b97f440c3ebcc1c1cbf1b68792677b61265c8d455c2ba890ed1",
+      "ASM-0028": "sha256:a6098a4180a6350a93841aae9b0bc33ec4a5d2736792251e4595623a3f631394",
+      "ASM-0045": "sha256:f95cc5de78b3951882642cae4cddb697c1911270e8b6f8d5b9e0b01ee5728f32",
+      "ASM-0046": "sha256:26d794f2ef1ef75a76fdd9867a63e7b6602707b2be1da819fbc3af868009d5cd",
+      "ASM-0057": "sha256:1d3ae653d74840978d081331f33cb8ed82e4a7c2dadc73271093ba144a140cbd"
+    },
+    "supporting_semantics": {
+      "http_profile.freshness_window": {
+        "class": "sha256:096337596d2af6a702151ef6cc897e2f3cd597b839435134b40ee3776607cacc",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:27c4aa21ec726789b14de509e34ebb4cfe428bdb49f998ad11a352443ad6f2c0",
+        "exported_contracts": "sha256:4d54c4c41ebed1357b9d15819c6e917437888b666f41fa35e6c473edff4c9e73",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:3739e545912816fb04703b937073a527e730f9bbdc13a602c15c076f9d90405e",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proof_dependencies": "sha256:adc302e2370a93718a2484bf2db91510c6b88e5b4c8529dbc8ea9386d23a2f9d",
+        "proved_symbols": "sha256:98e5956ea173dcd4367072380496bf6b58081393b12eef4ff63975fdf553e1f1",
+        "source_inputs": "sha256:84ea54d1f16bc4b9b36f3c8ea16a3568c12f1319fe0be490d6eb25a4da127b63",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:d4988f9eac4bc5b246791a703f9b280c64e6dc1fd5d27bc3754408d7ce46b1d2",
+        "test_selection": "sha256:d251ba0169468be6dba66dc4d3a5724d19708c203f71b1ea522b6d82ab0206c5",
+        "test_sources": "sha256:20b64f604223f6598c38c4ba4c60de9a097ea2cf07fb3d21ca3e6b22073b3aaa",
+        "trusted_assumptions": "sha256:f70a8ab25da620fee3559f3dee297c60b84fe5ccfcde789d286b52eb7b74c16b",
+        "unit_id": "sha256:105e79af07c52974c53cf9a4dfe5e5a5c40f2aef6c33b36da697f4df52f8688e"
+      },
+      "http_profile.unbound_response_shared_facts": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:ade860a0dbb3caeae9698957c32ba0e004f83d01fe75cf640fd0aec67a779b21",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:58eaf9bf2c9192ee16a8a1a8911d6833be1b638cbe079a2767ba5b3973b7e752",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:d8ff24696cc6c26acf2ecb6484eceda63a06baa478fbd3a410264dc5814e4529",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:b4ce9a8e4d3302babd863736698346d240697338f873ef56a3439d851a17a0a8",
+        "test_selection": "sha256:b38efd0a3592efdd01adb607edddf278a4ce7157b51d3d235287d90fe45c6321",
+        "test_sources": "sha256:321b0b8a1cbb7228b32ad6d1332930c62d8623e75505e0ecc8fabfbb863186dc",
+        "trusted_assumptions": "sha256:71002ecbef6ab6ae20e2f3b437fe01a3d061545c23c9d1292091688916dea262",
+        "unit_id": "sha256:67206969f9481949067cc43957ad832268e902dcc46f02af725d022ce1aa9f8a"
+      }
+    },
+    "theorem_claim": "sha256:5a6ae3fc8d7e8da6cc64a01fd68effcf12734ed195160466e6eaede46794467e",
+    "theorem_dependencies": {
+      "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:f3fd9c3d1feb02cfc18c8ad3a185f9a04e38f2383ab7f1351aa6ba8acf820d7c",
   "reviewed_fingerprint": "sha256:26250e9cf23da4a0da6e266bdfa6b156d75b95ce40d161780626cbef8f0813f2",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0022"

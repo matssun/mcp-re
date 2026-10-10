@@ -2,9 +2,9 @@
 //! Checking a `COSE_Sign1` signature under a resolved key.
 //!
 //! One fact: **the algorithm that was allowlisted is the algorithm that runs.** The match on
-//! `(protected alg, resolved key)` is exhaustive, which is the point: a new
+//! the resolved key is exhaustive, which is the point: a new
 //! [`CoseVerificationKey`](super::CoseVerificationKey) variant does not compile until its
-//! verifier is wired here.
+//! verifier is wired here. The protected `alg` is then required to be the one that key names.
 //!
 //! A CHILD of the key rather than a sibling, because what it establishes is a property OF a
 //! key: possession of a [`P256Point`](super::P256Point) is already possession of a decoded
@@ -54,8 +54,9 @@ pub(crate) fn verify_cose_sign1_with_payload(
             ))
         }
     };
-    match (alg, key) {
-        (iana::Algorithm::EdDSA, CoseVerificationKey::Ed25519(ed)) => {
+    match key {
+        CoseVerificationKey::Ed25519(ed) => {
+            require_alg(alg, iana::Algorithm::EdDSA)?;
             let check = |sig: &[u8], data: &[u8]| {
                 verify_ed25519_with(data, &b64url_encode(sig), ed, McpReError::InvalidSignature)
             };
@@ -66,7 +67,8 @@ pub(crate) fn verify_cose_sign1_with_payload(
             }
             .map_err(|_| HttpProfileError::ReceiptInvalid)
         }
-        (iana::Algorithm::ES256, CoseVerificationKey::EcdsaP256(point)) => {
+        CoseVerificationKey::EcdsaP256(point) => {
+            require_alg(alg, iana::Algorithm::ES256)?;
             let verifying = point.verifying_key();
             let check = |sig: &[u8], data: &[u8]| verify_es256(verifying, sig, data);
             if detached {
@@ -76,7 +78,18 @@ pub(crate) fn verify_cose_sign1_with_payload(
             }
             .map_err(|_| HttpProfileError::ReceiptInvalid)
         }
-        (iana::Algorithm::EdDSA | iana::Algorithm::ES256, _) => Err(
+    }
+}
+/// The protected `alg` must be the one the resolved key names; a supported `alg` naming the
+/// other key is a mismatch, anything else is unsupported (`iana::Algorithm` is a foreign
+/// non-exhaustive enum, so the `alg` side needs a catch-all and exhaustiveness is taken over
+/// the key).
+fn require_alg(alg: iana::Algorithm, expected: iana::Algorithm) -> Result<(), HttpProfileError> {
+    if alg == expected {
+        return Ok(());
+    }
+    match alg {
+        iana::Algorithm::EdDSA | iana::Algorithm::ES256 => Err(
             HttpProfileError::MalformedEvidence("scitt cose algorithm key mismatch"),
         ),
         _ => Err(HttpProfileError::MalformedEvidence(
@@ -87,10 +100,15 @@ pub(crate) fn verify_cose_sign1_with_payload(
 /// Verify an `ES256` COSE signature: fixed-width `r || s`, 64 octets, over SHA-256.
 ///
 /// RFC 9053 §2.1 requires the fixed-width concatenation, NOT the ASN.1/DER `SEQUENCE`
-/// that most TLS and X.509 tooling emits. Accepting DER here would be a real hazard
-/// rather than leniency: DER is variable-length and admits multiple encodings of the
-/// same signature, so a verifier taking both loses the property that one signature has
-/// one byte string — and `Sig_structure` verification is built on exact octets.
+/// that most TLS and X.509 tooling emits, so DER is refused as a non-COSE encoding that
+/// would add a whole family of variable-length re-encodings.
+///
+/// This does not make a signature's octets unique: `p256` does not enforce low-S, so for
+/// any valid `(r, s)` the pair `(r, n - s)` also verifies. RFC 9053 does not require low-S
+/// and a transparency service signs with whatever its ECDSA implementation emits, so
+/// refusing high-S would refuse conforming receipts. Receipt octets are therefore not a
+/// receipt identity; a verified receipt establishes the attested tuple (the derived root
+/// under the pinned service key), not its bytes.
 fn verify_es256(
     key: &p256::ecdsa::VerifyingKey,
     signature: &[u8],

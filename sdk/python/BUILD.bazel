@@ -1,5 +1,19 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("//bazel:defs.bzl", "nt_rust_test")
 load("@rules_python//python:packaging.bzl", "py_wheel")
+load("@rules_python//python:py_library.bzl", "py_library")
+load("@rules_python//python:py_test.bzl", "py_test")
 load("//bazel/pyo3:defs.bzl", "nt_pyo3_extension")
+
+# A test binary is not loaded by an interpreter, so the CPython symbols the crate references
+# are never called; they are left unresolved at link time, as the extension leaves them for its
+# host.
+# Linux binds lazily: a symbol bound at load time would stop the process before any test runs,
+# while a call into an unresolved symbol still ends the process with a symbol lookup error.
+PYO3_TEST_LINK_FLAGS = select({
+    "@platforms//os:macos": ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"],
+    "@platforms//os:linux": ["-C", "link-arg=-Wl,--unresolved-symbols=ignore-all", "-C", "relro-level=partial", "-C", "link-arg=-Wl,-z,lazy"],
+})
 
 package(default_visibility = ["//visibility:public"])
 
@@ -21,6 +35,26 @@ nt_pyo3_extension(
     crate_root = "src/lib.rs",
     module_name = "mcp_re_sdk._core",
     deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# The binding's own unit tests: trust-anchor construction and the verdict projection. The test
+# binary links the crate with CPython's symbols left to the host process; no test calls into
+# the interpreter.
+nt_rust_test(
+    name = "native_binding_test",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "_core",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    rustc_flags = PYO3_TEST_LINK_FLAGS,
+    deps = [
+        "@rules_rust_pyo3//private:current_rust_pyo3_toolchain",
+        "@rules_python//python/cc:current_py_cc_headers",
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
         "@crates_mcp_re//:serde",
@@ -70,4 +104,36 @@ py_wheel(
     ],
     summary = "MCP-RE Python SDK — runtime-evidence security (signed requests, verified responses) for the MCP Python SDK, via a transport adapter over the audited mcp-re-client-core.",
     version = "0.1.0",
+)
+
+# The package a Bazel test imports: the Python sources copied beside the Bazel-built `_core`,
+# which `nt_pyo3_extension` emits as `mcp_re_sdk/_core.so` in this package. The source tree's
+# own `python/mcp_re_sdk/` is never on the path, so a stale extension a local maturin build
+# left there cannot be the one a test loads.
+[
+    copy_file(
+        name = "sdk_py_" + src.split("/")[-1].removesuffix(".py"),
+        src = src,
+        out = "mcp_re_sdk/" + src.split("/")[-1],
+    )
+    for src in glob(["python/mcp_re_sdk/*.py"])
+]
+
+py_library(
+    name = "sdk",
+    srcs = ["mcp_re_sdk/" + src.split("/")[-1] for src in glob(["python/mcp_re_sdk/*.py"])],
+    imports = ["."],
+    visibility = ["//visibility:private"],
+    deps = [":_core"],
+)
+
+# Standard-library `unittest` over the Bazel-built extension; no pip dependency. The first
+# test refuses to measure any other extension.
+py_test(
+    name = "core_lane_test",
+    srcs = ["bazel_tests/core_lane_test.py"],
+    data = ["//sdk/fixtures:delegated_response_replay.json"],
+    env = {"MCP_RE_SDK_REPLAY_FIXTURE": "$(rootpath //sdk/fixtures:delegated_response_replay.json)"},
+    main = "bazel_tests/core_lane_test.py",
+    deps = [":sdk"],
 )

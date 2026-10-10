@@ -29,6 +29,9 @@ claimed the guard held "at any replica count" and the chart did not.
 {{- if and .Values.admissionCurrency.allowDegraded (not (gt (int .Values.admissionCurrency.degradedBoundSecs) 0)) -}}
 {{- fail "admissionCurrency.allowDegraded=true requires a positive admissionCurrency.degradedBoundSecs: degraded serving is a BOUNDED window measured from the last successful authority read, and an unbounded or zero one is not a policy." -}}
 {{- end -}}
+{{- if and .Values.admissionCurrency.allowDegraded (gt (int .Values.admissionCurrency.degradedBoundSecs) 3600) -}}
+{{- fail "admissionCurrency.degradedBoundSecs must be at most 3600: while the authority is unreachable a revoked workload is served on last-known state for the whole window, so a longer one is a fail-open the deployment cannot bound (the CLI refuses it too)." -}}
+{{- end -}}
 {{/*
 LAST of the enforcing guards, deliberately. Every clause above predates it, and the
 diagnostic a multiply-misconfigured deployment meets first must not move because a new
@@ -145,6 +148,10 @@ spec:
             - {{ .Values.replay.redisUrl | quote }}
             - "--replay-durability-tier"
             - {{ .Values.replay.durabilityTier | quote }}
+            {{- if not (kindIs "invalid" .Values.replay.clockDivergenceSecs) }}
+            - "--replay-clock-divergence-secs"
+            - "{{ .Values.replay.clockDivergenceSecs }}"
+            {{- end }}
             - "--revocation-tier"
             - {{ .Values.revocation.tier | quote }}
             {{- if .Values.revocation.trustReloadSeconds }}
@@ -169,6 +176,10 @@ spec:
             - "--continuation-control-redis-url"
             - {{ .Values.continuationControl.redisUrl | quote }}
             {{- end }}
+            {{- if not (kindIs "invalid" .Values.continuationControl.maxLiveEntries) }}
+            - "--continuation-max-live-entries"
+            - "{{ .Values.continuationControl.maxLiveEntries }}"
+            {{- end }}
             - "--max-client-cert-lifetime"
             - "{{ .Values.maxClientCertLifetimeSeconds }}"
             # The client certificate's chain, CRL status and validity window are
@@ -184,6 +195,20 @@ spec:
             {{- if and .Values.clientCrl.paths .Values.clientCrl.reloadSeconds }}
             - "--client-crl-reload-secs"
             - "{{ .Values.clientCrl.reloadSeconds }}"
+            {{- end }}
+            # Delegated handshake-signing capacity. Keyed on null rather than truthiness,
+            # so a 0 reaches the proxy and is refused there instead of silently becoming
+            # the default; the proxy owns the bounds and the defaults.
+            {{- if not (kindIs "invalid" .Values.tlsHandshakeSigning.ratePerSec) }}
+            - "--tls-handshake-sign-rate"
+            - "{{ .Values.tlsHandshakeSigning.ratePerSec }}"
+            {{- end }}
+            {{- if not (kindIs "invalid" .Values.tlsHandshakeSigning.burst) }}
+            - "--tls-handshake-sign-burst"
+            - "{{ .Values.tlsHandshakeSigning.burst }}"
+            {{- end }}
+            {{- if not .Values.mcpProtocolVersions }}
+            {{- fail "mcpProtocolVersions must name at least one MCP protocol version: the transport contract is mandatory" }}
             {{- end }}
             {{- range .Values.mcpProtocolVersions }}
             - "--mcp-protocol-version"
@@ -265,6 +290,11 @@ spec:
             - {{ .Values.identity.targetUri | quote }}
             - "--trust-domain"
             - {{ .Values.identity.trustDomain | quote }}
+            {{- if .Values.identity.allowExampleFixtures }}
+            # The binary refuses the example.com placeholder domain itself; the same
+            # fenced-fixture acknowledgement the chart's guard reads is passed on to it.
+            - "--allow-example-fixtures"
+            {{- end }}
             {{- if .Values.identity.route }}
             - "--route"
             - {{ .Values.identity.route | quote }}

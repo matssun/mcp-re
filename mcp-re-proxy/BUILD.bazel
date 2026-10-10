@@ -12,7 +12,10 @@ package(default_visibility = ["//visibility:public"])
 # hand-maintained list of producers. The sentinel names the tree; the guard walks it.
 filegroup(
     name = "guard_src_files",
-    srcs = glob(["src/**/*.rs"]),
+    srcs = glob([
+        "src/**/*.rs",
+        "examples/**/*.rs",
+    ]),
 )
 
 # Read from disk by the ADR-MCPS-035 audit-vocabulary drift guard: the replay-tier
@@ -32,9 +35,9 @@ exports_files([
 #     process environment; `manual`, since every case in it is live.
 
 # Single source of truth for the mcp_re_proxy library sources. The default
-# `:mcp_re_proxy` library and the feature-flavored `:mcp_re_proxy_fault` /
-# `:mcp_re_proxy_dev_env` instances (each a full rebuild of the same crate under a
-# `#[cfg(feature = ...)]` fault/dev gate) ALL compile this exact file set — sharing
+# `:mcp_re_proxy` library and the feature-flavored instances such as
+# `:mcp_re_proxy_fault` (each a full rebuild of the same crate under a
+# `#[cfg(feature = ...)]` gate) ALL compile this exact file set — sharing
 # the list here prevents the instances from silently drifting apart.
 _PROXY_LIB_SRCS = [
     # ADR-MCPS-022: explicit authorized server key-set + per-audience response-
@@ -45,8 +48,14 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-064 Slice 5: the §7 admission gate's collaborators, decomposed out of the
     # serving pipeline — a deployment posture, not a stage.
     "src/admission_enforcer/mod.rs",
+    "src/admission_enforcer/authority.rs",
     "src/admission_enforcer/degraded_window.rs",
+    "src/admission_enforcer/enforcement.rs",
     "src/admission_enforcer/facet.rs",
+    "src/admission_enforcer/refusal.rs",
+    "src/admission_enforcer/refusal_class.rs",
+    "src/admission_enforcer/replica_history.rs",
+    "src/admission_enforcer/statement.rs",
     # ADR-MCPRE-065 Slice 1: the authorization authority — verified actor and action facts,
     # the mechanism seam, the honest posture, and the body only a decision can release.
     "src/authorization/mod.rs",
@@ -75,7 +84,9 @@ _PROXY_LIB_SRCS = [
     # is what the L-5 control for `BodyIsNotTheSignedBody` needs.
     "src/authorization/action_harness.rs",
     "src/aws_kms_keysource.rs",
+    "src/aws_kms_keysource/credential_refusal.rs",
     "src/aws_sigv4.rs",
+    "src/aws_sigv4/amz_date.rs",
     # ADR-MCPRE-063 Slice 1: the compatibility surface of the certificate identity
     # migration — the historical identity vocabulary, delegating to the authority.
     "src/aws_sts.rs",
@@ -136,12 +147,13 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-051 §6 (MCPRE-116): versioned serving-config snapshot + in-process
     # CRL hot-reloader. Pure std; always compiled by every flavor.
     "src/config_snapshot.rs",
-    # The classified legal deployment state — layer A of the configuration state atlas.
+    # The classified legal deployment state — layer A.
     # One classifier/validator per configuration machine, and the value they produce.
     "src/config_state/admission.rs",
     "src/config_state/authorization.rs",
     "src/config_state/client_credential_window.rs",
     "src/config_state/continuation_control.rs",
+    "src/config_state/coordinate.rs",
     "src/config_state/cross_machine.rs",
     "src/config_state/custody.rs",
     "src/config_state/delegated_signing.rs",
@@ -152,6 +164,7 @@ _PROXY_LIB_SRCS = [
     "src/config_state/key_file_access.rs",
     "src/config_state/mcp_transport_contract.rs",
     "src/config_state/replay.rs",
+    "src/config_state/replica_clock.rs",
     # Who this deployment IS, derived once: the server ActorIdentity two consumers used to
     # assemble independently from the same primitives.
     "src/config_state/server_identity.rs",
@@ -181,7 +194,6 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/secret_string.rs",
     "src/deployment_request/signing_source/aws_kms_source.rs",
     "src/deployment_request/signing_source/channel_role.rs",
-    "src/deployment_request/signing_source/environment_source.rs",
     "src/deployment_request/signing_source/file_source.rs",
     "src/deployment_request/signing_source/gcp_kms_source.rs",
     "src/deployment_request/signing_source/mod.rs",
@@ -198,7 +210,6 @@ _PROXY_LIB_SRCS = [
     "src/capability_materialization/key_file_custody/process_groups.rs",
 "src/capability_materialization/ingress.rs",
     "src/capability_materialization/key_source/aws.rs",
-    "src/capability_materialization/key_source/env.rs",
     "src/capability_materialization/key_source/file.rs",
     "src/capability_materialization/key_source/gcp.rs",
     "src/capability_materialization/key_source/mod.rs",
@@ -211,6 +222,7 @@ _PROXY_LIB_SRCS = [
     "src/cli/admission_flags/availability.rs",
     "src/cli/admission_flags/record_currentness.rs",
     "src/cli/admission_flags/mod.rs",
+    "src/cli/argv.rs",
     "src/cli/audit_flags.rs",
     "src/cli/channel_flags.rs",
     "src/cli/delegated_signing_flags.rs",
@@ -218,6 +230,7 @@ _PROXY_LIB_SRCS = [
     "src/cli/protocol_flags.rs",
     "src/cli/runtime_flags/admission_ceiling.rs",
     "src/cli/runtime_flags/connection_limits.rs",
+    "src/cli/runtime_flags/handshake_signing.rs",
     "src/cli/runtime_flags/mod.rs",
     "src/cli/serving_flags.rs",
     "src/deployment_request/admission/availability.rs",
@@ -260,8 +273,10 @@ _PROXY_LIB_SRCS = [
     "src/delegated_response_signer.rs",
     # ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5: hot-path delegated response signing — the
     # atomically-swappable delegated-key snapshot + cold-path rotor. Always compiled.
+    "src/delegated_server_signer/metrics.rs",
     "src/delegated_server_signer/mod.rs",
     "src/delegated_server_signer/reader.rs",
+    "src/delegated_server_signer/retirement.rs",
     "src/delegated_server_signer/retry_schedule.rs",
     # ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — builds the delegated signer
     # + cold-path rotor from a parsed Config + a ROOT issuer. Always compiled.
@@ -272,6 +287,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-063 Slice 3: the correspondence gate. Its own file so module privacy can
     # make "assemble a resolver without consulting the authority" inexpressible.
     "src/delegated_tls/resolver.rs",
+    "src/delegated_tls/sign_capacity.rs",
     "src/retained_evidence/mod.rs",
     "src/retained_evidence/archive.rs",
     "src/retained_evidence/private_file.rs",
@@ -305,8 +321,10 @@ _PROXY_LIB_SRCS = [
     "src/transparency/auditor/artifact/mod.rs",
     "src/transparency/auditor/artifact/verdict.rs",
     "src/transparency/auditor/artifact/derivation.rs",
+    "src/transparency/auditor/artifact/document.rs",
     "src/transparency/auditor/inputs.rs",
     "src/transparency/auditor/refusal.rs",
+    "src/transparency/auditor/durable_file.rs",
     "src/transparency/auditor/run.rs",
     # #841 G-1: the registration capability, its budget, its target, and the SCRAPI
     # mechanism leaf. Every file is compiled by every flavor; only `ureq_exchange` is
@@ -341,6 +359,7 @@ _PROXY_LIB_SRCS = [
     "src/kms_endpoint_policy/endpoint.rs",
     # ADR-MCPS-028: provider-agnostic cloud-KMS response signer core (the shared
     # protocol mapping behind the #3838 delegation seam). Always compiled.
+    "src/kms_keysource/handshake_control.rs",
     "src/kms_keysource/mod.rs",
     "src/kms_keysource/protocol_operands.rs",
     "src/lib.rs",
@@ -354,6 +373,8 @@ _PROXY_LIB_SRCS = [
     # The writer's teardown obligation: the bound, the wait, and the two-valued outcome.
     "src/audit_sink/drain.rs",
     "src/audit_sink/writer.rs",
+    "src/audit_sink/stream.rs",
+    "src/audit_sink/stderr.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
     # "pkcs11_keysource")]; cfg'd out of the default build).
     "src/pkcs11_keysource/mod.rs",
@@ -366,6 +387,7 @@ _PROXY_LIB_SRCS = [
     # cryptoki-sys FFI bindings (replaces the high-level cryptoki crate +
     # transitive unmaintained `paste`). Same `pkcs11_keysource` feature gate.
     "src/pkcs11_native.rs",
+    "src/pkcs11_native/custody.rs",
     # Issue #4030: online OCSP client-cert revocation (behind #[cfg(feature =
     # "online_ocsp")]; cfg'd out of the default build).
     "src/ocsp.rs",
@@ -380,17 +402,12 @@ _PROXY_LIB_SRCS = [
     "src/outbound_fetch/credential_egress.rs",
     "src/outbound_fetch/resolver.rs",
     "src/outbound_fetch/url.rs",
-    # Issue #4028: Redis-backed shared atomic ReplayCache (behind #[cfg(feature =
-    # "redis_replay")]; cfg'd out of the default build).
-    "src/redis_store.rs",
-    # Issue #69 (epic #68 v0.4 Axis 1): etcd-backed CP / LINEARIZABLE shared atomic
-    # ReplayCache (behind #[cfg(feature = "cpstore_etcd")]; cfg'd out of the default
-    # build).
-    "src/etcd_store.rs",
     # ADR-MCPRE-051 §4: the ASYNC etcd authoritative replay backend (hyper over the
     # v3 JSON gateway; same `cpstore_etcd` gate). The linearizable durable tier the
     # async serving fleet awaits.
     "src/async_etcd_store.rs",
+    "src/async_etcd_store/gateway.rs",
+    "src/async_etcd_store/protocol.rs",
     # ADR-MCPS-020: declared replay-store durability tier (deployment assertion).
     "src/replay_tier.rs",
     # MCPRE-104 (#308): proxy replay-tier adapter around the HTTP-profile dispatcher
@@ -416,7 +433,9 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/resolvers.rs",
     "src/http_profile_serve/request_admission.rs",
     "src/http_profile_serve/retention/mod.rs",
+    "src/http_profile_serve/retention/nothing_retained.rs",
     "src/http_profile_serve/retention/outcome.rs",
+    "src/http_profile_serve/retention/refusal.rs",
     "src/http_profile_serve/retention/fault_report.rs",
     "src/http_profile_serve/signing_window.rs",
     # ADR-MCPRE-061: the request pipeline, region by region — what the exchange has spent
@@ -488,12 +507,16 @@ _PROXY_LIB_SRCS = [
     "src/signing_plane/mod.rs",
     "src/signing_plane/rotation.rs",
     "src/signing_plane/trust_epoch_advance.rs",
+    "src/signing_plane/epoch_watch.rs",
+    "src/signing_plane/epoch_watch/refusal.rs",
     "src/signing_plane/mint_successor.rs",
+    "src/signing_plane/bounded_root_issuer.rs",
     # ADR-MCPRE-056 §8 (ADR-MCPRE-051 §6): the TLS plane — serving TLS config, the
     # per-request revocation index and the CRL reload worker.
     "src/tls_plane/mod.rs",
     "src/tls_plane/client_revocation_posture.rs",
     "src/tls_plane/crl_evidence.rs",
+    "src/tls_plane/crl_evidence/succession.rs",
     "src/tls_plane/crl_reload_worker/mod.rs",
     "src/tls_plane/crl_reload_worker/supervision.rs",
     "src/tls_plane/revocation_currency.rs",
@@ -519,8 +542,13 @@ _PROXY_LIB_SRCS = [
     # consults on every request, since rustls consults the CRLs at the handshake alone.
     "src/client_crl_publication.rs",
     "src/client_revocation.rs",
+    "src/client_revocation/index_build.rs",
+    "src/client_revocation/issuer_key.rs",
+    "src/client_revocation/shared.rs",
+    "src/client_revocation/verdict.rs",
     "src/stage_timers/mod.rs",
     "src/stage_timers/accumulator.rs",
+    "src/stage_timers/report_file.rs",
     "src/blocking_mtls_harness/connection.rs",
     "src/blocking_mtls_harness/deadline_stream.rs",
     "src/blocking_mtls_harness/http1.rs",
@@ -532,6 +560,7 @@ _PROXY_LIB_SRCS = [
     "src/tls_listener_state/mod.rs",
     "src/tls_listener_state/resumption_acceptance.rs",
     "src/tls_listener_state/resumption_binding.rs",
+    "src/tls_listener_state/trust_anchors.rs",
     # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
     # invalidation channel; bounded-T fallback when the channel is unhealthy).
     "src/trust_plane/push_trust.rs",
@@ -545,19 +574,23 @@ _PROXY_LIB_SRCS = [
     # supersedes the ADR-MCPS-018 §1 lean-sync firewall for the proxy serving path;
     # `mcp-re-core` stays pure.
     "src/async_serve/mod.rs",
+    "src/async_serve/accept.rs",
     # ADR-MCPRE-061: the listener's own authorities — what a core admits work against, the
     # byte half of that admission, one connection, and one request over it.
     "src/async_serve/core_admission.rs",
     "src/async_serve/body_budget.rs",
     "src/async_serve/connection.rs",
+    "src/async_serve/connection/activity.rs",
     "src/async_serve/http_limits.rs",
     "src/async_serve/inbound.rs",
+    "src/async_serve/open_connection.rs",
     "src/async_serve/request.rs",
     # MCPRE-113 (ADR-MCPRE-051 §1): the per-core serving fleet (per-core tokio
     # runtimes + SO_REUSEPORT listeners + Linux CPU pinning) — the production data
     # plane.
     "src/async_fleet/mod.rs",
     "src/async_fleet/core_runtime.rs",
+    "src/async_fleet/reuseport.rs",
     "src/async_fleet/shard_depth.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier (async store
     # contract + L1-never-Fresh wrapper) — the only replay path.
@@ -577,25 +610,34 @@ _PROXY_LIB_SRCS = [
     "src/async_inner/mod.rs",
     "src/async_inner/completion_bound.rs",
     "src/async_inner/outcome.rs",
+    "src/async_inner/in_process.rs",
     # ADR-MCPRE-051 §3: the production async inner plane — pooled hyper client to
     # stateless Streamable-HTTP inner backends.
     "src/http_inner/mod.rs",
     "src/http_inner/selection.rs",
+    "src/http_inner/response_budget.rs",
     "src/inner_plane_bound.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async Redis authoritative replay backend
     # (SET NX PX over the tokio async client). #[cfg(feature = "redis_replay")] —
     # cfg'd out of the default build; the ext and deploy flavors link it,
     # and main.rs selects it for `--replay-cache shared` (non-linearizable tier).
     "src/async_redis_store.rs",
+    "src/async_redis_store/protocol.rs",
     "src/async_redis_store/retention_promise.rs",
     # ADR-MCPS-047: the MRTR continuation correlation store — trait + in-memory impl
     # always compiled; the Redis backend is redis_replay-gated inside the module.
     "src/continuation_store/mod.rs",
+    "src/continuation_store/capacity.rs",
+    "src/continuation_store/consumption.rs",
+    "src/continuation_store/creation.rs",
     "src/continuation_store/in_memory.rs",
     "src/continuation_store/key.rs",
-    # ADR-MCPS-047: the Redis-backed continuation store (SET PX + GETDEL). #[cfg(feature
-    # = "redis_replay")] — cfg'd out of the default build, like async_redis_store.
+    "src/continuation_store/retained_handles.rs",
+    # ADR-MCPS-047: the Redis-backed continuation store (bounded create and consume
+    # scripts + GET). #[cfg(feature = "redis_replay")] — cfg'd out of the default build,
+    # like async_redis_store.
     "src/redis_continuation_store.rs",
+    "src/redis_continuation_store/scripts.rs",
     # MCPRE-493 (#414 §4.3): the authoritative admission-state seam — trait + in-memory
     # impl always compiled, so the serving path's §7 currency gate builds by default.
     "src/admission_source/mod.rs",
@@ -606,9 +648,11 @@ _PROXY_LIB_SRCS = [
     # copy). #[cfg(feature = "redis_replay")] — cfg'd out of the default build.
     "src/redis_admission_source/mod.rs",
     "src/redis_admission_source/refusal_report.rs",
+    "src/redis_admission_source/reply.rs",
     "src/transport/mod.rs",
     "src/transport/ingress/mod.rs",
     "src/transport/ingress/v2.rs",
+    "src/transport/ingress/v2_binding_refusal.rs",
     "src/transport/ingress/v2_wire.rs",
     "src/transport/identity.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
@@ -616,6 +660,9 @@ _PROXY_LIB_SRCS = [
     # MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source (Redis reader is
     # redis_replay-gated inside the module).
     "src/trust_epoch.rs",
+    "src/trust_epoch/raise.rs",
+    "src/trust_epoch/advance.rs",
+    "src/trust_epoch/state.rs",
     # MCPRE-148: the trust plan lives with its owner; `startup_plan` re-exports it.
     "src/trust_plan.rs",
 ]
@@ -633,11 +680,11 @@ _PROXY_ASYNC_CRATES = [
     "@crates_mcp_re//:bytes",
 ]
 
-# Single source of truth for the mcp_re_proxy library deps. All three library
+# Single source of truth for the mcp_re_proxy library deps. Every library
 # instances compile the SAME `_PROXY_LIB_SRCS`, so they MUST link the same crates —
 # they differ ONLY by `crate_features`. Sharing the list here prevents per-instance
-# dep drift (which previously left `:mcp_re_proxy_fault` / `:mcp_re_proxy_dev_env`
-# pointing at a removed `rustls-pemfile` and missing `zeroize`).
+# dep drift (which previously left `:mcp_re_proxy_fault` pointing at a removed
+# `rustls-pemfile` and missing `zeroize`).
 _PROXY_LIB_DEPS = [
     "//mcp-re-core:mcp_re_core",
     # MCPRE-180: the capsule-anchor registration leaf's wire convention is STANDARD
@@ -692,6 +739,8 @@ _PROXY_EXT_CRATES = [
     # owned safe wrapper in src/pkcs11_native.rs.
     "@crates_mcp_re//:cryptoki-sys",
     "@crates_mcp_re//:redis",
+    "@crates_mcp_re//:tower-service",
+    "@crates_mcp_re//:rustls-native-certs",
     "@crates_mcp_re//:ureq",
     # ADR-MCPS-028 §B: SigV4 HMAC-SHA256 for the AWS KMS Ed25519 signer (feature
     # aws_kms_keysource). NOTE: base64 moved to _PROXY_LIB_DEPS — the registration
@@ -894,8 +943,11 @@ nt_rust_library(
 # feature, so the faulted CLIENT verifier is compiled into the fault-injection
 # test. The default `:mcp_re_proxy` above is never built with this feature;
 # production and the default `bazel test //...` link only the verifying instance.
+# `testonly` makes Bazel refuse any non-test consumer, so the accept-any verifier cannot
+# link into a shippable target (scripts/fixture_feature_gate.py holds this).
 nt_rust_library(
     name = "mcp_re_proxy_fault",
+    testonly = True,
     srcs = _PROXY_LIB_SRCS,
     crate_features = ["fault_accept_any_client"],
     crate_name = "mcp_re_proxy",
@@ -944,7 +996,7 @@ nt_rust_test(
         "@crates_mcp_re//:zeroize",
     ],
 )
-# MCPS-027: KeySource (File + Env) — signing key + TLS cert/key + client-CA.
+# MCPS-027: FileKeySource — signing key + TLS cert/key + client-CA.
 nt_rust_test(
     name = "key_source_test",
     srcs = ["tests/key_source_test.rs"],
@@ -954,32 +1006,15 @@ nt_rust_test(
         "//mcp-re-core:mcp_re_core",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:zeroize",
     ],
 )
 
-# The same file with `dev_env_key_source`: its `env_source_*` tests exist only under the
-# feature, and `:key_source_test` above is the default build that must not have it.
-nt_rust_test(
-    name = "key_source_dev_env_test",
-    srcs = ["tests/key_source_test.rs"],
-    crate_features = ["dev_env_key_source"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_dev_env",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls-pki-types",
-    ],
-)
-
-# MCPS-076 (audit gap G-3): a SEPARATE library instance of mcp-re-proxy built WITH
-# the dev-only `dev_env_key_source` feature, so `EnvKeySource` (and the dev arm of
-# build_key_source) is compiled into the dev test below. The default `:mcp_re_proxy`
-# ADR-MCPRE-051 (MCPRE-118): the async serving path is now UNCONDITIONAL, so the
-# async crates live in `_PROXY_LIB_DEPS` and this flavor is a thin alias of the base
-# (the vestigial `async_serve` feature is a no-op — no code gates on it anymore).
-# Retained so the async test targets' `:mcp_re_proxy_async  # keep` dep edges stay
-# stable (MCPS-69) without a churny repoint.
+# ADR-MCPRE-051 (MCPRE-118): the async serving path is UNCONDITIONAL, so the async
+# crates live in `_PROXY_LIB_DEPS` and this flavor differs from the base only by
+# `async_serve`, the test flavors' feature: it exposes the process-local test fixture
+# `InMemoryAdmissionSource`, which no deployed flavor links. Every consumer of this
+# flavor is a test.
 nt_rust_library(
     name = "mcp_re_proxy_async",
     srcs = _PROXY_LIB_SRCS,
@@ -1031,7 +1066,7 @@ nt_rust_test(
 # What `ValidatedConfig` establishes, measured from outside the crate. In the DEFAULT
 # lane because the relations it characterizes are the ones every build has.
 # `config_refusal_precedence_test`
-# The refusal ORDER a multiply-illegal configuration meets. State legality is the atlas's
+# The refusal ORDER a multiply-illegal configuration meets. State legality is layer A's
 # question; diagnostic precedence is orchestration's, and it is observable — so it is
 # pinned separately, before the boundary is reorganised.
 # `documented_cli_test`
@@ -1123,10 +1158,9 @@ nt_rust_test(
     ],
 )
 
-# The same suite under the ext features: `tls_test`'s delegated-TLS cases for AWS and
-# Google KMS exist only with `aws_kms_keysource` / `gcp_kms_keysource`. They run against
-# a local seed, not a cloud. The suite spawns the proxy binary and expects diagnostics
-# matching its own features, so it spawns the ext binary, built with the same features.
+# The same suite under the ext features. The suite spawns the proxy binary and expects
+# diagnostics matching its own features, so it spawns the ext binary, built with the same
+# features.
 nt_rust_test(
     name = "integration_kms_test",
     srcs = glob(["tests/integration/*.rs"]) + [
@@ -1415,35 +1449,6 @@ build_test(
     name = "tls_load_harness_bench_builds",
     targets = [":tls_load_harness_bench"],
 )
-# above is NEVER built with this feature; production and the production CLI link
-# only the env-LESS instance. This instance is built on every `bazel test //...`
-# (NOT `manual`) so it can never silently fail to compile.
-nt_rust_library(
-    name = "mcp_re_proxy_dev_env",
-    srcs = _PROXY_LIB_SRCS,
-    crate_features = ["dev_env_key_source"],
-    crate_name = "mcp_re_proxy",
-    edition = "2021",
-    deps = _PROXY_LIB_DEPS,
-)
-
-# MCPS-076 (audit gap G-3): the dev-only EnvKeySource + secret-hygiene proofs. Built
-# WITH the `dev_env_key_source` feature (so EnvKeySource exists) and linked against
-# the matching `:mcp_re_proxy_dev_env` instance. Runs on EVERY `bazel test //...`
-# (NOT `manual`) so the dev-feature path can never silently rot.
-# Proves: the env source signs + REMOVES the env var after read; KeyError never
-# leaks the seed; and the canonical zeroize-on-drop heap-scrub check.
-nt_rust_test(
-    name = "dev_env_key_source_test",
-    srcs = ["tests/dev_env_key_source_test.rs"],
-    crate_features = ["dev_env_key_source"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_dev_env",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:zeroize",
-    ],
-)
 
 # ===========================================================================
 # Phase 7 external backends (#4028 Redis, #4030 OCSP, #4034 PKCS#11, #4039
@@ -1464,13 +1469,13 @@ nt_rust_library(
 
 # Every ext feature over the pre-052 fixture chain (`_PROXY_LIB_DEPS_PRE052`): the
 # library for the batteries that need both the ext features and the fixtures.
-# `async_serve` gates nothing in the library (only test files carry
-# `#![cfg(feature = "async_serve")]`), so the `async_serve` ext suites link it too.
+# It sets `async_serve`, the test flavors' feature, so the ext suites reach the
+# process-local test fixture `InMemoryAdmissionSource` the async suites use.
 nt_rust_library(
     name = "mcp_re_proxy_ext_pre052",
     testonly = True,
     srcs = _PROXY_LIB_SRCS,
-    crate_features = _PROXY_EXT_FEATURES,
+    crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     crate_name = "mcp_re_proxy",
     edition = "2021",
     deps = _PROXY_LIB_DEPS_PRE052 + _PROXY_EXT_CRATES,

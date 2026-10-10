@@ -199,12 +199,6 @@ mod tests {
     /// A digest that is not a base64url token never reaches the filesystem.
     #[test]
     fn a_non_token_digest_cannot_escape_the_root() {
-        let dir = TempDir::new();
-        let root = dir.path().join("archive");
-        let _store = FsRetainedEvidenceStore::open(&root).expect("open");
-        let archive = FsRetainedArchive::open_read_only(&root).expect("open read-only");
-        let traversal: EvidenceDigest =
-            serde_json::from_str("\"../../etc/passwd\"").expect("deserialize");
-        assert!(archive.get(&traversal).is_err());
+        assert!(serde_json::from_str::<EvidenceDigest>("\"../../etc/passwd\"").is_err());
     }
 }

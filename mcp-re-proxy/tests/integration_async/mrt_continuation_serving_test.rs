@@ -38,8 +38,8 @@ use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::RequestEvidenceDigest;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -55,10 +55,12 @@ use mcp_re_proxy::async_serve::ServedHttpResponse;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS;
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::DelegatedRotor;
 use mcp_re_proxy::DelegatedServerSigner;
 use mcp_re_proxy::HttpProfileProxy;
+use mcp_re_proxy::SigningRetirement;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const CLIENT_SEED_2: [u8; 32] = [12u8; 32];
@@ -139,7 +141,7 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: VERIFIER_AUD.into(),
         audience_hash: AUD_SCOPE.into(),
-        trust_epoch: EPOCH.into(),
+        trust_epoch: EPOCH.parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
@@ -147,9 +149,7 @@ fn custody_cfg() -> CustodyConfig {
     }
 }
 
-fn make_rotor(
-    signer: Arc<DelegatedServerSigner>,
-) -> DelegatedRotor<
+fn make_rotor() -> DelegatedRotor<
     impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
     impl FnMut() -> SigningKey,
 > {
@@ -162,10 +162,12 @@ fn make_rotor(
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        signer,
-    )
+    DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ))
 }
 
 /// The JSON-RPC `id` of the forwarded request, rendered for splicing into a canned reply.
@@ -186,26 +188,29 @@ fn echoed_id(forwarded: &[u8]) -> String {
 /// `InputRequiredResult` carrying an opaque `requestState`; an answer call returns a
 /// terminal result. Mirrors `tools/fastmcp_inner_backend.py`'s `confirm_action`.
 fn eliciting_inner(request_state: &'static str) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        let v: serde_json::Value =
-            serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
-        let is_answer = v
-            .get("params")
-            .map(|p| p.get("inputResponses").is_some() || p.get("requestState").is_some())
-            .unwrap_or(false);
-        let id = echoed_id(forwarded);
-        if is_answer {
-            format!(
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            let v: serde_json::Value =
+                serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
+            let is_answer = v
+                .get("params")
+                .map(|p| p.get("inputResponses").is_some() || p.get("requestState").is_some())
+                .unwrap_or(false);
+            let id = echoed_id(forwarded);
+            if is_answer {
+                format!(
                 r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","confirmed":true}}}}"#
             )
             .into_bytes()
-        } else {
-            format!(
+            } else {
+                format!(
                 r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"input_required","requestState":"{request_state}"}}}}"#
             )
             .into_bytes()
-        }
-    })
+            }
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// A serving proxy (its own signer + replay tier) sharing `store` — one fleet replica.
@@ -229,16 +234,22 @@ fn replica(
         300,
         signer,
     )
-    .with_continuation_store(store, TTL)
+    .with_continuation_store(store, DEFAULT_CONTINUATION_TTL_SECS)
 }
 
 fn ready_signer() -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let mut rotor = make_rotor(Arc::clone(&signer));
+    ready_signer_and_retirement().0
+}
+
+/// A ready signer, and the authority its rotor issues to withdraw it for good.
+fn ready_signer_and_retirement() -> (Arc<DelegatedServerSigner>, SigningRetirement) {
+    let mut rotor = make_rotor();
+    let signer = rotor.signer();
+    let retirement = rotor.retirement();
     rotor.rotate(NOW).expect("issue first delegated key");
     // Keep the rotor alive for the whole test so the published snapshot stays valid.
     std::mem::forget(rotor);
-    signer
+    (signer, retirement)
 }
 
 fn served_of(req: &HttpRequest) -> ServedHttpRequest {
@@ -257,13 +268,6 @@ fn http_response(served: ServedHttpResponse) -> HttpResponse {
         status: served.status,
         headers: served.headers,
         body: served.body,
-    }
-}
-
-fn as_digest(ev: &RequestEvidence) -> RequestEvidenceDigest {
-    RequestEvidenceDigest {
-        digest_alg: ev.digest_alg.clone(),
-        digest_value: ev.digest_value.clone(),
     }
 }
 
@@ -317,7 +321,7 @@ fn signed_request(
     nonce: &str,
     body: &[u8],
     continuation: Option<HttpContinuation>,
-) -> (HttpRequest, RequestEvidence) {
+) -> (HttpRequest, RequestRoleEvidence) {
     signed_request_as(CLIENT_KEY_ID, &client_key(), nonce, body, continuation)
 }
 
@@ -329,7 +333,7 @@ fn signed_request_as(
     nonce: &str,
     body: &[u8],
     continuation: Option<HttpContinuation>,
-) -> (HttpRequest, RequestEvidence) {
+) -> (HttpRequest, RequestRoleEvidence) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
@@ -394,8 +398,11 @@ async fn open_on(
     assert_eq!(seen_state, request_state);
 
     (
-        as_digest(&open_ev), // D_prev (client request handle)
-        as_digest(&verified.signature_facts.response_signature_base_digest), // D_irr (verified response handle)
+        open_ev.to_digest(), // D_prev (client request handle)
+        verified
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(), // D_irr (verified response handle)
         seen_state.to_owned(),
     )
 }
@@ -482,7 +489,7 @@ fn handles_of(request_state: &str) -> (RequestEvidenceDigest, RequestEvidenceDig
     // is unavailable here, so we take it from a throwaway open on a scratch replica.
     // Simpler: the second-answer test only needs a well-formed continuation whose
     // store entry is absent, so any consistent handles suffice — reuse D_prev shape.
-    let d = as_digest(&open_ev);
+    let d = open_ev.to_digest();
     (d.clone(), d, request_state.to_owned())
 }
 
@@ -646,16 +653,19 @@ fn replica_with_inner(
         300,
         signer,
     )
-    .with_continuation_store(store, TTL)
+    .with_continuation_store(store, DEFAULT_CONTINUATION_TTL_SECS)
 }
 
 /// An inner backend that announces a non-terminal turn and then withholds the state
 /// its continuation needs.
 fn malformed_eliciting_inner(result_json: &'static str) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        let id = echoed_id(forwarded);
-        format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{result_json}}}"#).into_bytes()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            let id = echoed_id(forwarded);
+            format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{result_json}}}"#).into_bytes()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// THE regression. The proxy's open-leg recorder used to read "declares itself
@@ -847,8 +857,8 @@ struct WriteFailingStore(InMemoryContinuationStore);
 impl AsyncContinuationStore for WriteFailingStore {
     fn create<'a>(
         &'a self,
-        _key: &'a str,
-        _bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        _key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+        _bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         _ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
@@ -864,17 +874,20 @@ impl AsyncContinuationStore for WriteFailingStore {
     }
     fn peek<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
-        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+        Option<mcp_re_proxy::continuation_store::RetainedHandles>,
     > {
         self.0.peek(key)
     }
     fn consume<'a>(
         &'a self,
-        key: &'a str,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Consumption,
+    > {
         self.0.consume(key)
     }
 }
@@ -992,7 +1005,13 @@ async fn an_unparseable_backend_body_is_refused_even_with_no_continuation_store(
         &b"{\"jsonrpc\":\"2.0\","[..],
         &b"<html>502 Bad Gateway</html>"[..],
     ] {
-        let proxy = replica_without_store(Box::new(move |_: &[u8]| garbage.to_vec()));
+        let proxy =
+            replica_without_store(Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+                move |_: &[u8]| garbage.to_vec(),
+                mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                    std::time::Duration::ZERO,
+                ),
+            )));
         let (req, _ev) = signed_request("nonce-garbage", OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
@@ -1046,7 +1065,13 @@ async fn an_illegal_json_rpc_envelope_is_refused_before_it_is_signed() {
         ),
     ] {
         let bytes = body.as_bytes().to_vec();
-        let proxy = replica_without_store(Box::new(move |_: &[u8]| bytes.clone()));
+        let proxy =
+            replica_without_store(Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+                move |_: &[u8]| bytes.clone(),
+                mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                    std::time::Duration::ZERO,
+                ),
+            )));
         let (req, _ev) = signed_request("nonce-envelope", OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
@@ -1082,7 +1107,13 @@ async fn a_legal_envelope_is_still_served_and_a_json_rpc_error_is_one() {
         ),
     ] {
         let bytes = body.as_bytes().to_vec();
-        let proxy = replica_without_store(Box::new(move |_: &[u8]| bytes.clone()));
+        let proxy =
+            replica_without_store(Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+                move |_: &[u8]| bytes.clone(),
+                mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                    std::time::Duration::ZERO,
+                ),
+            )));
         let (req, _ev) = signed_request("nonce-legal", OPEN_BODY, None);
         let served = proxy.handle(served_of(&req), NOW).await;
 
@@ -1267,18 +1298,10 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: reply_body.to_vec(),
     };
-    sign_delegated_response_full(
-        &mut response,
-        &request,
-        &req_evidence,
-        active.server_signer(),
-        active.credential(),
-        active.key(),
-        active.delegated_kid(),
-        NOW,
-        NOW + TTL,
-    )
-    .expect("the reply signs — signing does not classify");
+    let window = mcp_re_http_profile::custody::SigningWindow::over(active, NOW, TTL)
+        .expect("a live signing window");
+    sign_delegated_response_full(&mut response, &request, &window)
+        .expect("the reply signs — signing does not classify");
 
     // Precondition: this fixture is only meaningful if the response is otherwise
     // GENUINE. If it failed verification the SDKs would refuse it for the wrong
@@ -1327,8 +1350,8 @@ fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &
             "request_target_uri": request.target_uri,
             "request_headers": request.headers,
             "request_body_b64url": b64url_encode(&request.body),
-            "request_evidence_digest_alg": req_evidence.digest_alg,
-            "request_evidence_digest_value": req_evidence.digest_value,
+            "request_evidence_digest_alg": req_evidence.digest_alg(),
+            "request_evidence_digest_value": req_evidence.digest_value(),
             "status": response.status,
             "headers": response.headers,
             "body_b64url": b64url_encode(&response.body),
@@ -1507,16 +1530,17 @@ async fn the_same_retention_outage_without_a_spent_approval_stays_an_ordinary_re
 /// confirm a parameter of it — and it is the sequence that makes `Consumed -> Recorded`
 /// reachable rather than theoretical.
 fn twice_eliciting_inner(first: &'static str, second: &'static str) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        let v: serde_json::Value =
-            serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
-        let answered = v
-            .get("params")
-            .and_then(|p| p.get("requestState"))
-            .and_then(|s| s.as_str())
-            .map(|s| s.to_owned());
-        let id = echoed_id(forwarded);
-        match answered.as_deref() {
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            let v: serde_json::Value =
+                serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
+            let answered = v
+                .get("params")
+                .and_then(|p| p.get("requestState"))
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_owned());
+            let id = echoed_id(forwarded);
+            match answered.as_deref() {
             // The answer to leg 1 opens leg 2.
             Some(state) if state == first => format!(
                 r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"input_required","requestState":"{second}"}}}}"#
@@ -1533,7 +1557,9 @@ fn twice_eliciting_inner(first: &'static str, second: &'static str) -> Box<dyn A
             )
             .into_bytes(),
         }
-    })
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// ADR-MCPRE-057 §4 — the coexistence question, end to end.
@@ -1568,7 +1594,7 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
             300,
             ready_signer(),
         )
-        .with_continuation_store(Arc::clone(&store), TTL)
+        .with_continuation_store(Arc::clone(&store), DEFAULT_CONTINUATION_TTL_SECS)
     };
     let a = make();
     let b = make();
@@ -1590,8 +1616,11 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // Round 2 — answering leg 1 CONSUMES it, and the reply opens leg 2. Served on B, which
     // never saw round 1.
     let cont1 = HttpContinuation::from_handles(
-        as_digest(&ev1),
-        as_digest(&verified1.signature_facts.response_signature_base_digest),
+        ev1.to_digest(),
+        verified1
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(),
         FIRST.as_bytes(),
     );
     let (req2, ev2) = signed_request("nonce-r2", &answer_body(FIRST), Some(cont1));
@@ -1621,8 +1650,11 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // Round 3 — the load-bearing assertion. Leg 2 was recorded by an exchange that had
     // ALREADY consumed leg 1. If the latch had discarded the new leg, this fails closed.
     let cont2 = HttpContinuation::from_handles(
-        as_digest(&ev2),
-        as_digest(&verified2.signature_facts.response_signature_base_digest),
+        ev2.to_digest(),
+        verified2
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(),
         SECOND.as_bytes(),
     );
     let (req3, _ev3) = signed_request("nonce-r3", &answer_body(SECOND), Some(cont2));
@@ -1640,8 +1672,11 @@ async fn a_leg_opened_by_an_answer_leg_is_itself_answerable() {
     // Negative control: leg 1 really was consumed, so re-answering it fails closed. Without
     // this, the test above could pass on a store that never consumes anything.
     let cont1_again = HttpContinuation::from_handles(
-        as_digest(&ev1),
-        as_digest(&verified1.signature_facts.response_signature_base_digest),
+        ev1.to_digest(),
+        verified1
+            .signature_facts()
+            .response_signature_base_digest
+            .to_digest(),
         FIRST.as_bytes(),
     );
     let (replay_req, _e) = signed_request("nonce-r2-again", &answer_body(FIRST), Some(cont1_again));
@@ -1739,12 +1774,17 @@ async fn a_request_refused_on_the_continuation_binding_has_not_burned_its_nonce(
 
 /// An inner backend that counts how many times it was actually invoked.
 fn counting_inner(calls: Arc<std::sync::atomic::AtomicUsize>) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let id = echoed_id(forwarded);
-        format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","ok":true}}}}"#)
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |forwarded: &[u8]| -> Vec<u8> {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let id = echoed_id(forwarded);
+            format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","ok":true}}}}"#
+            )
             .into_bytes()
-    })
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// **reserve_retention_stage** — the last refusal that is genuinely free.
@@ -1783,7 +1823,7 @@ async fn a_retention_reservation_failure_leaves_the_backend_untouched() {
         300,
         ready_signer(),
     )
-    .with_continuation_store(Arc::clone(&store), TTL)
+    .with_continuation_store(Arc::clone(&store), DEFAULT_CONTINUATION_TTL_SECS)
     .with_evidence_retention(retention);
     dir.wedge();
 
@@ -1869,7 +1909,7 @@ async fn a_consumption_followed_by_a_refusal_reports_a_spent_approval_and_an_unr
         300,
         ready_signer(),
     )
-    .with_continuation_store(Arc::clone(&store), TTL)
+    .with_continuation_store(Arc::clone(&store), DEFAULT_CONTINUATION_TTL_SECS)
     .with_evidence_retention(retention);
     dir.wedge();
 
@@ -1898,8 +1938,8 @@ async fn a_consumption_followed_by_a_refusal_reports_a_spent_approval_and_an_unr
         "nonce-H4",
         &answer_body(&state),
         Some(HttpContinuation::from_handles(
-            as_digest(&signed_request("nonce-open", OPEN_BODY, None).1),
-            as_digest(&signed_request("nonce-open", OPEN_BODY, None).1),
+            signed_request("nonce-open", OPEN_BODY, None).1.to_digest(),
+            signed_request("nonce-open", OPEN_BODY, None).1.to_digest(),
             state.as_bytes(),
         )),
     );
@@ -2000,7 +2040,6 @@ async fn a_configured_transport_binding_refuses_a_request_that_presents_no_peer_
 
 /// A delegated signer whose credential expires in `ttl` seconds rather than [`TTL`].
 fn signer_with_credential_ttl(ttl: i64) -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -2021,10 +2060,13 @@ fn signer_with_credential_ttl(ttl: i64) -> Arc<DelegatedServerSigner> {
         window: DelegatedKeyWindow::of(ttl, ttl / 2).expect("0 < ttl/2 < ttl for ttl > 1"),
         ..custody_cfg()
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(cfg, issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        cfg,
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue the short-lived key");
     std::mem::forget(rotor);
     signer
@@ -2143,8 +2185,8 @@ struct PeekFailingStore(Arc<dyn AsyncContinuationStore>);
 impl AsyncContinuationStore for PeekFailingStore {
     fn create<'a>(
         &'a self,
-        key: &'a str,
-        bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+        bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
@@ -2154,10 +2196,10 @@ impl AsyncContinuationStore for PeekFailingStore {
     }
     fn peek<'a>(
         &'a self,
-        _key: &'a str,
+        _key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
-        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+        Option<mcp_re_proxy::continuation_store::RetainedHandles>,
     > {
         Box::pin(async {
             Err(
@@ -2169,8 +2211,11 @@ impl AsyncContinuationStore for PeekFailingStore {
     }
     fn consume<'a>(
         &'a self,
-        key: &'a str,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Consumption,
+    > {
         self.0.consume(key)
     }
 }
@@ -2182,8 +2227,8 @@ struct ConsumeFailingStore(Arc<dyn AsyncContinuationStore>);
 impl AsyncContinuationStore for ConsumeFailingStore {
     fn create<'a>(
         &'a self,
-        key: &'a str,
-        bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+        bases: &'a mcp_re_proxy::continuation_store::RetainedHandles,
         ttl_secs: i64,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
@@ -2193,17 +2238,20 @@ impl AsyncContinuationStore for ConsumeFailingStore {
     }
     fn peek<'a>(
         &'a self,
-        key: &'a str,
+        key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
     ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
         'a,
-        Option<mcp_re_proxy::continuation_store::RetainedBases>,
+        Option<mcp_re_proxy::continuation_store::RetainedHandles>,
     > {
         self.0.peek(key)
     }
     fn consume<'a>(
         &'a self,
-        _key: &'a str,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, bool> {
+        _key: &'a mcp_re_proxy::continuation_store::ContinuationKey,
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Consumption,
+    > {
         Box::pin(async {
             Err(
                 mcp_re_proxy::continuation_store::ContinuationStoreError::Unavailable {
@@ -2313,7 +2361,7 @@ async fn an_indeterminate_continuation_retirement_is_never_reported_as_retry_saf
         300,
         ready_signer(),
     )
-    .with_continuation_store(store, TTL);
+    .with_continuation_store(store, DEFAULT_CONTINUATION_TTL_SECS);
 
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
     let (answer, _e) = signed_request("nonce-R8-consume", &answer_body(&state), Some(continuation));
@@ -2560,7 +2608,7 @@ async fn a_delivered_notification_is_still_acknowledged_with_a_202() {
 }
 
 /// An inner plane that retires the delegated signer mid-flight, then fails the dispatch.
-struct SignerRetiringInner(Arc<DelegatedServerSigner>);
+struct SignerRetiringInner(SigningRetirement);
 
 impl AsyncInnerServer for SignerRetiringInner {
     fn prepare<'a>(
@@ -2570,12 +2618,12 @@ impl AsyncInnerServer for SignerRetiringInner {
         mcp_re_proxy::async_inner::PreparedInnerDispatch<'a>,
         mcp_re_proxy::async_inner::NotAdmitted,
     > {
-        let signer = Arc::clone(&self.0);
+        let retirement = self.0.clone();
         Ok(mcp_re_proxy::async_inner::PreparedInnerDispatch::over(
             move || {
                 // At the DISPATCH, not at the preparation: the point of the fixture is a
                 // signer that goes away while the exchange is past its threshold.
-                signer.retire();
+                retirement.retire_permanently();
                 Box::pin(async { DispatchedOutcome::Indeterminate("inner request timed out") })
             },
             // A fixture inner still states a finite bound; the serving path refuses an
@@ -2601,7 +2649,7 @@ impl AsyncInnerServer for SignerRetiringInner {
 /// did-not-run.
 #[tokio::test]
 async fn a_post_dispatch_refusal_is_signed_with_the_key_the_exchange_snapshotted() {
-    let signer = ready_signer();
+    let (signer, retirement) = ready_signer_and_retirement();
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
@@ -2613,7 +2661,7 @@ async fn a_post_dispatch_refusal_is_signed_with_the_key_the_exchange_snapshotted
             fleet_strict: false,
             tier: None,
         },
-        Box::new(SignerRetiringInner(Arc::clone(&signer))),
+        Box::new(SignerRetiringInner(retirement)),
         300,
         Arc::clone(&signer),
     );
@@ -2724,10 +2772,19 @@ async fn a_body_that_is_not_a_json_rpc_request_never_reaches_the_backend() {
         );
         assert_ne!(served.status, 202, "{name}: acknowledged as a notification");
         assert_ne!(served.status, 200, "{name}: served as a successful reply");
-        assert_eq!(served.status, 400, "{name}");
-        assert_eq!(
-            wire_code_of(&served.body),
-            "mcp-re.malformed_envelope",
+        // Refused before dispatch either way. A body the mandatory transport contract cannot
+        // be satisfied by (no method, or a target-naming method with no name) is refused by
+        // the verifier (403); the rest are refused as malformed MCP messages (400).
+        assert!(
+            matches!(served.status, 400 | 403),
+            "{name}: {}",
+            served.status
+        );
+        assert!(
+            matches!(
+                wire_code_of(&served.body).as_str(),
+                "mcp-re.malformed_envelope" | "mcp-re.missing_envelope"
+            ),
             "{name}"
         );
         // Refused before admission: nothing ran and nothing was spent.

@@ -13,9 +13,11 @@
 //! A composition root that held the timeout, or that decided what a missing acknowledgement
 //! meant, would be re-deciding what this owns.
 
-use std::time::Duration;
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
+use std::time::{Duration, Instant};
 
-use super::writer::writes_have_failed;
+use super::writer::{writes_have_failed, STDERR_AUDIT_DROPPED};
 use super::AuditMessage;
 use super::STDERR_AUDIT_WRITER;
 
@@ -52,7 +54,11 @@ pub(crate) enum AuditDrain {
 /// was slow would make an observability fault look like a serving fault — the inversion the
 /// sink's own "audit must never fail a request" rule rejects on the hot path.
 pub(crate) fn at_shutdown(report: bool) {
-    if let Some(line) = drain_line(flush(AUDIT_FLUSH_TIMEOUT), report) {
+    let outcome = flush(AUDIT_FLUSH_TIMEOUT);
+    // `load`, not `swap`: a concurrent writer report may state the same drops again, which
+    // over-states them — the direction `report_drops` already treats as safe.
+    let unreported = STDERR_AUDIT_DROPPED.load(Ordering::Relaxed);
+    if let Some(line) = drain_line(outcome, report, unreported) {
         eprintln!("{line}");
     }
 }
@@ -77,7 +83,8 @@ fn flush(timeout: Duration) -> AuditDrain {
 /// the full-queue arm from `OutcomeUnknown` to `Drained` left the whole battery green.
 ///
 /// ```text
-/// ensures  the Flush cannot be queued       => OutcomeUnknown
+/// ensures  the Flush cannot be queued inside the bound (writer gone, or queue still full
+///          at the bound)                    => OutcomeUnknown
 ///          no acknowledgement inside bound  => OutcomeUnknown
 ///          acknowledged, a write had failed => OutcomeUnknown
 ///          acknowledged, no write failed    => Drained
@@ -94,11 +101,14 @@ fn drain_queue(
     timeout: Duration,
     writes_failed: impl Fn() -> bool,
 ) -> AuditDrain {
-    let (ack, acked) = std::sync::mpsc::sync_channel(1);
-    if queue.try_send(AuditMessage::Flush(ack)).is_err() {
+    let started = Instant::now();
+    let Some(acked) = enqueue_flush(queue, started, timeout) else {
         return AuditDrain::OutcomeUnknown;
-    }
-    if acked.recv_timeout(timeout).is_err() {
+    };
+    if acked
+        .recv_timeout(timeout.saturating_sub(started.elapsed()))
+        .is_err()
+    {
         return AuditDrain::OutcomeUnknown;
     }
     if writes_failed() {
@@ -107,12 +117,34 @@ fn drain_queue(
     AuditDrain::Drained
 }
 
+/// Queue the Flush, retrying while the queue is merely full, until `timeout` has elapsed
+/// since `started`. `None` when the writer is gone or the queue stayed full to the bound.
+fn enqueue_flush(
+    queue: &SyncSender<AuditMessage>,
+    started: Instant,
+    timeout: Duration,
+) -> Option<Receiver<()>> {
+    let (ack, acked) = std::sync::mpsc::sync_channel(1);
+    let mut message = AuditMessage::Flush(ack);
+    loop {
+        match queue.try_send(message) {
+            Ok(()) => return Some(acked),
+            Err(TrySendError::Disconnected(_)) => return None,
+            Err(TrySendError::Full(_)) if started.elapsed() >= timeout => return None,
+            Err(TrySendError::Full(returned)) => {
+                message = returned;
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    }
+}
+
 /// What shutdown says about the drain, or `None` when this deployment does not write its
 /// audit stream to stderr and so has nothing to say about it.
 ///
 /// Separated from the wait so the one property that matters — that the two outcomes never
 /// read as the same fact — is assertable without stalling a log collector.
-fn drain_line(outcome: AuditDrain, report: bool) -> Option<String> {
+fn drain_line(outcome: AuditDrain, report: bool, unreported_drops: u64) -> Option<String> {
     if !report {
         return None;
     }
@@ -122,19 +154,34 @@ fn drain_line(outcome: AuditDrain, report: bool) -> Option<String> {
         // exchanges are still recording. A record offered during or after the flush is
         // outside the claim, so a line that said "every record" would be claiming an
         // ordering nothing establishes.
-        AuditDrain::Drained => "mcp-re-proxy: audit stream drained at shutdown: every record \
-                                handed to the audit writer before this drain reached stderr"
-            .to_string(),
+        AuditDrain::Drained => format!(
+            "mcp-re-proxy: audit stream drained at shutdown{}: every record handed to the \
+             audit writer before this drain reached stderr",
+            super::stream::run_suffix()
+        ),
         AuditDrain::OutcomeUnknown => format!(
-            "mcp-re-proxy: WARNING: the audit stream did not complete a clean drain — it either \
+            "mcp-re-proxy: WARNING: the audit stream{} did not complete a clean drain — it either \
              failed to acknowledge within {}s or reported a failed write. This is NOT a report \
              that records were lost and NOT a clean shutdown of the audit stream: whether the \
              decisions recorded last reached stderr is UNKNOWN. Their seq numbers are the gap \
              to look for, and the writer's backing channel (a stalled log collector, a full \
-             volume, a closed stderr) is what to check.",
-            AUDIT_FLUSH_TIMEOUT.as_secs()
+             volume, a closed stderr) is what to check.{}",
+            super::stream::run_suffix(),
+            AUDIT_FLUSH_TIMEOUT.as_secs(),
+            unreported_drops_sentence(unreported_drops)
         ),
     })
+}
+
+/// The outstanding drop count, stated when the writer may never have reported it.
+fn unreported_drops_sentence(unreported_drops: u64) -> String {
+    if unreported_drops == 0 {
+        return String::new();
+    }
+    format!(
+        " audit dropped={unreported_drops} records were dropped at the hand-off queue and not \
+         reported by the writer."
+    )
 }
 
 /// The bounded wait, for the sink's own queue tests. Not a production entry point: the
@@ -161,8 +208,9 @@ mod tests {
     /// line, or reporting only the success and leaving the timeout silent.
     #[test]
     fn a_timed_out_audit_drain_never_reads_as_a_completed_one() {
-        let drained = drain_line(AuditDrain::Drained, true).expect("stderr audit states its drain");
-        let timed_out = drain_line(AuditDrain::OutcomeUnknown, true)
+        let drained =
+            drain_line(AuditDrain::Drained, true, 0).expect("stderr audit states its drain");
+        let timed_out = drain_line(AuditDrain::OutcomeUnknown, true, 0)
             .expect("a timeout is stated, not swallowed");
 
         assert_ne!(drained, timed_out);
@@ -182,8 +230,8 @@ mod tests {
         // A deployment whose audit goes nowhere says nothing about a stream it does not
         // write; without this control the two assertions above would also hold for a
         // function that always spoke.
-        assert!(drain_line(AuditDrain::Drained, false).is_none());
-        assert!(drain_line(AuditDrain::OutcomeUnknown, false).is_none());
+        assert!(drain_line(AuditDrain::Drained, false, 0).is_none());
+        assert!(drain_line(AuditDrain::OutcomeUnknown, false, 0).is_none());
     }
 
     /// **R11-167 / R11-169.** A queue that cannot accept the Flush is `OutcomeUnknown`.
@@ -223,6 +271,61 @@ mod tests {
             "the wait must be BOUNDED; it took {:?}",
             started.elapsed()
         );
+    }
+
+    /// A queue the writer drains inside the bound is not reported as unknown merely because
+    /// it was full when the Flush was first offered.
+    #[test]
+    fn a_full_queue_the_writer_drains_inside_the_bound_is_drained() {
+        let (queue, receiver) = std::sync::mpsc::sync_channel::<AuditMessage>(1);
+        queue
+            .try_send(AuditMessage::Line(String::new()))
+            .expect("the fixture queue has room for one line");
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            let _line = receiver.recv();
+            if let Ok(AuditMessage::Flush(ack)) = receiver.recv() {
+                let _ = ack.send(());
+            }
+        });
+        assert_eq!(
+            drain_queue(&queue, Duration::from_secs(5), || false),
+            AuditDrain::Drained,
+        );
+        writer.join().expect("the fixture writer must not panic");
+    }
+
+    /// A queue that stays full to the bound returns, bounded, and says unknown.
+    #[test]
+    fn a_queue_that_stays_full_returns_bounded_and_unknown() {
+        let (queue, _receiver) = std::sync::mpsc::sync_channel::<AuditMessage>(1);
+        queue
+            .try_send(AuditMessage::Line(String::new()))
+            .expect("the fixture queue has room for one line");
+        let started = Instant::now();
+        assert_eq!(
+            drain_queue(&queue, Duration::from_millis(50), || false),
+            AuditDrain::OutcomeUnknown,
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the wait must be BOUNDED; it took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// An unknown drain carries the drop count the writer never got to report.
+    #[test]
+    fn an_unknown_drain_states_the_drop_count_the_writer_never_reported() {
+        let with_drops = drain_line(AuditDrain::OutcomeUnknown, true, 7).expect("stated");
+        assert!(with_drops.contains("dropped=7"), "{with_drops}");
+        let without = drain_line(AuditDrain::OutcomeUnknown, true, 0).expect("stated");
+        assert!(!without.contains("dropped="), "{without}");
+        assert_eq!(
+            drain_line(AuditDrain::Drained, true, 7),
+            drain_line(AuditDrain::Drained, true, 0)
+        );
+        assert!(drain_line(AuditDrain::OutcomeUnknown, false, 7).is_none());
     }
 
     /// An acknowledged drain over which a write had already failed is `OutcomeUnknown`.

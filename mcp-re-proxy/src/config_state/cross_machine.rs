@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Pass 2 — compatibility BETWEEN machines (`work/CONFIG-STATE-ATLAS.md` Part D).
+//! Pass 2 — compatibility BETWEEN machines (unit `proxy.cross_machine_legality`, THM-0049).
 //!
 //! A rule belongs here only if it joins two machines. A rule between two selectors of one
 //! machine is that machine's own column and lives with it; applying that test is what took
 //! the relation count from twelve to six, each pass moving a rule to the owner that would
 //! still make sense if the dependency graph were never drawn.
 //!
-//! **This pass reads classified states, never raw fields.** That is what makes it a second
-//! pass rather than a second opinion: every question it asks has already been answered
-//! once, by the machine that owns it.
+//! **No relation here re-decides a state a machine already classified.** That is what makes
+//! it a second pass rather than a second opinion. What each relation reads, and why:
+//! X9 reads the recognised `TrustRevocationState`'s epoch decision and the topology
+//! machine's fleet decision, and refuses only their combination. X2a reads the requested signing-source and channel-key
+//! SELECTIONS, not the custody states: a source the custody machine refuses still names the
+//! mechanism the channel key must match (see `x2a`). X6 reads `revocation_list_paths`, a
+//! field no machine classifies.
 //!
-//! All four live here: X2a, X2b, X6, X9.
+//! Three live here: X2a, X6, X9. X2b has no representation left to refuse (see its test).
 
 use crate::config_state::trust_revocation::TrustRevocationState;
 use crate::deployment_request::{
@@ -78,23 +82,34 @@ fn x6(config: &DeploymentRequest) -> Vec<String> {
         .collect()
 }
 
-/// X9: the trust-epoch posture, interpreted once (CF-09).
+/// X9: a delegated-signing fleet has a trust-epoch coordination source.
 ///
 /// `TrustRevocation` owns whether the epoch configuration is LEGAL — that is X8, and it is
-/// checked inside that machine. What belongs here is the relation to delegated signing:
-/// the credential label the operator's INCR kill switch reaches is minted under the same
-/// posture the trust cache flushes on, so the two must be one decision.
+/// checked inside that machine. What belongs here is the relation to delegated signing,
+/// which every deployment performs: the credential label the trust-epoch kill switch
+/// (`mcp-re-proxy trust-epoch advance`) reaches exists only where a networked epoch source does. On one node the kill switch
+/// is a restart; across replicas without a source there is none, and each replica mints
+/// under the bare base for as long as it lives.
 ///
-/// The decision is `TrustRevocationState::has_networked_epoch`, made by the machine and
-/// carried in `DeploymentConfigState`. Neither plan re-derives it from
-/// `trust_epoch_redis_url`, and neither plane asks the other. This function therefore has
-/// nothing left to refuse — which is the ruling holding, not an omission: it is stated so
-/// that a future rule joining these two machines has an owner to be added to.
-fn x9(
-    _trust_revocation: Option<&TrustRevocationState>,
-    _config: &DeploymentRequest,
-) -> Vec<String> {
-    Vec::new()
+/// Both facts are read from their owners' decisions — `has_networked_epoch` from the
+/// classified `TrustRevocationState`, the topology from `topology::classify` — so nothing
+/// is re-derived from `trust_epoch_redis_url` or `--fleet` (CF-09). A trust-revocation
+/// state the machine refused is `None` and has its own diagnostic.
+fn x9(trust_revocation: Option<&TrustRevocationState>, config: &DeploymentRequest) -> Vec<String> {
+    let Some(state) = trust_revocation else {
+        return Vec::new();
+    };
+    let (topology, _) = crate::config_state::topology::classify(config);
+    if !topology.is_fleet() || state.has_networked_epoch() {
+        return Vec::new();
+    }
+    vec![
+        "--fleet with delegated response signing requires a trust-epoch source \
+         (--revocation-tier push:<T> with --trust-epoch-redis-url): without one no replica \
+         can be moved to a new delegated-credential label, so the fleet has no kill switch \
+         for its delegated keys"
+            .to_string(),
+    ]
 }
 
 /// The delegated key object this request names, where it names one.
@@ -108,7 +123,8 @@ fn delegated_channel_key(key: &ChannelKeyRequest) -> Option<&DelegatedChannelKey
     }
 }
 
-/// Check the cross-machine relations over states pass 1 recognised.
+/// Check the cross-machine relations: X9 over the trust-revocation state pass 1 recognised,
+/// X2a and X6 over the request selections they relate.
 pub(crate) fn validate(
     trust_revocation: Option<&TrustRevocationState>,
     config: &DeploymentRequest,
@@ -272,11 +288,11 @@ mod tests {
         .is_empty());
     }
 
-    /// CF-09 holding, asserted rather than assumed: the epoch posture is decided by the
-    /// `TrustRevocation` machine, so this relation has nothing left to re-decide.
+    /// A fleet with a networked epoch source is legal.
     #[test]
-    fn the_trust_epoch_posture_is_not_re_derived_here() {
+    fn a_fleet_with_a_networked_epoch_source_is_legal() {
         let found = relations(|c| {
+            c.fleet = true;
             c.request_signer_currency =
                 crate::deployment_request::RequestSignerCurrencyRequest::Push {
                     t_secs: 30,
@@ -288,6 +304,49 @@ mod tests {
                         )),
                     },
                 };
+        });
+        assert!(found.x9_trust_epoch_posture.is_empty());
+    }
+
+    /// Every tier that carries no networked epoch source is refused under `--fleet`, and
+    /// the refusal names the flag that supplies one.
+    #[test]
+    fn a_fleet_without_a_networked_epoch_source_is_refused() {
+        use crate::deployment_request::RequestSignerCurrencyRequest as Currency;
+        let tiers = [
+            Currency::BoundedCache {
+                t_secs: 30,
+                reload_secs: None,
+            },
+            Currency::Live { reload_secs: 30 },
+            Currency::Push {
+                t_secs: 30,
+                reload_secs: 30,
+                epoch: crate::deployment_request::TrustEpochStoreRequest::default(),
+            },
+        ];
+        for tier in tiers {
+            let found = relations(|c| {
+                c.fleet = true;
+                c.request_signer_currency = tier.clone();
+            });
+            assert!(
+                found
+                    .x9_trust_epoch_posture
+                    .iter()
+                    .any(|v| v.contains("--trust-epoch-redis-url")),
+                "{tier:?} under --fleet must be refused: {found:?}"
+            );
+        }
+    }
+
+    /// One node without an epoch source stays legal: its kill switch is a restart.
+    #[test]
+    fn a_single_node_without_an_epoch_source_is_legal() {
+        let found = relations(|c| {
+            c.fleet = false;
+            c.request_signer_currency =
+                crate::deployment_request::RequestSignerCurrencyRequest::Live { reload_secs: 30 };
         });
         assert!(found.x9_trust_epoch_posture.is_empty());
     }

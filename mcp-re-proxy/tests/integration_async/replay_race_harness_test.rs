@@ -60,9 +60,8 @@ const TEST_ACTOR: &str = "did:example:test-signer";
 
 /// A retain-until far in the future so the store's defensive pre-store staleness
 /// guard (`is_stale_pre_store`, MCPS-08) never rejects the submission before the
-/// race — the vestigial `now_unix = 0` the trait passes means the guard reduces
-/// to "reject a non-positive ABSOLUTE retain-until", so any large positive value
-/// is admissible and the ONLY thing that decides Fresh/Replay is the atomic
+/// race — the store judges it against its own clock, so any value past that
+/// clock is admissible and the ONLY thing that decides Fresh/Replay is the atomic
 /// insert.
 const FAR_FUTURE_RETAIN_UNTIL: i64 = 4_000_000_000;
 
@@ -97,7 +96,7 @@ fn race_one_key(store: &Arc<dyn AtomicReplayStore + Send + Sync>, key: &str) -> 
                 // Every thread parks here; the last arrival releases them all
                 // simultaneously into the atomic insert — maximum contention.
                 barrier.wait();
-                store.insert_if_absent(&key, FAR_FUTURE_RETAIN_UNTIL, 0)
+                store.insert_if_absent(&key, FAR_FUTURE_RETAIN_UNTIL)
             })
         })
         .collect();
@@ -128,7 +127,10 @@ fn round_key(round: usize) -> String {
 /// a store that is behaving correctly. The caller reads the salt ONCE and reuses it
 /// for every round, so all threads in a round still submit the IDENTICAL key (the
 /// race invariant holds).
-#[cfg(any(feature = "redis_replay", feature = "cpstore_etcd"))]
+#[cfg(all(
+    feature = "async_serve",
+    any(feature = "redis_replay", feature = "cpstore_etcd")
+))]
 fn unique_salt(tag: &str) -> String {
     use std::time::SystemTime;
     let nanos = SystemTime::now()
@@ -139,7 +141,10 @@ fn unique_salt(tag: &str) -> String {
 }
 
 /// A `round_key` namespaced by a per-test `salt` (see [`unique_salt`]).
-#[cfg(any(feature = "redis_replay", feature = "cpstore_etcd"))]
+#[cfg(all(
+    feature = "async_serve",
+    any(feature = "redis_replay", feature = "cpstore_etcd")
+))]
 fn salted_round_key(salt: &str, round: usize) -> String {
     format!("did:example:agent\u{1f}did:example:server\u{1f}nonce-{salt}-{round}")
 }
@@ -151,27 +156,6 @@ fn salted_round_key(salt: &str, round: usize) -> String {
 fn assert_exactly_one_fresh_per_round(store: Arc<dyn AtomicReplayStore + Send + Sync>) {
     for round in 0..RACE_ROUNDS {
         let tally = race_one_key(&store, &round_key(round));
-        assert_eq!(
-            tally,
-            RaceTally {
-                fresh: 1,
-                replay: RACE_WIDTH - 1,
-                unavailable: 0,
-            },
-            "round {round}: {RACE_WIDTH}-way race must admit exactly one Fresh",
-        );
-    }
-}
-
-/// [`assert_exactly_one_fresh_per_round`] over keys namespaced by `salt` — the
-/// form every LIVE lane must use, since a live store outlives the test process.
-#[cfg(any(feature = "redis_replay", feature = "cpstore_etcd"))]
-fn assert_exactly_one_fresh_per_round_salted(
-    store: Arc<dyn AtomicReplayStore + Send + Sync>,
-    salt: &str,
-) {
-    for round in 0..RACE_ROUNDS {
-        let tally = race_one_key(&store, &salted_round_key(salt, round));
         assert_eq!(
             tally,
             RaceTally {
@@ -226,7 +210,6 @@ fn store_unavailable_admits_zero_fresh_fail_closed() {
             &self,
             _key: &str,
             _expires_at_unix: i64,
-            _now_unix: i64,
         ) -> Result<ReplayDecision, ReplayStoreError> {
             Err(ReplayStoreError::Unavailable {
                 details: "authoritative replay tier down".to_string(),
@@ -252,23 +235,43 @@ fn store_unavailable_admits_zero_fresh_fail_closed() {
 // SharedReplayCache wrapper coherence (single-threaded, deterministic)
 // ---------------------------------------------------------------------------
 
+/// The deployment window a wrapper cache retains under.
+fn window(skew_secs: i64) -> mcp_re_proxy::config_state::FreshnessWindow {
+    mcp_re_proxy::config_state::FreshnessWindow::new(skew_secs).expect("bounded")
+}
+
 /// The `SharedReplayCache` composite-key + skew-folding path admits the first
 /// submission of a `(signer, audience, nonce)` and rejects the second — the
 /// pure wrapper over the authoritative tier the race exercises concurrently.
 #[test]
 fn shared_cache_first_is_fresh_then_replay() {
-    let cache = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), 30);
+    let cache = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), window(30));
     assert_eq!(
-        cache.check_and_insert("did:example:agent", "did:example:server", "nonce-1", 1_000),
+        cache.check_and_insert(
+            "did:example:agent",
+            "did:example:server",
+            "nonce-1",
+            FAR_FUTURE_RETAIN_UNTIL
+        ),
         Ok(ReplayDecision::Fresh),
     );
     assert_eq!(
-        cache.check_and_insert("did:example:agent", "did:example:server", "nonce-1", 1_000),
+        cache.check_and_insert(
+            "did:example:agent",
+            "did:example:server",
+            "nonce-1",
+            FAR_FUTURE_RETAIN_UNTIL
+        ),
         Ok(ReplayDecision::Replay),
     );
     // A different nonce is independently Fresh.
     assert_eq!(
-        cache.check_and_insert("did:example:agent", "did:example:server", "nonce-2", 1_000),
+        cache.check_and_insert(
+            "did:example:agent",
+            "did:example:server",
+            "nonce-2",
+            FAR_FUTURE_RETAIN_UNTIL
+        ),
         Ok(ReplayDecision::Fresh),
     );
 }
@@ -281,16 +284,26 @@ fn shared_cache_first_is_fresh_then_replay() {
 #[test]
 fn shared_cache_cross_replica_admit_via_a_is_replay_via_b() {
     let backend = InMemoryAtomicReplayStore::new();
-    let replica_a = SharedReplayCache::new(Box::new(backend.clone()), 30);
-    let replica_b = SharedReplayCache::new(Box::new(backend.clone()), 30);
+    let replica_a = SharedReplayCache::new(Box::new(backend.clone()), window(30));
+    let replica_b = SharedReplayCache::new(Box::new(backend.clone()), window(30));
 
     assert_eq!(
-        replica_a.check_and_insert("did:example:agent", "did:example:server", "nonce-x", 1_000),
+        replica_a.check_and_insert(
+            "did:example:agent",
+            "did:example:server",
+            "nonce-x",
+            FAR_FUTURE_RETAIN_UNTIL
+        ),
         Ok(ReplayDecision::Fresh),
         "replica A admits the fresh nonce",
     );
     assert_eq!(
-        replica_b.check_and_insert("did:example:agent", "did:example:server", "nonce-x", 1_000),
+        replica_b.check_and_insert(
+            "did:example:agent",
+            "did:example:server",
+            "nonce-x",
+            FAR_FUTURE_RETAIN_UNTIL
+        ),
         Ok(ReplayDecision::Replay),
         "replica B rejects it as a replay — the authoritative tier is shared",
     );
@@ -303,61 +316,18 @@ fn shared_cache_cross_replica_admit_via_a_is_replay_via_b() {
 /// CI opt-in: when `MCP_RE_REQUIRE_LIVE_INFRA` is set to any non-empty value, a
 /// missing backend endpoint HARD-FAILS instead of skipping, so the live lane
 /// cannot be silently scored green.
-#[cfg(any(feature = "redis_replay", feature = "cpstore_etcd"))]
+#[cfg(all(
+    feature = "async_serve",
+    any(feature = "redis_replay", feature = "cpstore_etcd")
+))]
 fn require_live_infra() -> bool {
     std::env::var("MCP_RE_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.is_empty())
 }
 
-#[cfg(feature = "redis_replay")]
-#[test]
-fn cross_core_same_key_admits_exactly_one_fresh_redis() {
-    use mcp_re_proxy::RedisAtomicReplayStore;
-
-    let url = std::env::var("MCP_RE_TEST_REDIS_URL")
-        .ok()
-        .filter(|u| !u.trim().is_empty());
-    let Some(url) = url else {
-        if require_live_infra() {
-            panic!(
-                "MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_REDIS_URL is unavailable; \
-                 the replay-race Redis lane cannot be scored as passing without a live store"
-            );
-        }
-        eprintln!("skipping replay-race Redis lane: MCP_RE_TEST_REDIS_URL unset");
-        return;
-    };
-    let store = RedisAtomicReplayStore::connect(&url).expect("connect Redis replay store");
-    let store: Arc<dyn AtomicReplayStore + Send + Sync> = Arc::new(store);
-    assert_exactly_one_fresh_per_round_salted(store, &unique_salt("redis-sync"));
-}
-
-#[cfg(feature = "cpstore_etcd")]
-#[test]
-fn cross_core_same_key_admits_exactly_one_fresh_etcd() {
-    use mcp_re_proxy::EtcdAtomicReplayStore;
-
-    let endpoint = std::env::var("MCP_RE_TEST_ETCD_URL")
-        .ok()
-        .filter(|u| !u.trim().is_empty());
-    let Some(endpoint) = endpoint else {
-        if require_live_infra() {
-            panic!(
-                "MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_ETCD_URL is unavailable; \
-                 the replay-race etcd lane cannot be scored as passing without a live store"
-            );
-        }
-        eprintln!("skipping replay-race etcd lane: MCP_RE_TEST_ETCD_URL unset");
-        return;
-    };
-    let store = EtcdAtomicReplayStore::connect(&endpoint);
-    let store: Arc<dyn AtomicReplayStore + Send + Sync> = Arc::new(store);
-    assert_exactly_one_fresh_per_round_salted(store, &unique_salt("etcd-sync"));
-}
-
 /// ASYNC Redis lane (ADR-MCPRE-051 §4): the async authoritative tier
 /// (`RedisAsyncAtomicReplayStore`, `SET NX PX` over the tokio async client) admits
-/// EXACTLY ONE `Fresh` under a concurrent race — the same load-bearing property as
-/// the sync lane, proven on the async client the per-core data plane awaits.
+/// EXACTLY ONE `Fresh` under a concurrent race, proven on the async client the
+/// per-core data plane awaits.
 /// Skip-when-absent (hard-fail under `MCP_RE_REQUIRE_LIVE_INFRA`).
 #[cfg(all(feature = "async_serve", feature = "redis_replay"))]
 #[test]
@@ -430,8 +400,7 @@ fn cross_core_same_key_admits_exactly_one_fresh_redis_async() {
 /// ASYNC etcd lane (ADR-MCPRE-051 §4): the CP/linearizable async authoritative tier
 /// (`EtcdAsyncAtomicReplayStore`, a `compare { CREATE_REVISION == 0 }` txn over the
 /// v3 JSON gateway, AWAITED off the per-core runtime) admits EXACTLY ONE `Fresh`
-/// under a concurrent race — the async analogue of the sync etcd lane above, on the
-/// async client the per-core data plane awaits. Skip-when-absent (hard-fail under
+/// under a concurrent race, on the async client the per-core data plane awaits. Skip-when-absent (hard-fail under
 /// `MCP_RE_REQUIRE_LIVE_INFRA`).
 #[cfg(all(feature = "async_serve", feature = "cpstore_etcd"))]
 #[test]
@@ -463,7 +432,8 @@ fn cross_core_same_key_admits_exactly_one_fresh_etcd_async() {
         // `connect` is infallible (it only records the endpoint); a wrong/unreachable
         // gateway surfaces as a per-request `Unavailable`, i.e. ZERO Fresh — never a
         // false Fresh — which the exact count below would catch.
-        let store = Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint));
+        let store =
+            Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint).expect("etcd endpoint"));
         // Salt read ONCE so this lane's keys are disjoint from the sync etcd lane's
         // on this shared live store (see the Redis lane above).
         let salt = unique_salt("etcd-async");
@@ -541,7 +511,6 @@ mod http_profile_full_stack {
     use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
     use mcp_re_proxy::ActorResolver;
     use mcp_re_proxy::DelegatedRotor;
-    use mcp_re_proxy::DelegatedServerSigner;
     use mcp_re_proxy::HttpProfileProxy;
 
     const CLIENT_SEED: [u8; 32] = [11u8; 32];
@@ -615,7 +584,7 @@ mod http_profile_full_stack {
             profile: PROFILE_TAG.into(),
             aud: VERIFIER_AUD.into(),
             audience_hash: VERIFIER_AUD.into(),
-            trust_epoch: "epoch-1".into(),
+            trust_epoch: "epoch-1".parse().expect("epoch base"),
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
             server_subject: "did:example:server".into(),
@@ -631,7 +600,6 @@ mod http_profile_full_stack {
         seed_base: u8,
         now: i64,
     ) -> HttpProfileProxy {
-        let signer = Arc::new(DelegatedServerSigner::new());
         let root = root_key();
         let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
             Some(issue_delegation_credential(&root, h, c))
@@ -641,14 +609,20 @@ mod http_profile_full_stack {
             n = n.wrapping_add(1);
             SigningKey::from_seed_bytes(&[n; 32])
         };
-        let mut rotor = DelegatedRotor::new(
-            DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-            Arc::clone(&signer),
-        );
+        let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+            custody_cfg(),
+            root_key().public_key(),
+            issue,
+            factory,
+        ));
+        let signer = rotor.signer();
         rotor.rotate(now).expect("issue the first delegated key");
-        let inner = Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-        });
+        let inner = Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            |_forwarded: &[u8]| -> Vec<u8> {
+                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        ));
         HttpProfileProxy::new_delegated(
             actor_resolver(),
             audience(),
@@ -726,7 +700,10 @@ mod http_profile_full_stack {
         format!("{tag}-{}-{nanos}", std::process::id())
     }
 
-    #[cfg(any(feature = "redis_replay", feature = "cpstore_etcd"))]
+    #[cfg(all(
+        feature = "async_serve",
+        any(feature = "redis_replay", feature = "cpstore_etcd")
+    ))]
     fn require_live_infra() -> bool {
         std::env::var("MCP_RE_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.trim().is_empty())
     }
@@ -872,7 +849,8 @@ mod http_profile_full_stack {
         };
         rt().block_on(async {
             let now = now();
-            let store = Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint));
+            let store =
+                Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint).expect("etcd endpoint"));
             let proxy = Arc::new(proxy_over(store, 100, now));
             let prefix = unique_prefix("etcd");
             for round in 0..ROUNDS {
@@ -885,7 +863,10 @@ mod http_profile_full_stack {
     /// Read a live-store endpoint from `var`, or decide how to skip: silently
     /// when live infra is optional, by panic when it is required (so an absent
     /// store can never be scored as a pass).
-    #[cfg(any(feature = "redis_replay", feature = "cpstore_etcd"))]
+    #[cfg(all(
+        feature = "async_serve",
+        any(feature = "redis_replay", feature = "cpstore_etcd")
+    ))]
     fn live_url(var: &str, what: &str) -> Option<String> {
         match std::env::var(var).ok().filter(|u| !u.trim().is_empty()) {
             Some(url) => Some(url),

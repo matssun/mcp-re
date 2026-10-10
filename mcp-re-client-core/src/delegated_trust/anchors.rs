@@ -193,3 +193,75 @@ impl RevocationSource for TrustedIssuerSet {
         self.revoked.contains(identifier)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::CompositeResponseTrust;
+    use super::super::StaticRevocationList;
+    use super::*;
+
+    const NOW: i64 = 500;
+    const T: i64 = 1_000;
+    const PAST: i64 = 1_001;
+
+    fn root(kid: &str) -> ResolvedActor {
+        ResolvedActor {
+            identity: mcp_re_http_profile::ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: kid.into(),
+            },
+            verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
+            slot: SignerSlot::Response,
+        }
+    }
+
+    #[test]
+    fn a_revoked_issuer_resolves_nothing_even_while_listed_current() {
+        let set = TrustedIssuerSet::new()
+            .with_current(root("root-a"))
+            .revoke("root-a");
+        assert!(matches!(
+            set.resolve_issuer("root-a", SignerSlot::Response, NOW),
+            ResolverOutcome::NotTrusted
+        ));
+        assert!(!set.trusts("root-a", NOW));
+        let resolve = |k: &str, s: SignerSlot, n: i64| set.resolve_issuer(k, s, n);
+        let empty = StaticRevocationList::new();
+        let composed = CompositeResponseTrust::new(&resolve, &empty);
+        assert!(matches!(
+            composed.resolve_issuer("root-a", SignerSlot::Response, NOW),
+            ResolverOutcome::NotTrusted
+        ));
+    }
+
+    #[test]
+    fn a_current_unrevoked_issuer_resolves_for_the_response_slot_only() {
+        let set = TrustedIssuerSet::new().with_current(root("root-a"));
+        assert!(matches!(
+            set.resolve_issuer("root-a", SignerSlot::Response, NOW),
+            ResolverOutcome::Resolved(_)
+        ));
+        assert!(set.trusts("root-a", NOW));
+        assert!(matches!(
+            set.resolve_issuer("root-a", SignerSlot::Request, NOW),
+            ResolverOutcome::NotTrusted
+        ));
+    }
+
+    #[test]
+    fn retirement_wins_over_a_contradicting_current_entry() {
+        let set = TrustedIssuerSet::new()
+            .with_current(root("root-a"))
+            .with_retired(root("root-a"), T);
+        assert!(set.trusts("root-a", T));
+        assert!(set.resolve_root("root-a", T).is_some());
+        assert!(set.resolve_root("root-a", PAST).is_none());
+        assert!(!set.trusts("root-a", PAST));
+        assert!(matches!(
+            set.resolve_issuer("root-a", SignerSlot::Response, PAST),
+            ResolverOutcome::NotTrusted
+        ));
+    }
+}

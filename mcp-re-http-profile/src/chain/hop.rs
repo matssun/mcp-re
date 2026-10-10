@@ -111,8 +111,13 @@ impl<R: Into<ResolverOutcome>> ChainVerification<'_, R> {
         &self,
         hop: &RetainedHop,
         at: i64,
-    ) -> Result<(crate::evidence::RequestEvidence, HttpRequestEvidenceBlock), IncompleteReason>
-    {
+    ) -> Result<
+        (
+            crate::evidence::RequestRoleEvidence,
+            HttpRequestEvidenceBlock,
+        ),
+        IncompleteReason,
+    > {
         let unverifiable = IncompleteReason::RequestUnverifiable;
         let verified = self
             .verifier
@@ -159,7 +164,7 @@ impl<R: Into<ResolverOutcome>> ChainVerification<'_, R> {
         Ok(HopEvidence {
             request_evidence,
             response_evidence: verified_rsp
-                .signature_facts
+                .signature_facts()
                 .response_signature_base_digest
                 .clone(),
         })

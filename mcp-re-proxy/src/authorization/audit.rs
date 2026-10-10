@@ -81,7 +81,7 @@
 //! saw them, never raw params and never a second representation of the request
 //! (R-COMPOSE, ADR-MCPRE-066 R2 and invariant 7).
 
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_policy::PolicyError;
 
 use super::decision_evidence::DecisionEvidenceIdentity;
@@ -133,7 +133,7 @@ pub struct AuthorizationAttribution {
     pub action: VerifiedAuthorizationAction,
     /// The request evidence handle this decision is attributable to. A role-labelled
     /// digest, so naming the exchange costs no byte of its content.
-    pub attributable_to: RequestEvidence,
+    pub attributable_to: RequestRoleEvidence,
 }
 
 /// Why no permission was established — and, load-bearingly, by which authority.

@@ -31,6 +31,12 @@ use super::STATEMENT_CONTENT_TYPE;
 use super::STATEMENT_SUBJECT;
 
 impl SignedStatement {
+    /// Parse a tagged `COSE_Sign1` into a statement WITHOUT verifying its signature.
+    ///
+    /// Parsing is not acceptance: nothing here is trustworthy until
+    /// [`crate::verify_receipt_offline`] has checked the issuer signature over these exact
+    /// bytes. It is separate so a malformed statement fails as malformed rather than
+    /// as a bad signature.
     pub fn from_cose(bytes: &[u8]) -> Result<Self, HttpProfileError> {
         let sign1 = CoseSign1::from_tagged_slice(bytes)
             .map_err(|_| HttpProfileError::MalformedEvidence("scitt statement cose"))?;
@@ -43,8 +49,14 @@ impl SignedStatement {
             .ok_or(HttpProfileError::MalformedEvidence(
                 "scitt statement payload",
             ))?;
-        let commitment: EvidenceCommitment = ciborium::from_reader(payload)
+        let mut unread = payload;
+        let commitment: EvidenceCommitment = ciborium::from_reader(&mut unread)
             .map_err(|_| HttpProfileError::MalformedEvidence("scitt statement commitment"))?;
+        if !unread.is_empty() {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt statement commitment trailing octets",
+            ));
+        }
         Ok(SignedStatement {
             sig_structure: sig_structure_of(&sign1)?,
             cose: bytes.to_vec(),
@@ -86,11 +98,11 @@ fn checked_claims(sign1: &CoseSign1, issuer_kid: &str) -> Result<i64, HttpProfil
             "scitt statement critical header unsupported",
         ));
     }
-    let issued_at = cwt_claim(&sign1.protected.header, CWT_IAT)
+    let issued_at = cwt_claim(&sign1.protected.header, CWT_IAT)?
         .and_then(|v| v.as_integer())
         .and_then(|i| i64::try_from(i).ok())
         .ok_or(HttpProfileError::MalformedEvidence("scitt statement iat"))?;
-    let iss = cwt_claim(&sign1.protected.header, CWT_ISS)
+    let iss = cwt_claim(&sign1.protected.header, CWT_ISS)?
         .and_then(|v| v.as_text().map(str::to_owned))
         .ok_or(HttpProfileError::MalformedEvidence("scitt statement iss"))?;
     if iss != issuer_kid {
@@ -98,7 +110,7 @@ fn checked_claims(sign1: &CoseSign1, issuer_kid: &str) -> Result<i64, HttpProfil
             "scitt statement iss does not match the signing kid",
         ));
     }
-    let sub = cwt_claim(&sign1.protected.header, CWT_SUB)
+    let sub = cwt_claim(&sign1.protected.header, CWT_SUB)?
         .and_then(|v| v.as_text().map(str::to_owned))
         .ok_or(HttpProfileError::MalformedEvidence("scitt statement sub"))?;
     if sub != STATEMENT_SUBJECT {
@@ -134,16 +146,29 @@ fn sig_structure_of(sign1: &CoseSign1) -> Result<Vec<u8>, HttpProfileError> {
     Ok(sig_structure)
 }
 
-/// Read one CWT claim out of a protected header's claims map.
-fn cwt_claim(header: &coset::Header, key: i64) -> Option<Value> {
-    let claims = header
+/// Read one CWT claim out of a protected header's claims map; a second occurrence of the
+/// claim is refused.
+fn cwt_claim(header: &coset::Header, key: i64) -> Result<Option<Value>, HttpProfileError> {
+    let Some(claims) = header
         .rest
         .iter()
         .find(|(label, _)| *label == Label::Int(HEADER_CWT_CLAIMS))
-        .map(|(_, v)| v)?;
-    claims
-        .as_map()?
+        .map(|(_, v)| v)
+    else {
+        return Ok(None);
+    };
+    let Some(map) = claims.as_map() else {
+        return Ok(None);
+    };
+    let mut matching = map
         .iter()
-        .find(|(k, _)| k.as_integer().is_some_and(|i| i == key.into()))
-        .map(|(_, v)| v.clone())
+        .filter(|(k, _)| k.as_integer().is_some_and(|i| i == key.into()))
+        .map(|(_, v)| v);
+    let first = matching.next();
+    if matching.next().is_some() {
+        return Err(HttpProfileError::MalformedEvidence(
+            "scitt statement duplicate cwt claim",
+        ));
+    }
+    Ok(first.cloned())
 }

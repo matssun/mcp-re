@@ -70,6 +70,11 @@ import { McpReError, McpReSdkError, type Signer, type SignerPolicy } from "./cus
  */
 const MCP_RE_ERROR_CODE = -31001;
 
+// A verified rejection receipt that carried no (or an empty) wire code. The receipt is a
+// genuine refusal whose signature verified, so no `mcp-re.*` token may stand in for the one
+// the peer did not send; the condition is the SDK's own and carries its prefix.
+const NO_PEER_WIRE_CODE = "mcp-re-sdk: verified rejection carried no wire code";
+
 /**
  * Widest delegation clock skew a caller may configure, in seconds.
  *
@@ -1091,14 +1096,12 @@ export class McpReHttpTransport implements Transport {
         if (verified.outcome !== "success") {
           this.#correlation.take(correlationId, now());
           outstanding.delete(correlationId);
-          // An EMPTY wire code is substituted too, not just a missing one. A rejection
-          // receipt whose `error.data` carries no usable token yields `Some("")` from the
-          // core reader, and `??` would let that through as a JSON-RPC error with an empty
-          // message — an error the application cannot act on or log meaningfully. Python's
-          // truthiness check already substituted here; this is the side that diverged.
+          // A missing or EMPTY wire code is the SDK's own condition, not a peer token: an
+          // empty message is an error no application can act on, and an `mcp-re.*` token
+          // would name a statement the peer never made.
           return errorMessage(
             request.id,
-            verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
+            verified.wireCode ? verified.wireCode : NO_PEER_WIRE_CODE,
             rejectionData(verified),
           );
         }

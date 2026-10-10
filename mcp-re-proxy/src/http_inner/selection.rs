@@ -61,11 +61,16 @@ impl HttpInnerPool {
                             )
                             .is_ok()
                     {
-                        // This thread won the Open→HalfOpen transition; it owns the
-                        // trial. (A benign race can admit a second concurrent probe;
-                        // both are trial requests, never harmful.)
-                        b.probe_inflight.store(true, Ordering::Release);
-                        return Some((i, true, b));
+                        // The state transition does not itself own the trial; the slot
+                        // CAS does, so at most one probe per backend is in flight. A
+                        // scanner that took the slot through the HalfOpen arm first
+                        // keeps it, and this backend is skipped.
+                        if b.probe_inflight
+                            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                            .is_ok()
+                        {
+                            return Some((i, true, b));
+                        }
                     }
                 }
                 STATE_HALF_OPEN
@@ -109,5 +114,40 @@ impl HttpInnerPool {
             .enumerate()
             .map(move |(k, b)| (start + k, b))
             .chain(head.iter().enumerate())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::super::BreakerConfig;
+    use super::*;
+
+    #[test]
+    fn an_open_backend_whose_trial_slot_is_already_taken_is_not_probed_twice() {
+        let uri = "http://127.0.0.1:1/mcp".parse().expect("static uri parses");
+        let cooldown = Duration::from_secs(30);
+        let pool = HttpInnerPool::with_breaker_config(
+            vec![uri],
+            Duration::from_secs(1),
+            BreakerConfig {
+                failure_threshold: 1,
+                ejection_duration: cooldown,
+            },
+        )
+        .expect("one backend and a non-zero threshold build a pool");
+
+        let (i, is_probe, _) = pool
+            .select_backend(0)
+            .expect("a closed backend is selected");
+        pool.record_outcome(i, is_probe, false, 0);
+
+        let backend = pool.backends.first().expect("one backend");
+        backend.probe_inflight.store(true, Ordering::Release);
+
+        let after_cooldown = u64::try_from(cooldown.as_nanos()).expect("30s fits u64") + 1;
+        assert!(pool.select_backend(after_cooldown).is_none());
+        assert!(backend.probe_inflight.load(Ordering::Acquire));
     }
 }

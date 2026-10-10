@@ -29,9 +29,9 @@ fn base() -> DeploymentRequest {
         "--bind",
         "127.0.0.1:8443",
         "--audience",
-        "did:example:server-1",
+        "did:web:server-1.mcp.example.com",
         "--server-signer",
-        "did:example:server-1",
+        "did:web:server-1.mcp.example.com",
         "--server-key-id",
         "server-key-1",
         "--signing-key-seed",
@@ -48,6 +48,8 @@ fn base() -> DeploymentRequest {
         "http://127.0.0.1:8080/mcp",
         "--target-uri",
         "https://mcp.example.com/mcp",
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--delegated-trust-epoch",
         "epoch-min",
         "--trust-domain",
@@ -96,18 +98,18 @@ fn refused_at_the_boundary() {
     // meant a configuration naming no inner server was rejected only after trust had read
     // its document and started its workers, by a plane with no stake in the question.
     let mut config = base();
-    config.inner_http_urls.clear();
+    config.inner_http_urls = Vec::new().into();
     let refusal =
         ValidatedDeployment::try_from(config).expect_err("a deployment must name an inner server");
     assert!(refusal.contains("--inner-http-url"), "{refusal}");
 
-    // MCPS-84 / atlas X8 used to be pinned here: an epoch source under a tier that
+    // MCPS-84 used to be pinned here: an epoch source under a tier that
     // consumes none, which the deployment believed was an active networked invalidation.
     // It is gone because only the pushing posture has a field for one — the mutation cannot
     // be written (ADR-MCPRE-067 §7). The argv form is refused by `cli::currency_flags`.
 
-    // Atlas §C.3. `--key-source file` with no seed is the `FileSeed` state missing the one
-    // parameter it cannot start without: nothing else in that state supplies the
+    // The `Custody` machine. `--key-source file` with no seed is the `FileSeed` state missing
+    // the one parameter it cannot start without: nothing else in that state supplies the
     // response-signing key.
     let mut config = base();
     config.response_signing.source = mcp_re_proxy::deployment_request::SigningSourceRequest::File(
@@ -118,7 +120,7 @@ fn refused_at_the_boundary() {
     let refusal = ValidatedDeployment::try_from(config).expect_err("a custody state with no key");
     assert!(refusal.contains("--signing-key-seed"), "{refusal}");
 
-    // Atlas §C.1, the Replay machine's forbidden and required columns. A CP-store
+    // The Replay machine's forbidden and required columns. A CP-store
     // endpoint on a state whose store is Redis; and a deployment declaring no durability
     // tier, when the tier IS the horizontal replay-safety claim and the only selector.
     for (name, mutate) in [

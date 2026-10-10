@@ -47,7 +47,7 @@ pub(crate) fn read_outcome(
     response: &HttpResponse,
     request_id: Value,
 ) -> Result<ProxyResponse, ProxyError> {
-    match verified.outcome {
+    match verified.outcome() {
         DelegatedOutcome::Success => {
             let plain = plain_response_from_verified(&response.body, &request_id)?;
             // Classify BEFORE handing the reply over. A verified signature says
@@ -92,16 +92,41 @@ pub(crate) fn read_outcome(
             execution,
         } => Ok(ProxyResponse {
             plain_response: plain_error_from_rejection(
-                &request_id,
+                Some(&request_id),
                 wire_code.as_deref(),
-                &execution,
+                execution,
             ),
             kind: ResponseKind::VerifiedRejection {
-                wire_code,
-                bound: verified.verified.is_bound(),
-                execution,
+                wire_code: wire_code.clone(),
+                bound: verified.verified().is_bound(),
+                execution: execution.clone(),
             },
         }),
+    }
+}
+
+/// A verified rejection receipt for a one-way notification. A notification is answered
+/// by a 202 or a rejection receipt, so a success reply here fails closed.
+pub(crate) fn read_notification_rejection(
+    verified: mcp_re_client_core::VerifiedDelegatedResponse,
+) -> Result<ProxyResponse, ProxyError> {
+    match verified.outcome() {
+        DelegatedOutcome::Rejection {
+            wire_code,
+            execution,
+        } => Ok(ProxyResponse {
+            plain_response: plain_error_from_rejection(None, wire_code.as_deref(), execution),
+            kind: ResponseKind::RejectedNotification {
+                wire_code: wire_code.clone(),
+                bound: verified.verified().is_bound(),
+                execution: execution.clone(),
+            },
+        }),
+        DelegatedOutcome::Success => Err(ProxyError::FailedClosed(
+            mcp_re_client_core::HttpProfileError::MalformedEvidence(
+                "a notification is answered by a 202 or a rejection receipt, never a reply",
+            ),
+        )),
     }
 }
 
@@ -201,12 +226,13 @@ mod tests {
                 profile: PROFILE_TAG.into(),
                 aud: AUD.into(),
                 audience_hash: AUD_SCOPE.into(),
-                trust_epoch: EPOCH.into(),
+                trust_epoch: EPOCH.parse().expect("epoch base"),
                 server_role: "server".into(),
                 server_trust_domain: "example.com".into(),
                 server_subject: "did:example:server".into(),
                 window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
             },
+            root_key().public_key(),
             issue,
             factory,
         )
@@ -264,7 +290,7 @@ mod tests {
             body: body.to_vec(),
         };
         custody
-            .sign_response(NOW, &mut response, signed.request(), signed.evidence())
+            .sign_response(NOW, &mut response, signed.request())
             .expect("server delegated-signs the reply");
         let revoked = StaticRevocationList::new();
         let resolve = resolver();
@@ -379,15 +405,14 @@ mod tests {
         let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let response = mcp_re_http_profile::build_delegated_rejection(
             signed.request(),
-            signed.evidence(),
             &reason,
             409,
-            snapshot.server_signer(),
-            snapshot.credential(),
-            snapshot.key(),
-            snapshot.delegated_kid(),
-            NOW,
-            NOW + 300,
+            &mcp_re_http_profile::custody::SigningWindow::over(
+                std::sync::Arc::new(snapshot.clone()),
+                NOW,
+                300,
+            )
+            .expect("a live signing window"),
         )
         .expect("the boundary builds a bound delegated rejection");
         let revoked = StaticRevocationList::new();

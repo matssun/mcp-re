@@ -1,6 +1,6 @@
 {
   "schema": "mcp-re-scitt-conformance/v1",
-  "corpus_digest": "fb251a1c6c7927582977d5ad909e8b8df93a41e20517a978a4141b341e4580c7",
+  "corpus_digest": "287f369cec61008aa09d5fb0d4ef8dc14a76aaef7cbd072008b512122544c3e3",
   "fixtures": [
     {
       "file": "s01_complete_record.json",
@@ -8,7 +8,7 @@
     },
     {
       "file": "s02_incomplete_record.json",
-      "sha256": "d09d84db10ec64b97e9d7e02173673f6f62c4bb9fbebbe0942e43c507ba82c12"
+      "sha256": "1d9e4bb5e998ee41e954e6f7db761902982b3be8836800cae45ae58d90ef466e"
     },
     {
       "file": "s03_tampered_payload.json",
@@ -16,7 +16,7 @@
     },
     {
       "file": "s04_receipt_for_another_statement.json",
-      "sha256": "c149a7e6ea054eea0905dc25bf7e28e62d3cd455afa3ea53f7f882aa6c72acd8"
+      "sha256": "a9e4c6920fa70f0aa814b6f3fd7a859a6fd4a6b922e9d8686648302482c64796"
     },
     {
       "file": "s05_untrusted_issuer.json",

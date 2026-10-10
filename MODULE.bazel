@@ -285,6 +285,7 @@ crate.spec(
 crate.spec(
     package = "serde_json",
     version = "1.0",
+    features = ["raw_value"],
     repositories = ["crates_mcp_re"],
 )
 crate.spec(
@@ -321,6 +322,16 @@ crate.spec(
     version = "0.26",
     features = ["ring", "tls12"],
     default_features = False,
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "tower-service",
+    version = "0.3",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "rustls-native-certs",
+    version = "0.8",
     repositories = ["crates_mcp_re"],
 )
 crate.spec(

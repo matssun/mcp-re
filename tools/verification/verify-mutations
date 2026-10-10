@@ -40,6 +40,7 @@ import argparse
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import time
 import tomllib
@@ -52,6 +53,7 @@ from _ecosystems import (  # noqa: E402
     RUST,
     TYPESCRIPT,
     ReportUnreadable,
+    parse_libtest_logfile,
     parse_results,
     test_argv,
     unit_ecosystem,
@@ -508,7 +510,11 @@ def run_battery(
             # the one statement of how a label is run, and a second implementation of it is
             # how the two lanes come to disagree about one declared symbol. Bazel runs in
             # the SCRATCH workspace, so it builds the weakened source.
-            argv = test_argv(eco, package, target, grouped[target], runtime)
+            # The results are read from libtest's own record, not from the stream Bazel
+            # merges stdout and stderr into -- see `test_argv`. The scratch tree is
+            # discarded with its directory.
+            libtest_log = Path(tempfile.mkdtemp(prefix="libtest-", dir=tree.parent)).resolve() / "results"
+            argv = test_argv(eco, package, target, grouped[target], runtime, libtest_log)
             cwd = tree
             env = _env()
         else:
@@ -557,7 +563,14 @@ def run_battery(
             report = vitest_report_path(runtime, target)
             combined = report.read_text() if report.exists() else combined
         try:
-            observed = parse_results(eco, combined)
+            if eco is RUST and any(a.startswith("--test_arg=--logfile=") for a in argv):
+                # Absent file = nothing reported: every declared control reads as never
+                # having run, which the adjudicator fails rather than satisfies.
+                observed = parse_libtest_logfile(
+                    libtest_log.read_text() if libtest_log.exists() else ""
+                )
+            else:
+                observed = parse_results(eco, combined)
         except ReportUnreadable:
             # The runner collected cases and this lane understood none of them. That is the
             # lane failing to read a report, NOT a battery that went red, and reporting it

@@ -44,13 +44,16 @@ from _manifest import (  # noqa: E402
 )
 from _premise import (  # noqa: E402
     EVENT_KINDS,
+    MODEL_REGISTRATION,
     PREDICATES,
     PREMISE_CLASSES,
     STALE_CAUSE,
     class_problem,
     has_come_true,
     is_live,
+    is_model_registration,
     open_obligations,
+    registration_problems,
     roots_reaching_premises,
 )
 
@@ -112,6 +115,64 @@ def test_an_evidence_class_is_not_a_premise_class():
 
 def test_the_three_classes_are_the_three_questions():
     assert PREMISE_CLASSES == ("assumed", "external-boundary", "review-obligation")
+
+
+# --- model registrations (r12 Ruling 39 §4) ---------------------------------------------
+
+
+def _registration(**overrides) -> dict:
+    fields = {"premise_class": MODEL_REGISTRATION, "interpreted_by": "ASM-GIVER"}
+    fields.update(overrides)
+    return _entry(**fields)
+
+
+def test_a_model_registration_names_the_premise_that_interprets_it():
+    """A registration adds no axiom; its meaning comes from one premise. Without the name, the
+    trust the registered symbol carries would be attributed to nothing."""
+    _expect_ok(_registration())
+    _expect(_registration(interpreted_by=None), "requires `interpreted_by`")
+
+
+def test_a_model_registration_has_no_owner_and_no_debt():
+    _expect(_registration(boundary_owner=OWNER), "trusts nothing of its own")
+
+
+def test_a_premise_with_trust_of_its_own_interprets_nothing():
+    _expect(_entry(interpreted_by="ASM-0018"), "`interpreted_by` on a 'assumed' premise")
+
+
+def test_a_registration_its_interpreter_does_not_reach_is_refused():
+    """Accounting drops a registration from every closure because its interpreter is there
+    instead. A registration on a unit the interpreter does not reach would leave that unit's
+    closure short by exactly the trust the symbol carries."""
+    giver = _entry(id="ASM-GIVER", scope=["unit://x", "boundary://b"])
+    reached = _registration(id="ASM-REG", scope=["unit://x", "boundary://b"])
+    beyond = _registration(id="ASM-REG", scope=["unit://x", "unit://y", "boundary://b"])
+    assert registration_problems({"assumption": [giver, reached]}) == []
+    problems = registration_problems({"assumption": [giver, beyond]})
+    assert problems and "unit://y" in problems[0], problems
+    withdrawn_giver = _entry(id="ASM-GIVER", scope=[])
+    assert registration_problems({"assumption": [withdrawn_giver, reached]})
+    assert registration_problems({"assumption": [_registration(id="ASM-GIVER"), reached]})
+
+
+def test_the_live_registrations_are_interpreted_by_the_ruled_premises():
+    assert ENTRIES["ASM-0074"]["interpreted_by"] == "ASM-0018"
+    assert ENTRIES["ASM-0075"]["interpreted_by"] == "ASM-0073"
+    assert registration_problems(REGISTRY) == []
+
+
+def test_a_registration_reaches_no_root():
+    """Ruling 39 §4: a registration must not inflate a load-bearing count."""
+    from _theorems import load_theorems
+
+    theorems = load_theorems(
+        {unit["id"] for unit in VERIFICATION.get("unit", [])},
+        [e for e in VERIFICATION.get("edge", []) if e.get("kind") == "PROOF_DEPENDENCY"],
+    )
+    reach = roots_reaching_premises(theorems, VERIFICATION, REGISTRY)
+    reached = {asm for rows in reach.values() for ids in rows.values() for asm in ids}
+    assert not (reached & {"ASM-0074", "ASM-0075"}), sorted(reached)
 
 
 # --- external boundary (C2) ------------------------------------------------------------
@@ -266,13 +327,20 @@ def test_every_live_premise_is_typed_and_every_withdrawn_one_is_not():
 def test_the_estate_is_fully_typed_and_the_split_is_the_measured_one():
     counts = {name: 0 for name in PREMISE_CLASSES}
     withdrawn = 0
+    registrations = set()
     for entry in REGISTRY["assumption"]:
-        if is_live(entry):
-            counts[entry["premise_class"]] += 1
-        else:
+        if not is_live(entry):
             withdrawn += 1
-    assert sum(counts.values()) + withdrawn == 53, counts
-    assert withdrawn == 4, "ASM-0015, ASM-0022, ASM-0042 and ASM-0043 trust nothing"
+        elif is_model_registration(entry):
+            registrations.add(entry["id"])
+        else:
+            counts[entry["premise_class"]] += 1
+    assert sum(counts.values()) + len(registrations) + withdrawn == 85, counts
+    assert registrations == {"ASM-0074", "ASM-0075"}, sorted(registrations)
+    assert withdrawn == 12, (
+        "ASM-0007, ASM-0008, ASM-0015, ASM-0022, ASM-0025, ASM-0026, ASM-0042, ASM-0043, "
+        "ASM-0055, ASM-0062, ASM-0063 and ASM-0064 trust nothing"
+    )
     assert all(count for count in counts.values()), (
         f"a class nothing uses is a class nobody had to think about: {counts}"
     )
@@ -280,7 +348,7 @@ def test_the_estate_is_fully_typed_and_the_split_is_the_measured_one():
 
 def test_the_schema_version_is_enforced():
     """A registry written against schema 1 loading under schema-2 tooling would be read as a
-    fully typed estate with 53 untyped records in it."""
+    fully typed estate with 72 untyped records in it."""
     doc = tomllib.loads(ASSUMPTIONS_TOML.read_text(encoding="utf-8"))
     assert doc["schema_version"] == ASSUMPTIONS_SCHEMA_VERSION
 

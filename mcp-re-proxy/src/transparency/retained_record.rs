@@ -54,7 +54,7 @@ pub(super) struct RetainedHopRecord {
     response: RetainedResponse,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RetainedRequest {
     method: String,
@@ -63,12 +63,38 @@ pub(super) struct RetainedRequest {
     body_b64: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RetainedResponse {
     status: u16,
     headers: Vec<(String, String)>,
     body_b64: String,
+}
+
+/// The names of a retained message's headers; their values are credentials by design.
+fn header_names(headers: &[(String, String)]) -> Vec<&str> {
+    headers.iter().map(|(name, _)| name.as_str()).collect()
+}
+
+impl std::fmt::Debug for RetainedRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RetainedRequest")
+            .field("method", &self.method)
+            .field("target_uri", &self.target_uri)
+            .field("header_names", &header_names(&self.headers))
+            .field("body_len", &self.body_b64.len())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for RetainedResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RetainedResponse")
+            .field("status", &self.status)
+            .field("header_names", &header_names(&self.headers))
+            .field("body_len", &self.body_b64.len())
+            .finish()
+    }
 }
 
 /// The headers a retained message keeps: the ones its own signature covers, plus the two
@@ -305,5 +331,31 @@ mod tests {
         let record = RetainedHopRecord::of(&request(), &response());
         let json: serde_json::Value = serde_json::to_value(&record).expect("serializes");
         assert_eq!(json["schema"].as_str(), Some(RETAINED_HOP_SCHEMA));
+    }
+
+    #[test]
+    fn a_retained_record_never_renders_a_covered_credential_value() {
+        let mut req = request();
+        req.headers[0].1 = format!(
+            "{}=(\"@method\" \"authorization\" \"dpop\")",
+            mcp_re_http_profile::REQUEST_LABEL
+        );
+        req.headers.push((
+            "authorization".to_owned(),
+            "Bearer live-bearer-token-7f3a".to_owned(),
+        ));
+        req.headers
+            .push(("dpop".to_owned(), "live-dpop-proof-9c1e".to_owned()));
+        let record = RetainedHopRecord::of(&req, &response());
+        let rendered = format!("{record:?}");
+        assert!(rendered.contains("authorization"));
+        assert!(!rendered.contains("live-bearer-token-7f3a"));
+        assert!(!rendered.contains("live-dpop-proof-9c1e"));
+        let hop = record.clone().into_hop().expect("record reads back");
+        assert!(hop
+            .request
+            .headers
+            .iter()
+            .any(|(n, v)| n == "authorization" && v == "Bearer live-bearer-token-7f3a"));
     }
 }

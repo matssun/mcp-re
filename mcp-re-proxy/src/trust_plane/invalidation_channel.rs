@@ -7,21 +7,18 @@
 //! `T`*; this module owns the event vocabulary and the source contract — including the
 //! health signal, which is the input that fallback rule reads.
 //!
-//! The reference channel here is INERT: it delivers no external pushes, so a deployment
-//! wiring nothing runs Tier 3 at its honest bounded-`T` fallback. Its publishers exist to
-//! drive it, and a networked source (the MCPS-84 Redis trust-epoch reader) replaces it
-//! without either half changing.
-
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::sync::Mutex;
+//! The reference channel here is INERT: nothing can publish to it, so a deployment wiring
+//! no networked source runs Tier 3 at its honest bounded-`T` fallback, and the channel
+//! reports itself not operational. A networked source (the MCPS-84 Redis trust-epoch
+//! reader) takes its place without either half changing.
 
 /// One pushed invalidation event. A real channel would carry sequence/ordering
 /// metadata; the reference events are just the invalidation to apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvalidationEvent {
-    /// Evict one `(signer, key_id)` binding — a precise, per-key revocation (the
-    /// in-process reference channel's granularity).
+    /// Evict one `(signer, key_id)` binding — a precise, per-key revocation, for a
+    /// channel that knows which key changed. The in-tree trust-epoch source does not,
+    /// and emits only [`FlushAll`](Self::FlushAll).
     Evict {
         /// The signer whose binding is revoked.
         signer: String,
@@ -48,7 +45,7 @@ pub enum InvalidationEvent {
 ///
 /// The cache drains pending events before each lookup and evicts the named entries. The
 /// trait makes no delivery or ordering guarantee, which is exactly why the reference Tier 3
-/// is "near-zero + bounded fallback" rather than zero-window.
+/// is "re-read bound + bounded fallback" rather than zero-window.
 ///
 /// # `is_healthy` reports; it does not gate
 ///
@@ -60,7 +57,7 @@ pub enum InvalidationEvent {
 /// was down.
 ///
 /// Reading it as a gate is worse than useless: it suggests a control that would have to
-/// exist for the near-zero claim to be honest, and none does. The witness is worth keeping
+/// exist for the push claim to be honest, and none does. The witness is worth keeping
 /// — it is the difference between "no events arrived" and "nothing could have arrived", and
 /// a reader with only `drain_pending` cannot tell those apart — but it is evidence for an
 /// operator, not an input to a decision.
@@ -79,82 +76,103 @@ pub trait InvalidationChannel {
     fn is_healthy(&self) -> bool;
 }
 
-/// In-memory reference [`InvalidationChannel`]: a queue of pending events plus a
-/// settable health flag, for deterministic unit tests and single-process
-/// deployments. It does NOT prove reliable ordering/delivery across nodes (it is
-/// in-process), which is precisely why Tier 3 over this channel surfaces the
-/// near-zero+bounded-fallback guarantee, never zero-window.
-#[derive(Clone)]
-pub struct InMemoryInvalidationChannel {
-    pending: Arc<Mutex<VecDeque<InvalidationEvent>>>,
-    healthy: Arc<Mutex<bool>>,
-}
+/// The channel a Tier-3 deployment gets when it wires no networked source: nothing can
+/// publish to it, so it never delivers an event and never reports itself operational.
+///
+/// The deployment is legal and runs at the bounded-`T` fallback either way; what this type
+/// owns is the truthfulness of the witness. `is_healthy` answers "could a push arrive", and
+/// for a channel nobody can publish to the answer is no — the distinction the trait doc
+/// draws between "no events arrived" and "nothing could have arrived".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct InertInvalidationChannel;
 
-impl Default for InMemoryInvalidationChannel {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl InMemoryInvalidationChannel {
-    // The three publishers below are exercised only by this module's own tests, and that is
-    // question 8 of the ADR-MCPRE-061 §8 census — *what public interface exists only
-    // because tests need it* — answered by narrowing rather than by widening: each stays
-    // `pub(super)`, and the attribute states that a production build has no caller. They
-    // are the drive side of the inert reference channel, which is exactly what a networked
-    // event source would replace.
-    /// A fresh, healthy channel with no pending events.
-    pub fn new() -> Self {
-        InMemoryInvalidationChannel {
-            pending: Arc::new(Mutex::new(VecDeque::new())),
-            healthy: Arc::new(Mutex::new(true)),
-        }
-    }
-
-    /// Push a revocation event for `(signer, key_id)` onto the channel. The next
-    /// drain (and thus the next cache lookup) evicts the affected entry.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn push_revocation(&self, signer: &str, key_id: &str) {
-        if let Ok(mut q) = self.pending.lock() {
-            q.push_back(InvalidationEvent::Evict {
-                signer: signer.to_string(),
-                key_id: key_id.to_string(),
-            });
-        }
-    }
-
-    /// Push a coarse flush-all invalidation (invalidate every cached binding on the
-    /// next drain). The networked-source analogue of a trust-epoch advance.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn push_flush_all(&self) {
-        if let Ok(mut q) = self.pending.lock() {
-            q.push_back(InvalidationEvent::FlushAll);
-        }
-    }
-
-    /// Simulate a channel health transition (heartbeat lost / restored). When
-    /// unhealthy, pushed events may be silently lost — the cache must fall back to
-    /// bounded `T`.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn set_healthy(&self, healthy: bool) {
-        if let Ok(mut h) = self.healthy.lock() {
-            *h = healthy;
-        }
-    }
-}
-
-impl InvalidationChannel for InMemoryInvalidationChannel {
+impl InvalidationChannel for InertInvalidationChannel {
     fn drain_pending(&self) -> Vec<InvalidationEvent> {
-        // An unhealthy channel may have lost events; deliver only what is queued
-        // (the test of honesty is that the cache still falls back to T, not that
-        // an unhealthy channel magically delivers).
-        match self.pending.lock() {
-            Ok(mut q) => q.drain(..).collect(),
-            Err(_) => Vec::new(),
-        }
+        Vec::new()
     }
 
     fn is_healthy(&self) -> bool {
-        self.healthy.lock().map(|h| *h).unwrap_or(false)
+        false
+    }
+}
+
+/// A drivable channel for the Tier-3 cache's own tests: a queue of pending events plus a
+/// settable health flag.
+#[cfg(test)]
+pub(super) mod drivable {
+    use super::InvalidationChannel;
+    use super::InvalidationEvent;
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    /// An in-process channel whose events and health the test publishes.
+    #[derive(Clone)]
+    pub(in crate::trust_plane) struct InMemoryInvalidationChannel {
+        pending: Arc<Mutex<VecDeque<InvalidationEvent>>>,
+        healthy: Arc<Mutex<bool>>,
+    }
+
+    impl InMemoryInvalidationChannel {
+        /// A fresh, healthy channel with no pending events.
+        pub(in crate::trust_plane) fn new() -> Self {
+            InMemoryInvalidationChannel {
+                pending: Arc::new(Mutex::new(VecDeque::new())),
+                healthy: Arc::new(Mutex::new(true)),
+            }
+        }
+
+        /// Push a revocation event for `(signer, key_id)`; the next drain evicts it.
+        pub(in crate::trust_plane) fn push_revocation(&self, signer: &str, key_id: &str) {
+            if let Ok(mut q) = self.pending.lock() {
+                q.push_back(InvalidationEvent::Evict {
+                    signer: signer.to_string(),
+                    key_id: key_id.to_string(),
+                });
+            }
+        }
+
+        /// Push a coarse flush-all invalidation, the analogue of a trust-epoch advance.
+        pub(in crate::trust_plane) fn push_flush_all(&self) {
+            if let Ok(mut q) = self.pending.lock() {
+                q.push_back(InvalidationEvent::FlushAll);
+            }
+        }
+
+        /// Simulate a health transition (heartbeat lost / restored).
+        pub(in crate::trust_plane) fn set_healthy(&self, healthy: bool) {
+            if let Ok(mut h) = self.healthy.lock() {
+                *h = healthy;
+            }
+        }
+    }
+
+    impl InvalidationChannel for InMemoryInvalidationChannel {
+        fn drain_pending(&self) -> Vec<InvalidationEvent> {
+            match self.pending.lock() {
+                Ok(mut q) => q.drain(..).collect(),
+                Err(_) => Vec::new(),
+            }
+        }
+
+        fn is_healthy(&self) -> bool {
+            self.healthy.lock().map(|h| *h).unwrap_or(false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InertInvalidationChannel;
+    use super::InvalidationChannel;
+
+    #[test]
+    fn an_inert_channel_never_reports_itself_operational() {
+        assert!(!InertInvalidationChannel.is_healthy());
+    }
+
+    #[test]
+    fn an_inert_channel_delivers_nothing() {
+        assert!(InertInvalidationChannel.drain_pending().is_empty());
     }
 }

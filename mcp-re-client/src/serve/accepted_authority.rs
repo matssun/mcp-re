@@ -39,8 +39,11 @@ use super::guards::is_loopback_host;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcceptedHttpAuthority {
     /// The listener's own address, when it is not on loopback. `None` means the loopback
-    /// literals are the whole set.
+    /// literals are the whole set. Those literals are admitted bare or at the listener's
+    /// own port and at no other port, whether or not the listener is exposed.
     exposed: Option<SocketAddr>,
+    /// The port the listener is bound to.
+    port: u16,
 }
 
 impl AcceptedHttpAuthority {
@@ -48,18 +51,20 @@ impl AcceptedHttpAuthority {
     pub fn for_listener(scope: &BindScope) -> Self {
         Self {
             exposed: scope.exposed_authority(),
+            port: scope.listen_address().port(),
         }
     }
 
     /// Whether a `Host` header names this listener.
     ///
-    /// The loopback literals always, because that is how the local MCP clients spell the
-    /// sidecar and no page can claim one as its own name. An exposed listener additionally
-    /// answers to its own address — and to nothing else, which is the property a
-    /// rebound name fails on a deployment that binds off-host just as it does on loopback.
+    /// The loopback literals, bare or at the listener's own port, because that is how the
+    /// local MCP clients spell the sidecar and no page can claim one as its own name. A
+    /// loopback literal at another port names another listener. An exposed listener
+    /// additionally answers to its own address — and to nothing else, which is the property
+    /// a rebound name fails on a deployment that binds off-host just as it does on loopback.
     pub fn admits(&self, host: &str) -> bool {
         if is_loopback_host(host) {
-            return true;
+            return loopback_port_admitted(host, self.port);
         }
         let Some(address) = self.exposed else {
             return false;
@@ -70,6 +75,16 @@ impl AcceptedHttpAuthority {
         host.eq_ignore_ascii_case(&address.to_string())
             || host.eq_ignore_ascii_case(&address.ip().to_string())
             || bracketed_ipv6(&address).is_some_and(|bare| host.eq_ignore_ascii_case(&bare))
+    }
+}
+
+/// Whether a loopback `Host` carries no port or the listener's own.
+fn loopback_port_admitted(host: &str, port: u16) -> bool {
+    match host.rsplit_once(':') {
+        Some((_, suffix)) if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) => {
+            suffix.parse::<u16>() == Ok(port)
+        }
+        _ => true,
     }
 }
 
@@ -84,6 +99,7 @@ fn bracketed_ipv6(address: &SocketAddr) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::LocalConfig;
 
     fn scope(text: &str, declared: bool) -> BindScope {
         BindScope::decide(text.parse().expect("an address"), declared).expect("a legal bind")
@@ -145,5 +161,46 @@ mod tests {
             assert!(authority.admits(host), "{host} names this listener");
         }
         assert!(!authority.admits("[2001:db8::2]"));
+    }
+
+    #[test]
+    fn a_loopback_name_at_another_port_names_another_listener() {
+        let loopback = AcceptedHttpAuthority::for_listener(&scope("127.0.0.1:8640", false));
+        for host in [
+            "127.0.0.1:9999",
+            "localhost:1",
+            "[::1]:22",
+            "127.5.6.7:9999",
+            "127.0.0.1:99999",
+        ] {
+            assert!(!loopback.admits(host), "{host} names another listener");
+        }
+        for host in [
+            "127.0.0.1:8640",
+            "localhost:8640",
+            "[::1]:8640",
+            "127.0.0.1",
+        ] {
+            assert!(loopback.admits(host), "{host} names this listener");
+        }
+        let exposed = AcceptedHttpAuthority::for_listener(&scope("198.51.100.7:8640", true));
+        assert!(!exposed.admits("127.0.0.1:9999"));
+    }
+
+    #[test]
+    fn a_port_zero_bind_is_answered_at_the_port_it_was_given() {
+        let bound = crate::serve::bind(&LocalConfig {
+            bind: "127.0.0.1:0".parse().expect("an address"),
+            allow_non_loopback: false,
+            request_lifetime_secs: 60,
+            default_route: None,
+            max_in_flight: 8,
+        })
+        .expect("an ephemeral loopback bind");
+        let port = bound.local_addr().port();
+        let other = if port == 8640 { 8641 } else { 8640 };
+        let (_listener, authority) = bound.into_parts();
+        assert!(authority.admits(&format!("127.0.0.1:{port}")));
+        assert!(!authority.admits(&format!("127.0.0.1:{other}")));
     }
 }

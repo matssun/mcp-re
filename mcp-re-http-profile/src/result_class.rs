@@ -65,12 +65,18 @@ pub enum ResultTypeClass {
 /// error carries `error` instead — so it classifies as [`Complete`]: the exchange
 /// ends, and nothing continues from it.
 ///
+/// A `result` member that is present but not an object cannot be walked, so it is
+/// [`Unrecognized`](ResultTypeClass::Unrecognized).
+///
 /// [`Complete`]: ResultTypeClass::Complete
 pub fn classify_result_type(result: Option<&Value>) -> ResultTypeClass {
     let Some(result) = result else {
         return ResultTypeClass::Complete;
     };
-    match result.get("resultType") {
+    let Some(object) = result.as_object() else {
+        return ResultTypeClass::Unrecognized;
+    };
+    match object.get("resultType") {
         None => ResultTypeClass::Complete,
         Some(Value::String(t)) if t == INPUT_REQUIRED_RESULT_TYPE => ResultTypeClass::InputRequired,
         Some(Value::String(t)) if t == COMPLETE_RESULT_TYPE => ResultTypeClass::Complete,
@@ -79,16 +85,6 @@ pub fn classify_result_type(result: Option<&Value>) -> ResultTypeClass {
         // same refusal.
         Some(_) => ResultTypeClass::Unrecognized,
     }
-}
-
-/// Whether a (verified) `result` member is an `InputRequiredResult`.
-///
-/// A boolean cannot carry the third outcome, so this answers only the question it
-/// is named for. Readers that must distinguish "terminal" from "unclassifiable"
-/// call [`classify_result_type`]; readers acting on a live exchange call
-/// [`input_required_state`], which fails closed on both middle grounds.
-pub fn is_input_required(result: Option<&Value>) -> bool {
-    classify_result_type(result) == ResultTypeClass::InputRequired
 }
 
 /// The continuation state a VERIFIED response body carries: `Some(state)` for an
@@ -104,21 +100,28 @@ pub fn is_input_required(result: Option<&Value>) -> bool {
 /// answer leg, and handed an elicitation to the application as a completed tool
 /// result.
 ///
-/// Two shapes are refused rather than resolved:
+/// Three shapes are refused rather than resolved:
 ///
 /// - a message declaring itself non-terminal while withholding the state its
 ///   continuation needs — malformed, and the only safe reading is to say so;
 /// - a `resultType` this reader does not recognize (MCP 2026-07-28: unrecognized
 ///   MUST be considered invalid). Reading it as terminal would end the exchange on
 ///   a message whose continuation semantics are unknown — the same silent
-///   completion, arrived at from the other direction.
+///   completion, arrived at from the other direction;
+/// - a body that is not one JSON-RPC response object (a batch array or a scalar),
+///   which has no `result` member to classify and must not read as terminal.
 ///
-/// Call ONLY on bytes whose signature and `content-digest` have already verified:
-/// this reads protected content, it does not establish it.
+/// This reads content and establishes nothing about who produced it: a signer classifies
+/// the reply it is about to sign, and a client acting on a live exchange reads the answer
+/// from `mcp_re_client_core::VerifiedDelegatedResponse::continuation_state`, which only
+/// verification constructs.
 pub fn input_required_state(body: &[u8]) -> Result<Option<String>, HttpProfileError> {
     let parsed: Value = serde_json::from_slice(body)
         .map_err(|_| HttpProfileError::MalformedEvidence("response body"))?;
-    input_required_state_of(parsed.get("result"))
+    let Some(object) = parsed.as_object() else {
+        return Err(HttpProfileError::MalformedEvidence("response body"));
+    };
+    input_required_state_of(object.get("result"))
 }
 
 /// The same three-way contract, over an ALREADY-PARSED `result` member.
@@ -289,12 +292,11 @@ mod tests {
 
     /// The negative control for the whole change: if `Unrecognized` were folded
     /// back into `Complete`, an extension's non-terminal result would reach a
-    /// caller as a finished call. `is_input_required` says false for it — which is
-    /// true and insufficient — so nothing may infer "terminal" from that alone.
+    /// caller as a finished call. The classifier reports `Unrecognized` and the
+    /// live reader refuses it, so nothing may infer "terminal" from either face.
     #[test]
-    fn is_input_required_is_false_for_unrecognized_but_that_is_not_terminal() {
+    fn an_unrecognized_result_type_is_not_terminal_on_either_face() {
         let ext = serde_json::json!({ "resultType": "com.example/needs_more" });
-        assert!(!is_input_required(Some(&ext)));
         assert_eq!(
             classify_result_type(Some(&ext)),
             ResultTypeClass::Unrecognized
@@ -304,5 +306,50 @@ mod tests {
                 .expect_err("a live reader must refuse it"),
             HttpProfileError::UnrecognizedResultType
         );
+    }
+
+    /// A present `result` that is not an object has no `resultType` to read; it must
+    /// not fall through the member lookup as "absent, therefore complete".
+    #[test]
+    fn a_non_object_result_member_is_unrecognized_not_terminal() {
+        for v in [
+            serde_json::json!("input_required"),
+            serde_json::json!(42),
+            serde_json::json!(true),
+            serde_json::json!(null),
+            serde_json::json!([]),
+            serde_json::json!([{ "resultType": "input_required", "requestState": "s" }]),
+        ] {
+            assert_eq!(
+                classify_result_type(Some(&v)),
+                ResultTypeClass::Unrecognized,
+                "{v} is not an object"
+            );
+            let b = serde_json::json!({ "result": v }).to_string();
+            assert_eq!(
+                input_required_state(b.as_bytes()).expect_err("a live reader must refuse it"),
+                HttpProfileError::UnrecognizedResultType,
+                "{b} must not be reported as a terminal reply"
+            );
+        }
+    }
+
+    /// A batch array or scalar has no `result` member; reading that as absent would
+    /// resolve a continuation inside a batch to terminal.
+    #[test]
+    fn a_body_that_is_not_one_response_object_is_refused_not_read_as_terminal() {
+        for other in [
+            "[]",
+            r#"[{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required","requestState":"s"}}]"#,
+            r#""x""#,
+            "42",
+            "null",
+        ] {
+            assert_eq!(
+                input_required_state(&body(other)).expect_err("not one response object"),
+                HttpProfileError::MalformedEvidence("response body"),
+                "{other} must not be reported as a terminal reply"
+            );
+        }
     }
 }

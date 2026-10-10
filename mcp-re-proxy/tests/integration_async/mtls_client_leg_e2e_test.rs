@@ -44,6 +44,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve;
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ActorResolver;
@@ -110,6 +111,22 @@ fn audience() -> AudienceTuple {
 // rcgen CA + leaves (same idiom as mcp-re-transport/tests/mtls_client_test.rs).
 // ---------------------------------------------------------------------------
 
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(
+        std::time::Duration::from_secs(3600),
+        std::time::Duration::from_secs(300),
+    )
+    .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - std::time::Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + std::time::Duration::from_secs(1800)).into();
+}
+
 struct Ca {
     cert: rcgen::Certificate,
     key: KeyPair,
@@ -154,6 +171,9 @@ fn make_leaf(
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    if client_auth {
+        short_lived(&mut params);
+    }
     let cert = params
         .signed_by(&key, &ca.issuer())
         .expect("leaf signed by ca");
@@ -180,6 +200,7 @@ fn server_config_args() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "127.0.0.1:8443",
         "--audience",
         AUD,
+        "--allow-example-fixtures",
         "--server-signer",
         "did:example:server",
         "--server-key-id",
@@ -198,6 +219,8 @@ fn server_config_args() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "http://127.0.0.1:9",
         "--target-uri",
         TARGET,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--route",
         "a",
         "--replay-redis-url",
@@ -231,7 +254,7 @@ fn server_resolver() -> ActorResolver {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
                     role: "server".into(),
-                    trust_domain: "example.com".into(),
+                    trust_domain: "mcp.example.com".into(),
                     subject: "did:example:server".into(),
                     keyid: ROOT_KID.into(),
                 },
@@ -245,14 +268,18 @@ fn server_resolver() -> ActorResolver {
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
-    Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        |_forwarded: &[u8]| -> Vec<u8> {
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 fn build_server() -> HttpProfileProxy {
     let config = server_config_args();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("issue the first delegated key");
     HttpProfileProxy::new_delegated(
@@ -297,13 +324,16 @@ impl Drop for RunningServer {
 fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
     let (server_cert, server_key) =
         make_leaf(server_ca, vec![dns(SERVER_NAME)], Some(SERVER_NAME), false);
-    let tls = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_exported_key_config(vec![server_cert], server_key, Vec::new())
-        .expect("server tls config");
+    let tls = TlsListenerSecurityState::new(
+        vec![client_ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_exported_key_config(vec![server_cert], server_key, Vec::new())
+    .expect("server tls config");
 
     let options = ServerOptions {
         target_uri: TARGET.to_string(),
-        ..ServerOptions::default()
+        ..ServerOptions::new(window())
     };
 
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -328,19 +358,21 @@ fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
                     let proxy = Arc::clone(&proxy);
                     Box::pin(async move { proxy.handle(req, NOW).await })
                 };
+            let snapshot = Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(
+                Arc::new(tls),
+                mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+            ));
             // The handshake bound comes from the pool that built this runtime (2 workers),
             // never from a constant that never saw the depth.
             let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
                 mcp_re_proxy::async_fleet::ShardDepth::stated(2),
-                &options,
+                snapshot.key_exposure(),
             )
             .expect("a stated depth above one is a shape every custody has")
             .handshake_bound();
             async_serve::serve(
                 listener,
-                Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(
-                    Arc::new(tls),
-                )),
+                snapshot,
                 Arc::new(options),
                 Arc::new(handler),
                 shutdown_srv,
@@ -369,12 +401,12 @@ fn delegation_policy() -> DelegationPolicy {
 }
 
 fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
-    Box::new(move |key_id: &str, slot: SignerSlot| {
+    Box::new(move |key_id: &str, slot: SignerSlot, _now: i64| {
         match (key_id, slot) {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
                     role: "server".into(),
-                    trust_domain: "example.com".into(),
+                    trust_domain: "mcp.example.com".into(),
                     subject: "did:example:server".into(),
                     keyid: ROOT_KID.into(),
                 },
@@ -427,12 +459,16 @@ fn client_proxy(transport: MtlsRemoteTransport) -> ClientProxy {
 }
 
 /// Test nonces are padded to the 128-bit emission floor the client core enforces.
-fn call_params(nonce: &str) -> CallParams {
+fn fixed_now() -> i64 {
+    NOW
+}
+
+fn call_params(nonce: &str) -> CallParams<'static> {
     CallParams {
         nonce: format!("{nonce}-padded-to-the-128-bit-floor"),
         created: NOW,
         expires: NOW + 60,
-        now_unix: NOW,
+        verification_clock: &fixed_now,
     }
 }
 

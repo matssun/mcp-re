@@ -50,8 +50,6 @@
 //! `notifications/cancelled`, which is exactly why the distinction has to hold. See
 //! "Binding granularity" in `docs/spec/http-profile-conformance-notes.md` §3.4.
 
-use mcp_re_core::McpReError;
-
 // The cryptographic-floor subordinates, imported by name rather than spelled out at each
 // call site. The bodyless shapes verify DIFFERENT required component sets — a 202 has no
 // body to digest — under IDENTICAL parse, coverage, parameter, trust and signature rules,
@@ -62,8 +60,8 @@ use crate::verify::floor::components::require_conditional_coverage;
 use crate::verify::floor::params::check_params;
 use crate::verify::floor::signature::signature_value_b64url;
 use crate::verify::floor::signature::verify_under;
+use crate::verify::floor::signature::SignedMessage;
 use crate::verify::floor::signature_input::parse_signature_input_for;
-use crate::verify::floor::trust_slot::resolve_actor_for_slot;
 
 /// What a verified bodyless acknowledgement establishes.
 mod acknowledged;
@@ -85,24 +83,26 @@ use crate::block::SignerSlot;
 use crate::digest::content_digest_sha256;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestRoleEvidence;
 use crate::ids::BODYLESS_REQUEST_COMPONENTS;
+use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
 use crate::ids::MCP_RE_REQUEST_EVIDENCE_HEADER;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_LABEL;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
 use crate::ids::STATUS_ACCEPTED;
+use crate::mcp_transport::MCP_PROTOCOL_VERSION;
 use crate::message::reject_content_encoding;
 use crate::message::required_header;
 use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
-use crate::policy::VerifierPolicy;
 use crate::sigbase::signature_base;
 use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
 use crate::sigbase::SourceMessage;
+use crate::sign::set_header;
 pub use acknowledged::AcknowledgedDelegation;
 pub use delegated_ack::verify_delegated_accepted_202;
 
@@ -137,11 +137,6 @@ fn params_for(key_id: &str, created: i64, expires: i64, nonce: Option<&str>) -> 
     }
 }
 
-fn set_header(headers: &mut Vec<(String, String)>, name: &str, value: String) {
-    headers.retain(|(k, _)| !k.eq_ignore_ascii_case(name));
-    headers.push((name.to_owned(), value));
-}
-
 fn emit(
     headers: &mut Vec<(String, String)>,
     label: &str,
@@ -150,22 +145,9 @@ fn emit(
     base: &[u8],
     key: &mcp_re_core::SigningKey,
 ) -> Result<(), HttpProfileError> {
-    let sig = mcp_re_core::b64url_decode(&key.sign(base))
-        .map_err(|_| HttpProfileError::InvalidSignature)?;
-    if sig.len() != 64 {
-        return Err(HttpProfileError::InvalidSignature);
-    }
-    set_header(
-        headers,
-        "Signature-Input",
-        format!("{label}={}", params.serialize_with(components)?),
-    );
-    set_header(
-        headers,
-        "Signature",
-        format!("{label}=:{}:", crate::sign::base64_standard_encode(&sig)),
-    );
-    Ok(())
+    crate::sign::emit_signature(headers, label, components, params, base, |b| {
+        crate::sign::local_sig(key, b)
+    })
 }
 
 /// Derive the REQUEST-role evidence handle from the request itself.
@@ -181,7 +163,7 @@ fn emit(
 /// taken from the acknowledgement's own claims, and nothing couples to the TEXTUAL
 /// `Signature-Input` value — RFC 9421 §7.3.7 makes covering the request's `Signature`
 /// NOT RECOMMENDED, and this reaches the same instance identity without doing so.
-fn request_evidence_of(request: &HttpRequest) -> Result<RequestEvidence, HttpProfileError> {
+fn request_evidence_of(request: &HttpRequest) -> Result<RequestRoleEvidence, HttpProfileError> {
     let parsed =
         parse_signature_input_for(&request.headers, REQUEST_LABEL, "request signature-input")?;
     let base = signature_base(
@@ -189,14 +171,14 @@ fn request_evidence_of(request: &HttpRequest) -> Result<RequestEvidence, HttpPro
         &parsed.params,
         &SourceMessage::Request(request),
     )?;
-    Ok(RequestEvidence::from_signature_base(&base))
+    Ok(RequestRoleEvidence::from_signature_base(&base))
 }
 
 /// The covered request-evidence header value for `request`.
 fn request_evidence_header(request: &HttpRequest) -> Result<(String, String), HttpProfileError> {
     Ok((
         MCP_RE_REQUEST_EVIDENCE_HEADER.to_owned(),
-        request_evidence_of(request)?.digest_value,
+        request_evidence_of(request)?.digest_value().to_owned(),
     ))
 }
 
@@ -211,10 +193,11 @@ fn check_request_evidence(
     response_headers: &[(String, String)],
     request: &HttpRequest,
 ) -> Result<(), HttpProfileError> {
-    let claimed = required_header(response_headers, MCP_RE_REQUEST_EVIDENCE_HEADER)
-        .map_err(|_| HttpProfileError::MissingEvidence("response request-evidence"))?;
+    let claimed = single_header(response_headers, MCP_RE_REQUEST_EVIDENCE_HEADER)?.ok_or(
+        HttpProfileError::MissingEvidence("response request-evidence"),
+    )?;
     let derived = request_evidence_of(request)?;
-    if claimed != derived.digest_value {
+    if claimed != derived.digest_value() {
         // The existing "this response does not bind to that request" verdict — no new
         // wire token for what is the same class of failure.
         return Err(HttpProfileError::ResponseBindingMismatch);
@@ -233,7 +216,10 @@ fn check_request_evidence(
 ///
 /// This preserves the three constraints the ruling required jointly: MCP's
 /// bodyless 202, delegated-only response signing, and self-contained verification.
-pub fn sign_delegated_accepted_202(
+///
+/// Refuses before signing if the notification carries a request evidence block that does
+/// not validate, as every `;req`-bound signer does.
+pub fn sign_delegated_accepted_202_with_owned_key(
     request: &HttpRequest,
     server_delegation: &str,
     delegated_key: &mcp_re_core::SigningKey,
@@ -241,6 +227,7 @@ pub fn sign_delegated_accepted_202(
     created: i64,
     expires: i64,
 ) -> Result<HttpResponse, HttpProfileError> {
+    crate::sign::validate_carried_request_block(&request.body)?;
     if server_delegation.len() > crate::ids::MAX_DELEGATION_HEADER_LEN {
         return Err(HttpProfileError::MalformedEvidence(
             "delegation header too large",
@@ -291,7 +278,8 @@ pub fn sign_delegated_accepted_202(
 }
 
 /// Sign a bodyless REQUEST (§8.1): `@method`, `@target-uri`, and a
-/// `content-digest` over empty content. No `content-type`.
+/// `content-digest` over empty content. No `content-type`. Adds the
+/// `MCP-Protocol-Version` the transport contract requires when the caller set none.
 pub fn sign_bodyless_request(
     request: &mut HttpRequest,
     key: &mcp_re_core::SigningKey,
@@ -299,7 +287,7 @@ pub fn sign_bodyless_request(
     created: i64,
     expires: i64,
     nonce: &str,
-) -> Result<RequestEvidence, HttpProfileError> {
+) -> Result<RequestRoleEvidence, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
     request.body.clear();
     request
@@ -310,6 +298,13 @@ pub fn sign_bodyless_request(
         "Content-Digest",
         content_digest_sha256(&[]),
     );
+    if single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)?.is_none() {
+        set_header(
+            &mut request.headers,
+            "MCP-Protocol-Version",
+            MCP_PROTOCOL_VERSION.into(),
+        );
+    }
     let mut components: Vec<CoveredComponent> = BODYLESS_REQUEST_COMPONENTS
         .iter()
         .map(|n| CoveredComponent::new(n))
@@ -331,33 +326,23 @@ pub fn sign_bodyless_request(
         &base,
         key,
     )?;
-    Ok(RequestEvidence::from_signature_base(&base))
+    Ok(RequestRoleEvidence::from_signature_base(&base))
 }
 
 /// Verify a bodyless REQUEST (§8.1) under the named bodyless request set.
 ///
-/// **A configured MCP transport contract is refused, not skipped.** The §4.1 contract
-/// [`crate::verify::verify_request_with_policy`] applies is defined against a JSON-RPC
-/// body: `Mcp-Method` and `Mcp-Name` are checked for AGREEMENT with the body members
-/// they mirror, and `McpTransportPolicy::enforce` reads that body first. A bodyless
-/// request has none, so the contract cannot be applied to this shape as written —
-/// and the parts that could be (the supported-protocol-version set, REQ-10) are not
-/// separable through the policy's public surface.
-///
-/// Silently ignoring the policy is the one thing that must not happen: a deployment
-/// that configured `McpTransportPolicy::mcp_2026_07_28` would have believed its
-/// version and header contract applied to every request shape while one shape was
-/// exempt, which is "a client's claim is not consent" enforced on a request and not
-/// on its sibling. So a policy that carries a transport contract is refused here
-/// rather than dropped. Verifying bodyless requests under one needs a bodyless
-/// analogue of `enforce` — a version-set and header contract stated for a message
-/// with no body — which does not exist yet.
+/// **The policy's MCP transport contract applies to this shape too**, in its bodyless
+/// form (`McpTransportPolicy::enforce_bodyless`), after the signature: the covered
+/// `MCP-Protocol-Version` is required and must be in the deployment's accepted set,
+/// and a covered `Mcp-Method` or `Mcp-Name`, which would have no body to agree with,
+/// is refused. A deployment's version contract therefore holds for every request
+/// shape, bodied or not.
 pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
-    policy: &VerifierPolicy,
+    verifier: &crate::verifier::Verifier<'_, R>,
     now: i64,
-) -> Result<(ResolvedActor, RequestEvidence), HttpProfileError> {
+) -> Result<(ResolvedActor, RequestRoleEvidence), HttpProfileError> {
+    let policy = verifier.policy();
     reject_content_encoding(&request.headers)?;
     require_bodyless(&request.headers, &request.body)?;
 
@@ -382,7 +367,7 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     // routing claim entirely outside its signature.
     require_conditional_coverage(&request.headers, &parsed.components)?;
     let (_c, _e, _n, key_id, algorithm) = check_params(&parsed.params, policy, now, true)?;
-    let actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request)?;
+    let actor = verifier.resolve_for_slot(&key_id, SignerSlot::Request)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,
@@ -394,15 +379,13 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &actor.verification_key,
-        McpReError::InvalidSignature,
+        SignedMessage::Request,
     )?;
     // After the signature, never before: the contract reads covered headers, so
     // applying it to unverified input would let an attacker choose which arm fires.
     // A configured contract that simply did not apply to this shape was the defect —
     // a deployment believed its version contract covered every request while one
     // shape was exempt.
-    if let Some(transport) = policy.mcp_transport() {
-        transport.enforce_bodyless(request)?;
-    }
-    Ok((actor, RequestEvidence::from_signature_base(&base)))
+    policy.mcp_transport().enforce_bodyless(request)?;
+    Ok((actor, RequestRoleEvidence::from_signature_base(&base)))
 }

@@ -2087,7 +2087,7 @@ role-separation guarantee. That must be preserved explicitly, not by accident.
 > implementations — the private key is not in this process's address space.*
 
 The second clause is the point of the whole axis and **the trait cannot express it**:
-`FileKeySource`, `EnvKeySource` and `KmsKeySource` satisfy one trait, so a consumer holding
+`FileKeySource` and `KmsKeySource` satisfy one trait, so a consumer holding
 a `Box<dyn KeySource>` cannot distinguish a non-exporting custodian from a seed file. The
 distinction is carried by `CustodyState` and the startup posture — a fact about
 configuration standing in for a property of the value.
@@ -2723,6 +2723,10 @@ states that whether ND-005 still declines over `EXTENSION_ID` and `DIGEST_ALG_SH
 re-derivation and an owner decision rather than a rewrite"*. The now-zero-reader fact is recorded
 for that re-derivation; the deletion is not pre-executed.
 
+*Annotation, 2026-10-04:* owner Ruling 13.6 deleted `SIG_ALG_ED25519`, its crate-root re-export
+and its assertion in `frozen_profile_agnostic_constants`; NP-108 now states the two constants
+that remain. No compatibility alias.
+
 The NP-106 ratification packet is **annotated, not rewritten** — a review record states what was
 decided on the day it was decided.
 
@@ -2791,3 +2795,183 @@ hazard: nine of its `bodyless_202_test` controls drive the pre-052 pair and the 
 `delegated_202_test` and the bodyless-REQUEST half, and its claim is about the **named
 component sets**, which both modes share. Its `paths` gained the fixture file; nothing else
 about it moved.
+
+## EX-016 — `mcp-re-proxy/src/aws_sts.rs` — **census complete, disposition: ACTION REQUIRED, no exception sought**
+
+The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit.
+
+1. **Owns.** Acquiring the AWS credential the KMS adapter signs with from the
+   operator-selected source AND holding it no longer than its stated life. The "and" marks a
+   shallow boundary.
+2. **Authorities.** Four: (a) the env credential read (`EnvCredentialSource`); (b) STS
+   destination admission and request-field grammars (`validate_region`,
+   `validate_session_name`, `WebIdentityConfig::from_env`, `WebIdentityCredentialSource::new`);
+   (c) the exchange lifecycle — cache, single flight, unknown-expiry floor, failure cool-off,
+   poison recovery (`cached_or_exchange` and helpers); (d) the STS wire codec over peer
+   bytes — `read_capped`, `form_encode`, `parse_assume_role_response(_at)`, `element_text`,
+   `decode_xml_entities`.
+3. **Decides.** Which credential is current, whether an exchange runs, whether a response
+   is a credential, whether an endpoint, region or session name is admissible.
+4. **Executes.** The `AssumeRoleWithWebIdentity` POST via `CredentialEgress`, and the
+   projected-token file read.
+5. **Transports.** `AwsCredentials` to `aws_kms_keysource`; `KeyError` text.
+6. **Reconstructs.** Nothing: both endpoint doors call `kms_endpoint_authority` (`new` via
+   `KmsEndpoint::parse`), `from_env` deliberately earlier.
+7. **Ordering-only relationships.** Single flight re-reads state after taking `exchanging`,
+   and the failure stamp is read after the exchange — pinned by the staggered_callers tests.
+8. **Test-only interface.** None; the injected clock and instant seams are private.
+9. **Unreachable.** `SystemTime` overflow in `parse_assume_role_response_at`, under
+   THM-0002's bound.
+10. **Represented twice.** The `UNIX_EPOCH` sentinel is one constant: the parser writes it,
+    the cache reads it by equality. The endpoint check runs at `from_env` and `new`.
+11. **Constructible inconsistency.** `WebIdentityConfig` has pub fields, refused at `new`;
+    `AwsCredentials` has pub fields (`aws_sigv4.rs`).
+12. **Lanes.** `proxy_ext_unit_test` (aws_kms_keysource feature) for `tests::`,
+    `aws_irsa_web_identity_test` for the composition; the default lane compiles neither.
+
+### Disposition
+
+Action required: move authority (d) into a child module `aws_sts::sts_protocol`, declared
+from `aws_sts.rs` (no `lib.rs` line),
+its tests with it, retargeting mutation probe M265's path and the moved `tested_symbols`.
+Authority (c)'s revocation gap waits on ruling `aws-credential-revocation-recovery`.
+
+
+## EX-017 — Ruling 14.4 campaign waivers — **temporary CI representation, NOT a §14 census**
+
+**Authority:** owner Ruling 14.4 (2026-10-04) and Ruling 15, with the CI representation
+authorized by Ruling 16.2 (2026-10-05). **Expires:** at the post-campaign decomposition run,
+whose input is `docs/security/remediation-size-debt.jsonl`. **Measured:** at `99ff012` by
+`scripts/module_size_gate.py::production_lines`.
+
+This record is the reason fourteen registry entries carry `status = "reviewed-exception"`.
+That status is how `scripts/module_size_gate.py` lets an owner-approved size stand while it
+keeps measuring the rest of the tree; it is **not** a finding that any of these units is
+one authority, and none of the twelve §8 questions has been answered for them here. The
+approvals are not permanent baseline increases and not a judgment that the sizes are
+desirable. They cover exactly the values below and nothing more: any further growth in any
+of these files is a new owner decision, and the ratchet enforces that because each baseline
+equals its measurement.
+
+At the decomposition run every entry citing this record leaves `reviewed-exception`: either
+the file is decomposed to or below its pre-campaign baseline (or out of the registry), or it
+moves to `reviewed-action-required` with its census recorded. A file still citing EX-017
+after that run is an expired waiver, not an exception.
+
+| file | kind | pre-campaign baseline | approved | registered baseline | findings / commits |
+|---|---|---|---|---|---|
+| `mcp-re-client-core/src/trust_manifest/mod.rs` | growth of a registered entry | 411 | 413 | **413** | c9ad7999 |
+| `mcp-re-client-proxy/src/proxy.rs` | growth of a registered entry | 531 | 541 | **541** | 92990656 |
+| `mcp-re-http-profile/src/scitt/receipt/parse.rs` | newly over 200 | 191 | 209 | **209** | 0f4e13b7, b812ad67 |
+| `mcp-re-proxy/src/config_state/validation/residue.rs` | growth of a registered entry | 377 | 405 | **405** | 074e8d4c |
+| `mcp-re-proxy/src/http_profile_serve/mod.rs` | growth of a registered entry | 519 | 534 | **533** | 048bff62, 53abbc34 |
+| `mcp-re-proxy/src/materialized_runtime.rs` | growth of a registered entry | 298 | 313 | **313** | 39fff5a7 |
+| `mcp-re-proxy/src/materializing_runtime/mod.rs` | newly over 200 | 200 | 204 | **204** | 4ecf6668 |
+| `mcp-re-proxy/src/pkcs11_native.rs` | growth of a registered entry | 783 | 827 | **827** | 3d3a3be1 |
+| `mcp-re-proxy/src/transparency/auditor/invocation/mod.rs` | newly over 200 | 187 | 239 | **239** | b710e6b0, 63dde664 |
+| `mcp-re-proxy/src/transparency/auditor/registration/capability.rs` | newly over 200 | 194 | 218 | **218** | 89aa1a1a (D3) |
+| `mcp-re-proxy/src/transparency/auditor/registration/endpoint/mod.rs` | newly over 200 | 190 | 220 | **220** | 8cc3cf16, 9639c9bf, 89aa1a1a |
+| `mcp-re-transport/src/lib.rs` | growth of a registered entry | 234 | 240 | **240** | 3ac4cdf8 |
+| `mcp-re-transport/src/limits.rs` | newly over 200 | 200 | 201 | **201** | 673f0872 |
+| `sdk/typescript/src/lib.rs` | growth of a registered entry | 721 | 727 | **727** | 0ff471b7 |
+
+`mcp-re-proxy/src/http_profile_serve/mod.rs` was approved at 534 and measures 533; the
+baseline is the measurement, so the unused line is not headroom. Its file-level disposition
+remains EX-010; this record supplies only the growth authorization.
+
+The six files that newly crossed 200 are new registry entries and need no transition line.
+`sdk/typescript/src/lib.rs` stands at 731 on `origin/main` (the branch had lowered it to 721
+before the approved growth), so 727 is not an upward transition there: it keeps
+`status = "unreviewed"` and needs no authorization line, and its approved value is still
+727. The seven registered entries that grew each need one exact one-shot authorization:
+
+```text
+growth-authorization: mcp-re-client-core/src/trust_manifest/mod.rs 411 -> 413
+growth-authorization: mcp-re-client-proxy/src/proxy.rs 531 -> 541
+growth-authorization: mcp-re-proxy/src/config_state/validation/residue.rs 378 -> 405
+growth-authorization: mcp-re-proxy/src/http_profile_serve/mod.rs 523 -> 533
+growth-authorization: mcp-re-proxy/src/materialized_runtime.rs 298 -> 313
+growth-authorization: mcp-re-proxy/src/pkcs11_native.rs 783 -> 827
+growth-authorization: mcp-re-transport/src/lib.rs 234 -> 240
+```
+
+### The function-level waiver under the same ruling
+
+`mcp-re-demo/src/demo_fixtures.rs:260` (64/60 lines, 178808e2) carries an item-level
+`#[allow(clippy::too_many_lines)]` naming this record. It is scoped to that one function,
+grants nothing to the file or crate, and expires with the same decomposition obligation.
+`HttpProfileProxy::handle` (61/60) is the other Ruling 14.4 function waiver and is already
+inside `mcp-re-proxy`'s clippy-debt count, so it needs no attribute.
+
+
+### EX-017 growth authorization — `mcp-re-http-profile/src/scitt/receipt/parse.rs`, `209 -> 232`
+
+```text
+growth-authorization: mcp-re-http-profile/src/scitt/receipt/parse.rs 209 -> 232
+```
+
+**Authority:** Ruling 40 step 6 round 3, owner, 2026-10-08.
+
+**Occasioned by:** two SCITT receipt-parse refusals ordered under Ruling 36, each a bounded
+correction and neither a theorem weakening:
+
+- `read_inclusion_proof` refuses any trailing octets after the inclusion proof, so the whole
+  supplied slice must be consumed;
+- `inclusion_proof_bytes` refuses a repeated key anywhere in the `vdp` map at the MCP-RE parse
+  boundary, through `refuse_repeated_key`.
+
+The parser is one decode sequence with no seam a local extraction would follow, and neither
+refusal is delegated to `coset` or `ciborium`. The growth is 23 production lines, measured:
+209 before, 232 after.
+
+**It authorizes this pair and nothing beyond it.** 232 is the ceiling: further growth needs
+its own record, and the authorization is spent when it merges. It triggers no refactor and no
+return to 209 during the remediation campaign.
+
+---
+
+## EX-018 — `mcp-re-proxy/src/config_state/transport.rs` — **census complete, disposition: ACTION REQUIRED, no exception sought**
+
+The twelve questions (ADR-MCPRE-061 §8), answered for the file as a unit (finding
+`4232fb9da5d69c46`).
+
+1. **Owns.** How a verified request signer is bound to the authenticated channel AND which
+   offline client-certificate revocation posture the deployment holds AND the client
+   certificate lifetime ceiling. Two "and"s mark a shallow boundary.
+2. **Authorities.** Three: (a) the `ChannelBinding` machine and the peer-identity form
+   legality it depends on — `classify_binding`, `binding_kind_refusals`,
+   `classify_and_validate_binding`, `undeployable_transport_binding_refusal`,
+   `ingress_assertion_refusal`, `attested_ingress_refusal`, `verification_keys_refusal`,
+   `ingress_assertion_violation`; (b) the `CrlRevocation` machine — `CrlRevocationState`,
+   `ClientRevocationPlan`, `classify_crl`, `classify_and_validate_crl`; (c)
+   `MAX_CLIENT_CERT_LIFETIME`, whose deciding reader is `client_credential_window`.
+3. **Decides.** Whether a peer-identity form can be deployed and which exact identity field
+   binds; whether the CRL configuration names a posture; nothing for (c), which is a bound
+   another owner applies.
+4. **Executes.** Nothing; no I/O.
+5. **Transports.** `ClientRevocationPlan` to the TLS materialization; the binding state to
+   `app.rs`.
+6. **Reconstructs.** Nothing another owner decided. The identity-field default is applied
+   here, after the request records whether the operator chose one.
+7. **Ordering-only relationships.** `ingress_assertion_violation` is spliced at its own
+   clause position in `validation::legality_violations`, separate from the binding
+   machine's refusals; the binding machine's state does not depend on it.
+8. **Test-only interface.** None.
+9. **Unreachable.** None found under the current legality model. (The Common-Name identity
+   source this item named was deleted under owner Ruling 31.1; `cn_legacy` is now an unknown
+   `--transport-identity-source` value refused by the parser.)
+10. **Represented twice.** `MAX_CLIENT_CERT_LIFETIME` lives here but is read by
+    `client_credential_window` and the CLI; it is one constant, held by the wrong owner.
+11. **Constructible inconsistency.** None: both states are private-field types produced
+    only by their classifiers.
+12. **Lanes.** `proxy_unit_test` (`config_state::transport::tests`), the validation
+    precedence tests in `config_refusal_precedence_test`.
+
+### Disposition
+
+Action required: move authority (b) into a new sibling module `crl_revocation` under `config_state`, with its tests
+(a sibling of `transport.rs`; `config_state/mod.rs` gains one `mod` line and re-exports the
+two types it already re-exports), and move authority (c) into
+`config_state/client_credential_window.rs`, its one deciding reader. Authority (a) stays in
+`transport.rs`. Recorded, not performed, under the campaign's size-is-recorded rule; the
+file may not grow meanwhile.

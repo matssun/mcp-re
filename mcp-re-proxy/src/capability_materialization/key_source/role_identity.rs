@@ -34,12 +34,6 @@ pub(super) enum RoleIdentity {
 /// There is no failure arm for the canonical form, and no panic standing in for one. The
 /// value owner's `for_point` is total — a thirty-two-byte point has exactly one canonical
 /// RFC 8410 encoding — so the only question here is whether the backend answered.
-///
-/// It used to write the point out and interpret it back, which manufactured an `Err` arm for
-/// an outcome that owner's own contract says cannot occur, and filled it with
-/// `unreachable!`. `unreachable!` is not covered by the ADR-MCPRE-061 §6 lints, so it
-/// carried no obligation to justify itself while making exactly the kind of claim they
-/// exist to hold to account.
 pub(super) fn response_role_identity(source: &(dyn KeySource + Send + Sync)) -> RoleIdentity {
     let Ok(key) = source.response_public_key() else {
         return RoleIdentity::NoKey;
@@ -135,10 +129,11 @@ pub(super) mod tests {
     /// cannot be equal.
     #[test]
     fn a_non_ed25519_credential_is_incomparable_rather_than_a_failure() {
-        let garbage = vec![0x30, 0x03, 0x02, 0x01, 0x00];
-        assert!(CertificateChainEvidence::from_leaf_der(&garbage)
-            .interpret_credential_public_key()
-            .is_err());
+        let fixture = RolesFixture {
+            response: ed25519_leaf().1,
+            channel_leaf: vec![0x30, 0x03, 0x02, 0x01, 0x00],
+        };
+        assert_eq!(channel_role_identity(&fixture), RoleIdentity::NoKey);
     }
 
     /// A key source whose two roles are whatever the fixture says they are.

@@ -27,8 +27,12 @@ impl VettedDestination {
     /// the first URL is the only one any guard saw. The resolved-address vetting is
     /// installed only for a certificate-derived destination, for the same reason the
     /// literal-address block is.
-    pub fn agent(&self, _timeout: Duration) -> ureq::Agent {
-        let builder = ureq::AgentBuilder::new().redirects(0);
+    ///
+    /// The agent carries `timeout` as its overall request bound, so a request built from it
+    /// is bounded even when the call site sets no `.timeout(..)` of its own (a per-request
+    /// timeout overrides it). The bound covers connect and I/O, not name resolution.
+    pub fn agent(&self, timeout: Duration) -> ureq::Agent {
+        let builder = ureq::AgentBuilder::new().redirects(0).timeout(timeout);
         let builder = match self.provenance {
             Provenance::CertificateDerived => builder.resolver(VettingResolver::std()),
             Provenance::OperatorConfigured => builder,
@@ -98,6 +102,86 @@ mod tests {
         assert!(
             !reached.load(Ordering::SeqCst),
             "the authority named by the redirect was connected to"
+        );
+    }
+
+    /// A certificate-derived agent installs the resolved-address vetting; an
+    /// operator-configured one does not.
+    ///
+    /// The destination is built through the owner's private fields, so the literal-address
+    /// guard in the constructor cannot refuse the loopback listener first: the only thing
+    /// left between the agent and the listener is the resolver the provenance selects.
+    #[test]
+    fn a_certificate_derived_agent_never_connects_to_an_address_its_resolver_refused() {
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        fn listener_was_reached(provenance: Provenance) -> bool {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind the listener");
+            let port = listener.local_addr().expect("addr").port();
+            let reached = Arc::new(AtomicBool::new(false));
+            let flag = Arc::clone(&reached);
+            std::thread::spawn(move || {
+                if listener.accept().is_ok() {
+                    flag.store(true, Ordering::SeqCst);
+                }
+            });
+            let destination = VettedDestination {
+                url: format!("http://127.0.0.1:{port}/"),
+                provenance,
+            };
+            let _ = destination
+                .agent(Duration::from_secs(5))
+                .post(destination.url())
+                .timeout(Duration::from_secs(2))
+                .send_string("");
+            std::thread::sleep(Duration::from_millis(200));
+            reached.load(Ordering::SeqCst)
+        }
+
+        assert!(
+            listener_was_reached(Provenance::OperatorConfigured),
+            "the operator-configured agent must reach a loopback listener"
+        );
+        assert!(
+            !listener_was_reached(Provenance::CertificateDerived),
+            "the certificate-derived agent connected to an address its resolver refuses"
+        );
+    }
+
+    /// The bound belongs to the agent: a request that sets no timeout of its own still returns.
+    #[test]
+    fn an_agent_bounds_a_request_that_sets_no_timeout_of_its_own() {
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind the silent listener");
+        let port = listener.local_addr().expect("addr").port();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                std::thread::sleep(Duration::from_secs(30));
+                drop(stream);
+            }
+        });
+
+        let destination =
+            VettedDestination::operator_configured(format!("http://127.0.0.1:{port}/"))
+                .expect("a loopback http destination is one an operator may configure");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let outcome = destination
+                .agent(Duration::from_millis(300))
+                .post(destination.url())
+                .send_string("");
+            let _ = tx.send(outcome);
+        });
+        let outcome = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the agent's own bound must end a request that sets none");
+        assert!(
+            outcome.is_err(),
+            "a listener that never answers must not yield a response"
         );
     }
 }

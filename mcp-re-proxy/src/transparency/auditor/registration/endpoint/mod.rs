@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use mcp_re_http_profile::scitt::ScittServiceTrustPin;
 use mcp_re_http_profile::scitt::SignedStatement;
+use mcp_re_http_profile::scitt::TransparencyKeyLifecycle;
 
 use super::policy::RegistrationPolicy;
 use super::RegisteredStatement;
@@ -52,14 +53,25 @@ pub struct RegistrationTarget {
     protocol: RegistrationProtocol,
 }
 
-/// Whether `url` names the loopback interface, the one host plaintext is admitted to.
+/// Whether `url` names the loopback interface by ADDRESS (a name is the resolver's answer),
+/// the one host plaintext is admitted to: that address, an optional numeric port, no userinfo.
 fn is_loopback(url: &str) -> bool {
-    let rest = url.trim_start_matches("http://");
-    ["127.0.0.1", "[::1]", "localhost"].iter().any(|host| {
-        rest == *host
-            || rest.starts_with(&format!("{host}:"))
-            || rest.starts_with(&format!("{host}/"))
-    })
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    ["127.0.0.1", "[::1]"]
+        .iter()
+        .filter_map(|host| authority.strip_prefix(host))
+        .any(is_port_suffix)
+}
+
+/// Whether `rest`, the authority after its host, is empty or `:` and one or more digits.
+fn is_port_suffix(rest: &str) -> bool {
+    rest.is_empty()
+        || rest
+            .strip_prefix(':')
+            .is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
 }
 
 impl RegistrationTarget {
@@ -73,7 +85,7 @@ impl RegistrationTarget {
         base_url: &str,
         protocol: RegistrationProtocol,
         timeout: Duration,
-        interval: Duration,
+        interval: Option<Duration>,
     ) -> Result<Self, String> {
         // Owner Ruling 6: `--register-to` is operator-supplied and BOTH refusals below fire
         // on a WELL-FORMED URL — the scheme verdict and the plaintext rule each admit a
@@ -87,11 +99,32 @@ impl RegistrationTarget {
         }
         if !base_url.starts_with("https://") && !is_loopback(base_url) {
             return Err(format!(
-                "--register-to {locator}: registration is HTTPS. Plaintext is admitted \
-                 only to the loopback interface, where there is no network to observe it",
+                "--register-to {locator}: registration is HTTPS. Plaintext is admitted only \
+                 to http://127.0.0.1 or http://[::1], where no network can observe it",
             ));
         }
-        let policy = RegistrationPolicy::new(timeout, interval)?;
+        let policy = match (protocol, interval) {
+            (RegistrationProtocol::Scrapi11, Some(interval)) => {
+                RegistrationPolicy::new(timeout, interval)?
+            }
+            (RegistrationProtocol::CapsuleAnchor, None) => {
+                RegistrationPolicy::single_exchange(timeout)?
+            }
+            (RegistrationProtocol::CapsuleAnchor, Some(_)) => {
+                return Err(
+                    "--registration-poll-interval-secs does not apply to --registration-protocol \
+                     capsule-anchor: that contract has no polling, so the term would select \
+                     nothing"
+                        .to_owned(),
+                );
+            }
+            (RegistrationProtocol::Scrapi11, None) => {
+                return Err(
+                    "--registration-protocol scrapi-11 polls, so its budget needs a poll interval"
+                        .to_owned(),
+                );
+            }
+        };
         Ok(RegistrationTarget {
             base_url: base_url.trim_end_matches('/').to_owned(),
             policy,
@@ -116,20 +149,19 @@ impl RegistrationTarget {
         statement: &SignedStatement,
         issuer_key: &mcp_re_core::VerificationKey,
         pin: &ScittServiceTrustPin,
+        ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
+        clock: &dyn Fn() -> i64,
     ) -> Result<RegisteredStatement, RegistrationError> {
-        let exchange = super::ureq_exchange::UreqExchange::operator_configured(
-            &self.base_url,
-            self.policy.timeout(),
-        )
-        .ok_or_else(|| {
-            // Defence in depth, and unreachable under the current legality model: `new`
-            // already put this value through the same vetting. Redacted regardless — a
-            // branch that cannot fire today is the one nobody re-reads when it can.
-            RegistrationError::Refused(format!(
-                "{} is not a destination this proxy may fetch from",
-                crate::deployment_request::RedactedLocator::of(&self.base_url),
-            ))
-        })?;
+        let exchange = super::ureq_exchange::UreqExchange::operator_configured(&self.base_url)
+            .ok_or_else(|| {
+                // Defence in depth, and unreachable under the current legality model: `new`
+                // already put this value through the same vetting. Redacted regardless — a
+                // branch that cannot fire today is the one nobody re-reads when it can.
+                RegistrationError::Refused(format!(
+                    "{} is not a destination this proxy may fetch from",
+                    crate::deployment_request::RedactedLocator::of(&self.base_url),
+                ))
+            })?;
         // The one place a target becomes a protocol. Which arm runs is the operator's
         // stated choice, and both arms hand the SAME verifying function a mechanism —
         // there is no second path to a `RegisteredStatement`.
@@ -143,15 +175,20 @@ impl RegistrationTarget {
                 statement,
                 issuer_key,
                 pin,
+                ts_key,
+                clock,
             ),
             RegistrationProtocol::CapsuleAnchor => super::capability::register_and_verify(
                 &super::capsule_anchor::CapsuleAnchorRegistrationClient::new(
                     exchange,
                     &self.base_url,
+                    self.policy,
                 ),
                 statement,
                 issuer_key,
                 pin,
+                ts_key,
+                clock,
             ),
         }
     }
@@ -170,6 +207,8 @@ impl RegistrationTarget {
         _statement: &SignedStatement,
         _issuer_key: &mcp_re_core::VerificationKey,
         _pin: &ScittServiceTrustPin,
+        _ts_key: &dyn Fn(&str) -> Option<TransparencyKeyLifecycle>,
+        _clock: &dyn Fn() -> i64,
     ) -> Result<RegisteredStatement, RegistrationError> {
         Err(RegistrationError::Refused(
             "this build has no registration transport (feature `scitt_registration` is \
@@ -188,7 +227,7 @@ mod tests {
             url,
             RegistrationProtocol::default(),
             Duration::from_secs(60),
-            Duration::from_secs(1),
+            Some(Duration::from_secs(1)),
         )
     }
 
@@ -206,6 +245,15 @@ mod tests {
             "http://10.0.0.1:8080",
             "http://127.0.0.1.evil.test",
             "http://localhost.evil.test",
+            "http://localhost:8600@evil.test/",
+            "http://127.0.0.1:1@attacker.example/",
+            "http://[::1]:1@evil.test/",
+            "http://http://localhost:1/",
+            "http://localhost:8600\\@evil.test/",
+            "http://127.0.0.1:86x0",
+            // A loopback NAME is refused: the resolver, not this rule, decides what it is.
+            "http://localhost:8600",
+            "http://localhost/scitt",
         ] {
             let refused = target(url).expect_err("plaintext off loopback");
             assert!(refused.contains("HTTPS"), "{url}: {refused}");
@@ -213,7 +261,7 @@ mod tests {
         for url in [
             "http://127.0.0.1:8600",
             "http://[::1]:8600/scitt",
-            "http://localhost:8600",
+            "http://127.0.0.1",
         ] {
             assert!(target(url).is_ok(), "{url}");
         }
@@ -239,16 +287,43 @@ mod tests {
             "https://ts.example.test",
             RegistrationProtocol::default(),
             Duration::from_secs(60),
-            Duration::ZERO,
+            Some(Duration::ZERO),
         )
         .is_err());
         assert!(RegistrationTarget::new(
             "https://ts.example.test",
             RegistrationProtocol::default(),
             Duration::from_secs(7_200),
-            Duration::from_secs(1),
+            Some(Duration::from_secs(1)),
         )
         .is_err());
+    }
+
+    #[test]
+    fn a_budget_shape_the_protocol_does_not_use_is_not_a_target() {
+        let url = "https://ts.example.test";
+        let second = Duration::from_secs(1);
+        let refused = RegistrationTarget::new(
+            url,
+            RegistrationProtocol::CapsuleAnchor,
+            second,
+            Some(second),
+        )
+        .expect_err("capsule-anchor has no polling");
+        assert!(
+            refused.contains("--registration-poll-interval-secs"),
+            "{refused}"
+        );
+        assert!(RegistrationTarget::new(
+            url,
+            RegistrationProtocol::Scrapi11,
+            Duration::from_secs(60),
+            None,
+        )
+        .is_err());
+        assert!(
+            RegistrationTarget::new(url, RegistrationProtocol::CapsuleAnchor, second, None).is_ok()
+        );
     }
 
     /// LOAD-BEARING (Owner Ruling 6): `--register-to` is operator-supplied, and BOTH
@@ -268,7 +343,7 @@ mod tests {
                 configured,
                 RegistrationProtocol::default(),
                 Duration::from_secs(1),
-                Duration::from_secs(1),
+                Some(Duration::from_secs(1)),
             )
             .expect_err("a credential-bearing endpoint on a refused branch");
             assert!(!why.contains("hunter2"), "credential echoed: {why}");

@@ -15,6 +15,8 @@
 //! and the ceiling that binds beyond that is the token''s own session limit and internal
 //! concurrency rather than the host''s.
 
+use std::num::NonZeroUsize;
+
 use crate::key_source::KeyError;
 
 use super::amortized_session::AmortizedSession;
@@ -24,7 +26,10 @@ use super::SessionOpError;
 /// Sized to the per-core handshake workers and deliberately not scaled by core count:
 /// the ceiling that binds beyond that is the token's own session limit and its internal
 /// concurrency, not the host's.
-pub(crate) const TLS_SESSION_POOL_SIZE: usize = 4;
+pub(crate) const TLS_SESSION_POOL_SIZE: NonZeroUsize = match NonZeroUsize::new(4) {
+    Some(size) => size,
+    None => panic!("the TLS session pool size is non-zero"),
+};
 
 /// A fixed set of interchangeable logged-in sessions for the delegated-TLS path.
 ///
@@ -37,9 +42,9 @@ pub(crate) struct SessionPool<S> {
 }
 
 impl<S> SessionPool<S> {
-    pub(crate) fn new(size: usize) -> Self {
+    pub(crate) fn new(size: NonZeroUsize) -> Self {
         SessionPool {
-            sessions: (0..size.max(1)).map(|_| AmortizedSession::new()).collect(),
+            sessions: (0..size.get()).map(|_| AmortizedSession::new()).collect(),
             next: std::sync::atomic::AtomicUsize::new(0),
         }
     }
@@ -49,6 +54,10 @@ impl<S> SessionPool<S> {
     /// The cursor is advanced with `Relaxed` ordering: it selects which session to try
     /// and orders nothing, and the session's own mutex is what makes the operation
     /// exclusive.
+    // `sessions` is private, built once by `new` from a `NonZeroUsize` and never mutated,
+    // so `sessions.len() >= 1` keeps the `%` from dividing by zero and `index < len`
+    // keeps the index in bounds.
+    #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
     pub(crate) fn with_session<F, T, Op>(&self, factory: &F, op: Op) -> Result<T, KeyError>
     where
         F: LoginSessionFactory<Session = S>,

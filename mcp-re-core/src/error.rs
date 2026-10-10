@@ -1,108 +1,88 @@
 //! Frozen MCP-RE error taxonomy (MCP_RE_SPEC §8 / ADR-002, ADR-007, ADR-009).
 //!
 //! Every `mcp-re.*` constant in the frozen oracle is represented by exactly one
-//! variant. `Display` and [`McpReError::wire_code`] both render the bare
+//! variant. `Display` is rendered from [`McpReError::wire_code`], the bare
 //! `mcp-re.<name>` token; any human-readable `details` payload is kept separate so
 //! the wire token is never polluted.
 
 /// The complete frozen MCP-RE error taxonomy. One variant per `mcp-re.*` constant.
 ///
-/// `Display` (via `thiserror`) and [`McpReError::wire_code`] both yield the exact
+/// `Display` is rendered from [`McpReError::wire_code`] and yields the exact
 /// wire string (e.g. `mcp-re.invalid_signature`). Variants that can usefully carry
 /// diagnostic context hold a `details: String`; the wire token NEVER includes it.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpReError {
     /// No MCP-RE envelope present under the expected `_meta` key.
-    #[error("mcp-re.missing_envelope")]
     MissingEnvelope,
 
     /// Envelope `version` is not `draft-01`.
-    #[error("mcp-re.unsupported_version")]
     UnsupportedVersion,
 
     /// Signature did not verify, or an unsupported algorithm was presented.
-    #[error("mcp-re.invalid_signature")]
     InvalidSignature,
 
     /// The protected message could not be structurally decoded or serialized
     /// (malformed base64, an unparseable hash id, or a value outside the safe
     /// domain — duplicate keys, unsafe integers, invalid UTF-8, non-integer numbers).
-    #[error("mcp-re.serialization_failed")]
     SerializationFailed,
 
     /// The request fell outside its freshness window (stale or future-dated
     /// beyond the configured clock skew).
-    #[error("mcp-re.expired_request")]
     ExpiredRequest,
 
     /// A previously seen `(signer, audience, nonce)` triple was replayed.
-    #[error("mcp-re.replay_detected")]
     ReplayDetected,
 
     /// The envelope `audience` did not match the expected verifier identity.
-    #[error("mcp-re.invalid_audience")]
     InvalidAudience,
 
     /// Trust resolution found no usable binding for `(signer, key_id)`
     /// (not-found / revoked / disabled / malformed key). Name kept verbatim per
     /// ADR-007 despite the field rename `actor` -> `signer`.
-    #[error("mcp-re.actor_binding_failed")]
     ActorBindingFailed,
 
     /// Transport-level channel binding check failed.
-    #[error("mcp-re.transport_binding_failed")]
     TransportBindingFailed,
 
     /// Required `authorization_hash` field absent. Renamed from the brief's
     /// `capability_hash_missing` (field renamed).
-    #[error("mcp-re.authorization_hash_missing")]
     AuthorizationHashMissing,
 
     /// Required `on_behalf_of` field absent. Renamed from the brief's
     /// `missing_principal` ("principal" term rejected).
-    #[error("mcp-re.on_behalf_of_missing")]
     OnBehalfOfMissing,
 
     /// `on_behalf_of` was present but malformed (e.g. empty). Renamed from the
     /// brief's `invalid_principal_format`.
-    #[error("mcp-re.on_behalf_of_invalid_format")]
     OnBehalfOfInvalidFormat,
 
     /// Response signature did not verify, or an unsupported algorithm was used.
-    #[error("mcp-re.response_sig_invalid")]
     ResponseSigInvalid,
 
     /// The response's `request_hash` did not match the locally verified request
     /// hash (binding mismatch).
-    #[error("mcp-re.response_hash_mismatch")]
     ResponseHashMismatch,
 
     /// A security downgrade was attempted and refused.
-    #[error("mcp-re.downgrade_forbidden")]
     DowngradeForbidden,
 
     /// A JSON-RPC batch (top-level array) was presented; forbidden in Core.
-    #[error("mcp-re.batch_forbidden")]
     BatchForbidden,
 
     /// A security-consequential notification (no `id`) was presented; such
     /// operations must be id-bearing requests.
-    #[error("mcp-re.notification_forbidden")]
     NotificationForbidden,
 
     /// An unknown field appeared inside an envelope (fail closed).
-    #[error("mcp-re.unknown_envelope_field")]
     UnknownEnvelopeField,
 
     /// Operational/transient trust-resolver failure (distinct from a binding
     /// verdict). ADR-007 addition. Never falls back to allow.
-    #[error("mcp-re.trust_resolver_unavailable")]
     TrustResolverUnavailable,
 
     /// Replay-cache failure (distinct from a replay verdict). Oracle addition
     /// (ADR-006: cache failure fails closed). Parallels
     /// `trust_resolver_unavailable`.
-    #[error("mcp-re.replay_cache_unavailable")]
     ReplayCacheUnavailable,
 
     /// Retained-evidence store failure, on a deployment that has turned evidence
@@ -112,7 +92,6 @@ pub enum McpReError {
     /// breaks that assertion silently. Fails closed for the same reason the replay
     /// cache does, and is NOT a reuse of `replay_cache_unavailable` — an operator
     /// reading that token would go and look at the replay tier.
-    #[error("mcp-re.evidence_retention_unavailable")]
     EvidenceRetentionUnavailable,
 
     /// The retained-evidence write failed AFTER the inner backend had already run
@@ -125,7 +104,6 @@ pub enum McpReError {
     /// call which may have executed was safe to repeat — and the repeat carries a fresh
     /// nonce, so the replay tier cannot stop it. Carries
     /// `retry_safety = unsafe_without_reconciliation`.
-    #[error("mcp-re.evidence_retention_indeterminate")]
     EvidenceRetentionIndeterminate,
 
     /// The proxy's execution no longer satisfied its exchange model: either a transition
@@ -141,7 +119,6 @@ pub enum McpReError {
     /// deployment is running code that disagrees with its own exchange model. Carries no
     /// retry advice — the disposition stays the exchange machine's, which reports the
     /// crossing it observed.
-    #[error("mcp-re.exchange_invariant_violation")]
     ExchangeInvariantViolation,
 
     // ----- Draft-02 (v0.6) fail-closed codes (ADR-MCPS-040 / decision F.1) -----
@@ -151,35 +128,29 @@ pub enum McpReError {
     /// Required draft-02 `authorization_binding` object absent. MINTED for
     /// draft-02 (ADR-MCPS-040): NOT a reuse of `authorization_hash_missing`, which
     /// names a draft-01 field that no longer exists on the draft-02 wire.
-    #[error("mcp-re.authorization_binding_missing")]
     AuthorizationBindingMissing,
 
     /// `authorization_binding.binding_type` is not one of the base draft-02 forms
     /// (`opaque-bytes` / `authz-system-reference`).
-    #[error("mcp-re.authorization_binding_type_unsupported")]
     AuthorizationBindingTypeUnsupported,
 
     /// `authorization_binding` is structurally invalid for its `binding_type`
     /// (missing mandatory field, malformed digest shape, ...).
-    #[error("mcp-re.authorization_binding_malformed")]
     AuthorizationBindingMalformed,
 
     /// A structured authorization-object binding (case 3) was presented; the base
     /// draft-02 profile forbids it without an explicit authorization-binding
     /// profile defining artifact schema / canonicalization / hash / vectors.
-    #[error("mcp-re.authorization_binding_profile_required")]
     AuthorizationBindingProfileRequired,
 
     /// The opaque-bytes binding cannot be reduced to one unambiguous byte string
     /// (e.g. both binding forms present, or an ambiguous artifact representation).
-    #[error("mcp-re.authorization_binding_ambiguous_bytes")]
     AuthorizationBindingAmbiguousBytes,
 
     /// The optional draft-02 `continuation` object is present but `type` is not the
     /// supported multi-round-trip token (`mcp-mrt`) — ADR-MCPS-047 / D4. A future
     /// continuation profile would be a distinct token; anything unrecognized fails
     /// closed rather than being treated as a bare (unbound) request.
-    #[error("mcp-re.continuation_type_unsupported")]
     ContinuationTypeUnsupported,
 
     /// The draft-02 `continuation` object is structurally invalid for its `type`
@@ -187,7 +158,6 @@ pub enum McpReError {
     /// `sha256:<base64url>` identifier) — ADR-MCPS-047 / D4. Core validates the
     /// binding SHAPE only; the policy/server layer checks the hashes against the
     /// verified `InputRequiredResult` it is answering.
-    #[error("mcp-re.continuation_malformed")]
     ContinuationMalformed,
 
     // ----- HTTP-profile signed-rejection codes (ADR-MCPRE-050, MCPRE-92) -----
@@ -198,32 +168,27 @@ pub enum McpReError {
     /// base, `Signature-Input` member, or evidence block that does not parse
     /// against the profile's closed grammar. Distinct from
     /// [`McpReError::MissingEnvelope`] (evidence entirely absent).
-    #[error("mcp-re.malformed_envelope")]
     MalformedEnvelope,
 
     /// The message content does not match its signed `Content-Digest`
     /// (RFC 9530). Distinct from [`McpReError::InvalidSignature`]: the content
     /// commitment itself is wrong, before any signature statement about it is
     /// weighed.
-    #[error("mcp-re.digest_mismatch")]
     DigestMismatch,
 
     /// An `artifact_bindings[]` proof (DPoP `ath`, mTLS `x5t#S256`, RAR
     /// authorization-details digest) does not bind to the covered credential
     /// surface.
-    #[error("mcp-re.artifact_binding_failed")]
     ArtifactBindingFailed,
 
     /// A signed response's `;req` / `request_evidence` binding does not match
     /// the signed request it claims to answer (a splice). Distinct from
     /// [`McpReError::ResponseHashMismatch`], which names the native-profile
     /// `request_hash` field.
-    #[error("mcp-re.request_binding_mismatch")]
     RequestBindingMismatch,
 
     /// An MRTR continuation handle does not match its mandated signature-base
     /// digest (previous-request, input-required-response, or `requestState`).
-    #[error("mcp-re.continuation_binding_failed")]
     ContinuationBindingFailed,
 
     /// A live MRTR continuation already exists for this `(audience, verifier-resolved
@@ -233,7 +198,6 @@ pub enum McpReError {
     /// match. Not [`McpReError::ReplayCacheUnavailable`] — the tier answered, so a retry
     /// finds the same key taken. Issued PAST the execution threshold, so the execution
     /// disposition stays the exchange machine's and this never means "nothing ran".
-    #[error("mcp-re.continuation_conflict")]
     ContinuationConflict,
 
     // Delegated signing-key attestation (ADR-MCPRE-052 §8). A delegated-key
@@ -241,52 +205,42 @@ pub enum McpReError {
     /// A delegated-key-signed response carried no inline delegation credential
     /// (in required delegation mode, a directly root-signed response also lands
     /// here). ADR-MCPRE-052 §3 step 1.
-    #[error("mcp-re.delegation_credential_missing")]
     DelegationCredentialMissing,
 
     /// The delegation JWS is malformed, `alg` ≠ `EdDSA`, JWS `kid` ≠ `issuer_kid`,
     /// or the root signature does not verify. ADR-MCPRE-052 §3 step 3.
-    #[error("mcp-re.delegation_credential_invalid")]
     DelegationCredentialInvalid,
 
     /// `now` is outside the credential's `[nbf, exp]` window (+ skew).
     /// ADR-MCPRE-052 §3 step 4.
-    #[error("mcp-re.delegation_credential_expired")]
     DelegationCredentialExpired,
 
     /// The credential's `issuer_kid` is not a trusted root anchor.
     /// ADR-MCPRE-052 §3 step 2.
-    #[error("mcp-re.delegation_issuer_untrusted")]
     DelegationIssuerUntrusted,
 
     /// `mcp_re_profile` is not the active HTTP profile id. ADR-MCPRE-052 §3 step 5.
-    #[error("mcp-re.delegation_profile_mismatch")]
     DelegationProfileMismatch,
 
     /// The verifier is not named in `aud`, or `mcp_re_audience_hash` /
     /// `mcp_re_server_signer` do not match the expected service/audience scope —
     /// a credential lifted outside its scope. ADR-MCPRE-052 §3 step 5.
-    #[error("mcp-re.delegation_audience_mismatch")]
     DelegationAudienceMismatch,
 
     /// `mcp_re_key_use` does not permit this signature use. ADR-MCPRE-052 §3 step 5.
-    #[error("mcp-re.delegation_key_use_invalid")]
     DelegationKeyUseInvalid,
 
     /// The credential's `trust_epoch` is not in the verifier's active accepted
     /// epoch set — a coarse, coherent invalidation independent of targeted
     /// revocation. ADR-MCPRE-052 §3 step 6.
-    #[error("mcp-re.delegation_trust_epoch_stale")]
     DelegationTrustEpochStale,
 
     /// The RFC 9421 response `keyid` ≠ `delegated_kid`, or the response signature
     /// does not verify under `cnf.jwk`. ADR-MCPRE-052 §3 step 8.
-    #[error("mcp-re.delegation_key_mismatch")]
     DelegationKeyMismatch,
 
     /// The credential's `delegated_kid`, `issuer_kid`, or `jti` is revoked at the
     /// current trust epoch. ADR-MCPRE-052 §3 step 7.
-    #[error("mcp-re.delegation_revoked")]
     DelegationRevoked,
 
     /// SERVER-SIDE availability fault (ADR-MCPRE-052 §6): delegated-required mode with no
@@ -296,7 +250,6 @@ pub enum McpReError {
     /// less life left than the inner dispatch it would authorize — the reply it could sign
     /// is one the client's freshness floor must refuse. Emitted by the SIGNER, not a client
     /// verdict: a client's own faults keep their `delegation_*` tokens above.
-    #[error("mcp-re.delegated_signing_unavailable")]
     DelegatedSigningUnavailable,
 
     // ----- Response-region codes (ADR-MCPRE-058 §10, rulings D1/D2/D4/D5) -----
@@ -312,7 +265,6 @@ pub enum McpReError {
     /// Always emitted from the response region, so it is always
     /// `execution_status = possibly_executed`: the reply being illegal says nothing about
     /// whether the action behind it ran.
-    #[error("mcp-re.upstream_response_invalid")]
     UpstreamResponseInvalid,
 
     /// The inner transport failed AFTER the request was transmitted — a timeout, a reset,
@@ -323,7 +275,6 @@ pub enum McpReError {
     /// genuinely retry-safe; this one is the textbook indeterminate case. Collapsing them
     /// — which is what a seam returning only bytes does — destroys information no later
     /// reader can reconstruct. Carries `retry_safety = unsafe_without_reconciliation`.
-    #[error("mcp-re.inner_dispatch_indeterminate")]
     InnerDispatchIndeterminate,
 
     /// The inner plane could not begin a dispatch: local in-flight saturation, or every
@@ -331,7 +282,6 @@ pub enum McpReError {
     /// definitely did not execute and an ordinary retry is correct.
     ///
     /// Decided BEFORE the execution threshold, which is what makes that claim true.
-    #[error("mcp-re.inner_plane_unavailable")]
     InnerPlaneUnavailable,
 }
 
@@ -404,6 +354,14 @@ impl McpReError {
         }
     }
 }
+
+impl std::fmt::Display for McpReError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.wire_code())
+    }
+}
+
+impl std::error::Error for McpReError {}
 
 /// EVERY variant of the frozen taxonomy, once.
 ///
@@ -687,7 +645,8 @@ mod all_errors_tests {
     use super::McpReError;
     use super::ALL_ERRORS;
 
-    /// `ALL_ERRORS` names no wire code twice, and every token it names is a `mcp-re.*` one.
+    /// `ALL_ERRORS` names no wire code twice, every token it names is a whitespace-free
+    /// `mcp-re.*` one, and `Display` renders exactly that token.
     #[test]
     fn all_errors_is_duplicate_free() {
         let codes: std::collections::BTreeSet<&'static str> =
@@ -699,6 +658,8 @@ mod all_errors_tests {
         );
         for error in ALL_ERRORS {
             assert!(error.wire_code().starts_with("mcp-re."));
+            assert_eq!(error.to_string(), error.wire_code());
+            assert!(!error.wire_code().contains(char::is_whitespace));
         }
     }
 

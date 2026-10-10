@@ -90,7 +90,7 @@ const STS_FAILURE_COOLDOWN: Duration = NETWORK_TIMEOUT;
 /// A role's `MaxSessionDuration` cannot exceed 12 hours, so an `Expiration` beyond that is
 /// not a lifetime STS can honestly have issued. Unbounded, a substituted or emulator
 /// endpoint stating a far-future `Expiration` pins the credential for the process lifetime
-/// — nothing re-exchanges it and nothing evicts it — which is a permanent loss of
+/// — nothing re-exchanges it unless KMS refuses it as expired, which a substitute can avoid — a loss of
 /// AWS-rooted signing on that replica.
 const MAX_SESSION_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 
@@ -113,18 +113,19 @@ const STS_API_VERSION: &str = "2011-06-15";
 
 /// How long a credential whose response carried NO usable `Expiration` is reused.
 ///
-/// An absent, unparseable or already-past `Expiration` parses to `UNIX_EPOCH`, which no
-/// cache gate can ever satisfy — so without a floor every KMS operation performs its
-/// own `AssumeRoleWithWebIdentity`. The module used to call that affordable because the
-/// KMS path is cold; under delegated TLS it is one STS exchange per TLS handshake,
-/// driven by unauthenticated connections, against a far tighter quota than KMS `Sign`,
-/// and STS throttling then also stops the cold-path rotor refreshing credentials.
+/// [`parse_assume_role_response`] stamps an absent or unparseable `Expiration` with the
+/// sentinel `UNIX_EPOCH`, which no cache gate can ever satisfy — so without a floor every KMS
+/// operation performs its own `AssumeRoleWithWebIdentity`. Under delegated TLS that is one STS
+/// exchange per TLS handshake, driven by unauthenticated connections, against a far tighter
+/// quota than KMS `Sign`, and STS throttling then also stops the cold-path rotor refreshing
+/// credentials.
 ///
 /// The floor is not a guess at the credential's life. `AssumeRoleWithWebIdentity` refuses
 /// a `DurationSeconds` below 900, so a session AWS has just issued is valid for at least
-/// that long whatever the response said, and this window is well inside it. It applies
-/// ONLY when the stated expiry is at or before the exchange instant: a real expiry,
-/// including one about to lapse, is never extended.
+/// that long whatever the response said, and this window is well inside it. It applies ONLY
+/// to the sentinel, matched by equality and never by comparison with `now`: a STATED expiry —
+/// future, about to lapse, or already past — is never extended (THM-0117), so one already
+/// past is re-exchanged on the next call.
 ///
 /// That argument assumes the peer is AWS, and the branch fires precisely when the response
 /// did NOT have the shape AWS produces — an emulator, or a substituted `--aws-sts-endpoint`
@@ -140,29 +141,13 @@ const STS_API_VERSION: &str = "2011-06-15";
 /// so this constant must stay strictly ABOVE the margin or the floor silently becomes a
 /// no-op and every KMS operation exchanges again.
 ///
-/// The SAME length as the GCP metadata sibling's identically-named constant, and the two
-/// reach it from opposite directions. GCP's peer is an unauthenticated link-local plaintext
-/// service, which argues for a short bound, and it can also afford one because
-/// `UreqGcpClient` evicts a token Cloud KMS answers 401 for. This peer is an
-/// operator-configured HTTPS endpoint, the stronger position — but there is NO eviction
-/// here: nothing clears a cached credential when KMS rejects it.
-///
-/// Be exact about how little this bound covers, because the earlier wording implied more.
-/// It applies ONLY to the branch where no `Expiration` could be read. A credential that
-/// STATED an expiry and that AWS then stops honouring — revoked, or a role whose trust
-/// policy changed — is held for its whole stated life, up to [`MAX_SESSION_LIFETIME`], with
-/// nothing evicting it and nothing shortening it; every KMS operation and every
-/// delegated-TLS handshake fails for that entire window. That is the uncovered case, and
-/// this constant does not touch it. Closing it means giving `AwsCredentialSource` an
-/// invalidation hook and classifying the KMS error in `post_kms`, the way the GCP sibling
-/// evicts on a Cloud KMS 401.
-///
-/// The "already expired" test this floor keys on is safe HERE and would not be safe if it
-/// were copied: `parse_assume_role_response` stamps the fixed constant `UNIX_EPOCH` for an
-/// Expiration it cannot read, which is unconditionally before any `now`. The GCP sibling
-/// once encoded the same idea as "the expiry equals the current instant", which stopped
-/// firing the moment two clock readings were taken instead of one. A sentinel must be a
-/// value no clock can produce, not a value a clock happened to produce a moment ago.
+/// The SAME length as the GCP metadata sibling's identically-named constant, reached from the
+/// opposite direction: that peer is an unauthenticated link-local plaintext service and its
+/// client evicts a token Cloud KMS answers 401 for; this peer is an operator-configured HTTPS
+/// endpoint. A credential KMS refuses as expired or unrecognized is evicted and re-exchanged
+/// once (`aws_kms_keysource::credential_refusal`); one KMS authenticates but does not
+/// authorize (`AccessDenied`) is not, so it is held for its stated life, up to
+/// [`MAX_SESSION_LIFETIME`]; this floor does not touch that case.
 const UNKNOWN_EXPIRY_REUSE: Duration = Duration::from_secs(120);
 
 /// Default session name when `AWS_ROLE_SESSION_NAME` is unset. It lands in
@@ -180,9 +165,22 @@ const DEFAULT_SESSION_NAME: &str = "mcp-re-proxy";
 pub trait AwsCredentialSource: Send + Sync {
     fn credentials(&self) -> Result<AwsCredentials, KeyError>;
 
+    /// Discard the cached credential IF it is still the one whose access key id was refused;
+    /// report whether it was. The default is right for a source that reads per call
+    /// (`EnvCredentialSource` re-reads the environment every call).
+    fn invalidate(&self, _refused_access_key_id: &str) -> bool {
+        false
+    }
+
     /// One line for the startup banner, so an operator can see which custody path a
     /// running proxy actually took rather than which one they meant to configure.
     fn describe(&self) -> String;
+}
+
+/// One required variable: absent and empty are the same refusal.
+fn required_var(var: &dyn Fn(&str) -> Option<String>, name: &str) -> Result<String, KeyError> {
+    let value = var(name).filter(|v| !v.is_empty());
+    value.ok_or_else(|| KeyError::NotFound(format!("aws-kms: {name} is not set or is empty")))
 }
 
 /// Static or STS credentials from the narrow, explicit environment-variable set.
@@ -194,18 +192,21 @@ impl EnvCredentialSource {
     /// remains a deliberate non-feature. A session token is honoured when present,
     /// which is what lets an externally-refreshed STS pair work here.
     fn from_env() -> Result<AwsCredentials, KeyError> {
-        let access_key_id = std::env::var("AWS_ACCESS_KEY_ID")
-            .map_err(|_| KeyError::NotFound("aws-kms: AWS_ACCESS_KEY_ID not set".to_string()))?;
-        let secret_access_key = std::env::var("AWS_SECRET_ACCESS_KEY").map_err(|_| {
-            KeyError::NotFound("aws-kms: AWS_SECRET_ACCESS_KEY not set".to_string())
-        })?;
+        Self::from_lookup(&|name| std::env::var(name).ok())
+    }
+
+    /// As [`Self::from_env`], over an injected lookup. Absent and empty are one refusal, as
+    /// they are for the STS credential fields.
+    fn from_lookup(var: &dyn Fn(&str) -> Option<String>) -> Result<AwsCredentials, KeyError> {
+        let required = |name: &str| required_var(var, name);
+        let access_key_id = required("AWS_ACCESS_KEY_ID")?;
+        let secret_access_key = required("AWS_SECRET_ACCESS_KEY")?;
         Ok(AwsCredentials {
             access_key_id,
             secret_access_key: Zeroizing::new(secret_access_key),
-            session_token: std::env::var("AWS_SESSION_TOKEN")
-                .map(Zeroizing::new)
-                .ok()
-                .filter(|s| !s.is_empty()),
+            session_token: var("AWS_SESSION_TOKEN")
+                .filter(|s| !s.is_empty())
+                .map(Zeroizing::new),
         })
     }
 }
@@ -362,35 +363,12 @@ fn validate_session_name(name: &str) -> Result<(), KeyError> {
     Ok(())
 }
 
+/// `Debug` is derived: the secret halves render through [`AwsCredentials`]'s own redacting
+/// `Debug`, the owner of that invariant, so this type keeps no second copy of the rule.
+#[derive(Debug)]
 struct CachedCredentials {
     credentials: AwsCredentials,
     expires_at: SystemTime,
-}
-
-/// Hand-written so a secret cannot reach a log through a derived `Debug`.
-///
-/// `AwsCredentials` holds `Zeroizing<String>`, whose own `Debug` prints the wrapped
-/// string verbatim — so `#[derive(Debug)]` here would put a live KMS-signing
-/// credential into any format string that touched it, including a test failure
-/// message or a `KeyError` chain. The access key id is deliberately kept: it is an
-/// identifier AWS itself puts in CloudTrail, and it is the field that makes a
-/// "wrong credentials" report actionable.
-impl std::fmt::Debug for CachedCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CachedCredentials")
-            .field("access_key_id", &self.credentials.access_key_id)
-            .field("secret_access_key", &"<redacted>")
-            .field(
-                "session_token",
-                &if self.credentials.session_token.is_some() {
-                    "<redacted>"
-                } else {
-                    "<none>"
-                },
-            )
-            .field("expires_at", &self.expires_at)
-            .finish()
-    }
 }
 
 /// IRSA: exchange the projected service-account token for temporary credentials.
@@ -554,11 +532,9 @@ impl WebIdentityCredentialSource {
                 return Err(error);
             }
         };
-        // A credential that is already expired the instant it was issued is one whose
-        // `Expiration` could not be read, not one AWS has stopped honouring. Reusing it
-        // briefly is what stops a response-shape drift turning every KMS call — and so
-        // every delegated-TLS handshake — into its own STS round trip.
-        if fresh.expires_at <= now {
+        // Only the no-readable-`Expiration` sentinel earns the bounded reuse floor; a stated
+        // expiry, even one already past, is cached exactly as stated.
+        if fresh.expires_at == UNIX_EPOCH {
             fresh.expires_at = now + UNKNOWN_EXPIRY_REUSE;
         }
         let credentials = fresh.credentials.clone();
@@ -578,17 +554,11 @@ impl WebIdentityCredentialSource {
                 self.config.token_file
             ))
         })?;
-        let mut buf = String::new();
-        std::io::BufReader::new(file)
-            .take(MAX_TOKEN_FILE_BYTES)
-            .read_to_string(&mut buf)
-            .map_err(|e| {
-                KeyError::NotFound(format!(
-                    "aws-kms: read web identity token {}: {e}",
-                    self.config.token_file
-                ))
-            })?;
-        let token = Zeroizing::new(buf.trim().to_string());
+        let what = format!("web identity token {}", self.config.token_file);
+        let bytes = read_capped(file, MAX_TOKEN_FILE_BYTES, &what)?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| KeyError::Malformed(format!("aws-kms: {what} is not UTF-8")))?;
+        let token = Zeroizing::new(text.trim().to_string());
         if token.is_empty() {
             return Err(KeyError::Malformed(format!(
                 "aws-kms: web identity token {} is empty",
@@ -607,9 +577,9 @@ impl WebIdentityCredentialSource {
              &RoleArn={}&RoleSessionName={}&WebIdentityToken={}",
             STS_API_VERSION,
             REQUESTED_DURATION_SECS,
-            form_encode(&self.config.role_arn),
-            form_encode(&self.config.session_name),
-            form_encode(&token),
+            form_encode(&self.config.role_arn).as_str(),
+            form_encode(&self.config.session_name).as_str(),
+            form_encode(&token).as_str(),
         ));
         // The endpoint itself, as a path the egress joins onto the vetted authority: STS
         // serves the query API at the root, and no path this source names can move the
@@ -623,12 +593,8 @@ impl WebIdentityCredentialSource {
             .send_string(&body);
         let xml = match response {
             Ok(resp) => {
-                let mut buf = Vec::new();
-                resp.into_reader()
-                    .take(MAX_STS_RESPONSE_BYTES)
-                    .read_to_end(&mut buf)
-                    .map_err(|e| KeyError::NotFound(format!("aws-kms: read STS response: {e}")))?;
-                Zeroizing::new(String::from_utf8_lossy(&buf).into_owned())
+                let body = read_capped(resp.into_reader(), MAX_STS_RESPONSE_BYTES, "STS response")?;
+                Zeroizing::new(String::from_utf8_lossy(&body).into_owned())
             }
             Err(ureq::Error::Status(code, resp)) => {
                 return Err(KeyError::NotFound(format!(
@@ -652,6 +618,19 @@ impl AwsCredentialSource for WebIdentityCredentialSource {
         self.cached_or_exchange(&SystemTime::now, &|| self.exchange())
     }
 
+    fn invalidate(&self, refused_access_key_id: &str) -> bool {
+        // `last_failure` stays: a KMS refusal says nothing about whether STS answers.
+        let mut state = self.state();
+        let held = state
+            .credentials
+            .as_ref()
+            .is_some_and(|c| c.credentials.access_key_id == refused_access_key_id);
+        if held {
+            state.credentials = None;
+        }
+        held
+    }
+
     fn describe(&self) -> String {
         format!(
             "web identity / IRSA (role {}, token {})",
@@ -660,14 +639,35 @@ impl AwsCredentialSource for WebIdentityCredentialSource {
     }
 }
 
+/// Read a credential-bearing input whole, or refuse it.
+///
+/// Past `cap` the input is REFUSED, not truncated, so no reader of the result has to know
+/// that a cut document happens to fail to parse. The buffer scrubs on drop and is allocated
+/// at `cap + 1` before the first byte, so no reallocation leaves an unscrubbed copy of the
+/// credential behind. `what` names the input in either refusal.
+fn read_capped(source: impl Read, cap: u64, what: &str) -> Result<Zeroizing<Vec<u8>>, KeyError> {
+    let limit = cap.saturating_add(1);
+    let mut buf = Zeroizing::new(Vec::with_capacity(usize::try_from(limit).unwrap_or(0)));
+    source
+        .take(limit)
+        .read_to_end(&mut buf)
+        .map_err(|e| KeyError::NotFound(format!("aws-kms: read {what}: {e}")))?;
+    if buf.len() as u64 > cap {
+        return Err(KeyError::Malformed(format!(
+            "aws-kms: {what} exceeds the {cap}-byte cap"
+        )));
+    }
+    Ok(buf)
+}
+
 /// Percent-encode for `application/x-www-form-urlencoded`.
 ///
 /// Unreserved characters pass through; everything else — including the `+`, `/` and
 /// `=` a JWT's base64url padding and an ARN's separators produce — is escaped. A
 /// bare `+` in a form body decodes as a space, which would corrupt the very token
 /// being presented, so this is not cosmetic.
-fn form_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+fn form_encode(s: &str) -> Zeroizing<String> {
+    let mut out = Zeroizing::new(String::with_capacity(s.len().saturating_mul(3)));
     for b in s.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
@@ -727,7 +727,7 @@ fn parse_assume_role_response_at(
     // The TOP is bounded too, and for the same reason the GCP sibling clamps `expires_in`:
     // an `Expiration` of year 9999 parses cleanly and pins the credential for the process
     // lifetime, so CREDENTIAL_REFRESH_MARGIN never fires again and nothing re-exchanges —
-    // and nothing evicts a cached credential when KMS rejects it either, so that state is
+    // a credential KMS refuses as expired is evicted and re-exchanged once, but one it accepts is not, so that state is
     // permanent until a restart. `AssumeRoleWithWebIdentity` cannot issue a session longer
     // than the role's MaxSessionDuration, whose own ceiling is 12 hours, so a longer claim
     // is not a lifetime the peer can honestly promise. Truncating is a truthful bound, not
@@ -912,13 +912,71 @@ mod tests {
     #[test]
     fn form_encoding_escapes_what_a_jwt_and_an_arn_contain() {
         // A bare `+` decodes as a space on the server, corrupting the token.
-        assert_eq!(form_encode("a+b/c=d"), "a%2Bb%2Fc%3Dd");
+        assert_eq!(form_encode("a+b/c=d").as_str(), "a%2Bb%2Fc%3Dd");
         assert_eq!(
-            form_encode("arn:aws:iam::455880745808:role/mcp-re"),
+            form_encode("arn:aws:iam::455880745808:role/mcp-re").as_str(),
             "arn%3Aaws%3Aiam%3A%3A455880745808%3Arole%2Fmcp-re"
         );
         // Unreserved characters are left alone.
-        assert_eq!(form_encode("Az0-_.~"), "Az0-_.~");
+        assert_eq!(form_encode("Az0-_.~").as_str(), "Az0-_.~");
+    }
+
+    #[test]
+    fn a_credential_read_past_its_cap_is_refused_not_truncated() {
+        let whole = read_capped(&b"abcd"[..], 4, "x").expect("at the cap is admitted");
+        assert_eq!(whole.as_slice(), b"abcd");
+        let empty = read_capped(&b""[..], 4, "x").expect("empty is admitted");
+        assert!(empty.is_empty());
+        assert!(matches!(
+            read_capped(&b"abcde"[..], 4, "x"),
+            Err(KeyError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn an_empty_environment_credential_is_refused_like_an_absent_one() {
+        let lookup = |table: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                table
+                    .iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| (*v).to_string())
+            }
+        };
+        let empty_key = lookup(&[("AWS_ACCESS_KEY_ID", ""), ("AWS_SECRET_ACCESS_KEY", "s")]);
+        assert!(EnvCredentialSource::from_lookup(&empty_key).is_err());
+        let empty_secret = lookup(&[("AWS_ACCESS_KEY_ID", "k"), ("AWS_SECRET_ACCESS_KEY", "")]);
+        assert!(EnvCredentialSource::from_lookup(&empty_secret).is_err());
+        let absent_key = lookup(&[("AWS_SECRET_ACCESS_KEY", "s")]);
+        assert!(EnvCredentialSource::from_lookup(&absent_key).is_err());
+        let blank_token = lookup(&[
+            ("AWS_ACCESS_KEY_ID", "k"),
+            ("AWS_SECRET_ACCESS_KEY", "s"),
+            ("AWS_SESSION_TOKEN", ""),
+        ]);
+        let ok = EnvCredentialSource::from_lookup(&blank_token).expect("complete");
+        assert_eq!(ok.access_key_id, "k");
+        assert!(ok.session_token.is_none());
+    }
+
+    #[test]
+    fn a_stated_expiry_already_past_is_not_extended_by_the_reuse_floor() {
+        let source = source();
+        let now = SystemTime::now();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let exchange = || {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(CachedCredentials {
+                credentials: parsed("2999-01-01T00:00:00Z").credentials,
+                expires_at: now - Duration::from_secs(1),
+            })
+        };
+        for _ in 0..3 {
+            source
+                .cached_or_exchange(&|| now, &exchange)
+                .expect("credentials");
+        }
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -1025,7 +1083,6 @@ mod tests {
             "https://sts.emulator.svc.cluster.local:8443",
             // The loopback emulator lane the IRSA tests themselves run against.
             "http://127.0.0.1:4566/",
-            "http://localhost:4566",
             "http://[::1]:4566",
         ] {
             if let Err(err) = WebIdentityConfig::from_env("eu-north-1", Some(endpoint.to_string()))
@@ -1340,7 +1397,6 @@ mod tests {
             "https://sts.amazonaws.com",
             "https://sts.emulator.svc.cluster.local:8443",
             "http://127.0.0.1:4566/",
-            "http://localhost:4566",
         ] {
             assert!(
                 WebIdentityCredentialSource::new(WebIdentityConfig {
@@ -1422,6 +1478,43 @@ mod tests {
             .cached_or_exchange(&|| now + UNKNOWN_EXPIRY_REUSE, &exchange)
             .expect("credentials");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_refused_credential_is_evicted_only_while_it_is_still_the_cached_one() {
+        let source = source();
+        let now = SystemTime::now();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let exchange = || {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(CachedCredentials {
+                credentials: AwsCredentials {
+                    access_key_id: "ASIAFIRST".to_string(),
+                    ..parsed("2026-08-03T12:34:56Z").credentials
+                },
+                expires_at: now + Duration::from_secs(3600),
+            })
+        };
+        let count = || calls.load(std::sync::atomic::Ordering::SeqCst);
+        source
+            .cached_or_exchange(&|| now, &exchange)
+            .expect("first");
+        assert_eq!(count(), 1);
+        assert!(!source.invalidate("ASIAOTHER"));
+        source
+            .cached_or_exchange(&|| now, &exchange)
+            .expect("cached");
+        assert_eq!(
+            count(),
+            1,
+            "a refusal about another credential evicts nothing"
+        );
+        assert!(source.invalidate("ASIAFIRST"));
+        source
+            .cached_or_exchange(&|| now, &exchange)
+            .expect("again");
+        assert_eq!(count(), 2, "the refused credential is re-exchanged");
+        assert!(!EnvCredentialSource.invalidate("ASIAFIRST"));
     }
 
     /// The floor must never extend a real expiry. A credential with 100 seconds left is

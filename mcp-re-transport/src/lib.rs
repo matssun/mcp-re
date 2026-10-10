@@ -51,6 +51,12 @@
 //! # }
 //! ```
 
+// ADR-MCPRE-061 Amendment 1 §3.1: this crate holds no `unsafe` (including the
+// `fault_accept_any_server` lane). `forbid` (unlike `deny`) cannot be overridden by an inner
+// `#[allow]` anywhere in it. Acquiring `unsafe` here means deleting this line: an
+// architectural decision, reviewed as one.
+#![forbid(unsafe_code)]
+
 pub mod remote;
 
 /// Whom this client trusts to be the proxy, and what it presents to prove itself.

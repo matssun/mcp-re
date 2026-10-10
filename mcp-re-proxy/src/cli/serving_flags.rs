@@ -12,6 +12,14 @@ pub(super) struct ServingFlags {
     allow_group_readable_key_files: bool,
 }
 
+#[derive(Clone, Copy)]
+enum Field {
+    Bind,
+    Route,
+    InnerHttpUrl,
+    Trust,
+}
+
 /// What one deployment serves, and from what.
 #[derive(Debug)]
 pub(super) struct ServingSurface {
@@ -24,23 +32,36 @@ pub(super) struct ServingSurface {
 }
 
 impl ServingFlags {
-    /// Whether this value-taking flag belongs to the family.
-    pub(super) fn owns(flag: &str) -> bool {
-        matches!(flag, "--bind" | "--route" | "--inner-http-url" | "--trust")
+    /// The field a value-taking flag of the family fills; the one table of its spellings.
+    fn field(flag: &str) -> Option<Field> {
+        match flag {
+            "--bind" => Some(Field::Bind),
+            "--route" => Some(Field::Route),
+            "--inner-http-url" => Some(Field::InnerHttpUrl),
+            "--trust" => Some(Field::Trust),
+            _ => None,
+        }
     }
 
-    /// Read one value-taking flag of the family. [`Self::owns`] decided it is one.
+    /// Whether this value-taking flag belongs to the family.
+    pub(super) fn owns(flag: &str) -> bool {
+        Self::field(flag).is_some()
+    }
+
+    /// Read one value-taking flag of the family. Ownership and routing are the same table,
+    /// so a flag outside the family writes nothing.
     pub(super) fn take(&mut self, flag: &str, value: &str) {
-        match flag {
-            "--bind" => self.bind = Some(value.to_string()),
-            "--route" => self.route = Some(value.to_string()),
+        match Self::field(flag) {
+            Some(Field::Bind) => self.bind = Some(value.to_string()),
+            Some(Field::Route) => self.route = Some(value.to_string()),
             // ADR-MCPRE-051 §3: stateless HTTP inner backend URL(s) for the async serving
             // path. Comma-separated and/or repeated; splitting is the CLI's encoding, and
             // whether a resulting value names a backend is the boundary's.
-            "--inner-http-url" => self
+            Some(Field::InnerHttpUrl) => self
                 .inner_http_urls
                 .extend(value.split(',').map(str::to_string)),
-            _ => self.trust_path = Some(value.to_string()),
+            Some(Field::Trust) => self.trust_path = Some(value.to_string()),
+            None => {}
         }
     }
 
@@ -109,6 +130,25 @@ mod tests {
         flags.take("--inner-http-url", "http://a/mcp,http://b/mcp");
         flags.take("--inner-http-url", "http://c/mcp");
         assert_eq!(flags.finish().expect("a surface").inner_http_urls.len(), 3);
+    }
+
+    /// Each flag fills the locator named after it, and a flag of another family fills none.
+    #[test]
+    fn each_flag_reaches_the_locator_named_after_it_and_no_other() {
+        for flag in ["--bind", "--route", "--inner-http-url", "--trust"] {
+            assert!(ServingFlags::owns(flag), "{flag}");
+        }
+        let mut flags = ServingFlags::default();
+        flags.take("--bind", "127.0.0.1:8443");
+        flags.take("--trust-domain", "x");
+        let err = flags.finish().expect_err("--trust was never given");
+        assert!(err.contains("--trust"), "{err}");
+
+        let mut flags = minimal();
+        flags.take("--route", "/r");
+        let surface = flags.finish().expect("a surface");
+        assert_eq!(surface.route.as_deref(), Some("/r"));
+        assert_eq!(surface.trust_path, "/trust.json");
     }
 
     /// The two switches are recognised as switches, and nothing else is.

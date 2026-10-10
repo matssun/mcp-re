@@ -50,6 +50,7 @@ mod response_expectation;
 /// What an MCP result MEANS — as distinct from whether the message carrying it is genuine.
 mod result_classification;
 pub mod trust_manifest;
+mod verified_delegated_response;
 
 pub use binding_spec::build_authorization;
 pub use binding_spec::BindingForm;
@@ -82,13 +83,10 @@ pub use request_signing_inputs::RequestSigningInputs;
 pub use response::verify_delegated_accepted_202;
 pub use response::verify_delegated_response;
 pub use response::DelegatedOutcome;
-pub use response::VerifiedDelegatedResponse;
 pub use response_expectation::ResponseExpectation;
 pub use result_classification::classify_result;
-pub use result_classification::continuation_state;
 pub use result_classification::continuation_state_of;
 pub use result_classification::ResultClass;
-pub use trust_manifest::load_signed_manifest;
 pub use trust_manifest::load_signed_manifest_with_floor;
 pub use trust_manifest::sign_manifest;
 pub use trust_manifest::InMemoryVersionFloor;
@@ -99,9 +97,13 @@ pub use trust_manifest::RetiringIssuer;
 pub use trust_manifest::SignedTrustAnchorManifest;
 pub use trust_manifest::TrustAnchorManifest;
 pub use trust_manifest::TrustManifestError;
+pub use verified_delegated_response::VerifiedDelegatedResponse;
 
 // Re-export the RFC 9421 carrier types callers construct/consume, so the proxy and
 // SDK depend on ONE evidence vocabulary through this seam.
+/// The verifier's own `Authorization: Bearer` extraction, so a client binding a DPoP token
+/// digests exactly the bytes the verifier will.
+pub use mcp_re_http_profile::bearer_token;
 pub use mcp_re_http_profile::result_class::INPUT_REQUIRED_RESULT_TYPE;
 pub use mcp_re_http_profile::ActorIdentity;
 pub use mcp_re_http_profile::ArtifactBinding;
@@ -112,8 +114,8 @@ pub use mcp_re_http_profile::HttpContinuation;
 pub use mcp_re_http_profile::HttpProfileError;
 pub use mcp_re_http_profile::HttpRequest;
 pub use mcp_re_http_profile::HttpResponse;
-pub use mcp_re_http_profile::RequestEvidence;
 pub use mcp_re_http_profile::RequestEvidenceDigest;
+pub use mcp_re_http_profile::RequestRoleEvidence;
 pub use mcp_re_http_profile::ResolvedActor;
 pub use mcp_re_http_profile::ResolverOutcome;
 pub use mcp_re_http_profile::SignerSlot;

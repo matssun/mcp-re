@@ -11,7 +11,7 @@
 //! missing.
 
 use crate::block::ResolvedActor;
-use crate::RequestEvidence;
+use crate::ResponseRoleEvidence;
 
 use super::facts::AcceptedResponseSigner;
 use super::facts::UnboundResponseSignatureFacts;
@@ -27,13 +27,32 @@ use super::facts::UnboundResponseSignatureFacts;
 /// which is why it is a different type rather than an `Option`.
 #[derive(Debug, Clone)]
 pub struct CryptographicFloorVerifiedUnboundResponse {
-    /// The resolved server/response signer — identity, key, and `Response` slot.
-    pub resolved_server_actor: ResolvedActor,
-    /// The response signature-base handle, under the response role label.
-    pub response_signature_base_digest: RequestEvidence,
+    resolved_server_actor: ResolvedActor,
+    response_signature_base_digest: ResponseRoleEvidence,
 }
 
 impl CryptographicFloorVerifiedUnboundResponse {
+    /// Assemble from what the trust seam resolved; `crate::verify` is the only producer.
+    pub(crate) fn new(
+        resolved_server_actor: ResolvedActor,
+        response_signature_base_digest: ResponseRoleEvidence,
+    ) -> Self {
+        Self {
+            resolved_server_actor,
+            response_signature_base_digest,
+        }
+    }
+
+    /// The resolved server/response signer — identity, key, and `Response` slot.
+    pub fn resolved_server_actor(&self) -> &ResolvedActor {
+        &self.resolved_server_actor
+    }
+
+    /// The response signature-base handle, under the response role label.
+    pub fn response_signature_base_digest(&self) -> &ResponseRoleEvidence {
+        &self.response_signature_base_digest
+    }
+
     /// The authorization-independent facts, as the delegated unbound product carries them.
     pub fn signature_facts(&self) -> UnboundResponseSignatureFacts {
         UnboundResponseSignatureFacts {
@@ -60,12 +79,34 @@ impl CryptographicFloorVerifiedUnboundResponse {
 /// seam-resolved.
 #[derive(Debug, Clone)]
 pub struct VerifiedDelegatedUnboundResponse {
+    signature_facts: UnboundResponseSignatureFacts,
+    delegation_issuer_kid: String,
+}
+
+impl VerifiedDelegatedUnboundResponse {
+    /// Assemble from the facts a verified credential chain authorized; `crate::verify` is
+    /// the only producer.
+    pub(crate) fn new(
+        signature_facts: UnboundResponseSignatureFacts,
+        delegation_issuer_kid: String,
+    ) -> Self {
+        Self {
+            signature_facts,
+            delegation_issuer_kid,
+        }
+    }
+
     /// The unbound cryptographic facts, with the credential-authorized signer. Its
     /// `accepted_signer.identity` is the block's declared `server_signer`, whose keyid was
     /// checked against the credential's delegated kid.
-    pub signature_facts: UnboundResponseSignatureFacts,
+    pub fn signature_facts(&self) -> &UnboundResponseSignatureFacts {
+        &self.signature_facts
+    }
+
     /// The ROOT issuer kid the credential chained to.
-    pub delegation_issuer_kid: String,
+    pub fn delegation_issuer_kid(&self) -> &str {
+        &self.delegation_issuer_kid
+    }
 }
 
 #[cfg(test)]
@@ -92,8 +133,20 @@ mod tests {
     fn the_unbound_products_carry_no_request_binding_to_misread() {
         let unbound = CryptographicFloorVerifiedUnboundResponse {
             resolved_server_actor: actor("resp-2"),
-            response_signature_base_digest: RequestEvidence::from_response_signature_base(b"r"),
+            response_signature_base_digest: ResponseRoleEvidence::from_signature_base(b"r"),
         };
+        let CryptographicFloorVerifiedUnboundResponse {
+            resolved_server_actor: _,
+            response_signature_base_digest: _,
+        } = &unbound;
+        let UnboundResponseSignatureFacts {
+            accepted_signer:
+                AcceptedResponseSigner {
+                    identity: _,
+                    verification_key: _,
+                },
+            response_signature_base_digest: _,
+        } = unbound.signature_facts();
         assert_eq!(unbound.resolved_server_actor.slot, SignerSlot::Response);
         assert_eq!(
             unbound.signature_facts().accepted_signer.identity.keyid,
@@ -102,8 +155,9 @@ mod tests {
     }
 
     /// A delegated receipt carries the shared facts and the ROOT issuer kid, and no
-    /// `ResolvedActor`: the seam answered for the root, never for the signing key, and the
-    /// two are different values.
+    /// `ResolvedActor`: the seam answered for the root, never for the signing key. The
+    /// exhaustive destructuring is the control: a field added to the product or its facts
+    /// stops this target compiling.
     #[test]
     fn a_delegated_receipt_carries_no_trust_seam_resolution_to_misread() {
         let delegated = VerifiedDelegatedUnboundResponse {
@@ -112,7 +166,7 @@ mod tests {
                     identity: actor("delegated-1").identity,
                     verification_key: SigningKey::from_seed_bytes(&[4u8; 32]).public_key(),
                 },
-                response_signature_base_digest: RequestEvidence::from_response_signature_base(b"r"),
+                response_signature_base_digest: ResponseRoleEvidence::from_signature_base(b"r"),
             },
             delegation_issuer_kid: "root-1".into(),
         };
@@ -121,9 +175,17 @@ mod tests {
             "delegated-1"
         );
         assert_eq!(delegated.delegation_issuer_kid, "root-1");
-        assert_ne!(
-            delegated.delegation_issuer_kid,
-            delegated.signature_facts.accepted_signer.identity.keyid
-        );
+        let VerifiedDelegatedUnboundResponse {
+            signature_facts:
+                UnboundResponseSignatureFacts {
+                    accepted_signer:
+                        AcceptedResponseSigner {
+                            identity: _,
+                            verification_key: _,
+                        },
+                    response_signature_base_digest: _,
+                },
+            delegation_issuer_kid: _,
+        } = &delegated;
     }
 }

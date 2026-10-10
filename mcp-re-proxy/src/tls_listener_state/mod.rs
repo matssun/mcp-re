@@ -69,7 +69,7 @@ use rustls_pki_types::PrivateKeyDer;
 
 use crate::delegated_tls::DelegatedCertResolver;
 use crate::delegated_tls::RawEd25519TlsSigner;
-use crate::delegated_tls::TlsHandshakeSignBudget;
+use crate::delegated_tls::{HandshakeSignCapacity, TlsHandshakeSignBudget};
 use crate::tls::TlsError;
 
 mod assembly;
@@ -77,14 +77,14 @@ mod auth_epoch;
 mod client_verifier;
 mod resumption_acceptance;
 mod resumption_binding;
+mod trust_anchors;
 
 use auth_epoch::EpochBoundSessionStore;
 
 /// The trust-anchor digest an epoch-bound store is tagged with.
 ///
-/// Re-exported because it is a VALUE — computing one confers no authority — and the
-/// startup posture line and the plane's own tests name it. The capabilities that could
-/// pair a store with the wrong one stay private to this subtree.
+/// A VALUE — computing one confers no authority — so it is re-exported for the startup posture
+/// line and the plane's tests; the capabilities that pair a store with an epoch stay private.
 pub use auth_epoch::TlsAuthEpoch;
 
 /// Entries the per-listener TLS session cache retains.
@@ -113,7 +113,7 @@ impl TlsListenerSecurityState {
     /// The epoch and the cache are derived HERE, from these anchors, which is what makes
     /// "the store was established from these trust anchors" true by construction rather
     /// than by a caller passing two arguments that happen to agree.
-    pub fn new(client_ca: Vec<CertificateDer<'static>>) -> Self {
+    pub fn new(client_ca: Vec<CertificateDer<'static>>, signing: HandshakeSignCapacity) -> Self {
         let resumption = Arc::new(EpochBoundSessionStore::memory_backed(
             TlsAuthEpoch::compute(&client_ca),
             TLS_SESSION_CACHE_ENTRIES,
@@ -121,7 +121,7 @@ impl TlsListenerSecurityState {
         TlsListenerSecurityState {
             client_ca,
             resumption,
-            sign_budget: Arc::new(TlsHandshakeSignBudget::default()),
+            sign_budget: Arc::new(TlsHandshakeSignBudget::new(signing)),
         }
     }
 
@@ -252,7 +252,10 @@ mod tests {
     #[test]
     fn the_epoch_digests_the_anchors_this_state_owns() {
         let anchors = vec![ca(), ca()];
-        let state = TlsListenerSecurityState::new(anchors.clone());
+        let state = TlsListenerSecurityState::new(
+            anchors.clone(),
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        );
         assert_eq!(*state.epoch(), TlsAuthEpoch::compute(&anchors));
         assert_ne!(*state.epoch(), TlsAuthEpoch::compute(&[]));
     }
@@ -267,7 +270,10 @@ mod tests {
     fn a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through() {
         let anchors = vec![ca()];
         let (chain, key) = credential();
-        let state = TlsListenerSecurityState::new(anchors.clone());
+        let state = TlsListenerSecurityState::new(
+            anchors.clone(),
+            crate::delegated_tls::HandshakeSignCapacity::default(),
+        );
 
         let first = state
             .build_exported_key_config(chain.clone(), key.clone_key(), Vec::new())
@@ -302,7 +308,8 @@ mod tests {
     #[test]
     fn a_different_anchor_set_is_a_different_state_with_its_own_empty_cache() {
         let (chain, key) = credential();
-        let first_state = TlsListenerSecurityState::new(vec![ca()]);
+        let first_state =
+            TlsListenerSecurityState::new(vec![ca()], HandshakeSignCapacity::default());
         let first = first_state
             .build_exported_key_config(chain.clone(), key.clone_key(), Vec::new())
             .expect("build");
@@ -310,7 +317,8 @@ mod tests {
             .session_storage
             .put(b"ticket".to_vec(), b"session".to_vec()));
 
-        let second_state = TlsListenerSecurityState::new(vec![ca()]);
+        let second_state =
+            TlsListenerSecurityState::new(vec![ca()], HandshakeSignCapacity::default());
         assert_ne!(*first_state.epoch(), *second_state.epoch());
         let second = second_state
             .build_exported_key_config(chain, key, Vec::new())
@@ -375,7 +383,7 @@ mod tests {
     #[test]
     fn a_delegated_rebuild_reuses_the_listeners_signing_budget() {
         let (chain, signer) = delegated_credential();
-        let state = TlsListenerSecurityState::new(vec![ca()]);
+        let state = TlsListenerSecurityState::new(vec![ca()], HandshakeSignCapacity::default());
 
         let first = state
             .delegated_resolver(chain.clone(), Arc::clone(&signer))
@@ -386,6 +394,22 @@ mod tests {
             Arc::ptr_eq(first.budget(), second.budget()),
             "a rebuild must reuse the listener's budget; a fresh bucket bounds a reload \
              window rather than a rate"
+        );
+    }
+
+    /// The budget every delegated build installs is the one sized by the capacity this
+    /// listener was established with — the operator's setting, not a default.
+    #[test]
+    fn a_delegated_build_enforces_the_capacity_the_listener_was_established_with() {
+        let (chain, signer) = delegated_credential();
+        let capacity = HandshakeSignCapacity::new(7, 13).expect("in bounds");
+        let state = TlsListenerSecurityState::new(vec![ca()], capacity);
+        let resolver = state
+            .delegated_resolver(chain, signer)
+            .expect("delegated build");
+        assert_eq!(
+            (resolver.budget().rate_per_sec(), resolver.budget().burst()),
+            (7, 13)
         );
     }
 
@@ -407,7 +431,7 @@ mod tests {
     fn every_config_this_owner_builds_carries_this_states_epoch_bound_store() {
         let (chain, key) = credential();
         let (delegated_chain, signer) = delegated_credential();
-        let state = TlsListenerSecurityState::new(vec![ca()]);
+        let state = TlsListenerSecurityState::new(vec![ca()], HandshakeSignCapacity::default());
 
         let configs = [
             state
@@ -451,7 +475,7 @@ mod tests {
     fn no_config_this_owner_builds_can_resume_outside_the_store() {
         let (chain, key) = credential();
         let (delegated_chain, signer) = delegated_credential();
-        let state = TlsListenerSecurityState::new(vec![ca()]);
+        let state = TlsListenerSecurityState::new(vec![ca()], HandshakeSignCapacity::default());
         let configs = [
             state
                 .build_exported_key_config(chain, key, Vec::new())

@@ -62,7 +62,10 @@ mod inner_plane;
 
 /// Durable responsibility for a served exchange: taken before the side effects run, and
 /// discharged with what was actually served.
-mod retention;
+// Crate-visible for one item: `request_stages` names `retention::NothingRetained`, the
+// owner's witness that a deployment retains nothing, in its two `NotConfigured` arms. The
+// owner's representation stays private to this module tree.
+pub(crate) mod retention;
 
 /// What makes an inbound message a request this deployment reads at all: whose it is,
 /// whether it is addressed here, and whether it is legal MCP.
@@ -106,7 +109,6 @@ use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ExecutionDisposition;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::OutstandingId;
 use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::VerifierPolicy;
@@ -135,7 +137,11 @@ use authority_verdicts::AuthorityVerdicts;
 /// (ADR-MCPS-047): long enough for a client to answer an `InputRequiredResult`,
 /// bounded so an unanswered continuation does not linger. Overridable via
 /// [`HttpProfileProxy::with_continuation_store`].
-pub const DEFAULT_CONTINUATION_TTL_SECS: i64 = 300;
+pub const DEFAULT_CONTINUATION_TTL_SECS: std::num::NonZeroU32 = match std::num::NonZeroU32::new(300)
+{
+    Some(ttl) => ttl,
+    None => panic!("the default continuation lifetime is positive"),
+};
 
 /// One exchange's identity, as every stage past VERIFIED needs it.
 ///
@@ -148,16 +154,17 @@ pub(super) struct Exchange<'a> {
     verified: &'a VerifiedMcpRequest,
     actor_id: &'a str,
     now: i64,
-    /// The delegated key snapshotted at ANSWERABLE, once the exchange has one.
-    ///
-    /// `None` only before that stage. Every refusal from ANSWERABLE onward signs with this
-    /// snapshot rather than re-asking the signer: `now` is fixed for the exchange, so a key
-    /// valid there is valid here, while a signer retired in between makes the re-ask return
-    /// nothing and degrades the refusal to an unsigned error — on exactly the exits that
-    /// most need to state, under signature, that the backend may have acted.
-    key: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     /// What the request-side authorities established; see [`AuthorityVerdicts`].
     verdicts: AuthorityVerdicts,
+}
+
+/// An exchange past ANSWERABLE, holding the delegated key snapshotted there.
+///
+/// Every refusal from here on signs with this snapshot, not a re-ask of a signer that may
+/// have been retired since, which would degrade to an unsigned error.
+pub(super) struct Answerable<'a> {
+    ex: Exchange<'a>,
+    key: Arc<mcp_re_http_profile::ActiveDelegatedKey>,
 }
 
 /// The RFC 9421 server-side PEP run by the async fleet (ADR-MCPRE-051).
@@ -237,13 +244,12 @@ impl HttpProfileProxy {
         self
     }
 
-    /// Construct the serving PEP (ADR-MCPRE-052 delegated-signing — the only response-
-    /// signing mode). `resolve_actor` is the trust seam; `expected_audience` the
-    /// verifier audience; `dispatch_cfg`/`inner_async` the replay/inner planes. There
-    /// is no directly-held server key on the serving struct — only the shared
-    /// [`DelegatedServerSigner`] whose snapshot the cold-path rotor keeps fresh. Every
-    /// response and rejection is signed by the active delegated key + inline
-    /// credential, failing closed when none is valid.
+    /// Construct the serving PEP (ADR-MCPRE-052 delegated signing, the only response-signing
+    /// mode), signing every response and rejection with the shared [`DelegatedServerSigner`].
+    /// `dispatch_cfg.fleet_strict` IS the replay claim: set, every request refuses unless
+    /// both the declared tier and `replay_async`'s own durability class are durable; unset,
+    /// the tier refuses replays within this process only, the single-process posture.
+    // Public embedder constructor: seven required inputs, no default; optional postures are `with_*`.
     #[allow(clippy::too_many_arguments)]
     pub fn new_delegated(
         resolve_actor: ActorResolver,
@@ -328,16 +334,16 @@ impl HttpProfileProxy {
         self
     }
 
-    /// Wire the MRTR continuation correlation store (ADR-MCPS-047) with a bounded
-    /// entry TTL. The open leg records `{previous_request_base,
-    /// input_required_response_base}` under `H(requestState)`; the answer leg — on
-    /// ANY replica — takes them one-shot to drive the pure continuation binding.
+    /// Wire the MRTR continuation correlation store (ADR-MCPS-047) with a bounded entry TTL.
+    /// The open leg records two role-labeled evidence handles under `continuation_key` over
+    /// (audience, verifier-resolved actor, requestState); the answer leg, on ANY replica,
+    /// `peek`s them to bind and only the post-admission retirement `consume`s, one-shot.
     pub fn with_continuation_store(
         mut self,
         store: Arc<dyn AsyncContinuationStore>,
-        ttl_secs: i64,
+        ttl: std::num::NonZeroU32,
     ) -> Self {
-        self.continuations = continuation::ContinuationPlane::wired(store, ttl_secs);
+        self.continuations = continuation::ContinuationPlane::wired(store, ttl);
         self
     }
 
@@ -375,12 +381,17 @@ impl HttpProfileProxy {
     /// tried. WHICH receipt that becomes belongs to [`receipt::ResponseSigning`].
     fn refuse(
         &self,
-        ex: &Exchange<'_>,
+        ex: &mut Exchange<'_>,
         refusal: Refusal,
         progress: &ExchangeProgress,
     ) -> ServedHttpResponse {
         let owed = Self::disposition(progress, refusal.execution_refinement);
-        self.responses.refuse(&self.audit, ex, refusal, owed)
+        self.responses.refuse(
+            &self.audit,
+            receipt::RefusalPoint::Request(ex, None),
+            refusal,
+            owed,
+        )
     }
 
     /// What the exchange machine's cross-machine state means on the wire.
@@ -392,7 +403,7 @@ impl HttpProfileProxy {
     /// continuation-record failure at **HTTP 503** returned a bare status after the tool
     /// had run (ADR-MCPRE-058 §10, ruling D1). Deriving it from the machine, not an
     /// allowlist, stops the next post-dispatch exit from silently not being on it — and a
-    /// refusing OWNER refines only where an ordinary retry was correct.
+    /// refusing OWNER refines only where an ordinary retry was correct or retention is unresolved.
     fn disposition(
         p: &ExchangeProgress,
         refined: Option<ExecutionDisposition>,
@@ -400,8 +411,8 @@ impl HttpProfileProxy {
         match (p.retry_semantics(), refined) {
             (RetrySemantics::SafeNothingExecuted, Some(refined)) => refined,
             (RetrySemantics::SafeNothingExecuted, None) => ExecutionDisposition::NothingExecuted,
-            (RetrySemantics::RequiresNewElicitation, _) => {
-                ExecutionDisposition::ApprovalSpentNothingExecuted
+            (RetrySemantics::RequiresNewElicitation, refined) => {
+                ExecutionDisposition::approval_spent(refined)
             }
             (RetrySemantics::NotRetrySafe, _) => ExecutionDisposition::PossiblyExecuted,
         }
@@ -446,7 +457,6 @@ impl HttpProfileProxy {
             verified: &verified,
             actor_id: &actor_id,
             now,
-            key: None,
             verdicts: AuthorityVerdicts::default(),
         };
 
@@ -461,12 +471,18 @@ impl HttpProfileProxy {
             Ok(admitted) => admitted,
             Err(rejection) => return rejection,
         };
-        let window = match self.commit_to_answering(&mut ex, &mut progress).await {
-            Ok(window) => window,
+        let (ans, window) = match self.commit_to_answering(ex, &admitted, &mut progress).await {
+            Ok(answered) => answered,
             Err(rejection) => return rejection,
         };
-        self.record_request_accepted(&admitted, ex.verdicts.admission, &actor_id, now);
-        let commitment = self.commit_to_dispatch(&ex, admitted.authorized, &window, &mut progress);
+        let acc = receipt::Accepted::record(&self.audit, &admitted, ans);
+        let commitment = self.commit_to_dispatch(
+            &acc,
+            &admitted.envelope,
+            admitted.authorized,
+            &window,
+            &mut progress,
+        );
         let (prepared, retention) = match commitment.await {
             Ok(committed) => committed,
             Err(rejection) => return rejection,
@@ -489,20 +505,20 @@ impl HttpProfileProxy {
         // NOTIFICATION — a one-way message with no JSON-RPC `id` is its own terminal: it
         // says the boundary accepted the message, never that anything completed. Decided
         // from the REQUEST, which is where the fact lives.
-        if matches!(admitted.outstanding, OutstandingId::Notification) {
+        if admitted.envelope.outstanding().is_notification() {
             return self
-                .answer_notification_terminal(&ex, &mut progress, &outcome, &window, &owed)
+                .answer_notification_terminal(&acc, &mut progress, &outcome, &window, &owed)
                 .await;
         }
-        let outstanding = &admitted.outstanding;
+        let outstanding = admitted.envelope.outstanding();
         let reply = match self
-            .assemble_reply(&ex, &mut progress, outcome, outstanding, &window, &owed)
+            .assemble_reply(&acc, &mut progress, outcome, outstanding, &window, &owed)
             .await
         {
             Ok(reply) => reply,
             Err(rejection) => return rejection,
         };
-        self.serve_retained(&ex, &mut progress, reply, &owed).await
+        self.serve_retained(&acc, &mut progress, reply, &owed).await
     }
 }
 
@@ -512,5 +528,56 @@ pub(super) fn served(resp: HttpResponse) -> ServedHttpResponse {
         status: resp.status,
         headers: resp.headers,
         body: resp.body,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exchange_state::ContinuationState;
+
+    #[test]
+    fn every_retry_verdict_maps_to_its_one_wire_disposition() {
+        let safe = ExchangeProgress::new();
+        let mut spent = ExchangeProgress::new();
+        spent.observe_continuation(ContinuationState::Consumed);
+        let mut dispatched = ExchangeProgress::new();
+        dispatched.advance(ExchangeEvent::BackendDispatched);
+        assert_eq!(safe.retry_semantics(), RetrySemantics::SafeNothingExecuted);
+        assert_eq!(
+            spent.retry_semantics(),
+            RetrySemantics::RequiresNewElicitation
+        );
+        assert_eq!(dispatched.retry_semantics(), RetrySemantics::NotRetrySafe);
+
+        let refinements = [
+            ExecutionDisposition::Unstated,
+            ExecutionDisposition::NothingExecuted,
+            ExecutionDisposition::ApprovalSpentNothingExecuted,
+            ExecutionDisposition::PossiblyExecuted,
+            ExecutionDisposition::NothingExecutedRetentionUnresolved,
+            ExecutionDisposition::ApprovalSpentRetentionUnresolved,
+        ];
+        assert_eq!(
+            HttpProfileProxy::disposition(&safe, None),
+            ExecutionDisposition::NothingExecuted
+        );
+        for r in refinements {
+            assert_eq!(HttpProfileProxy::disposition(&safe, Some(r)), r);
+        }
+        for refined in std::iter::once(None).chain(refinements.into_iter().map(Some)) {
+            let expected = match refined {
+                Some(
+                    ExecutionDisposition::NothingExecutedRetentionUnresolved
+                    | ExecutionDisposition::ApprovalSpentRetentionUnresolved,
+                ) => ExecutionDisposition::ApprovalSpentRetentionUnresolved,
+                _ => ExecutionDisposition::ApprovalSpentNothingExecuted,
+            };
+            assert_eq!(HttpProfileProxy::disposition(&spent, refined), expected);
+            assert_eq!(
+                HttpProfileProxy::disposition(&dispatched, refined),
+                ExecutionDisposition::PossiblyExecuted
+            );
+        }
     }
 }

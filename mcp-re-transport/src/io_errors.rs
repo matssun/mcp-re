@@ -16,14 +16,14 @@ use std::io;
 use super::TransportError;
 
 /// Map a handshake-phase IO error: a socket timeout (stalled handshake)
-/// surfaces as [`TransportError::Timeout`]; any other IO error here is a server
-/// authentication rejection and surfaces as [`TransportError::Handshake`].
+/// surfaces as [`TransportError::Timeout`]; otherwise it defers to
+/// [`io_or_handshake`] (a rustls-wrapped error is a handshake failure; anything
+/// else stays `Io`).
 pub(super) fn handshake_error(e: io::Error) -> TransportError {
     if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut {
-        TransportError::Timeout(e.to_string())
-    } else {
-        TransportError::Handshake(e.to_string())
+        return TransportError::Timeout(e.to_string());
     }
+    io_or_handshake(e)
 }
 
 /// Classify a request-WRITE-phase IO error (MCPS-093, audit M-6 residual). A
@@ -50,5 +50,29 @@ pub(super) fn io_or_handshake(e: io::Error) -> TransportError {
         TransportError::Handshake(e.to_string())
     } else {
         TransportError::Io(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_handshake_io_failure_without_a_rustls_error_is_io_not_handshake() {
+        let got = handshake_error(io::Error::from(io::ErrorKind::ConnectionReset));
+        assert!(matches!(got, TransportError::Io(_)), "got {got:?}");
+    }
+
+    #[test]
+    fn a_handshake_io_failure_carrying_a_rustls_error_is_handshake() {
+        let inner = rustls::Error::InvalidCertificate(rustls::CertificateError::Expired);
+        let got = handshake_error(io::Error::new(io::ErrorKind::InvalidData, inner));
+        assert!(matches!(got, TransportError::Handshake(_)), "got {got:?}");
+    }
+
+    #[test]
+    fn a_stalled_handshake_is_a_timeout() {
+        let got = handshake_error(io::Error::from(io::ErrorKind::TimedOut));
+        assert!(matches!(got, TransportError::Timeout(_)), "got {got:?}");
     }
 }

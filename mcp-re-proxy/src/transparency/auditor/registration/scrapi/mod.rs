@@ -67,7 +67,11 @@ impl<E: HttpExchange> Scrapi11RegistrationClient<E> {
     }
 
     /// POST the statement, and read what the service made of it.
-    fn submit(&self, signed_statement: &[u8]) -> Result<Submitted, Scrapi11Fault> {
+    fn submit(
+        &self,
+        signed_statement: &[u8],
+        deadline: Instant,
+    ) -> Result<Submitted, Scrapi11Fault> {
         let request = HttpRequest {
             method: "POST",
             url: wire::entries_url(&self.base_url),
@@ -76,6 +80,7 @@ impl<E: HttpExchange> Scrapi11RegistrationClient<E> {
                 ("accept".to_owned(), wire::COSE_MEDIA_TYPE.to_owned()),
             ],
             body: signed_statement.to_vec(),
+            deadline,
         };
         let response = self
             .exchange
@@ -93,35 +98,47 @@ impl<E: HttpExchange> Scrapi11RegistrationClient<E> {
     /// failure and a rate limit do not end it either — both are transient by nature, and
     /// abandoning on the first one would discard a receipt the service is still producing.
     /// What ends it is a receipt, an unreadable answer, or the budget.
-    fn poll(&self, location: &str, deadline: Instant) -> Result<Vec<u8>, Scrapi11Fault> {
+    fn poll(
+        &self,
+        location: &str,
+        started: Instant,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, Scrapi11Fault> {
+        let mut last_poll_failure = None;
         while Instant::now() < deadline {
-            std::thread::sleep(self.policy.interval());
-            match self.poll_once(location) {
-                Polled::Ready(receipt) => return Ok(receipt),
-                Polled::StillWorking => (),
-                Polled::Unusable(fault) => return Err(fault),
+            std::thread::sleep(
+                self.policy
+                    .interval()
+                    .min(deadline.saturating_duration_since(Instant::now())),
+            );
+            match self.poll_once(location, deadline) {
+                Ok(Polled::Ready(receipt)) => return Ok(receipt),
+                Ok(Polled::StillWorking) => last_poll_failure = None,
+                Ok(Polled::Unusable(fault)) => return Err(fault),
+                Err(detail) => last_poll_failure = Some(detail),
             }
         }
         Err(Scrapi11Fault::TimedOut {
-            after: self.policy.timeout(),
+            after: started.elapsed(),
+            last_poll_failure,
         })
     }
 
-    /// One poll of the receipt resource, and what it said.
-    fn poll_once(&self, location: &str) -> Polled {
+    /// One poll of the receipt resource, and what it said, or why it said nothing.
+    fn poll_once(&self, location: &str, deadline: Instant) -> Result<Polled, String> {
         let request = HttpRequest {
             method: "GET",
             url: location.to_owned(),
             headers: vec![("accept".to_owned(), wire::COSE_MEDIA_TYPE.to_owned())],
             body: Vec::new(),
+            deadline,
         };
-        // A transport failure is not an answer; the budget above decides how long to keep
-        // asking, and abandoning on the first blip would discard a receipt still being
+        // A transport failure is not an answer; the caller keeps asking until the budget
+        // ends, and abandoning on the first blip would discard a receipt still being
         // produced.
-        let Ok(response) = self.exchange.send(request) else {
-            return Polled::StillWorking;
-        };
-        answer::read_poll(&response)
+        self.exchange
+            .send(request)
+            .map(|response| answer::read_poll(&response))
     }
 }
 
@@ -133,19 +150,20 @@ impl<E: HttpExchange> TransparencyRegistration for Scrapi11RegistrationClient<E>
     fn register(&self, signed_statement: &[u8]) -> Result<RegistrationResponse, RegistrationError> {
         // Before anything is sent. A budget whose end is not representable is a run with
         // no bound, and refusing here is a definitive negative: nothing went out.
-        let deadline = Instant::now()
-            .checked_add(self.policy.timeout())
-            .ok_or_else(|| {
-                RegistrationError::Refused(
-                    "the registration deadline is not representable on this host's clock"
-                        .to_owned(),
-                )
-            })?;
-        let receipt = match self.submit(signed_statement).map_err(fault_to_error)? {
+        let started = Instant::now();
+        let deadline = started.checked_add(self.policy.timeout()).ok_or_else(|| {
+            RegistrationError::Refused(
+                "the registration deadline is not representable on this host's clock".to_owned(),
+            )
+        })?;
+        let receipt = match self
+            .submit(signed_statement, deadline)
+            .map_err(fault_to_error)?
+        {
             Submitted::Receipt(bytes) => bytes,
-            Submitted::Pending(location) => {
-                self.poll(&location, deadline).map_err(fault_to_error)?
-            }
+            Submitted::Pending(location) => self
+                .poll(&location, started, deadline)
+                .map_err(fault_to_error)?,
         };
         Ok(RegistrationResponse::of(receipt))
     }
@@ -204,6 +222,9 @@ mod tests {
         requests: RefCell<Vec<HttpRequest>>,
         /// Fail the next `n` polls at the transport, to exercise the retry.
         poll_failures: Cell<u32>,
+        /// A failed poll returns only once its request's deadline has passed, so the
+        /// service — not the scheduler — decides that the budget ends on a failed poll.
+        failed_polls_hold_to_deadline: bool,
     }
 
     impl HermeticService {
@@ -218,11 +239,17 @@ mod tests {
                 receipt: RefCell::new(Vec::new()),
                 requests: RefCell::new(Vec::new()),
                 poll_failures: Cell::new(0),
+                failed_polls_hold_to_deadline: false,
             }
         }
 
         fn with_poll_failures(self, n: u32) -> Self {
             self.poll_failures.set(n);
+            self
+        }
+
+        fn holding_failed_polls_to_deadline(mut self) -> Self {
+            self.failed_polls_hold_to_deadline = true;
             self
         }
 
@@ -267,6 +294,9 @@ mod tests {
             }
             if self.poll_failures.get() > 0 {
                 self.poll_failures.set(self.poll_failures.get() - 1);
+                if self.failed_polls_hold_to_deadline {
+                    std::thread::sleep(request.deadline.saturating_duration_since(Instant::now()));
+                }
                 return Err("connection reset".to_owned());
             }
             if self.pending.get() > 0 {
@@ -328,8 +358,15 @@ mod tests {
             BASE,
             policy(),
         );
-        let registered = register_and_verify(&client, &statement, &issuer().public_key(), &pin())
-            .expect("the receipt the service returned verifies against the statement and the pin");
+        let registered = register_and_verify(
+            &client,
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_lifecycle,
+            &|| NOW,
+        )
+        .expect("the receipt the service returned verifies against the statement and the pin");
         assert!(!registered.receipt_bytes().is_empty());
     }
 
@@ -344,8 +381,15 @@ mod tests {
         let statement = a_statement();
         let service = HermeticService::new(Mode::Asynchronous { pending: 2 });
         let client = Scrapi11RegistrationClient::new(service, BASE, policy());
-        let registered = register_and_verify(&client, &statement, &issuer().public_key(), &pin())
-            .expect("the polled receipt verifies");
+        let registered = register_and_verify(
+            &client,
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_lifecycle,
+            &|| NOW,
+        )
+        .expect("the polled receipt verifies");
         assert!(!registered.receipt_bytes().is_empty());
 
         let requests = client.exchange.requests.borrow();
@@ -394,8 +438,15 @@ mod tests {
         let statement = a_statement();
         let service = HermeticService::new(Mode::Asynchronous { pending: 0 }).with_poll_failures(2);
         let client = Scrapi11RegistrationClient::new(service, BASE, policy());
-        register_and_verify(&client, &statement, &issuer().public_key(), &pin())
-            .expect("two failed polls inside the budget are not a lost receipt");
+        register_and_verify(
+            &client,
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_lifecycle,
+            &|| NOW,
+        )
+        .expect("two failed polls inside the budget are not a lost receipt");
     }
 
     // ---- the refusals, and their certainty --------------------------------------
@@ -425,11 +476,18 @@ mod tests {
     /// A client-error answer to the submission is the ONE definitive negative.
     #[test]
     fn a_client_error_is_a_definitive_refusal() {
-        for status in [400, 401, 403, 404, 409, 422] {
+        for status in [400, 401, 403, 404, 422] {
             let outcome = register(Canned::submitting(response(status, &[], b"")));
             assert!(
                 matches!(outcome, Err(RegistrationError::Refused(_))),
                 "{status}: the service read the submission and said no",
+            );
+        }
+        for status in [408, 409, 425] {
+            let outcome = register(Canned::submitting(response(status, &[], b"")));
+            assert!(
+                matches!(outcome, Err(RegistrationError::Indeterminate(_))),
+                "{status}: the service may hold the statement",
             );
         }
     }
@@ -535,6 +593,50 @@ mod tests {
         assert!(
             refused.to_string().contains("may be registered"),
             "and the words must say so: {refused}",
+        );
+    }
+
+    /// One clock governs the registration: every exchange carries the same deadline, and it
+    /// is the policy's timeout from the start of `register`.
+    #[test]
+    fn every_exchange_carries_the_one_registration_deadline() {
+        let service = HermeticService::new(Mode::Asynchronous { pending: 2 });
+        let client = Scrapi11RegistrationClient::new(service, BASE, policy());
+        let before = Instant::now();
+        client
+            .register(a_statement().to_cose())
+            .expect("the receipt becomes ready");
+        let after = Instant::now();
+        let requests = client.exchange.requests.borrow();
+        let first = requests.first().expect("a submission").deadline;
+        assert!(requests.len() > 1, "the lane polled");
+        assert!(requests.iter().all(|r| r.deadline == first));
+        assert!(before + policy().timeout() <= first);
+        assert!(first <= after + policy().timeout());
+    }
+
+    /// A poll that never completes is named, not reported as slowness.
+    #[test]
+    fn a_poll_that_never_completes_names_its_transport_failure() {
+        let service = HermeticService::new(Mode::Asynchronous { pending: 0 })
+            .with_poll_failures(u32::MAX)
+            .holding_failed_polls_to_deadline();
+        let client = Scrapi11RegistrationClient::new(service, BASE, policy());
+        let refused = client
+            .register(a_statement().to_cose())
+            .expect_err("no poll ever completed");
+        assert_eq!(
+            client.exchange.requests.borrow().len(),
+            2,
+            "the submission, then one poll that failed at the transport and ended the budget",
+        );
+        assert!(
+            matches!(refused, RegistrationError::Indeterminate(_)),
+            "{refused:?}",
+        );
+        assert!(
+            refused.to_string().contains("connection reset"),
+            "{refused}"
         );
     }
 

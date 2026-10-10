@@ -663,6 +663,20 @@ def test_a_doctest_carries_its_fence_mode():
     assert any("compile-fail" in control.note for control in doctests)
 
 
+def test_a_test_attribute_with_arguments_is_a_test():
+    """`#[tokio::test(flavor = "multi_thread")]` declares a test as surely as the bare form.
+    A census that matched only `#[tokio::test]` saw none of them."""
+    tests = [
+        "    #[test]",
+        "    #[tokio::test]",
+        '    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]',
+        "    #[tokio::test(start_paused = true)]",
+    ]
+    not_tests = ["    #[testing]", "    #[test_case(1)]", "    #[cfg(test)]", "    // #[test]"]
+    assert all(_controls._TEST_ATTR.match(line) for line in tests)
+    assert not any(_controls._TEST_ATTR.match(line) for line in not_tests)
+
+
 # ---------------------------------------------------------------------------
 # Repository scope — the census may only see files a commit could contain
 # ---------------------------------------------------------------------------
@@ -740,6 +754,31 @@ def run() -> int:
     print(f"control census self-test: {'PASS' if not failures else f'FAIL ({failures})'}")
     return 1 if failures else 0
 
+
+
+def test_a_crate_root_is_named_under_the_package_that_holds_it():
+    """A target in another package compiling the same root must not re-home the crate.
+
+    The Verus non-vacuity probe lives in `//mcp-re-http-profile/verus_probe` and compiles
+    `mcp-re-http-profile/src/lib.rs`. Its label sorts before `//mcp-re-http-profile:…`, and
+    when label order picked the package every http-profile test selector stopped resolving.
+    """
+    import _rust_targets
+
+    rows = {
+        "//pkg/probe:p": {"root": "pkg/src/lib.rs", "package": "pkg/probe", "kind": "verus_verify"},
+        "//pkg:lib": {"root": "pkg/src/lib.rs", "package": "pkg", "kind": "rust_library"},
+        "//pkg:test": {"root": "pkg/src/lib.rs", "package": "pkg", "kind": "rust_test"},
+    }
+    real = _rust_targets.table
+    _rust_targets.table = lambda: rows
+    try:
+        assert _rust_targets.crate_roots()["pkg/src/lib.rs"]["package"] == "pkg"
+    finally:
+        _rust_targets.table = real
+    live = _rust_targets.crate_roots()
+    misplaced = sorted(root for root, entry in live.items() if not _rust_targets._holds(entry["package"], root))
+    assert not misplaced, misplaced
 
 if __name__ == "__main__":
     raise SystemExit(run())

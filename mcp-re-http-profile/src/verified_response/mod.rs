@@ -50,27 +50,30 @@
 //! why the shared facts are also two types, one per binding kind, rather than one type
 //! with the coverage difference left to prose.
 //!
-//! # These types state propositions; they do not prove provenance
+//! # These types state propositions; the verifier is their only producer
 //!
-//! Fields are `pub` for the reason recorded in `docs/dev/sealed-owners.md`: a proved
-//! postcondition outranks a seal, and Verus rejects private fields on a transparent
-//! datatype. Nothing therefore prevents a caller from assembling one of these values by
-//! hand, so the table above — and every product below — is deliberately phrased over what a
-//! SUCCESSFUL RETURN from the verifier establishes, never over what holding a value means.
-//! "Possession implies" would claim an origin the types do not give.
+//! Every product's representation is private to its module and its sole constructor is
+//! `pub(crate)`, called from `crate::verify`. No Verus `ensures` reads a response product,
+//! so nothing is traded for the seal (unlike the request products, `docs/dev/sealed-owners.md`
+//! "The same trade, measured a second time"). Outside this crate, holding a product
+//! therefore means a verifier returned it; inside the crate the producer set is held by the
+//! `pub(crate)` constructor, not by type privacy. The shared facts types are plain
+//! pub-field value records that establish nothing alone and are reached as projections of
+//! a product.
 //!
 //! What the type split DOES give is non-substitutability: no consumer requiring one
 //! proposition can be handed a value of another, by the compiler rather than a runtime
 //! check. The registered claims are THM-0016 … THM-0022 and their scopes say the same.
 
 mod bound;
+mod delegated_bound;
 mod facts;
 mod unbound;
 
 pub(crate) use bound::block_agreement;
 pub use bound::CryptographicFloorVerifiedBoundResponse;
-pub use bound::VerifiedDelegatedMcpResponse;
 pub use bound::VerifiedMcpResponse;
+pub use delegated_bound::VerifiedDelegatedMcpResponse;
 pub use facts::AcceptedResponseSigner;
 pub use facts::BoundRequestEvidenceAgreement;
 pub use facts::BoundResponseSignatureFacts;

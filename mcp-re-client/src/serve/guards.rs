@@ -4,8 +4,8 @@
 //! "Processes on this host" does not describe a browser. A web page the user visits can
 //! issue cross-origin `POST`s to `127.0.0.1`, and a page served from a name that resolves
 //! to `127.0.0.1` (DNS rebinding) is treated by the browser as SAME-origin, so it does not
-//! even send an `Origin`. Either way the sidecar would sign and send the attacker''s tool
-//! call under this client''s identity, mTLS certificate and authorization bindings, and the
+//! even send an `Origin`. Either way the sidecar would sign and send the attacker's tool
+//! call under this client's identity, mTLS certificate and authorization bindings, and the
 //! remote server would see perfectly valid RFC 9421 evidence. That the page cannot read the
 //! reply is no comfort: the side effect is the payload.
 //!

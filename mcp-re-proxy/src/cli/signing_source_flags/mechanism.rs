@@ -8,11 +8,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Mechanism {
     File,
-    /// Development and CI only. The variant exists exactly where the `--key-source env`
-    /// spelling does: a production build has no way to name it, so it has no way to be
-    /// selected either.
-    #[cfg(feature = "dev_env_key_source")]
-    Environment,
     Pkcs11,
     AwsKms,
     GcpKms,
@@ -23,8 +18,6 @@ impl Mechanism {
     pub(super) fn spelling(self) -> &'static str {
         match self {
             Mechanism::File => "file",
-            #[cfg(feature = "dev_env_key_source")]
-            Mechanism::Environment => "env",
             Mechanism::Pkcs11 => "pkcs11",
             Mechanism::AwsKms => "aws-kms",
             Mechanism::GcpKms => "gcp-kms",
@@ -34,14 +27,11 @@ impl Mechanism {
 
 /// Which mechanism a `--key-source` spelling names.
 ///
-/// Env key material is a development-only downgrade — it is visible to the process tree —
-/// and it EXISTS ONLY in a build with the `dev_env_key_source` feature. A production build
-/// has no `env` spelling at all, so there is no runtime knob to enable it.
+/// Every mechanism reads secret key material from a file or keeps it on a device; none
+/// reads it from the process environment, so `env` is an unknown spelling like any other.
 pub(super) fn mechanism(value: &str) -> Result<Mechanism, String> {
     match value {
         "file" => Ok(Mechanism::File),
-        #[cfg(feature = "dev_env_key_source")]
-        "env" => Ok(Mechanism::Environment),
         "pkcs11" => Ok(Mechanism::Pkcs11),
         "aws-kms" => Ok(Mechanism::AwsKms),
         "gcp-kms" => Ok(Mechanism::GcpKms),

@@ -2,17 +2,53 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:5257cf03ef37e18111138630d894519568df5df26365503b2c491efd6729c0b5",
+    "theorem_claim": "sha256:de86f58b75c85d0de55fdbe31a153bb36e934efe1564d7bf290d7e4bec3e8e36",
     "theorem_dependencies": {
-      "THM-0057": "sha256:6af9416e71f599cefa633a6efd1174807feb9d8aab41658586b3ec15e8bfb4dd",
+      "THM-0057": "sha256:a61fda80e3c2b9837b5083cec274eb504fc6e268ab7f0ecb92e5c20c5eebf48b",
       "THM-0120": "sha256:e8a77509aa8a72be2dafd15c25580451147a3853bed65e81051674a538201bd2",
-      "THM-0121": "sha256:1cd97005d7965df1136ee2b756433117be8a9d070bada9d25f73425f8e1df714"
+      "THM-0121": "sha256:c9293d78014c1d38cff190bfdef662c7350949d35982569338008e720ad664a2"
     },
     "theorem_id": "THM-0127",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "OWNER SPECIFICATION REVIEW, 2026-09-30, authorized by the owner in this session against head 0e460b8d and re-verified after merging origin/main (fingerprint unchanged). Recorded by the implementing agent as a transcription of that authorization.\n\nAccepts the scope correction and the reported ordering, lifetime and boundary evidence. Two kinds of evidence are distinct and must stay distinct: SOURCE-STRUCTURE evidence (the test that reads serve_until_shutdown via include_str! and asserts AnchorRefresher::start precedes the accept loop and is held by a named binding) shows how the code is written; BEHAVIOURAL evidence (the existing refresher-lifetime tests) shows what the running client does. The structural control adds a precise failure message and does not add kill power beyond the behavioural test.\n\nEVIDENCE: verification/reviews/packets/bazel-only-specification-review-evidence-2026-09-30.md ; the prior record's text is preserved in git history of this file.",
-  "reviewed_fingerprint": "sha256:41d895d991ca84466ae5b3bacc78405d98a2a18d5602e24046d2117b64d4763b",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0077": "sha256:2c4008f70a4c379b7dcd0bbef2f0912980f5707e4d71b308f9b48399e30c8667"
+    },
+    "supporting_semantics": {
+      "client.serving_lifetime": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:068b0d62b0d48f7d6092bb3d05ea42ab956f82bf32dbb0477baaee74cc9fb3fa",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:0498517d23ec9590dc6920791737e5cfdacca6d74e6c71bb7a335ffa3e283a9a",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:08143aa88332f23965d442b238e6cf0cda4cf776d20ed80841b9e6a860a9012d",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:20e8fd6a37600f5887732a0098f3bb6c24c0cbd5468361c6da68ac952c2a5958",
+        "test_selection": "sha256:5e3540dbdd9994c6036d0d71e90bb158c08e7fe8175f6fa9f6e262ab3632fc66",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:cd7c0e40e97c57563c7a2f1e151b5511f5c877b5ed3ae639b6e3c8d563a54652",
+        "unit_id": "sha256:5e09b05f376847b9295b213a084c822e44502e12263051c4e0dfee261ab30a6a"
+      }
+    },
+    "theorem_claim": "sha256:de86f58b75c85d0de55fdbe31a153bb36e934efe1564d7bf290d7e4bec3e8e36",
+    "theorem_dependencies": {
+      "THM-0057": "sha256:a61fda80e3c2b9837b5083cec274eb504fc6e268ab7f0ecb92e5c20c5eebf48b",
+      "THM-0120": "sha256:e8a77509aa8a72be2dafd15c25580451147a3853bed65e81051674a538201bd2",
+      "THM-0121": "sha256:c9293d78014c1d38cff190bfdef662c7350949d35982569338008e720ad664a2"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:fa2fa5415d258181ab11c7df7a07278481cd133df973a35ff44d70787f08a419",
+  "reviewed_fingerprint": "sha256:5f6e9adcb2f9d0490e385f51069e410b2079c03d527b80070627b56b49c153cd",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0127"
 }

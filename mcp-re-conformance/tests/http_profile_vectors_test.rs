@@ -29,10 +29,10 @@ use mcp_re_http_profile::bodyless::pre_052_fixtures::verify_pre_052_root_signed_
 use mcp_re_http_profile::reconstruct_chain;
 use mcp_re_http_profile::rejection::pre_052_direct_root::build_pre_052_direct_root_rejection_for_negative_test;
 use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_base_for_negative_test;
+use mcp_re_http_profile::rejection::pre_052_direct_root_verifier::verify_pre_052_direct_root_rejection_for_negative_test;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::verify_artifact_binding;
-use mcp_re_http_profile::verify_signed_rejection;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -43,9 +43,9 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::IncompleteReason;
 use mcp_re_http_profile::RejectionReason;
-use mcp_re_http_profile::RequestEvidence;
-use mcp_re_http_profile::RequestEvidenceDigest;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResponseRoleEvidence;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::Verifier;
@@ -410,27 +410,9 @@ fn build_fixtures() -> Vec<Fixture> {
         .verify_request_floor(&req, NOW)
         .expect("fixture verifies");
     assert_eq!(&evidence, verified.evidence(), "writer sanity");
-    // Reconstruct the exact base the verifier accepted, for the oracle.
-    let base = {
-        use mcp_re_http_profile::sigbase::signature_base;
-        use mcp_re_http_profile::sigbase::SourceMessage;
-        use mcp_re_http_profile::CoveredComponent;
-        use mcp_re_http_profile::SignatureParams;
-        let components: Vec<CoveredComponent> =
-            ["@method", "@target-uri", "content-digest", "content-type"]
-                .iter()
-                .map(|n| CoveredComponent::new(n))
-                .collect();
-        let params = SignatureParams {
-            created: Some(CREATED),
-            expires: Some(EXPIRES),
-            nonce: Some("vec-nonce-1".into()),
-            keyid: Some(CLIENT_KEY_ID.into()),
-            alg: Some("ed25519".into()),
-            tag: Some("mcp-re-http-v1".into()),
-        };
-        signature_base(&components, &params, &SourceMessage::Request(&req)).expect("base builds")
-    };
+    // The oracle's base is the one the verifier accepted, taken from the verified product
+    // rather than rebuilt over a component list that can drift from what the signer covers.
+    let base = verified.request_signature_base().to_vec();
     let content_digest = req
         .headers
         .iter()
@@ -456,7 +438,7 @@ fn build_fixtures() -> Vec<Fixture> {
             signature_base_b64url: mcp_re_core::b64url_encode(&base),
             content_digest,
             signature_header,
-            request_evidence_digest_value: evidence.digest_value.clone(),
+            request_evidence_digest_value: evidence.digest_value().to_owned(),
         }),
         artifact_check: None,
         continuation_check: None,
@@ -1104,7 +1086,7 @@ fn build_fixtures() -> Vec<Fixture> {
             headers: hs,
             body: body.to_vec(),
         };
-        sign_request(
+        mcp_re_http_profile::sign::sign_request_as_given(
             &mut r,
             &client_key(),
             CLIENT_KEY_ID,
@@ -1284,7 +1266,7 @@ fn build_fixtures() -> Vec<Fixture> {
         EXPIRES,
     )
     .expect("bound rejection builds");
-    verify_signed_rejection(
+    verify_pre_052_direct_root_rejection_for_negative_test(
         &bound,
         Some(&req),
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -1456,20 +1438,13 @@ fn chain_block(continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlo
     }
 }
 
-fn to_digest(e: &RequestEvidence) -> RequestEvidenceDigest {
-    RequestEvidenceDigest {
-        digest_alg: e.digest_alg.clone(),
-        digest_value: e.digest_value.clone(),
-    }
-}
-
 /// Sign one hop and return it with the two role-labeled handles the next hop's
 /// continuation must name.
 fn chain_hop(
     nonce: &str,
     continuation: Option<HttpContinuation>,
     body: &str,
-) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+) -> (RetainedHop, RequestRoleEvidence, ResponseRoleEvidence) {
     let mut request = HttpRequest {
         method: "POST".into(),
         target_uri: CHAIN_TARGET.into(),
@@ -1479,7 +1454,8 @@ fn chain_hop(
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), "Bearer tok".into()),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     let req_evidence = sign_request_full(
         &mut request,
@@ -1499,10 +1475,9 @@ fn chain_hop(
     // DELEGATED signing, because that is the only response mode the serving path has.
     // Signing these hops direct-root meant the frozen corpus exercised a mode removed
     // from the runtime surface, so a green suite said nothing about real evidence.
-    mcp_re_http_profile::sign_delegated_response_full(
+    mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
-        &req_evidence,
         &chain_server_signer(),
         &chain_credential(),
         &chain_delegated_key(),
@@ -1520,8 +1495,9 @@ fn chain_hop(
             NOW,
         )
         .expect("response verifies")
-        .signature_facts
-        .response_signature_base_digest;
+        .signature_facts()
+        .response_signature_base_digest
+        .clone();
     (
         RetainedHop { request, response },
         req_evidence,
@@ -1618,8 +1594,8 @@ fn three_hop() -> Vec<RetainedHop> {
     let (h1, r1, s1) = chain_hop(
         "chain-n1",
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-0",
         )),
         AWAITING,
@@ -1627,8 +1603,8 @@ fn three_hop() -> Vec<RetainedHop> {
     let (h2, _, _) = chain_hop(
         "chain-n2",
         Some(HttpContinuation::from_handles(
-            to_digest(&r1),
-            to_digest(&s1),
+            r1.to_digest(),
+            s1.to_digest(),
             b"state-1",
         )),
         DONE,
@@ -1672,8 +1648,8 @@ fn chain_fixtures() -> Vec<Fixture> {
     let (o1, _, _) = chain_hop(
         "chain-other1",
         Some(HttpContinuation::from_handles(
-            to_digest(&other_r),
-            to_digest(&other_s),
+            other_r.to_digest(),
+            other_s.to_digest(),
             b"state-o",
         )),
         DONE,
@@ -1691,8 +1667,8 @@ fn chain_fixtures() -> Vec<Fixture> {
     let (s1h, _, _) = chain_hop(
         "chain-swap1",
         Some(HttpContinuation::from_handles(
-            to_digest(&ss0),
-            to_digest(&sr0),
+            ss0.to_digest(),
+            sr0.to_digest(),
             b"state-s",
         )),
         DONE,
@@ -1709,8 +1685,8 @@ fn chain_fixtures() -> Vec<Fixture> {
     let (t1, _, _) = chain_hop(
         "chain-term1",
         Some(HttpContinuation::from_handles(
-            to_digest(&tr0),
-            to_digest(&ts0),
+            tr0.to_digest(),
+            ts0.to_digest(),
             b"state-t",
         )),
         DONE,
@@ -1730,8 +1706,8 @@ fn chain_fixtures() -> Vec<Fixture> {
     let (u1, _, _) = chain_hop(
         "chain-unrec1",
         Some(HttpContinuation::from_handles(
-            to_digest(&ur0),
-            to_digest(&us0),
+            ur0.to_digest(),
+            us0.to_digest(),
             b"state-u",
         )),
         UNRECOGNIZED,
@@ -1873,7 +1849,7 @@ fn d202_fixture(name: &str, check: Delegated202Check, expected: &str) -> Fixture
 
 fn delegated_202_fixtures() -> Vec<Fixture> {
     let note = d202_notification();
-    let ack = mcp_re_http_profile::sign_delegated_accepted_202(
+    let ack = mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key(
         &note,
         &d202_credential(),
         &d202_delegated(),
@@ -2148,9 +2124,15 @@ fn frozen_http_profile_corpus_verifies() {
                         if let Some(oracle) = &fixture.oracle {
                             // Oracle byte-equality (S8: assert bytes, not prints).
                             assert_eq!(
-                                verified.evidence().digest_value,
+                                verified.evidence().digest_value(),
                                 oracle.request_evidence_digest_value,
                                 "{name}: evidence handle drifted from frozen oracle"
+                            );
+                            assert_eq!(
+                                mcp_re_core::b64url_encode(verified.request_signature_base()),
+                                oracle.signature_base_b64url,
+                                "{name}: the reconstructed signature base drifted from the \
+                                 frozen oracle"
                             );
                             let digest_header = request
                                 .headers
@@ -2208,9 +2190,23 @@ fn frozen_http_profile_corpus_verifies() {
                 let continuation: HttpContinuation =
                     serde_json::from_value(check.continuation.clone())
                         .expect("continuation parses");
+                // The vector states the bases; the verifier compares the handles a store
+                // retains for them, minted under their role labels.
+                let handle = |role: mcp_re_http_profile::evidence::EvidenceRole, b64: &str| {
+                    mcp_re_http_profile::RequestEvidenceDigest::over_labeled(
+                        role,
+                        &base64_std_decode(b64),
+                    )
+                };
                 match continuation.verify(
-                    &base64_std_decode(&check.previous_request_base_b64),
-                    &base64_std_decode(&check.input_required_response_base_b64),
+                    &handle(
+                        mcp_re_http_profile::evidence::EvidenceRole::Request,
+                        &check.previous_request_base_b64,
+                    ),
+                    &handle(
+                        mcp_re_http_profile::evidence::EvidenceRole::Response,
+                        &check.input_required_response_base_b64,
+                    ),
                     &base64_std_decode(&check.request_state_b64),
                 ) {
                     Ok(()) => "verify_ok".to_owned(),
@@ -2282,46 +2278,54 @@ fn frozen_http_profile_corpus_verifies() {
                 let issuer_key =
                     mcp_re_core::VerificationKey::from_b64url(&check.issuer_public_key_b64url)
                         .expect("issuer key parses");
-                let authoritative = match (
-                    &check.authoritative_generation,
-                    &check.authoritative_status,
-                ) {
-                    // The fixture states the authority's generation and status and
-                    // no subject, because a vector describes ONE workload: the
-                    // lookup it models is the lookup for the workload this binding
-                    // names, so the binding's id is the honest subject to build the
-                    // state with. A vector wanting to exercise a mismatched subject
-                    // would have to say so, and none does.
-                    (Some(g), Some(s)) => Some(
-                        mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission::new(
-                            binding.admission_id.clone(),
-                            *g,
-                            match s.as_str() {
-                                "admitted" => mcp_re_http_profile::AdmissionStatus::Admitted,
-                                "suspended" => mcp_re_http_profile::AdmissionStatus::Suspended,
-                                "revoked" => mcp_re_http_profile::AdmissionStatus::Revoked,
-                                other => panic!("{name}: unknown status {other}"),
-                            },
-                        ),
-                    ),
-                    _ => None,
-                };
                 let policy = mcp_re_http_profile::AdmissionPolicy {
                     allow_degraded_mode: check.allow_degraded_mode,
                     degraded_propagation_bound: check.degraded_propagation_bound,
                     ..mcp_re_http_profile::AdmissionPolicy::default()
                 };
-                match mcp_re_http_profile::check_admission(
+                let outcome = mcp_re_http_profile::authenticate_admission(
                     &binding,
                     &check.assertion_jws,
                     &admission_presenter(),
-                    authoritative.as_ref(),
                     mcp_re_http_profile::PROFILE_TAG,
                     &["mcp.example.com"],
                     &policy,
                     manifest.verify_at_unix,
                     |kid: &str| (kid == ADMISSION_ISSUER_KID).then(|| issuer_key.clone()),
-                ) {
+                )
+                .and_then(|authenticated| {
+                    let authoritative = match (
+                        &check.authoritative_generation,
+                        &check.authoritative_status,
+                    ) {
+                        // The fixture states the authority's generation and status and
+                        // no subject, because a vector describes ONE workload: the lookup
+                        // it models is the lookup for the workload the call was
+                        // authenticated as, so that id is the honest subject to build the
+                        // state with. A vector wanting to exercise a mismatched subject
+                        // would have to say so, and none does.
+                        (Some(g), Some(s)) => Some(
+                            mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission::new(
+                                authenticated.admission_id().to_owned(),
+                                *g,
+                                match s.as_str() {
+                                    "admitted" => mcp_re_http_profile::AdmissionStatus::Admitted,
+                                    "suspended" => mcp_re_http_profile::AdmissionStatus::Suspended,
+                                    "revoked" => mcp_re_http_profile::AdmissionStatus::Revoked,
+                                    other => panic!("{name}: unknown status {other}"),
+                                },
+                            ),
+                        ),
+                        _ => None,
+                    };
+                    mcp_re_http_profile::check_admission(
+                        authenticated,
+                        authoritative.as_ref(),
+                        &policy,
+                        manifest.verify_at_unix,
+                    )
+                });
+                match outcome {
                     Ok(_) => "verify_ok".to_owned(),
                     Err(e) => e.wire_code().to_owned(),
                 }
@@ -2378,7 +2382,7 @@ fn frozen_http_profile_corpus_verifies() {
                 // A rejection carries request context only when bound.
                 let request = fixture.request.as_ref().map(from_wire_request);
                 let response = from_wire_response(fixture.response.as_ref().expect("response"));
-                match verify_signed_rejection(
+                match verify_pre_052_direct_root_rejection_for_negative_test(
                     &response,
                     request.as_ref(),
                     &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -2387,7 +2391,7 @@ fn frozen_http_profile_corpus_verifies() {
                     // On success the observed verdict IS the trusted wire code
                     // (not just "verify_ok"): the frozen fixture pins the exact
                     // machine signal a client would act on.
-                    Ok(verdict) => verdict.wire_code,
+                    Ok(wire_code) => wire_code,
                     Err(e) => e.wire_code().to_owned(),
                 }
             }

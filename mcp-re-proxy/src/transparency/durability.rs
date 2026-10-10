@@ -375,7 +375,7 @@ impl EvidenceRetention {
         ))
     }
 
-    /// Complete a commitment with the exchange the backend actually produced.
+    /// Complete a commitment with the caller's response; only the REQUEST half is bound to it.
     ///
     /// The hop is written first and the marker cleared only after it lands, so an
     /// interruption between them leaves the marker — over-reporting indeterminacy, which
@@ -384,9 +384,9 @@ impl EvidenceRetention {
     /// costs an auditor one reconciliation, whereas failing the exchange there would
     /// refuse a call whose evidence is on disk.
     ///
-    /// A commitment is worth exactly one completion, and a second attempt is refused with
-    /// [`RetentionError::AlreadyCompleted`] before any job is queued —
-    /// [`DispatchCommitted`] owns that fact.
+    /// A commitment is worth exactly one completion; a second attempt is refused with
+    /// [`RetentionError::AlreadyCompleted`] before any job is queued, which
+    /// [`DispatchCommitted`] owns.
     ///
     /// # It takes no request, and that is the repair
     ///
@@ -396,7 +396,7 @@ impl EvidenceRetention {
     /// serving-path bug — or a future stage that normalises a header, rewrites a body or
     /// retries a backend call between reserve and complete — discharge the crossing for
     /// request D with a hop describing D\', and the one fact an auditor cannot recover
-    /// would be WRONG rather than missing, with nothing on disk or in the API to detect it.
+    /// would be WRONG rather than missing, with nothing on disk to detect it.
     pub async fn complete(
         &self,
         committed: &DispatchCommitted,
@@ -724,12 +724,7 @@ mod tests {
 
     #[test]
     fn a_marker_path_refuses_a_digest_that_is_not_a_token() {
-        let dir = TempDir::new("marker-hostile");
-        let retention = EvidenceRetention::open(&dir.0).expect("open");
-        let hostile: EvidenceDigest =
-            serde_json::from_str("\"../../etc/passwd\"").expect("deserializes");
-
-        assert!(retention.marker_path(&hostile, RESERVED_EXTENSION).is_err());
+        assert!(serde_json::from_str::<EvidenceDigest>("\"../../etc/passwd\"").is_err());
     }
 
     #[test]

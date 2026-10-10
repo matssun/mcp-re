@@ -73,12 +73,25 @@ mod tests {
 
     #[test]
     fn round_trip_parse() {
-        let id = sha256_hash_id(b"some bytes");
-        let digest = parse_hash_id(&id).expect("parse");
-        // Re-encoding the digest reproduces the same id.
-        assert_eq!(sha256_hash_id(b"some bytes"), id);
-        // Digest length is exactly 32.
-        assert_eq!(digest.len(), 32);
+        let known: [u8; 32] = [
+            0x44, 0x13, 0x6f, 0xa3, 0x55, 0xb3, 0x67, 0x8a, 0x11, 0x46, 0xad, 0x16, 0xf7, 0xe8,
+            0x64, 0x9e, 0x94, 0xfb, 0x4f, 0xc2, 0x1f, 0xe7, 0x7e, 0x83, 0x10, 0xc0, 0x60, 0xf6,
+            0x1c, 0xaa, 0xff, 0x8a,
+        ];
+        assert_eq!(
+            parse_hash_id("sha256:RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o").expect("parse"),
+            known
+        );
+
+        let expected: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(b"some bytes").into();
+        assert_eq!(
+            parse_hash_id(&sha256_hash_id(b"some bytes")).expect("parse"),
+            expected
+        );
+
+        let abc = parse_hash_id(&sha256_hash_id(b"abc")).expect("parse abc");
+        let abd = parse_hash_id(&sha256_hash_id(b"abd")).expect("parse abd");
+        assert_ne!(abc, abd);
     }
 
     #[test]

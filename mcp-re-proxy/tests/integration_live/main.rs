@@ -30,3 +30,4 @@ mod gcp_kms_delegated_signing_live_test;
 mod gcp_kms_delegated_tls_live_test;
 mod gcp_kms_http_profile_live_test;
 mod gcp_kms_root_rotation_live_test;
+mod local_seed_backend;

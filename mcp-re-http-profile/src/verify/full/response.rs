@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Full-profile response verification for the trust-seam-authorized path (THM-0018).
 //!
-//! One authority: **this response's evidence block names the identity that actually signed
-//! it, and the request it claims to answer is THE REQUEST THIS VERIFICATION WAS GIVEN.**
+//! One authority: **this response's evidence block names the keyid the signature was actually
+//! accepted under, and the request it claims to answer is THE REQUEST THIS VERIFICATION WAS GIVEN.**
 //!
 //! Both checks are defence in depth over a floor that already bound the response to the
 //! request cryptographically through `;req`. They are not redundant: the `;req` floor
@@ -53,17 +53,15 @@ pub(crate) fn full_bound_response<R: Into<ResolverOutcome>>(
     // comparison below reads are produced next to each other.
     let bound_request_evidence = request_evidence_of(request)?;
 
-    // 3. server_signer must be the identity that actually signed.
-    if block.server_signer.keyid != floor.resolved_server_actor.identity.keyid {
+    // 3. server_signer.keyid must be the keyid the signature was accepted under; the block's other coordinates are not compared and the product carries only the seam's identity.
+    if block.server_signer.keyid != floor.resolved_server_actor().identity.keyid {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 
     // 4. Explicit request-evidence comparison: body handle == the signature-base
     //    digest of THIS request. This is the precise `request_binding_mismatch` path
     //    (the ;req floor already rejects a cryptographic splice above).
-    if block.request_evidence.digest_alg != bound_request_evidence.digest_alg
-        || block.request_evidence.digest_value != bound_request_evidence.digest_value
-    {
+    if !bound_request_evidence.matches(&block.request_evidence) {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 

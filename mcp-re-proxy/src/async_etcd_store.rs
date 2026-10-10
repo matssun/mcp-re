@@ -1,16 +1,14 @@
 //! MCPRE (ADR-MCPRE-051 §4) — the ASYNC etcd authoritative replay backend.
 //!
-//! The async analogue of [`crate::etcd_store::EtcdAtomicReplayStore`]: the same
-//! CP/linearizable put-if-absent under a bounded lease, but issued over an ASYNC
-//! `hyper` client to etcd's v3 JSON gateway so the insert is AWAITED on the
-//! per-core request path and never blocks a runtime worker (ADR-MCPRE-051 §4 —
-//! "the per-core Redis/etcd clients are async and pipelined"). It implements
+//! A CP/linearizable put-if-absent under a bounded lease, issued over an ASYNC `hyper`
+//! client to etcd's v3 JSON gateway so the insert is AWAITED on the per-core request
+//! path and never blocks a runtime worker (ADR-MCPRE-051 §4 — "the per-core Redis/etcd
+//! clients are async and pipelined"). It implements
 //! [`AsyncAtomicReplayStore`](crate::async_replay::AsyncAtomicReplayStore), so an
 //! [`AsyncReplayTier`](crate::async_replay::AsyncReplayTier) over it gives the
 //! serving path a genuinely durable, LINEARIZABLE cross-process authoritative tier.
 //!
-//! Protocol (identical wire shape to the sync store, whose PURE helpers are reused
-//! verbatim so the two backends cannot drift):
+//! Protocol (the wire shape and its pure helpers live in [`protocol`]):
 //!   * `POST /v3/lease/grant` mints a lease with a BOUNDED TTL (so a recorded nonce
 //!     self-expires at the freshness window even if the proxy dies), granted only when
 //!     no live lease already expires at this key's exact instant — keys retained to the
@@ -23,19 +21,15 @@
 //! Fail-closed: ANY transport/status/parse error — including a per-operation TIMEOUT —
 //! is [`ReplayStoreError::Unavailable`], and an outage is NEVER a fresh nonce.
 //!
-//! Awaiting the round-trips means a slow etcd does not block a runtime worker, but that
-//! is not the same as bounding it: an awaited future that never completes holds its
-//! request (and its in-flight admission slot) forever. This module's doc used to claim
-//! "the request path is still bounded by the tier's own timeout" — there is no such
-//! timeout. `AsyncReplayTier` has none, and the async serve path bounds the TLS
-//! handshake and the body read but awaits the handler unbounded. So a black-holed etcd
-//! endpoint (a dropped route, a stateful firewall that discards instead of resetting)
-//! parks every request on this store until the peer gives up, and with
-//! `--max-in-flight` set that is a way to consume the whole admission budget without
-//! sending a single invalid request. The timeout therefore lives HERE, where the
-//! round-trip is issued, and applies to every one of the three POSTs.
+//! Awaiting the round-trips keeps a runtime worker free but does not bound them: neither
+//! `AsyncReplayTier` nor the async serve path times the handler, so a black-holed etcd
+//! (a firewall that discards instead of resetting) would park requests and, under
+//! `--max-in-flight`, the whole admission budget. The deadline lives HERE, on every POST.
 
 #![cfg(feature = "cpstore_etcd")]
+
+mod gateway;
+mod protocol;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -45,7 +39,6 @@ use http_body_util::Full;
 use hyper::header;
 use hyper::Method;
 use hyper::Request;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use serde_json::Value;
@@ -56,14 +49,15 @@ use mcp_re_core::ReplayDurabilityClass;
 use crate::async_replay::AsyncAtomicReplayStore;
 use crate::async_replay::ReplayDecisionFuture;
 use crate::async_replay::ReplayInsert;
-use crate::etcd_store::build_lease_grant_body;
-use crate::etcd_store::build_txn_body;
-use crate::etcd_store::compute_ttl_secs;
-use crate::etcd_store::decision_from_txn;
-use crate::etcd_store::parse_lease_id;
-use crate::etcd_store::system_clock;
-use crate::etcd_store::UnixClock;
 use crate::shared_replay::ReplayStoreError;
+use gateway::GatewayConnector;
+use protocol::build_lease_grant_body;
+use protocol::build_txn_body;
+use protocol::compute_ttl_secs;
+use protocol::decision_from_txn;
+use protocol::parse_lease_id;
+pub use protocol::system_clock;
+pub use protocol::UnixClock;
 
 /// A cap on the etcd gateway response body read into memory, so a broken/hostile
 /// gateway cannot exhaust the proxy. Generous relative to a lease/txn JSON reply.
@@ -88,7 +82,7 @@ pub const MAX_ETCD_OP_TIMEOUT: Duration = Duration::from_secs(30);
 /// gateway. Holds one pooled `hyper` client (cheap to clone per op) and the
 /// gateway base URL.
 pub struct EtcdAsyncAtomicReplayStore {
-    client: Client<HttpConnector, Full<Bytes>>,
+    client: Client<GatewayConnector, Full<Bytes>>,
     /// The etcd JSON-gateway base, e.g. `http://10.0.0.5:2379` (no trailing slash).
     base_url: String,
     /// The store's own clock, read once per op for the lease-TTL arithmetic.
@@ -113,13 +107,12 @@ pub struct EtcdAsyncAtomicReplayStore {
 impl EtcdAsyncAtomicReplayStore {
     /// Build a store over the etcd JSON-gateway `base_url` (e.g.
     /// `http://host:2379`) with the production system clock.
-    pub fn connect(base_url: &str) -> Self {
+    pub fn connect(base_url: &str) -> Result<Self, ReplayStoreError> {
         Self::connect_with(base_url, system_clock())
     }
 
-    /// Build with an injected clock (deterministic tests reuse the sync store's
-    /// clock-injection pattern).
-    pub fn connect_with(base_url: &str, clock: UnixClock) -> Self {
+    /// Build with an injected clock (deterministic tests inject a fixed one).
+    pub fn connect_with(base_url: &str, clock: UnixClock) -> Result<Self, ReplayStoreError> {
         Self::connect_with_timeout(base_url, clock, DEFAULT_ETCD_OP_TIMEOUT)
     }
 
@@ -128,14 +121,19 @@ impl EtcdAsyncAtomicReplayStore {
     /// because `timeout(0)` fires before the request is even issued, which would fail
     /// EVERY insert closed and take the whole serving path down. The value is also
     /// clamped to [`MAX_ETCD_OP_TIMEOUT`].
-    pub fn connect_with_timeout(base_url: &str, clock: UnixClock, op_timeout: Duration) -> Self {
-        EtcdAsyncAtomicReplayStore {
-            client: Client::builder(TokioExecutor::new()).build_http(),
+    pub fn connect_with_timeout(
+        base_url: &str,
+        clock: UnixClock,
+        op_timeout: Duration,
+    ) -> Result<Self, ReplayStoreError> {
+        let connector = GatewayConnector::for_endpoint(base_url)?;
+        Ok(EtcdAsyncAtomicReplayStore {
+            client: Client::builder(TokioExecutor::new()).build(connector),
             base_url: base_url.trim_end_matches('/').to_string(),
             clock,
             op_timeout: op_timeout.clamp(Duration::from_millis(1), MAX_ETCD_OP_TIMEOUT),
             leases: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-        }
+        })
     }
 
     /// The per-operation deadline in force.
@@ -180,7 +178,7 @@ impl EtcdAsyncAtomicReplayStore {
     /// A non-2xx status, a transport error, an oversize body, or unparseable JSON
     /// all fail closed as [`ReplayStoreError::Unavailable`].
     async fn post(
-        client: &Client<HttpConnector, Full<Bytes>>,
+        client: &Client<GatewayConnector, Full<Bytes>>,
         base_url: &str,
         path: &str,
         body: &Value,
@@ -204,7 +202,7 @@ impl EtcdAsyncAtomicReplayStore {
 
     /// The unbounded exchange, wrapped by [`post`](Self::post).
     async fn post_inner(
-        client: &Client<HttpConnector, Full<Bytes>>,
+        client: &Client<GatewayConnector, Full<Bytes>>,
         base_url: &str,
         path: &str,
         body: &Value,
@@ -254,30 +252,29 @@ impl AsyncAtomicReplayStore for EtcdAsyncAtomicReplayStore {
         // backend quota raises a NOSPACE alarm that stays raised, read-only, until an
         // operator compacts, defragments and disarms it, taking every co-tenant of that
         // etcd down with the replay tier.
-        let (key, expires_at_unix) = (insert.key, insert.expires_at_unix);
+        let (key, expires_at_unix) = (insert.key, insert.retain_until);
         // Read the store's OWN clock once (the trait's vestigial now_unix=0 is
         // ignored), and reuse it for the lease-TTL arithmetic.
         let now = (self.clock)();
         let key_b64 = STANDARD.encode(key.as_bytes());
-        // Value is the constant marker "1" (base64), matching the sync store.
+        // Value is the constant marker "1" (base64).
         let value_b64 = STANDARD.encode(b"1");
         let client = &self.client;
         let base = self.base_url.as_str();
         let op_timeout = self.op_timeout;
         let store = self;
         Box::pin(async move {
-            // MCPS-08 defensive pre-store rejection (#142), the guard the sync sibling
-            // `etcd_store` and the Redis backend both enforce and this one skipped.
+            // MCPS-08 defensive pre-store rejection (#142), the guard the Redis backend
+            // enforces too.
             //
             // If the (already skew-folded) retain-until is at or before `now`, the request
-            // is ALREADY STALE. Without this the store fell through to `compute_ttl_secs`,
-            // which CLAMPS a non-positive window up to a minimal 1s lease — so an expired
-            // nonce was put-if-absent'd and reported `Fresh`. That is the exact behaviour
-            // the guard was added elsewhere to eliminate, and it mattered most here: this
-            // is the LINEARIZABLE production backend, the one a deployment selects when it
-            // wants the strongest replay guarantee. Enforcing it at this layer means an
-            // upstream ordering regression (the `mcp-re-core` freshness step no longer
-            // running before replay) cannot admit a stale nonce.
+            // is ALREADY STALE. `compute_ttl_secs` CLAMPS a non-positive window up to a
+            // minimal 1s lease, so without this guard an expired nonce would be
+            // put-if-absent'd and reported `Fresh` — by the LINEARIZABLE production
+            // backend, the one a deployment selects when it wants the strongest replay
+            // guarantee. Enforcing it at this layer means an upstream ordering regression
+            // (the `mcp-re-core` freshness step no longer running before replay) cannot
+            // admit a stale nonce.
             //
             // Same `now` the lease arithmetic uses, so the guard and the granted lease
             // cannot disagree about when it is.
@@ -291,9 +288,8 @@ impl AsyncAtomicReplayStore for EtcdAsyncAtomicReplayStore {
                 });
             }
 
-            // Bounded lease TTL (the pure helper is shared verbatim with the sync
-            // backend). Past the guard above the window is strictly positive, so the
-            // helper's clamp is no longer load-bearing here.
+            // Bounded lease TTL. Past the guard above the window is strictly positive, so
+            // the helper's clamp is not load-bearing here.
             let ttl_secs = compute_ttl_secs(expires_at_unix, now);
             // A lease already granted to expire at this exact instant is the same
             // retention this key needs, so it is reused rather than duplicated.
@@ -433,7 +429,8 @@ mod tests {
             &base,
             fixed_clock(),
             Duration::from_millis(150),
-        );
+        )
+        .expect("an http gateway endpoint is servable");
         let err = store
             .atomic_insert_if_absent(ReplayInsert::new(
                 "did:example:host|aud|nonce",
@@ -468,7 +465,8 @@ mod tests {
             &base,
             fixed_clock(),
             Duration::from_millis(150),
-        );
+        )
+        .expect("an http gateway endpoint is servable");
         let started = tokio::time::Instant::now();
         let err = store
             // A comfortably fresh window, so the staleness guard above is not what fires.
@@ -499,8 +497,14 @@ mod tests {
 
     /// A scripted etcd JSON gateway: answers `/v3/lease/grant` with an incrementing
     /// lease id and `/v3/kv/txn` with a successful compare, counting the calls to each.
-    /// Returns its base URL and the two counters (grants, txns).
-    async fn counting_gateway() -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    /// Returns its base URL, the two counters (grants, txns) and the `TTL` of every
+    /// lease-grant request body, in arrival order.
+    async fn counting_gateway() -> (
+        String,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        Arc<std::sync::Mutex<Vec<i64>>>,
+    ) {
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
 
@@ -510,10 +514,11 @@ mod tests {
         let addr = listener.local_addr().expect("addr");
         let grants = Arc::new(AtomicUsize::new(0));
         let txns = Arc::new(AtomicUsize::new(0));
-        let (g, t) = (Arc::clone(&grants), Arc::clone(&txns));
+        let ttls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (g, t, l) = (Arc::clone(&grants), Arc::clone(&txns), Arc::clone(&ttls));
         tokio::spawn(async move {
             while let Ok((mut stream, _)) = listener.accept().await {
-                let (g, t) = (Arc::clone(&g), Arc::clone(&t));
+                let (g, t, l) = (Arc::clone(&g), Arc::clone(&t), Arc::clone(&l));
                 tokio::spawn(async move {
                     let mut seen = Vec::new();
                     let mut buf = [0u8; 1024];
@@ -541,6 +546,11 @@ mod tests {
                         }
                         let body = if text.contains("/v3/lease/grant") {
                             let id = g.fetch_add(1, Ordering::SeqCst) + 1;
+                            let request: serde_json::Value =
+                                serde_json::from_slice(&seen[head_len + 4..]).unwrap_or_default();
+                            if let Some(ttl) = request["TTL"].as_i64() {
+                                l.lock().expect("ttls").push(ttl);
+                            }
                             format!("{{\"ID\":\"{id}\",\"TTL\":\"300\"}}")
                         } else {
                             t.fetch_add(1, Ordering::SeqCst);
@@ -558,7 +568,7 @@ mod tests {
                 });
             }
         });
-        (format!("http://{addr}"), grants, txns)
+        (format!("http://{addr}"), grants, txns, ttls)
     }
 
     /// One lease per admitted nonce makes the outstanding-lease count grow with request
@@ -569,8 +579,9 @@ mod tests {
     /// the freshness window instead.
     #[tokio::test]
     async fn nonces_retained_to_the_same_instant_share_one_lease() {
-        let (base, grants, txns) = counting_gateway().await;
-        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock());
+        let (base, grants, txns, ttls) = counting_gateway().await;
+        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock())
+            .expect("an http gateway endpoint is servable");
         for i in 0..25 {
             assert_eq!(
                 store
@@ -607,14 +618,54 @@ mod tests {
             .await
             .expect("records");
         assert_eq!(grants.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            *ttls.lock().expect("ttls"),
+            vec![300, 600],
+            "each lease is granted for retain_until minus the injected clock"
+        );
+    }
+
+    fn divergence(secs: i64) -> crate::config_state::ReplicaClockDivergence {
+        crate::config_state::ReplicaClockDivergence::new(secs).expect("inside the declared ceiling")
+    }
+
+    /// The lease is granted the declared bound longer than the verifier's horizon, and a
+    /// replica whose clock runs ahead by that bound still retains to the TRUE horizon.
+    #[tokio::test]
+    async fn a_lease_outlives_the_horizon_by_the_declared_divergence() {
+        let (base, _grants, _txns, ttls) = counting_gateway().await;
+        let store =
+            EtcdAsyncAtomicReplayStore::connect_with(&base, divergence(7).retention_clock(|| NOW))
+                .expect("an http gateway endpoint is servable");
+        store
+            .atomic_insert_if_absent(ReplayInsert::new("k|a|n1", TEST_ACTOR, NOW + 300, 0))
+            .await
+            .expect("records");
+        assert_eq!(*ttls.lock().expect("ttls"), vec![307]);
+
+        let ahead = 4;
+        let (base, _grants, _txns, ttls) = counting_gateway().await;
+        let fast = EtcdAsyncAtomicReplayStore::connect_with(
+            &base,
+            divergence(ahead).retention_clock(move || NOW + ahead),
+        )
+        .expect("an http gateway endpoint is servable");
+        fast.atomic_insert_if_absent(ReplayInsert::new("k|a|n2", TEST_ACTOR, NOW + 300, 0))
+            .await
+            .expect("records");
+        assert!(
+            ttls.lock().expect("ttls")[0] >= 300,
+            "the lease lapses before the horizon, 300s after true now"
+        );
     }
 
     /// The pool holds leases only while they are live: one whose instant has passed has
     /// been revoked by etcd, and attaching a key to it would leave the key unretained.
     #[tokio::test]
     async fn an_expired_lease_is_never_reused() {
-        let (base, grants, _txns) = counting_gateway().await;
-        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock());
+        let (base, grants, _txns, _ttls) = counting_gateway().await;
+        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock())
+            .expect("an http gateway endpoint is servable");
         store
             .atomic_insert_if_absent(ReplayInsert::new("k|a|n1", TEST_ACTOR, NOW + 5, 0))
             .await
@@ -638,7 +689,8 @@ mod tests {
             "http://127.0.0.1:2379",
             fixed_clock(),
             Duration::ZERO,
-        );
+        )
+        .expect("an http gateway endpoint is servable");
         assert_eq!(
             zero.op_timeout(),
             Duration::from_millis(1),
@@ -649,18 +701,175 @@ mod tests {
             "http://127.0.0.1:2379",
             fixed_clock(),
             Duration::from_secs(86_400),
-        );
+        )
+        .expect("an http gateway endpoint is servable");
         assert_eq!(
             absurd.op_timeout(),
             MAX_ETCD_OP_TIMEOUT,
             "clamped to the ceiling"
         );
 
-        let default = EtcdAsyncAtomicReplayStore::connect("http://127.0.0.1:2379");
+        let default = EtcdAsyncAtomicReplayStore::connect("http://127.0.0.1:2379")
+            .expect("an http gateway endpoint is servable");
         assert_eq!(
             default.op_timeout(),
             DEFAULT_ETCD_OP_TIMEOUT,
             "connect() is bounded too"
+        );
+    }
+
+    /// How a scripted gateway answers one request: from its path and JSON body, the full
+    /// HTTP response text.
+    type Answer = Arc<dyn Fn(&str, &Value) -> String + Send + Sync>;
+
+    /// A gateway whose every reply is chosen by `answer`. Each connection carries one
+    /// request. Returns the gateway's base URL.
+    async fn scripted_gateway(answer: Answer) -> String {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let answer = Arc::clone(&answer);
+                tokio::spawn(async move {
+                    let mut seen = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    loop {
+                        let read = match stream.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => n,
+                        };
+                        seen.extend_from_slice(&buf[..read]);
+                        let text = String::from_utf8_lossy(&seen).to_string();
+                        let Some(head_len) = text.find("\r\n\r\n") else {
+                            continue;
+                        };
+                        let body_len: usize = text
+                            .to_ascii_lowercase()
+                            .split("content-length:")
+                            .nth(1)
+                            .and_then(|rest| rest.split("\r\n").next())
+                            .and_then(|v| v.trim().parse().ok())
+                            .unwrap_or(0);
+                        if seen.len() < head_len + 4 + body_len {
+                            continue;
+                        }
+                        let path = text.split_whitespace().nth(1).unwrap_or("").to_string();
+                        let request: Value =
+                            serde_json::from_slice(&seen[head_len + 4..]).unwrap_or_default();
+                        let _ = stream.write_all(answer(&path, &request).as_bytes()).await;
+                        let _ = stream.shutdown().await;
+                        return;
+                    }
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn ok_json(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
+             connection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    /// One etcd cluster behind two stores: the gateway applies the put-if-absent compare
+    /// to a shared key set, so the first store to put a key gets `succeeded` and every
+    /// later put of it — through either store — does not. A nonce admitted through one
+    /// replica is a replay through the same replica and through another.
+    #[tokio::test]
+    async fn a_nonce_admitted_through_one_store_is_a_replay_through_another() {
+        let keys = Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new()));
+        let base = scripted_gateway(Arc::new(move |path: &str, request: &Value| {
+            if path == "/v3/lease/grant" {
+                return ok_json(r#"{"ID":"7","TTL":"300"}"#);
+            }
+            let key = request["compare"][0]["key"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let fresh = keys.lock().expect("keys").insert(key);
+            ok_json(&format!("{{\"succeeded\":{fresh}}}"))
+        }))
+        .await;
+        let a = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock()).expect("servable");
+        let b = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock()).expect("servable");
+        let insert = || ReplayInsert::new("did:example:host|aud|nonce", TEST_ACTOR, NOW + 300, 0);
+
+        assert_eq!(
+            a.atomic_insert_if_absent(insert()).await.expect("answered"),
+            ReplayDecision::Fresh,
+            "first sight is fresh"
+        );
+        assert_eq!(
+            a.atomic_insert_if_absent(insert()).await.expect("answered"),
+            ReplayDecision::Replay,
+            "the same replica must reject it"
+        );
+        assert_eq!(
+            b.atomic_insert_if_absent(insert()).await.expect("answered"),
+            ReplayDecision::Replay,
+            "a second replica against the same cluster must reject it"
+        );
+    }
+
+    /// An outage is never a fresh nonce: a gateway that answers every POST with a
+    /// server error fails the insert closed.
+    #[tokio::test]
+    async fn a_gateway_that_answers_an_error_status_is_unavailable_never_fresh() {
+        let base = scripted_gateway(Arc::new(|_: &str, _: &Value| {
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                .to_string()
+        }))
+        .await;
+        let store =
+            EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock()).expect("servable");
+        let err = store
+            .atomic_insert_if_absent(ReplayInsert::new("k|a|n", TEST_ACTOR, NOW + 300, 0))
+            .await
+            .expect_err("an erroring gateway must fail closed");
+        let ReplayStoreError::Unavailable { details } = err;
+        assert!(
+            details.contains("503"),
+            "the status is the reason: {details}"
+        );
+    }
+
+    /// A gateway that answers a redirect is not followed: its target is never reached,
+    /// and the 3xx body — shaped like a successful grant and compare — is never read as
+    /// an etcd decision.
+    #[tokio::test]
+    async fn a_redirecting_gateway_is_refused_and_its_target_never_reached() {
+        let (elsewhere, reached) = silent_gateway().await;
+        let base = scripted_gateway(Arc::new(move |path: &str, _: &Value| {
+            const BODY: &str = r#"{"ID":"424242","succeeded":true}"#;
+            format!(
+                "HTTP/1.1 302 Found\r\nlocation: {elsewhere}{path}\r\ncontent-length: {}\r\n\
+                 connection: close\r\n\r\n{BODY}",
+                BODY.len()
+            )
+        }))
+        .await;
+        let store =
+            EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock()).expect("servable");
+        let result = store
+            .atomic_insert_if_absent(ReplayInsert::new("k|a|n", TEST_ACTOR, NOW + 300, 0))
+            .await;
+        assert!(
+            matches!(result, Err(ReplayStoreError::Unavailable { .. })),
+            "a redirecting gateway must fail closed, got {result:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            reached.load(Ordering::SeqCst),
+            0,
+            "the redirect target was connected to"
         );
     }
 
@@ -674,7 +883,8 @@ mod tests {
     #[tokio::test]
     async fn a_request_build_failure_leaks_neither_the_credential_nor_the_configured_url() {
         const CONFIGURED: &str = "http://ops:hunter2@etcd internal:2379";
-        let client = Client::builder(TokioExecutor::new()).build_http();
+        let client = Client::builder(TokioExecutor::new())
+            .build(GatewayConnector::for_endpoint("http://127.0.0.1:1").expect("servable"));
         let err =
             EtcdAsyncAtomicReplayStore::post_inner(&client, CONFIGURED, "/v3/kv/txn", &Value::Null)
                 .await
@@ -699,7 +909,8 @@ mod tests {
     /// build its request and fail (if at all) at the transport, not at the builder.
     #[tokio::test]
     async fn a_well_formed_credential_bearing_endpoint_still_reaches_the_transport() {
-        let client = Client::builder(TokioExecutor::new()).build_http();
+        let client = Client::builder(TokioExecutor::new())
+            .build(GatewayConnector::for_endpoint("http://127.0.0.1:1").expect("servable"));
         let err = EtcdAsyncAtomicReplayStore::post_inner(
             &client,
             "http://ops:hunter2@127.0.0.1:1",

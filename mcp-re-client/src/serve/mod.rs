@@ -50,7 +50,6 @@ use std::time::Instant;
 use mcp_re_client_proxy::ClientProxy;
 
 use crate::config::BindScope;
-use crate::config::ConfigError;
 use crate::config::LocalConfig;
 
 /// One wall-clock bound per phase, not a set of per-syscall timers.
@@ -63,6 +62,9 @@ mod close;
 /// What a browser cannot do, stated as two predicates.
 mod accepted_authority;
 mod guards;
+
+/// A listening socket together with the names that reach it.
+mod bound_listener;
 
 /// Reading one local request, and refusing everything this listener does not parse.
 mod request;
@@ -80,6 +82,7 @@ mod exchange;
 mod render;
 
 pub use accepted_authority::AcceptedHttpAuthority;
+pub use bound_listener::BoundListener;
 use exchange::handle_connection;
 
 /// The largest request head this listener will read before giving up.
@@ -123,14 +126,6 @@ pub struct ServeContext {
     pub request_lifetime_secs: i64,
     /// Concurrent local requests permitted.
     pub max_in_flight: usize,
-    /// Which HTTP authority names may reach the signing key.
-    ///
-    /// The half of the browser guard `Origin` does not cover: a DNS-rebound page is
-    /// SAME-origin, so it sends no `Origin`, and the `Host` it must send is the name it
-    /// cannot forge. Derived from the deployment's [`crate::config::BindScope`] and never
-    /// from `local.allow_non_loopback` — permitting an off-host BIND is a different fact
-    /// from widening WHO MAY REACH the listener, and one boolean used to be both.
-    pub accepted_authority: AcceptedHttpAuthority,
     /// Wall clock, Unix seconds.
     pub clock: Box<dyn Fn() -> i64 + Send + Sync>,
     /// Fresh nonce bytes, Base64URL-encoded by the caller of [`next_nonce`].
@@ -140,29 +135,21 @@ pub struct ServeContext {
 impl ServeContext {
     /// The serving context a validated local configuration describes.
     ///
-    /// Here rather than at the composition root because the authority policy must derive
-    /// from the [`BindScope`] and never from `local.allow_non_loopback`: a root that
-    /// destructured the config to fill both fields could reintroduce the conflation this
-    /// split removed — permitting an off-host BIND is not the same fact as widening WHO
-    /// MAY REACH the listener, and one boolean was both.
-    ///
-    /// `BindScope::decide` refuses rather than assumes. It is total over a config the
-    /// validation boundary already accepted, so the failure arm is unreachable there —
-    /// which is a property of that caller, not of this constructor.
-    pub fn for_local_config(local: &LocalConfig, proxy: ClientProxy) -> Result<Self, ConfigError> {
-        let scope = BindScope::decide(local.bind, local.allow_non_loopback)?;
-        Ok(Self {
+    /// The authority names that reach the listener come from [`bind`], which derives them
+    /// from the address the socket is actually bound to, and never from
+    /// `local.allow_non_loopback`.
+    pub fn for_local_config(local: &LocalConfig, proxy: ClientProxy) -> Self {
+        Self {
             proxy,
             default_route: local.default_route.clone(),
             request_lifetime_secs: local.request_lifetime_secs,
             max_in_flight: local.max_in_flight,
-            accepted_authority: AcceptedHttpAuthority::for_listener(&scope),
             clock: Box::new(|| {
                 use mcp_re_host::Clock;
                 mcp_re_host::SystemClock::new().now_unix()
             }),
             nonce: Box::new(crate::next_nonce),
-        })
+        }
     }
 }
 
@@ -184,10 +171,11 @@ struct LocalRequest {
 /// the mode this loop needs. A blocking listener parks the accept loop between local
 /// calls, so `stop` is never observed and a SIGTERM is never honoured.
 pub fn serve(
-    listener: TcpListener,
+    listener: BoundListener,
     context: Arc<ServeContext>,
     stop: Arc<AtomicBool>,
 ) -> std::io::Result<()> {
+    let (listener, authority) = listener.into_parts();
     listener.set_nonblocking(true)?;
     let in_flight = Arc::new(AtomicUsize::new(0));
     while !stop.load(Ordering::Relaxed) {
@@ -198,14 +186,17 @@ pub fn serve(
                     continue;
                 };
                 let worker_context = Arc::clone(&context);
-                // A spawn failure drops the closure, and with it `slot`, so the claim is
-                // released by the same destructor that releases it on unwind.
-                let _ = std::thread::Builder::new()
-                    .name("mcp-re-client-conn".to_owned())
-                    .spawn(move || {
-                        let _slot = slot;
-                        handle_connection(stream, &worker_context);
-                    });
+                admission::dispatch(
+                    stream,
+                    slot,
+                    move |stream| handle_connection(stream, &worker_context, &authority),
+                    |job| {
+                        std::thread::Builder::new()
+                            .name("mcp-re-client-conn".to_owned())
+                            .spawn(job)
+                            .map(drop)
+                    },
+                );
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(20));
@@ -244,7 +235,7 @@ pub fn serve(
 /// and is therefore refused. That is the fail-closed direction: the check never admits
 /// an address that is not loopback, and an operator who wants that address can spell it
 /// `127.0.0.1`.
-pub fn bind(local: &LocalConfig) -> std::io::Result<TcpListener> {
+pub fn bind(local: &LocalConfig) -> std::io::Result<BoundListener> {
     // THE SCOPE IS WHAT ADMITS THE BIND, and this function obtains one rather than
     // deciding for itself. It used to re-implement `BindScope::decide`'s condition and
     // copy its message verbatim, which meant the seam that opens the socket never held a
@@ -253,7 +244,12 @@ pub fn bind(local: &LocalConfig) -> std::io::Result<TcpListener> {
     // representations of one security fact, kept in agreement by remembering.
     let scope = BindScope::decide(local.bind, local.allow_non_loopback)
         .map_err(|refusal| std::io::Error::new(std::io::ErrorKind::InvalidInput, refusal.0))?;
-    TcpListener::bind(scope.listen_address())
+    let listener = TcpListener::bind(scope.listen_address())?;
+    // The OS may have chosen the port (`:0`), so the names that reach the socket are
+    // decided over the address it is actually bound to.
+    let bound = BindScope::decide(listener.local_addr()?, local.allow_non_loopback)
+        .map_err(|refusal| std::io::Error::new(std::io::ErrorKind::InvalidInput, refusal.0))?;
+    Ok(BoundListener::new(listener, &bound))
 }
 
 #[cfg(test)]

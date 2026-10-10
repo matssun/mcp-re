@@ -103,7 +103,7 @@ impl<'a> AuditorTrustView<'a> {
         };
         ResolverOutcome::Resolved(Box::new(ResolvedActor {
             identity: mcp_re_http_profile::ActorIdentity {
-                role: "client".to_owned(),
+                role: crate::config_state::server_identity::CLIENT_ROLE.to_owned(),
                 trust_domain: self.profile.trust_domain().to_owned(),
                 subject: signer.clone(),
                 keyid: kid.to_owned(),

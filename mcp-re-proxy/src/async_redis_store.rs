@@ -1,10 +1,9 @@
 //! MCPRE-117 (ADR-MCPRE-051 §4, Phase 2) — the ASYNC Redis authoritative replay
 //! backend.
 //!
-//! The async analogue of [`crate::redis_store::RedisAtomicReplayStore`]: the same
-//! server-side-atomic `SET key 1 NX PX <ttl_ms>`, but issued through the tokio
-//! ASYNC redis client so the insert is AWAITED on the per-core request path and
-//! never blocks a runtime worker (ADR-MCPRE-051 §4 — "the per-core Redis/etcd
+//! A server-side-atomic `SET key 1 NX PX <ttl_ms>`, issued through the tokio ASYNC
+//! redis client so the insert is AWAITED on the per-core request path and never blocks
+//! a runtime worker (ADR-MCPRE-051 §4 — "the per-core Redis/etcd
 //! clients are async and pipelined"). It implements
 //! [`AsyncAtomicReplayStore`](crate::async_replay::AsyncAtomicReplayStore), so an
 //! [`AsyncReplayTier`](crate::async_replay::AsyncReplayTier) over it gives the
@@ -12,21 +11,20 @@
 //!
 //! Connection handling uses redis's auto-reconnecting, cloneable
 //! [`ConnectionManager`]: each op clones the manager (cheap, shares one
-//! multiplexed connection) and awaits the command. Unlike the sync store this does
-//! NOT reconnect-and-retry a failed `SET NX`: a transient error surfaces as
-//! [`ReplayStoreError::Unavailable`] (fail closed), which is always safe and
-//! sidesteps the `SET NX` non-idempotency-under-retry subtlety (sync store audit
-//! #97) — an outage is NEVER a fresh nonce.
+//! multiplexed connection) and awaits the command. It does NOT reconnect-and-retry a
+//! failed `SET NX`: a transient error surfaces as [`ReplayStoreError::Unavailable`]
+//! (fail closed), which is always safe and sidesteps the `SET NX`
+//! non-idempotency-under-retry subtlety (audit #97) — an outage is NEVER a fresh nonce.
 //!
 //! The `REDIS_WAIT_QUORUM` tier (ADR-MCPS-020) is carried here too: a store built by
 //! [`connect_with_wait_quorum`](RedisAsyncAtomicReplayStore::connect_with_wait_quorum)
 //! with `Some((quorum, timeout_ms))` pipelines `WAIT <quorum> <timeout_ms>` behind the
-//! `SET NX PX` and an ack shortfall fails closed, through the same pure decision helper
-//! as the sync backend. The tier is a construction parameter, so no store exists in a
-//! weaker tier than the one it was connected with.
+//! `SET NX PX` and an ack shortfall fails closed, through the pure decision helper in
+//! [`protocol`]. The tier is a construction parameter, so no store exists in a weaker
+//! tier than the one it was connected with.
 //!
-//! TTL derivation and the MCPS-08 pre-store staleness guard reuse the SAME pure
-//! helpers as the sync backend ([`compute_ttl_ms`] / [`is_stale_pre_store`](crate::shared_replay::is_stale_pre_store)),
+//! TTL derivation and the MCPS-08 pre-store staleness guard are pure helpers
+//! ([`compute_ttl_ms`] / [`is_stale_pre_store`](crate::shared_replay::is_stale_pre_store)),
 //! reading the store's own clock, so the `PX` window is the intended
 //! `retain_until - now` and an already-stale request is rejected before Redis is
 //! touched.
@@ -52,11 +50,6 @@ use std::time::Duration;
 use crate::async_replay::AsyncAtomicReplayStore;
 use crate::async_replay::ReplayDecisionFuture;
 use crate::async_replay::ReplayInsert;
-use crate::redis_store::classify_wait_acks;
-use crate::redis_store::compute_ttl_ms;
-use crate::redis_store::system_clock;
-use crate::redis_store::UnixClock;
-use crate::redis_store::WaitQuorum;
 use crate::shared_replay::is_stale_pre_store;
 use crate::shared_replay::ReplayStoreError;
 
@@ -105,7 +98,14 @@ const CONNECT_TIMEOUT_MS: u64 = 1_000;
 /// The shared retention authority: whether an instance promises to keep a key. The
 /// decision serves both redis-backed stores, so it lives beside neither store's error
 /// type — this module supplies the replay tier's consequence and wraps the detail.
+mod protocol;
 pub(crate) mod retention_promise;
+
+use protocol::classify_wait_acks;
+use protocol::compute_ttl_ms;
+pub use protocol::system_clock;
+pub use protocol::UnixClock;
+use protocol::WaitQuorum;
 
 use self::retention_promise::retention_verdict;
 
@@ -127,8 +127,7 @@ impl RedisAsyncAtomicReplayStore {
         Self::connect_with(url, system_clock()).await
     }
 
-    /// Connect with an injected clock (deterministic tests reuse the sync store's
-    /// clock-injection pattern).
+    /// Connect with an injected clock (deterministic tests inject a fixed one).
     pub async fn connect_with(url: &str, clock: UnixClock) -> Result<Self, ReplayStoreError> {
         Self::connect_with_wait_quorum(url, clock, None).await
     }
@@ -163,18 +162,19 @@ impl RedisAsyncAtomicReplayStore {
             .set_response_timeout(Some(Self::response_timeout_for(wait_quorum)));
         let mut pool = Vec::with_capacity(pool_size.max(1));
         for _ in 0..pool_size.max(1) {
-            let conn = client
+            let mut conn = client
                 .get_connection_manager_with_config(config.clone())
                 .await
                 .map_err(|e| ReplayStoreError::Unavailable {
                     details: format!("connect redis async: {e}"),
                 })?;
+            // Asked on EVERY connection: the URL can resolve to a different server per
+            // connection (a failover pair, a replacement), so the policy one connection
+            // reported says nothing about the server the next one reached. The premise
+            // that every server behind the URL keeps `noeviction` afterwards is ASM-0059.
+            Self::assert_no_eviction(&mut conn).await?;
             pool.push(conn);
         }
-        // Asked ONCE rather than per connection: every connection in the pool addresses
-        // the same server, so an eviction policy is a property of that server and asking
-        // n times would only add n-1 round trips to startup.
-        Self::assert_no_eviction(&mut pool[0]).await?;
         Ok(RedisAsyncAtomicReplayStore {
             pool,
             next: AtomicUsize::new(0),
@@ -199,10 +199,11 @@ impl RedisAsyncAtomicReplayStore {
 
     /// Refuse to serve on a Redis that may drop a replay record before its TTL.
     ///
-    /// Asked once, at connect, because it is a property of the server rather than of
-    /// a request — and asked at all because nothing on the insert path can detect an
-    /// eviction after the fact: the next `SET NX` on an evicted key simply succeeds,
-    /// which is indistinguishable from a nonce that was never presented.
+    /// Asked at connect, on each connection, because it is a property of the server a
+    /// connection reached rather than of a request — and asked at all because nothing on
+    /// the insert path can detect an eviction after the fact: the next `SET NX` on an
+    /// evicted key simply succeeds, which is indistinguishable from a nonce that was
+    /// never presented.
     async fn assert_no_eviction(conn: &mut ConnectionManager) -> Result<(), ReplayStoreError> {
         eviction_policy_verdict(retention_promise::read_policy(conn).await.as_deref())
     }
@@ -232,7 +233,7 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
         // trips below. The three spans together split the replay call into "before the
         // wire", "the SET", and "the WAIT".
         let _t_prep = crate::stage_timers::Timed::start(crate::stage_timers::Stage::ReplayPrep);
-        let expires_at_unix = insert.expires_at_unix;
+        let expires_at_unix = insert.retain_until;
         let key = insert.key.to_string();
         let mut conn = self.checkout();
         let wait_quorum = self.wait_quorum;
@@ -389,6 +390,63 @@ mod tests {
         );
     }
 
+    /// A server whose first connection reports `first` and every later one `rest`,
+    /// standing for a URL that resolves to a different server after the first connect.
+    async fn serve_policy_per_connection(first: &'static str, rest: &'static str) -> String {
+        use super::retention_promise::scripted_server::read_command;
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let mut accepted = 0usize;
+            while let Ok((stream, _)) = listener.accept().await {
+                let policy = if accepted == 0 { first } else { rest };
+                accepted += 1;
+                tokio::spawn(async move {
+                    let (rx, mut tx) = stream.into_split();
+                    let mut reader = tokio::io::BufReader::new(rx);
+                    while let Some(args) = read_command(&mut reader).await {
+                        let is_config = args
+                            .first()
+                            .is_some_and(|c| c.eq_ignore_ascii_case("CONFIG"));
+                        let frame = if is_config {
+                            format!(
+                                "*2\r\n${}\r\n{MAXMEMORY_POLICY_PARAM}\r\n${}\r\n{policy}\r\n",
+                                MAXMEMORY_POLICY_PARAM.len(),
+                                policy.len()
+                            )
+                        } else {
+                            "+OK\r\n".to_string()
+                        };
+                        if tx.write_all(frame.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        format!("redis://{addr}")
+    }
+
+    #[tokio::test]
+    async fn every_pooled_connection_is_asked_for_its_eviction_policy() {
+        // The first connection reaches a `noeviction` server and the rest an evicting
+        // one. A policy read once on the first connection would accept this pool.
+        let url = serve_policy_per_connection("noeviction", "volatile-lru").await;
+        let err = RedisAsyncAtomicReplayStore::connect_pooled(&url, system_clock(), None, 4)
+            .await
+            .err()
+            .expect("a pooled connection that reached an evicting server must be refused");
+        let ReplayStoreError::Unavailable { details } = err;
+        assert!(details.contains("volatile-lru"), "got: {details}");
+        let url = serve_policy_per_connection("noeviction", "noeviction").await;
+        RedisAsyncAtomicReplayStore::connect_pooled(&url, system_clock(), None, 4)
+            .await
+            .expect("every connection reporting noeviction is the supported configuration");
+    }
+
     #[tokio::test]
     async fn a_noeviction_redis_is_accepted() {
         // The refusal above must be the policy, not the scripted server: the identical
@@ -430,6 +488,46 @@ mod tests {
         assert_eq!(insert_at(&store, 1_600).await, Ok(ReplayDecision::Fresh));
         let recorded = seen.lock().expect("commands").clone();
         assert_eq!(recorded, vec![vec!["SET", "k", "1", "NX", "PX", "600000"]]);
+    }
+
+    fn divergence(secs: i64) -> crate::config_state::ReplicaClockDivergence {
+        crate::config_state::ReplicaClockDivergence::new(secs).expect("inside the declared ceiling")
+    }
+
+    /// The record is kept exactly the declared bound longer than the verifier's horizon.
+    #[tokio::test]
+    async fn a_record_is_kept_the_declared_divergence_longer_than_the_horizon() {
+        let (url, seen) = serve(set_script("+OK\r\n")).await;
+        let store = RedisAsyncAtomicReplayStore::connect_with(
+            &url,
+            divergence(7).retention_clock(|| 1_000),
+        )
+        .await
+        .expect("connect");
+        assert_eq!(insert_at(&store, 1_600).await, Ok(ReplayDecision::Fresh));
+        let recorded = seen.lock().expect("commands").clone();
+        assert_eq!(recorded, vec![vec!["SET", "k", "1", "NX", "PX", "607000"]]);
+    }
+
+    /// The gap the padding closes, from the correct replica's side: a replica whose clock
+    /// runs `ahead` seconds fast must not write a key that lapses before the verifier stops
+    /// accepting the request in TRUE time.
+    #[tokio::test]
+    async fn a_replica_whose_clock_runs_ahead_still_retains_to_the_true_horizon() {
+        let ahead = 4;
+        let (url, seen) = serve(set_script("+OK\r\n")).await;
+        let clock = divergence(ahead).retention_clock(move || 1_000 + ahead);
+        let store = RedisAsyncAtomicReplayStore::connect_with(&url, clock)
+            .await
+            .expect("connect");
+        assert_eq!(insert_at(&store, 1_600).await, Ok(ReplayDecision::Fresh));
+        let px: i64 = seen.lock().expect("commands")[0][5]
+            .parse()
+            .expect("PX is an integer");
+        assert!(
+            px >= (1_600 - 1_000) * 1_000,
+            "PX {px} ms lapses before the horizon, 600s after true now"
+        );
     }
 
     #[tokio::test]

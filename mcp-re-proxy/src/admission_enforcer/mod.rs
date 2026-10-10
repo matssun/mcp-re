@@ -13,33 +13,34 @@
 
 use std::sync::Arc;
 
-use mcp_re_http_profile::admission::AdmissionVerdict;
+use mcp_re_http_profile::authenticate_admission;
 use mcp_re_http_profile::check_admission;
 use mcp_re_http_profile::AdmissionPolicy;
-use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::VerifiedMcpRequest;
 
 use crate::admission_source::AsyncAdmissionSource;
 use crate::http_profile_serve::AdmissionAuthorityResolver;
 
+#[cfg(feature = "redis_replay")]
+mod authority;
 /// How long a replica may serve on last-known state while the authority is unreachable.
 mod degraded_window;
+mod enforcement;
 mod facet;
+mod refusal;
+mod refusal_class;
+mod replica_history;
+mod statement;
 
+#[cfg(feature = "redis_replay")]
+pub(crate) use authority::fixed_authority_resolver;
+pub use enforcement::AdmissionEnforcement;
 pub use facet::AdmissionFacet;
+pub(crate) use refusal::AdmissionRefusal;
+pub use refusal_class::AdmissionRefusalClass;
+pub(crate) use statement::AdmissionStatement;
 
 use degraded_window::DegradedWindow;
-
-/// What a request that carries NO admission evidence means to this deployment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AdmissionEnforcement {
-    /// Serve it. For a deployment that has not rolled admission out to every client
-    /// yet — the binding is honoured when present and absent is not an error.
-    Optional,
-    /// Refuse it. The only setting under which "every served call acted under a
-    /// current admission" is a true statement about the deployment.
-    Required,
-}
 
 /// The §7 admission gate's collaborators, held together because none of them is
 /// meaningful alone. The representation is private, so [`AdmissionEnforcer::new`] is the
@@ -87,15 +88,15 @@ impl AdmissionEnforcer {
     /// COSTS the client is a fact about the whole exchange, and the serving path's machine
     /// owns it.
     ///
-    /// It takes the verified request and the verifier-resolved actor id, and nothing the
-    /// request asserts about itself.
+    /// It takes the verified request, derives the actor from the verifier's resolution of
+    /// it, and reads nothing the request asserts about itself.
     pub(crate) async fn decide(
         &self,
         verified: &VerifiedMcpRequest,
-        actor_id: &str,
         audience_id: &str,
         now: i64,
-    ) -> Result<AdmissionFacet, HttpProfileError> {
+    ) -> Result<AdmissionFacet, AdmissionRefusal> {
+        let actor_id = verified.resolved_actor().actor_id();
         let block = verified.request_block();
         let (binding, assertion) = match (
             block.admission.as_ref(),
@@ -106,7 +107,9 @@ impl AdmissionEnforcer {
             // reaching here means BOTH are absent: the call declares no admission.
             _ => {
                 if self.enforcement == AdmissionEnforcement::Required {
-                    return Err(HttpProfileError::AdmissionStateUnavailable);
+                    // The client presented nothing: the evidence it owed is absent, which is
+                    // not the authority being unreachable.
+                    return Err(AdmissionRefusal::no_evidence());
                 }
                 // The call declared no admission and this deployment tolerates that. NOT
                 // the same fact as having been checked and passed, and the record now says
@@ -115,81 +118,39 @@ impl AdmissionEnforcer {
             }
         };
 
-        // The degraded window is a DURATION, so it is read from the monotonic clock and
-        // never from `now` — see `degraded_window`. One reading for the whole decision, so
-        // the instant a read is recorded at and the instant the window is judged against
-        // cannot differ by the time the lookup took.
-        let elapsed_at = std::time::Instant::now();
-        // The authoritative lookup. An outage yields `None` — the ONLY input that
-        // reaches the §5.2 degraded fork — while a store that ANSWERED is a definitive
-        // negative whenever it has nothing this deployment will act on: no record, or a
-        // record that is not the configured authority's current statement. Both are
-        // refused here rather than handed to a fork that would serve the call on its own
-        // assertion, which is what would make corrupting a record a cheaper un-revoke than
-        // issuing one.
-        let authoritative = match self.source.current(&binding.admission_id, now).await {
-            Ok(Some(state)) => {
-                self.window.record_read(elapsed_at);
-                Some(state)
-            }
-            Ok(None) => {
-                self.window.record_read(elapsed_at);
-                return Err(HttpProfileError::AdmissionNotCurrent);
-            }
-            // The source is unreachable — the ONLY input that reaches the §5.2 degraded
-            // fork. Whether this replica may still SERVE on it is decided below, where the
-            // candidate is converted, and not here: one check, at the conversion, so that
-            // deleting it makes an out-of-window serve reachable rather than leaving a
-            // second copy still enforcing.
-            Err(_) => None,
-        };
-
+        // AUTHENTICATE FIRST. The assertion is verified against the configured authority,
+        // equated with the VERIFIER-RESOLVED actor — the FULL signing actor, keyid
+        // included, never the bare subject and never anything the request asserts — and the
+        // call's binding is equated with it. An assertion issued to another workload, or
+        // under another key, names a different actor and is refused, so possession alone
+        // does not satisfy the gate (§16.4). Nothing below runs for a request that did not
+        // pass: no store round trip is spent on, and no window refreshed by, an identity the
+        // caller merely asserted.
         let resolve = Arc::clone(&self.resolve_authority);
-        let verdict = check_admission(
+        let authenticated = authenticate_admission(
             binding,
             assertion,
-            // The VERIFIER-RESOLVED actor — the FULL signing actor, keyid included, never
-            // the bare subject and never anything the request asserts. An assertion issued
-            // to another workload, or under another key, names a different actor and is
-            // refused, so possession alone does not satisfy the gate (§16.4).
-            actor_id,
-            // The PROJECTION, not the product. `CurrentAdmissionState` exists so that
-            // reaching this line means the state was authenticated as the configured
-            // authority's and found current; the currency check below consumes the
-            // semantic fact, which is what its Verus contract is stated over.
-            authoritative.as_ref().map(|current| current.state()),
+            &actor_id,
             mcp_re_http_profile::PROFILE_TAG,
             &[audience_id],
             &self.policy,
             now,
             move |kid: &str| resolve(kid),
-        )?;
-
-        // THE CONVERSION, and this authority's own conjunct. `check_admission` is
-        // stateless: it saw one call against one snapshot, and a `DegradedCandidate` says
-        // only that the authority was unreachable, that the deployment opted in, and that
-        // the assertion the CALLER presented is recent. That last term is the caller's to
-        // choose — during an outage the issuer keeps minting, so a client that refetches
-        // satisfies it for the whole outage however long it runs.
-        //
-        // What bounds the outage is elapsed time since this replica last reached the
-        // authority, which is replica HISTORY and which only this owner holds. Its window
-        // is monotonic and judged against the SAME `elapsed_at` the lookup was timed at, so
-        // the instant the read is recorded at and the instant the window is judged against
-        // cannot differ by the time the lookup took.
-        //
-        // The arm is REPORTED, not discarded. `.map(|_| ())` here was R11-106: a serve on a
-        // stale snapshot inside P became indistinguishable in audit from a live-confirmed
-        // one, and the facet is what the record now carries instead.
-        match verdict {
-            AdmissionVerdict::Live(_) => Ok(AdmissionFacet::LiveConfirmed),
-            AdmissionVerdict::DegradedCandidate(_)
-                if self.window.exhausted(&self.policy, elapsed_at) =>
-            {
-                Err(HttpProfileError::AdmissionStateUnavailable)
-            }
-            AdmissionVerdict::DegradedCandidate(_) => Ok(AdmissionFacet::Degraded),
-        }
+        )
+        .map_err(AdmissionRefusal::authentication)?;
+        let authoritative = self.lookup(authenticated.admission_id(), now).await?;
+        // The PROJECTION, not the product. `CurrentAdmissionState` exists so that reaching
+        // this line means the state was authenticated as the configured authority's and found
+        // current; the currency check consumes the semantic fact, which is what its Verus
+        // contract is stated over.
+        let verdict = check_admission(
+            authenticated,
+            authoritative.as_ref().map(|current| current.state()),
+            &self.policy,
+            now,
+        )
+        .map_err(AdmissionRefusal::currency)?;
+        self.convert(verdict)
     }
 }
 
@@ -221,10 +182,53 @@ mod tests {
             Arc::new(|_kid: &str| None),
         );
         assert!(
-            enforcer
-                .window
-                .exhausted(&enforcer.policy, std::time::Instant::now()),
+            enforcer.window.exhausted(&enforcer.policy),
             "a gate must not treat its own construction as a confirmation"
+        );
+    }
+
+    /// The serving-path consequence of the store's reply split: a key a store writer gave
+    /// another type is refused at the store and is never the outage that would reach the
+    /// degraded fork, even on a deployment that opted into degraded mode. The Redis source
+    /// exists only in the `redis_replay` build, so this selects in `proxy_ext_unit_test`.
+    #[cfg(feature = "redis_replay")]
+    #[tokio::test]
+    async fn a_key_of_another_type_is_refused_at_the_store_and_never_degraded() {
+        use crate::async_redis_store::retention_promise::scripted_server::{serve, Script};
+        use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal;
+        let (url, _) = serve(Script {
+            policy: Some("noeviction".to_string()),
+            recorded: vec!["GET".to_string()],
+            reply: "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"
+                .to_string(),
+        })
+        .await;
+        let verifier = crate::admission_source::test_support::verifier_for(
+            &mcp_re_core::SigningKey::from_seed_bytes(&[3u8; 32]),
+            60,
+            5,
+        );
+        let source = crate::redis_admission_source::RedisAdmissionSource::connect(&url, verifier)
+            .await
+            .expect("noeviction is the supported configuration");
+        let enforcer = AdmissionEnforcer::new(
+            Arc::new(source),
+            AdmissionPolicy {
+                max_assertion_age: 300,
+                max_clock_skew: 5,
+                degraded_propagation_bound: 60,
+                allow_degraded_mode: true,
+            },
+            AdmissionEnforcement::Required,
+            Arc::new(|_kid: &str| None),
+        );
+        let refusal = enforcer
+            .lookup("wl", 1_030)
+            .await
+            .expect_err("an answered key of another type is a refusal, not the degraded route");
+        assert_eq!(
+            refusal.class(),
+            AdmissionRefusalClass::RecordRefused(AdmissionRecordRefusal::Malformed)
         );
     }
 }

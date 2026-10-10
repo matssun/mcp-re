@@ -16,6 +16,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use mcp_re_client_core::bearer_token;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
@@ -277,22 +278,6 @@ fn err(message: impl Into<String>) -> ConfigError {
 /// The header the profile's verifier reads a DPoP access token from.
 const AUTHORIZATION: &str = "Authorization";
 
-/// The bearer credential inside an `Authorization` header value, or `None`.
-///
-/// Byte-identical to the verifier's own extraction
-/// (`mcp_re_http_profile::authorization_bearer_bytes`), pinned by
-/// `a_dpop_binding_digests_what_the_verifier_digests`: the digest must cover the token,
-/// not the `Bearer ` scheme in front of it, or the binding cannot verify anywhere.
-fn bearer_token(authorization_header: &str) -> Option<&str> {
-    let token = authorization_header.strip_prefix("Bearer ")?.trim();
-    if token.is_empty() {
-        None
-    } else {
-        Some(token)
-    }
-}
-
-/// The checks that cannot be expressed in the type.
 mod bind_scope;
 mod local;
 mod validation;
@@ -316,12 +301,6 @@ impl ClientConfig {
         ClientConfig::from_json(&bytes)
     }
 
-    /// The checks that cannot be expressed in the type: non-empty collections, unique
-    /// route ids, a resolvable binding source, and the loopback guard.
-    ///
-    /// Public because every field of this struct is public and the type derives
-    /// `Deserialize`: a consumer that builds or mutates a config rather than going
-    /// through [`ClientConfig::from_json`] must be able to re-establish the invariant,
     /// The checks that cannot be expressed in the type: non-empty collections, unique
     /// route ids, a resolvable binding source, and the loopback guard.
     ///
@@ -459,7 +438,7 @@ mod tests {
         );
 
         let declared = document(
-            r#"{ "bind": "0.0.0.0:8640", "allow_non_loopback": true }"#,
+            r#"{ "bind": "198.51.100.7:8640", "allow_non_loopback": true }"#,
             ROUTE,
         );
         ClientConfig::from_json(declared.as_bytes()).expect("an explicit opt-in is honoured");

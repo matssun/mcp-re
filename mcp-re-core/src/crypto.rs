@@ -77,16 +77,14 @@ impl VerificationKey {
 /// NOT a purity violation.
 ///
 /// # Custody boundary (MCPS-076, ADR-MCPS-028)
-/// This is the IN-PROCESS SOFTWARE signer, used by the SEED-BACKED key sources:
+/// This is the IN-PROCESS SOFTWARE signer, used by the SEED-BACKED key source
 /// `--key-source file` (`FileKeySource` — the proxy's default, production-capable
-/// source) and the dev-only, separately-gated `--key-source env`
-/// (`EnvKeySource`, behind `--allow-env-keysource`), plus test/conformance. All
-/// of these reconstruct a seed-backed `SigningKey` via `from_seed_bytes`, so this
-/// type IS on a production path — it is not test-only.
+/// source), plus test/conformance. Each reconstructs a seed-backed `SigningKey` via
+/// `from_seed_bytes`, so this type IS on a production path — it is not test-only.
 ///
 /// The custody property it provides is internal signing with NO export: the
 /// secret scalar stays private (no `to_bytes`/`to_seed`; see Secret hygiene), and
-/// seed-backed sources hold the on-disk/env seed in `Zeroizing` and scrub it. The
+/// seed-backed sources hold the on-disk seed in `Zeroizing` and scrub it. The
 /// STRONGER posture — a non-exporting HSM / cloud-KMS where no raw seed is ever
 /// reconstructed in process — is provided by the `KeySource` seam's PKCS#11 /
 /// AWS-KMS / GCP-KMS backends (signing on the device), tracked as the ADR-MCPS-028
@@ -96,15 +94,21 @@ impl VerificationKey {
 ///
 /// # Secret hygiene
 /// The secret scalar lives inside dalek's `DalekSigningKey`, which is
-/// `ZeroizeOnDrop` (the `zeroize` feature is enabled workspace-wide), so it is
-/// scrubbed on drop. There is deliberately NO seed/key EXPORT method (no
-/// `to_bytes` / `to_seed`) and no separate raw `[u8; 32]` copy is retained.
+/// `ZeroizeOnDrop` (pinned by `tests::dalek_signing_key_is_zeroize_on_drop`,
+/// which does not compile without it), so it is scrubbed on drop. There is
+/// deliberately NO seed/key EXPORT method (no `to_bytes` / `to_seed`) and no
+/// separate raw `[u8; 32]` copy is retained.
 /// `Clone` is intentionally NOT derived — a private key should not be silently
-/// duplicated. `Debug` is derived but dalek redacts the secret (prints just
-/// `"SigningKey"`), so it cannot leak the key into logs.
-#[derive(Debug)]
+/// duplicated. `Debug` is implemented here and renders only `SigningKey { .. }`,
+/// so it cannot leak the key into logs.
 pub struct SigningKey {
     inner: DalekSigningKey,
+}
+
+impl std::fmt::Debug for SigningKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SigningKey").finish_non_exhaustive()
+    }
 }
 
 impl SigningKey {
@@ -196,6 +200,22 @@ mod tests {
 
     // A fixed, documented test seed so signatures are reproducible.
     const SEED: [u8; 32] = [7u8; 32];
+
+    #[test]
+    fn signing_key_debug_renders_no_key_material() {
+        let sk = SigningKey::from_seed_bytes(&SEED);
+        let rendered = format!("{:?}", sk);
+        assert_eq!(rendered, "SigningKey { .. }");
+        assert!(!rendered.contains(&hex::encode(SEED)));
+        assert!(!rendered.contains(&crate::encoding::b64url_encode(&SEED)));
+        assert!(!rendered.contains(&format!("{:?}", SEED)));
+    }
+
+    #[test]
+    fn dalek_signing_key_is_zeroize_on_drop() {
+        fn requires_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        requires_zeroize_on_drop::<super::DalekSigningKey>();
+    }
 
     #[test]
     fn raw_primitive_verifies_without_any_alg_plumbing() {

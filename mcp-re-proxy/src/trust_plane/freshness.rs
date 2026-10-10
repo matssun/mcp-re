@@ -19,12 +19,26 @@
 //! afterwards must not report the store fresh. Held in one flag the difference is not
 //! representable and the next successful read reverses either, which is why there are two.
 //!
+//! # Silence is staleness too
+//!
+//! Both flags are written by the reloader, so a reloader that stops running — wedged inside
+//! a read, or never scheduled — leaves them at whatever they last said. The reload task
+//! therefore also requires a successful read within a bound, the failure budget measured in
+//! time, and a store past it fails closed exactly as an exhausted budget does, recoverably.
+//!
 //! # Why the refusal is `Unavailable` and not `NotFound`
 //!
 //! A frozen store still HOLDS the revoked key. Answering from it is the one outcome that
 //! must not happen, and reporting the outage as an unknown keyid would send the operator
 //! hunting a client bug. The verifier maps `Unavailable` to
 //! `mcp-re.trust_resolver_unavailable`, which is what a stale store actually is.
+//!
+//! # Ordering
+//!
+//! Every load and store of the four atomics is `SeqCst`, so all of them sit in one total
+//! order: a verification whose read follows a marking in that order observes it. No
+//! weaker ordering is used on the read side, because the latch is the security fact and
+//! its reads are not the hot cost of a verification.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -35,7 +49,7 @@ use std::sync::Arc;
 /// [`TRUST_RELOAD_FAILURE_BUDGET`] consecutive cadences, or when the reload thread has
 /// died. Read by the resolver wrapper below on every verification, which is what makes
 /// it a real fail-closed rather than a log line.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct TrustStoreFreshness {
     stale: std::sync::atomic::AtomicBool,
     /// Set by [`mark_stale_permanently`](Self::mark_stale_permanently). Separate from
@@ -45,8 +59,47 @@ pub(super) struct TrustStoreFreshness {
     /// owner going away or the reload thread dying is not. Held in one flag, the
     /// difference is not representable and the next successful read reverses either.
     terminal: std::sync::atomic::AtomicBool,
+    /// The instant the two millisecond counters below are measured from.
+    origin: std::time::Instant,
+    /// When the store was last read successfully, in milliseconds since `origin`.
+    last_success_ms: std::sync::atomic::AtomicU64,
+    /// How long the store may go without a successful read; zero until the reloader sets
+    /// one, because a store nothing reloads has no cadence to fall behind.
+    success_bound_ms: std::sync::atomic::AtomicU64,
+}
+impl Default for TrustStoreFreshness {
+    fn default() -> Self {
+        TrustStoreFreshness {
+            stale: Default::default(),
+            terminal: Default::default(),
+            origin: std::time::Instant::now(),
+            last_success_ms: Default::default(),
+            success_bound_ms: Default::default(),
+        }
+    }
 }
 impl TrustStoreFreshness {
+    fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.origin.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Require a successful read within `bound` from now on, counting the read the store
+    /// already holds as the latest one.
+    pub(super) fn require_success_within(&self, bound: std::time::Duration) {
+        let bound_ms = u64::try_from(bound.as_millis()).unwrap_or(u64::MAX).max(1);
+        self.last_success_ms
+            .store(self.elapsed_ms(), Ordering::SeqCst);
+        self.success_bound_ms.store(bound_ms, Ordering::SeqCst);
+    }
+
+    fn overdue(&self) -> bool {
+        let bound = self.success_bound_ms.load(Ordering::SeqCst);
+        let since = self
+            .elapsed_ms()
+            .saturating_sub(self.last_success_ms.load(Ordering::SeqCst));
+        bound != 0 && since > bound
+    }
+
     pub(super) fn mark_stale(&self) {
         self.stale.store(true, Ordering::SeqCst);
     }
@@ -63,6 +116,8 @@ impl TrustStoreFreshness {
     }
 
     pub(super) fn mark_fresh(&self) {
+        self.last_success_ms
+            .store(self.elapsed_ms(), Ordering::SeqCst);
         if self.terminal.load(Ordering::SeqCst) {
             return;
         }
@@ -70,7 +125,7 @@ impl TrustStoreFreshness {
     }
 
     pub(super) fn is_stale(&self) -> bool {
-        self.terminal.load(Ordering::Relaxed) || self.stale.load(Ordering::Relaxed)
+        self.terminal.load(Ordering::SeqCst) || self.stale.load(Ordering::SeqCst) || self.overdue()
     }
 }
 /// The request-trust resolver, refusing to answer at all once the store behind it has
@@ -117,6 +172,27 @@ mod tests {
         freshness.mark_stale();
         assert!(freshness.is_stale());
         freshness.mark_fresh();
+        assert!(!freshness.is_stale());
+    }
+
+    /// A reloader that stops producing reads is stale on its own: no flag was written, and
+    /// silence past the bound still fails closed — until a read succeeds again.
+    #[test]
+    fn a_store_with_no_successful_read_within_its_bound_is_stale_until_one_succeeds() {
+        let freshness = TrustStoreFreshness::default();
+        freshness.require_success_within(std::time::Duration::from_millis(40));
+        assert!(!freshness.is_stale(), "the read the store holds counts");
+        std::thread::sleep(std::time::Duration::from_millis(90));
+        assert!(freshness.is_stale(), "silence past the bound is staleness");
+        freshness.mark_fresh();
+        assert!(!freshness.is_stale(), "a successful read recovers it");
+    }
+
+    /// A store nothing reloads has no cadence, so the clock alone never makes it stale.
+    #[test]
+    fn a_store_with_no_bound_is_not_made_stale_by_time() {
+        let freshness = TrustStoreFreshness::default();
+        std::thread::sleep(std::time::Duration::from_millis(20));
         assert!(!freshness.is_stale());
     }
 

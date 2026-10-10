@@ -3,7 +3,7 @@
 //!
 //! A deliberately small emitter: a status line, `Content-Type`, `Content-Length`,
 //! `Connection: close` — one exchange per connection — and the body. The
-//! `Mcp-Re-Verified-Kind` header rides along for an embedder that wants the pipeline''s
+//! `Mcp-Re-Verified-Kind` header rides along for an embedder that wants the pipeline's
 //! classification; it is outside the plain-MCP contract, which is why nothing in the status
 //! or body depends on the caller reading it.
 

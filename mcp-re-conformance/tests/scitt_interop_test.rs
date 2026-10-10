@@ -38,7 +38,8 @@ use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::chain::ChainLabel;
 use mcp_re_http_profile::chain::ChainReconstruction;
 use mcp_re_http_profile::chain::HopEvidence;
-use mcp_re_http_profile::evidence::RequestEvidence;
+use mcp_re_http_profile::evidence::RequestRoleEvidence;
+use mcp_re_http_profile::evidence::ResponseRoleEvidence;
 use mcp_re_http_profile::scitt::verify_receipt_offline;
 use mcp_re_http_profile::scitt::verify_retained_evidence;
 use mcp_re_http_profile::scitt::EvidenceCommitment;
@@ -100,10 +101,10 @@ fn retained_chain(bytes: &[u8]) -> ChainReconstruction {
             .expect("hops")
             .iter()
             .map(|hop| HopEvidence {
-                request_evidence: RequestEvidence::from_signature_base(
+                request_evidence: RequestRoleEvidence::from_signature_base(
                     hop["request"].as_str().expect("request base").as_bytes(),
                 ),
-                response_evidence: RequestEvidence::from_response_signature_base(
+                response_evidence: ResponseRoleEvidence::from_signature_base(
                     hop["response"].as_str().expect("response base").as_bytes(),
                 ),
             })
@@ -286,7 +287,7 @@ fn a_wrong_pinned_service_key_is_refused() {
     });
     assert_eq!(
         verify_with(&statement(), &receipt(), &other_kid).unwrap_err(),
-        HttpProfileError::ReceiptIssuerUntrusted,
+        HttpProfileError::ReceiptServiceUntrusted,
     );
 }
 
@@ -478,7 +479,7 @@ fn the_wrong_leaf_profile_refuses_rather_than_falling_back() {
             |_| Some(issuer.clone().into()),
             |kid| pin.resolve(kid)
         )
-        .expect_err("the default profile must not verify this service's receipt"),
+        .expect_err("the statement-bytes profile must not verify this service's receipt"),
         HttpProfileError::ReceiptInvalid,
     );
 }

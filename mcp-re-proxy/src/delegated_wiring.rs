@@ -21,7 +21,6 @@
 use std::sync::Arc;
 
 use mcp_re_core::b64url_decode;
-use mcp_re_core::verify_ed25519;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential_with_signer;
@@ -34,6 +33,8 @@ use zeroize::Zeroizing;
 use crate::delegated_server_signer::DelegatedRotor;
 use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::key_source::ResponseSigner;
+use crate::signing_plane::bounded_root_issuer::BoundedRootIssuer;
+use crate::signing_plane::bounded_root_issuer::ROOT_ISSUER_CALL_BOUND;
 
 /// The root issuer closure the custody drives at issuance/rotation. Boxed so the
 /// production rotor has a concrete type regardless of which root signer (KMS/file)
@@ -68,6 +69,23 @@ pub struct DelegatedSigningWiring {
     pub window: DelegatedKeyWindow,
 }
 
+/// The root issuer's signature over a credential signing input, as the 64 bytes a JWS
+/// carries. Whether it verifies under the root is the custody's to decide, not this seam's.
+fn root_signature<S: ResponseSigner + Send + 'static>(
+    root: &BoundedRootIssuer<S>,
+    input: &[u8],
+) -> Result<Vec<u8>, String> {
+    let b64 = root.sign(input).map_err(|e| e.to_string())?;
+    b64url_decode(&b64)
+        .map_err(|_| "root issuer CONTRACT VIOLATION: its signature is not base64url".to_string())
+}
+
+/// Name why an issuance was refused, and answer with the one error the custody understands.
+fn issuance_refused(class: impl std::fmt::Display) -> HttpProfileError {
+    eprintln!("mcp-re-proxy: delegated credential issuance refused: {class}");
+    HttpProfileError::DelegationCredentialInvalid
+}
+
 /// Build the delegated-signing wiring from a [`SigningPlan`](crate::startup_plan::SigningPlan)
 /// and a `root_signer` (the ROOT issuer). Does NOT issue the first key or start any thread
 /// — the caller drives the initial [`DelegatedRotor::rotate`] (so a startup issuance
@@ -80,44 +98,38 @@ pub struct DelegatedSigningWiring {
 /// established resources. The wiring is handed a policy and builds it.
 ///
 /// `root_signer` signs ONLY the delegation credential's compact-JWS signing input at
-/// issuance/rotation (never per response); a transient root failure yields `None`,
-/// which the custody state machine treats as a fail-closed issuance.
+/// issuance/rotation (never per response), each call bounded and single-flight; a root
+/// failure or an unanswered call yields `None`, which the custody state machine treats as
+/// a fail-closed issuance. `Err` when the root cannot state the public key it signs under:
+/// the custody adopts only credentials that key verifies, so without it nothing can issue.
 pub fn build_delegated_signing(
     plan: &crate::startup_plan::SigningPlan,
     root_signer: impl ResponseSigner + Send + 'static,
-) -> DelegatedSigningWiring {
+) -> Result<DelegatedSigningWiring, String> {
+    build_with_root_bound(plan, root_signer, ROOT_ISSUER_CALL_BOUND)
+}
+
+/// [`build_delegated_signing`], with every root-issuer call bounded by `bound`.
+fn build_with_root_bound(
+    plan: &crate::startup_plan::SigningPlan,
+    root_signer: impl ResponseSigner + Send + 'static,
+    bound: std::time::Duration,
+) -> Result<DelegatedSigningWiring, String> {
     let cfg = plan.custody.clone();
     let window = cfg.window;
-
-    // The key the root issuer says it signs under, read ONCE at build. A backend that
-    // cannot state its own public key cannot have its issuance checked against anything, and
-    // an unverifiable issuer is not one this deployment publishes credentials from.
-    let root_public_key = root_signer.response_public_key().ok();
+    let root_public_key = root_signer.response_public_key().map_err(|e| {
+        format!("delegated-signing: the root issuer states no public key ({e}), so no credential it issues can be verified")
+    })?;
+    let root = BoundedRootIssuer::with_bound(root_signer, bound);
 
     // ROOT ISSUER: sign the credential's compact-JWS signing input with the root
     // ResponseSigner (KMS/HSM/file), decoding its base64url raw Ed25519 signature to
     // the 64 bytes the JWS carries. Invoked at issuance/rotation ONLY. A transient
-    // root failure → `None` → the custody treats it as a fail-closed issuance.
-    //
-    // The signature is then RE-VERIFIED under the key the root advertises, which is what the
-    // response seam next door already does and this one did not. Downstream,
-    // `issue_delegation_credential_with_signer` only length-checks the bytes that come back,
-    // so before this a root backend wired to the wrong key — or one whose adapter returned
-    // the right number of wrong bytes — published a credential every verifier in the fleet
-    // rejects, discovered at the next request rather than at the first issuance. Fail-closed
-    // here means the current key keeps serving until its own `exp`, which is the outcome the
-    // custody state machine already guarantees.
+    // root failure → `None` → the custody treats it as a fail-closed issuance. A signature
+    // that does not verify under `root_public_key` is refused by the custody itself.
     let issue: BoxedIssuer = Box::new(move |h, c| {
         issue_delegation_credential_with_signer(h, c, |input| {
-            let b64 = root_signer
-                .sign_response(input)
-                .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
-            let public_key = root_public_key
-                .as_ref()
-                .ok_or(HttpProfileError::DelegationCredentialInvalid)?;
-            verify_ed25519(input, &b64, public_key)
-                .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
-            b64url_decode(&b64).map_err(|_| HttpProfileError::DelegationCredentialInvalid)
+            root_signature(&root, input).map_err(issuance_refused)
         })
         .ok()
     });
@@ -142,14 +154,17 @@ pub fn build_delegated_signing(
         SigningKey::from_seed_bytes(&seed)
     });
 
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let custody = DelegatedSigningCustody::new(cfg, issue, factory);
-    let rotor = DelegatedRotor::new(custody, Arc::clone(&signer));
-    DelegatedSigningWiring {
-        signer,
+    let rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        cfg,
+        root_public_key,
+        issue,
+        factory,
+    ));
+    Ok(DelegatedSigningWiring {
+        signer: rotor.signer(),
         rotor,
         window,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -182,7 +197,7 @@ mod tests {
             "--audience",
             "verifier-1",
             "--server-signer",
-            "did:example:server",
+            "did:web:server.mcp.example.com",
             "--server-key-id",
             "root-kid",
             "--signing-key-seed",
@@ -199,6 +214,8 @@ mod tests {
             "http://127.0.0.1:9",
             "--target-uri",
             "https://mcp.example.com/mcp?route=a",
+            "--mcp-protocol-version",
+            "2026-07-28",
             // A durable replay selection so parse-time unsafe-config checks pass; the
             // path is not opened at parse (this builder reads config fields only).
             "--replay-redis-url",
@@ -216,21 +233,56 @@ mod tests {
         crate::cli::parse_args(&args).expect("parse delegated-required config")
     }
 
-    /// A ROOT issuer that always fails — proves fail-closed issuance flows through.
+    /// A ROOT issuer whose every signing call fails — proves fail-closed issuance flows
+    /// through. It states its key, as a reachable but failing KMS does.
     struct FailingRoot;
     impl ResponseSigner for FailingRoot {
         fn sign_response(&self, _preimage: &[u8]) -> Result<String, KeyError> {
             Err(KeyError::NotFound("root offline".into()))
         }
         fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
-            Err(KeyError::NotFound("root offline".into()))
+            Ok(SigningKey::from_seed_bytes(&ROOT_SEED).public_key())
+        }
+    }
+
+    /// A ROOT issuer that cannot state the key it signs under.
+    struct KeylessRoot;
+    impl ResponseSigner for KeylessRoot {
+        fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
+            Ok(SigningKey::from_seed_bytes(&ROOT_SEED).sign(preimage))
+        }
+        fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
+            Err(KeyError::NotFound("no public key".into()))
+        }
+    }
+
+    /// A root whose key cannot be stated gives the custody nothing to verify an issuance
+    /// against, so no signing is built over it — a startup refusal, as a first issuance
+    /// that cannot succeed already was.
+    #[test]
+    fn a_root_that_states_no_key_builds_no_signing() {
+        let refused = build_delegated_signing(&delegated_plan(), KeylessRoot)
+            .err()
+            .expect("no key, no signing");
+        assert!(refused.contains("states no public key"), "{refused}");
+    }
+
+    /// A ROOT issuer whose answer is not a base64url signature at all.
+    struct GarbledRoot;
+    impl ResponseSigner for GarbledRoot {
+        fn sign_response(&self, _preimage: &[u8]) -> Result<String, KeyError> {
+            Ok("not base64url!".into())
+        }
+        fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
+            Ok(SigningKey::from_seed_bytes(&ROOT_SEED).public_key())
         }
     }
 
     #[test]
     fn builds_and_first_rotate_publishes_a_snapshot() {
         let root = SigningKey::from_seed_bytes(&ROOT_SEED);
-        let mut wiring = build_delegated_signing(&delegated_plan(), root);
+        let mut wiring =
+            build_delegated_signing(&delegated_plan(), root).expect("the root states its key");
         assert_eq!((wiring.window.ttl(), wiring.window.overlap()), (300, 60));
         // No key until the first rotate (fail-closed until issuance).
         assert!(wiring.signer.current(NOW).is_none());
@@ -242,16 +294,57 @@ mod tests {
         // is asserted by the credential's `issuer_kid`, not by the kid string.
         assert_eq!(
             snap.delegated_kid(),
-            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key().public_key().to_b64url()),
+            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.public_key().to_b64url()),
         );
         // The root issuer was touched exactly once (issuance), never per read.
         assert_eq!(wiring.rotor.root_invocations(), 1);
     }
 
+    /// A ROOT issuer that never answers until released: a wedged HSM `C_Sign`.
+    struct SilentRoot(std::sync::Mutex<std::sync::mpsc::Receiver<()>>);
+    impl ResponseSigner for SilentRoot {
+        fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
+            let _ = self.0.lock().expect("release lock").recv();
+            Ok(SigningKey::from_seed_bytes(&ROOT_SEED).sign(preimage))
+        }
+        fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
+            Ok(SigningKey::from_seed_bytes(&ROOT_SEED).public_key())
+        }
+    }
+
+    /// A root that does not answer is a failed issuance at the bound, so the rotation
+    /// worker gets its loop — and its trust-epoch poll — back instead of parking in the call.
+    #[test]
+    fn a_root_that_does_not_answer_fails_the_issuance_at_the_bound() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let bound = std::time::Duration::from_millis(100);
+        let mut wiring = build_with_root_bound(
+            &delegated_plan(),
+            SilentRoot(std::sync::Mutex::new(wait)),
+            bound,
+        )
+        .expect("the root states its key");
+        let started = std::time::Instant::now();
+        assert!(
+            wiring.rotor.rotate(NOW).is_err(),
+            "no answer is no issuance"
+        );
+        assert!(
+            started.elapsed() < bound * 50,
+            "the issuance failed at the bound, not when the root returned"
+        );
+        assert!(
+            wiring.signer.current(NOW).is_none(),
+            "nothing was published"
+        );
+        drop(release);
+    }
+
     #[test]
     fn ttl_bounds_the_published_snapshot() {
         let root = SigningKey::from_seed_bytes(&ROOT_SEED);
-        let mut wiring = build_delegated_signing(&delegated_plan(), root);
+        let mut wiring =
+            build_delegated_signing(&delegated_plan(), root).expect("the root states its key");
         wiring.rotor.rotate(NOW).expect("issue");
         // Valid within [nbf, exp); fails closed at exp (ttl = 300 default).
         assert!(wiring.signer.current(NOW + 299).is_some());
@@ -287,7 +380,8 @@ mod tests {
             signing: SigningKey::from_seed_bytes(&ROOT_SEED),
             advertised: SigningKey::from_seed_bytes(&[34u8; 32]).public_key(),
         };
-        let mut wiring = build_delegated_signing(&delegated_plan(), mismatched);
+        let mut wiring = build_delegated_signing(&delegated_plan(), mismatched)
+            .expect("the root states its key");
 
         assert!(
             wiring.rotor.rotate(NOW).is_err(),
@@ -312,14 +406,29 @@ mod tests {
             signing: SigningKey::from_seed_bytes(&ROOT_SEED),
             advertised,
         };
-        let mut wiring = build_delegated_signing(&delegated_plan(), matched);
+        let mut wiring =
+            build_delegated_signing(&delegated_plan(), matched).expect("the root states its key");
         wiring.rotor.rotate(NOW).expect("issuance");
         assert!(wiring.signer.current(NOW).is_some());
     }
 
     #[test]
+    fn issuance_refusals_name_their_class() {
+        let bound = std::time::Duration::from_secs(5);
+        let failing = BoundedRootIssuer::with_bound(FailingRoot, bound);
+        let unavailable = root_signature(&failing, b"input").expect_err("root is down");
+        assert!(unavailable.contains("unavailable"), "{unavailable}");
+
+        let garbled = BoundedRootIssuer::with_bound(GarbledRoot, bound);
+        let violation = root_signature(&garbled, b"input").expect_err("not a signature");
+        assert!(violation.contains("CONTRACT VIOLATION"), "{violation}");
+        assert_ne!(unavailable, violation);
+    }
+
+    #[test]
     fn failing_root_fails_closed_at_first_issuance() {
-        let mut wiring = build_delegated_signing(&delegated_plan(), FailingRoot);
+        let mut wiring = build_delegated_signing(&delegated_plan(), FailingRoot)
+            .expect("the root states its key");
         // The root cannot issue and there is no prior key: rotate fails closed and
         // publishes nothing — the serving path would then refuse to start.
         assert!(wiring.rotor.rotate(NOW).is_err());
@@ -355,14 +464,14 @@ pub(crate) mod test_support {
     pub(crate) fn cfg(ttl: i64, overlap: i64) -> CustodyConfig {
         CustodyConfig {
             issuer_kid: ROOT_KID.into(),
-            iss: "did:example:server".into(),
+            iss: "did:web:server.mcp.example.com".into(),
             profile: "mcp-re-http-v1".into(),
             aud: "verifier-1".into(),
             audience_hash: "aud-scope-1".into(),
-            trust_epoch: "epoch-1".into(),
+            trust_epoch: "epoch-1".parse().expect("epoch base"),
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
-            server_subject: "did:example:server".into(),
+            server_subject: "did:web:server.mcp.example.com".into(),
             window: DelegatedKeyWindow::of(ttl, overlap).expect("0 < overlap < ttl"),
         }
     }
@@ -377,17 +486,62 @@ pub(crate) mod test_support {
     /// thumbprint of the key the credential attests. A fixture can no longer name its own
     /// kid, which is the point: it could not have named one the credential agreed with.
     pub(crate) fn issued_expiring_at(exp: i64, seed: u8) -> ActiveDelegatedKey {
+        issued_living(FIXTURE_TTL, exp, seed)
+    }
+
+    /// The same, for a credential living `ttl` seconds — including lifetimes no
+    /// configuration owner would have produced, for the controls that refuse them.
+    pub(crate) fn issued_living(ttl: i64, exp: i64, seed: u8) -> ActiveDelegatedKey {
         let root = SigningKey::from_seed_bytes(&[33u8; 32]);
         let mut custody = DelegatedSigningCustody::new(
-            cfg(FIXTURE_TTL, FIXTURE_TTL / 6),
+            cfg(ttl, ttl / 6),
+            root.public_key(),
             move |h, c| Some(issue_delegation_credential(&root, h, c)),
             move || SigningKey::from_seed_bytes(&[seed; 32]),
         );
         custody
-            .ensure_active(exp - FIXTURE_TTL)
+            .ensure_active(exp - ttl)
             .expect("the software root issues");
         let active = custody.active_snapshot().expect("an issuance published");
         assert_eq!(active.exp(), exp, "the fixture window is the credential's");
         active
+    }
+
+    /// A rotor over the fixture root whose `n`th issuance mints the key seeded `seed + n`,
+    /// publishing into a signer of its own: the one way a test outside the rotor's module
+    /// gets a key into a signer, which is the way production does.
+    pub(crate) fn rotor_from(seed: u8) -> super::ProdDelegatedRotor {
+        let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+        rotor_over(
+            Box::new(move |h, c| Some(issue_delegation_credential(&root, h, c))),
+            seed,
+        )
+    }
+
+    /// A rotor configured with the fixture root's public key, whose issuer seam is `issue`.
+    pub(crate) fn rotor_over(issue: super::BoxedIssuer, seed: u8) -> super::ProdDelegatedRotor {
+        let root_public = SigningKey::from_seed_bytes(&[33u8; 32]).public_key();
+        let mut next = seed;
+        let factory: super::BoxedKeyFactory = Box::new(move || {
+            let key = SigningKey::from_seed_bytes(&[next; 32]);
+            next = next.wrapping_add(1);
+            key
+        });
+        let window = cfg(FIXTURE_TTL, FIXTURE_TTL / 6);
+        super::DelegatedRotor::new(DelegatedSigningCustody::new(
+            window,
+            root_public,
+            issue,
+            factory,
+        ))
+    }
+
+    /// A rotor that has published the key seeded `seed`, its credential expiring at `exp`.
+    pub(crate) fn published(exp: i64, seed: u8) -> super::ProdDelegatedRotor {
+        let mut rotor = rotor_from(seed);
+        rotor
+            .rotate(exp - FIXTURE_TTL)
+            .expect("the software root issues");
+        rotor
     }
 }

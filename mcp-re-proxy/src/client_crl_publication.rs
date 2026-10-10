@@ -20,9 +20,7 @@ use rustls_pki_types::CertificateRevocationListDer;
 /// `Stale` CRL fails every new handshake closed. This startup gate surfaces that
 /// condition **loudly at boot**: under strict the proxy refuses to start, rather
 /// than coming up and silently rejecting every client at the first handshake, and
-/// it warns while a CRL is `NearExpiry` so the operator can reload/restart with a
-/// refreshed CRL before the cutover (the "restart before `nextUpdate`" contract;
-/// the in-process hot-reloader is a v0.10 follow-up).
+/// it warns while a CRL is `NearExpiry` so a refreshed CRL is in place before the cutover.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CrlFreshness {
     /// `now < nextUpdate - warn_window` — comfortably valid.
@@ -44,6 +42,12 @@ pub enum CrlFreshness {
     NoNextUpdate,
 }
 
+fn decode_crl(crl_der: &[u8]) -> Result<x509_cert::crl::CertificateList, TlsError> {
+    use der::Decode;
+    x509_cert::crl::CertificateList::from_der(crl_der)
+        .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))
+}
+
 /// Refuse a client CRL that omits `nextUpdate`.
 ///
 /// RFC 5280 §5.1.2.5 requires a conforming CRL issuer to include it, and every
@@ -53,7 +57,7 @@ pub enum CrlFreshness {
 /// so it is refused where it is read — at startup and on every reload — rather than
 /// admitted into a posture that says it bounds itself.
 pub fn crl_next_update_required(crl_der: &[u8], index: usize) -> Result<(), TlsError> {
-    if crl_freshness(crl_der, 0, 0)? == CrlFreshness::NoNextUpdate {
+    if decode_crl(crl_der)?.tbs_cert_list.next_update.is_none() {
         return Err(TlsError::Verifier(format!(
             "client CRL #{index} omits nextUpdate. It would never fall out of force, so a \
              reload that stops working (unreadable mount, dead reload thread) would leave \
@@ -77,10 +81,7 @@ pub fn crl_freshness(
     now_unix: i64,
     warn_window_secs: i64,
 ) -> Result<CrlFreshness, TlsError> {
-    use der::Decode;
-    use x509_cert::crl::CertificateList;
-    let crl = CertificateList::from_der(crl_der)
-        .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))?;
+    let crl = decode_crl(crl_der)?;
     let next_update = match crl.tbs_cert_list.next_update {
         Some(t) => t.to_unix_duration().as_secs() as i64,
         None => return Ok(CrlFreshness::NoNextUpdate),
@@ -128,10 +129,7 @@ pub struct CrlPosture {
 /// offline-testable. A malformed CRL is a hard error (fail closed), consistent
 /// with [`crl_freshness`] and the verifier build.
 pub fn crl_posture(crl_der: &[u8]) -> Result<CrlPosture, TlsError> {
-    use der::Decode;
-    use x509_cert::crl::CertificateList;
-    let crl = CertificateList::from_der(crl_der)
-        .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))?;
+    let crl = decode_crl(crl_der)?;
     let this_update = crl.tbs_cert_list.this_update.to_unix_duration().as_secs() as i64;
     let next_update_unix = crl
         .tbs_cert_list
@@ -144,25 +142,33 @@ pub fn crl_posture(crl_der: &[u8]) -> Result<CrlPosture, TlsError> {
     })
 }
 
-/// Load the configured offline client-certificate revocation lists (#3839) into
+/// The largest client CRL file read, in bytes: a file is read whole, so this bounds one load.
+const MAX_CLIENT_CRL_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Load the configured client-certificate revocation lists (#3839) into
 /// the DER form rustls' `WebPkiClientVerifier` consumes. Each path may hold one or
-/// more CRLs in PEM (`-----BEGIN X509 CRL-----`) or a single raw DER CRL. Fails
-/// closed: a missing or malformed CRL file is a hard startup error (`Err`) rather
-/// than a silently-skipped revocation check. An empty `paths` yields an empty vec
-/// (revocation checking disabled — the pre-#3839 behavior).
+/// more CRLs in PEM (`-----BEGIN X509 CRL-----`) or a single raw DER CRL. Refuses an
+/// unreadable path, malformed PEM and an empty file; a non-PEM file is passed through
+/// as one DER CRL undecoded, and DER validity, `nextUpdate` and signature are refused
+/// by `ClientCrlEvidence::from_checked` (`crate::tls_plane::crl_evidence`). A file
+/// larger than `MAX_CLIENT_CRL_FILE_BYTES` is refused, never truncated.
 ///
-/// OFFLINE only: these bytes are read once at startup and never refreshed over the
-/// network. Online OCSP / CRL-distribution-point fetching is deliberately NOT done
-/// here and is deferred to a follow-up (it needs an HTTP client + a live
-/// responder, which would expand the firewalled supply chain).
+/// Local files only, read at startup and by the reload worker; nothing is fetched.
 pub fn load_client_crls(
     paths: &[String],
 ) -> Result<Vec<rustls_pki_types::CertificateRevocationListDer<'static>>, String> {
     use rustls_pki_types::pem::PemObject;
+    use std::io::Read;
 
     let mut crls: Vec<CertificateRevocationListDer<'static>> = Vec::new();
     for path in paths {
-        let bytes = std::fs::read(path).map_err(|e| format!("client CRL {path}: {e}"))?;
+        let limit = MAX_CLIENT_CRL_FILE_BYTES.saturating_add(1);
+        let mut bytes = Vec::new();
+        let read = std::fs::File::open(path).and_then(|f| f.take(limit).read_to_end(&mut bytes));
+        read.map_err(|e| format!("client CRL {path}: {e}"))?;
+        if !u64::try_from(bytes.len()).is_ok_and(|n| n <= MAX_CLIENT_CRL_FILE_BYTES) {
+            return Err(format!("client CRL {path}: larger than the size limit"));
+        }
         // Try PEM first (one file may carry several `X509 CRL` blocks). If the file
         // contains no PEM CRL block, treat the whole file as a single DER CRL.
         let pem: Vec<CertificateRevocationListDer<'static>> =
@@ -196,6 +202,15 @@ pub(crate) mod test_support {
     /// told it, so a test about the boundary is about the CRL's own boundary.
     pub(crate) fn crl_with_next_update() -> rustls_pki_types::CertificateRevocationListDer<'static>
     {
+        crl_and_issuer().0
+    }
+
+    /// The same CRL together with the CA certificate that signed it — the client CA anchor a
+    /// deployment would configure for the CRL to be authentic.
+    pub(crate) fn crl_and_issuer() -> (
+        rustls_pki_types::CertificateRevocationListDer<'static>,
+        rustls_pki_types::CertificateDer<'static>,
+    ) {
         let key = rcgen::KeyPair::generate().expect("ca key");
         let mut params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -206,7 +221,7 @@ pub(crate) mod test_support {
         params
             .distinguished_name
             .push(rcgen::DnType::CommonName, "crl-gate-ca");
-        let _ca = params.self_signed(&key).expect("ca");
+        let ca = params.self_signed(&key).expect("ca");
         let crl_params = rcgen::CertificateRevocationListParams {
             this_update: rcgen::date_time_ymd(2024, 1, 1),
             next_update: rcgen::date_time_ymd(2999, 1, 1),
@@ -215,13 +230,63 @@ pub(crate) mod test_support {
             revoked_certs: Vec::new(),
             key_identifier_method: rcgen::KeyIdMethod::Sha256,
         };
-        rustls_pki_types::CertificateRevocationListDer::from(
+        let crl = rustls_pki_types::CertificateRevocationListDer::from(
             crl_params
                 .signed_by(&rcgen::Issuer::from_params(&params, &key))
                 .expect("crl")
                 .der()
                 .to_vec(),
-        )
+        );
+        (crl, ca.der().clone())
+    }
+
+    /// One fresh CA and one CRL per `(crlNumber, revoked serials)` entry, all from that CA.
+    pub(crate) fn crls_from_one_ca(
+        entries: &[(u64, &[u64])],
+    ) -> (
+        Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
+        rustls_pki_types::CertificateDer<'static>,
+    ) {
+        let key = rcgen::KeyPair::generate().expect("ca key");
+        let mut params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "crl-gate-ca");
+        let ca = params.self_signed(&key).expect("ca");
+        let crls = entries
+            .iter()
+            .map(|(number, serials)| {
+                let crl_params = rcgen::CertificateRevocationListParams {
+                    this_update: rcgen::date_time_ymd(2024, 1, 1),
+                    next_update: rcgen::date_time_ymd(2999, 1, 1),
+                    crl_number: rcgen::SerialNumber::from(*number),
+                    issuing_distribution_point: None,
+                    revoked_certs: serials
+                        .iter()
+                        .map(|serial| rcgen::RevokedCertParams {
+                            serial_number: rcgen::SerialNumber::from(*serial),
+                            revocation_time: rcgen::date_time_ymd(2024, 1, 1),
+                            reason_code: None,
+                            invalidity_date: None,
+                        })
+                        .collect(),
+                    key_identifier_method: rcgen::KeyIdMethod::Sha256,
+                };
+                rustls_pki_types::CertificateRevocationListDer::from(
+                    crl_params
+                        .signed_by(&rcgen::Issuer::from_params(&params, &key))
+                        .expect("crl")
+                        .der()
+                        .to_vec(),
+                )
+            })
+            .collect();
+        (crls, ca.der().clone())
     }
 }
 
@@ -300,5 +365,52 @@ mod client_crl_loading_tests {
         // The no-CRL path: empty input → empty vec (revocation disabled), no error.
         let crls = super::load_client_crls(&[]).expect("empty load");
         assert!(crls.is_empty());
+    }
+
+    fn load_fixture(name: &str, content: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+        let path = std::env::temp_dir().join(format!("mcp-re-crl-{name}-{}", std::process::id()));
+        std::fs::write(&path, content).expect("write fixture");
+        let result = super::load_client_crls(&[path.to_string_lossy().into_owned()]);
+        std::fs::remove_file(&path).expect("remove fixture");
+        result.map(|crls| crls.into_iter().map(|c| c.as_ref().to_vec()).collect())
+    }
+
+    /// A file past the limit is refused whole: a truncated prefix would be a different
+    /// document, and a reload reading an unbounded file is an unbounded allocation.
+    #[test]
+    fn a_client_crl_file_over_the_size_limit_is_refused() {
+        let path = std::env::temp_dir().join(format!("mcp-re-crl-oversize-{}", std::process::id()));
+        let file = std::fs::File::create(&path).expect("create fixture");
+        file.set_len(super::MAX_CLIENT_CRL_FILE_BYTES + 1)
+            .expect("size fixture");
+        let result = super::load_client_crls(&[path.to_string_lossy().into_owned()]);
+        std::fs::remove_file(&path).expect("remove fixture");
+        let err = result.unwrap_err();
+        assert!(err.contains("larger than the size limit"), "got: {err}");
+    }
+
+    #[test]
+    fn an_empty_client_crl_file_fails_closed() {
+        let err = load_fixture("empty", b"").unwrap_err();
+        assert!(err.contains("file is empty"), "got: {err}");
+    }
+
+    #[test]
+    fn a_malformed_pem_client_crl_fails_closed() {
+        let err = load_fixture(
+            "badpem",
+            b"-----BEGIN X509 CRL-----\n!!!not-base64!!!\n-----END X509 CRL-----\n",
+        )
+        .unwrap_err();
+        assert!(err.contains("malformed PEM"), "got: {err}");
+    }
+
+    #[test]
+    fn a_non_pem_client_crl_is_passed_through_as_one_der() {
+        let der = super::test_support::crl_with_next_update()
+            .as_ref()
+            .to_vec();
+        let crls = load_fixture("der", &der).expect("load");
+        assert_eq!(crls, vec![der]);
     }
 }

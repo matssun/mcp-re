@@ -13,16 +13,24 @@
         "application/json"
       ],
       [
+        "Mcp-Method",
+        "notifications/initialized"
+      ],
+      [
+        "MCP-Protocol-Version",
+        "2026-07-28"
+      ],
+      [
         "Content-Digest",
         "sha-256=:WZUcoLISsQOHb6I6nli8u8j7zAEg4/XuchRGHivRzV4=:"
       ],
       [
         "Signature-Input",
-        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-note\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"mcp-method\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-note\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
       ],
       [
         "Signature",
-        "mcp-re=:zfYRknLT/u8pfqZdjToJzKytgIbAclLPzPhvY2ofN7tAxThL/oKUUT2Q8qhsFb1F1yY0sgMBbvnpxrlwmwmyAw==:"
+        "mcp-re=:yl17qAUsGO8zJqPu7FVmlz9Fst5j9ghKCLVpS0EtQQjNCYl618pvPuyZ8AxB3zKfopggfPRQtve/VO5GpwvNAA==:"
       ]
     ],
     "body_utf8": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
@@ -38,7 +46,7 @@
       ],
       [
         "mcp-re-request-evidence",
-        "k-dNjrAQNoiWZTO3Afq0g4IbEM_iBZUMEP9UaAfUH14"
+        "_AJFvML-0dEMtvIJT2_DWuammgmntqdz3tm2Ggsk8bs"
       ],
       [
         "Signature-Input",
@@ -46,7 +54,7 @@
       ],
       [
         "Signature",
-        "mcp-re-response=:KO3nACYSNWpQ3nyAU6Ck1CJjeHgK+FtwZuQpeopcefBsUUBsLLLQ5yaUGGkc2dLl05eRFZ/uh1SB+SOnn6yTBg==:"
+        "mcp-re-response=:YBnLDllTji3C5JMnv2yG7YlWlWgj6DnvJHYuUDoZymSTDzQi3FQ/iF0aeldQFGOn7LsuNhSOAdbt2mBPVRk7CA==:"
       ],
       [
         "Content-Type",

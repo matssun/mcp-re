@@ -114,6 +114,7 @@ fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "127.0.0.1:8443",
         "--audience",
         AUD,
+        "--allow-example-fixtures",
         "--server-signer",
         "did:example:server",
         "--server-key-id",
@@ -132,6 +133,8 @@ fn server_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "http://127.0.0.1:9",
         "--target-uri",
         TARGET,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--route",
         "a",
         "--replay-redis-url",
@@ -165,7 +168,7 @@ fn server_resolver() -> ActorResolver {
             (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
                 identity: ActorIdentity {
                     role: "server".into(),
-                    trust_domain: "example.com".into(),
+                    trust_domain: "mcp.example.com".into(),
                     subject: "did:example:server".into(),
                     keyid: ROOT_KID.into(),
                 },
@@ -180,7 +183,8 @@ fn server_resolver() -> ActorResolver {
 
 fn build_server(backend_reply: &'static str) -> HttpProfileProxy {
     let config = server_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key())
+        .expect("the root states its key");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first delegated key");
     let expected_audience = AudienceTuple {
@@ -199,7 +203,11 @@ fn build_server(backend_reply: &'static str) -> HttpProfileProxy {
             fleet_strict: false,
             tier: None,
         },
-        Box::new(move |_forwarded: &[u8]| -> Vec<u8> { backend_reply.as_bytes().to_vec() }),
+        // The fixture's backend answers synchronously from memory, and says so.
+        Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+            move |_forwarded: &[u8]| -> Vec<u8> { backend_reply.as_bytes().to_vec() },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+        )),
         300,
         Arc::clone(&wiring.signer),
     )
@@ -246,7 +254,7 @@ fn publish_manifest(path: &std::path::Path, version: u64, revoke_root: bool) {
             issuer_kid: ROOT_KID.into(),
             public_key: root_key().public_key().to_b64url(),
             role: "server".into(),
-            trust_domain: "example.com".into(),
+            trust_domain: "mcp.example.com".into(),
             subject: "did:example:server".into(),
         }],
         retiring_issuers: vec![],
@@ -358,13 +366,6 @@ fn start_sidecar_with_backend(
         default_route: default_route.map(str::to_owned),
         request_lifetime_secs: 300,
         max_in_flight: 8,
-        accepted_authority: mcp_re_client::serve::AcceptedHttpAuthority::for_listener(
-            &mcp_re_client::config::BindScope::decide(
-                "127.0.0.1:0".parse().expect("an address"),
-                false,
-            )
-            .expect("loopback is admitted"),
-        ),
         // A FIXED clock, matching the server's: the point of this lane is the listener
         // and the anchors, not clock skew, and a fixed pair keeps the freshness gate
         // out of the way of what is being measured.
@@ -380,7 +381,7 @@ fn start_sidecar_with_backend(
         max_in_flight: 8,
     })
     .expect("bind an ephemeral loopback port");
-    let addr = listener.local_addr().expect("local addr");
+    let addr = listener.local_addr();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
     let handle = std::thread::spawn(move || {

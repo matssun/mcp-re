@@ -59,8 +59,9 @@ The verified client identity is extracted from the leaf certificate using the
 ```text
 --transport-identity-source uri_san   # URI SAN (SPIFFE-style), recommended default
 --transport-identity-source dns_san   # DNS SAN
---transport-identity-source cn_legacy # Common Name — LEGACY, deprecated, warns
 ```
+
+The subject Common Name is never an identity source; any other value is refused.
 
 If the selected field is absent from the certificate, identity extraction returns
 nothing and the (required) binding fails closed — a missing URI SAN is **never**
@@ -119,19 +120,17 @@ Source: [`key_source.rs`](../mcp-re-proxy/src/key_source.rs).
 
 A sidecar needs three pieces of material: the Ed25519 **signing key** (a 32-byte
 seed, Base64URL-no-pad), the **TLS server certificate chain + key** (PEM), and
-the **client-CA trust anchors** (PEM). Two sources implement the `KeySource`
-trait:
+the **client-CA trust anchors** (PEM). `FileKeySource` reads them from files; the
+PKCS#11 and KMS sources keep the signing key on a device:
 
 - **`FileKeySource`** (`--key-source file`, default) — reads from disk. Use this
   in production with `0600` permissions; the CLI warns about group/world-readable
   key files.
-- **`EnvKeySource`** (`--key-source env`) — reads from environment variables.
-  **Dev/CI only**, and compiled in only under the non-default `dev_env_key_source`
-  cargo feature: a production build has no `env` option at all and rejects the value
-  as unknown. Env vars are visible to the process tree and leak via crash dumps,
-  `ps e`, and `/proc/<pid>/environ`, so this is a build-time decision rather than a
-  runtime one. `KeyError` values carry only the var NAME and the parse
-  failure, never the secret bytes, so they are safe to log.
+- No source reads key material from environment variables, and `--key-source env`
+  is refused as an unknown value: env vars are visible to the process tree and leak
+  via crash dumps, `ps e`, and `/proc/<pid>/environ`. `KeyError` values carry only
+  the file name and the parse failure, never the secret bytes, so they are safe to
+  log.
 
 **HSM/KMS-backed sources** now implement the `KeySource` trait — PKCS#11, AWS
 KMS, and GCP KMS adapters selected with `--key-source` — each behind its own
@@ -139,6 +138,36 @@ build feature, so a default build parses the flag but fails closed at
 construction. GCP-KMS custody has been exercised on live GKE via Workload
 Identity (v0.12.1). A non-exporting device never surrenders the private key; the
 proxy drives it through the `ResponseSigner` seam.
+
+### Delegated handshake-signing capacity
+
+When the TLS key is non-exporting, every full handshake costs one remote signature, and
+TLS 1.3 signs before any client certificate is seen. One token bucket per listener bounds
+how fast that signer can be driven:
+
+- `--tls-handshake-sign-rate` — sustained signatures per second, `1..=1000`, default 100.
+- `--tls-handshake-sign-burst` — signatures drawn back-to-back before the rate binds,
+  `1..=2000`, default 200.
+
+A value outside its range refuses startup. The bucket protects the signing backend's
+**global** capacity, which the delegated-key issuer shares. It does not allocate that
+capacity fairly among connections or clients: enough concurrent or adversarial handshake
+demand empties it, and legitimate handshakes are then refused until it refills. That is an
+accepted availability risk. It fails closed — an exhausted bucket refuses the signature;
+there is no fallback signer. Separately, after a KMS provider throttles a signature, the
+handshake path refuses locally for one network-timeout window and leaves the quota to
+issuance; that window is derived, not configured.
+
+On the Helm chart the two flags are `tlsHandshakeSigning.ratePerSec` and
+`tlsHandshakeSigning.burst`. Left `null`, the flag is not rendered and the proxy's default
+applies; a set value is passed through verbatim, so the bounds above are enforced by the
+proxy at startup, not by the chart:
+
+```yaml
+tlsHandshakeSigning:
+  ratePerSec: 250
+  burst: 400
+```
 
 ## Replay protection
 

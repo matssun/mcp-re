@@ -121,3 +121,50 @@ impl Drop for Charge {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::bounds::ASYNC_PRUNE_EVERY_N_INSERTS;
+    use super::*;
+
+    /// Drive the ledger's own cadence prune at `now` by settling a run of filler reservations.
+    fn expire_past(ledger: &Arc<RetentionLedger>, now: i64) {
+        for _ in 0..ASYNC_PRUNE_EVERY_N_INSERTS {
+            Charge::reserve(ledger, "filler", now, now + 1_000)
+                .expect("filler reservation")
+                .release_proven_absent();
+        }
+    }
+
+    fn charge(ledger: &Arc<RetentionLedger>) -> Charge {
+        Charge::reserve(ledger, "a", 0, 100).expect("reservation")
+    }
+
+    /// A committed charge is held until its `retain_until` passes, then returned.
+    #[test]
+    fn a_committed_charge_is_held_until_its_retain_until() {
+        let ledger = Arc::new(RetentionLedger::new(1_000));
+        charge(&ledger).commit();
+        assert_eq!(ledger.held_by("a"), 1);
+        expire_past(&ledger, 101);
+        assert_eq!(ledger.held_by("a"), 0);
+    }
+
+    /// A proven-absent settlement hands the reservation back at once.
+    #[test]
+    fn a_proven_absent_charge_is_handed_back_at_once() {
+        let ledger = Arc::new(RetentionLedger::new(1_000));
+        charge(&ledger).release_proven_absent();
+        assert_eq!(ledger.held_by("a"), 0);
+    }
+
+    /// A charge dropped unsettled is kept on its `retain_until` timeline, not handed back.
+    #[test]
+    fn an_unsettled_charge_dropped_mid_flight_is_kept_until_its_retain_until() {
+        let ledger = Arc::new(RetentionLedger::new(1_000));
+        drop(charge(&ledger));
+        assert_eq!(ledger.held_by("a"), 1);
+        expire_past(&ledger, 101);
+        assert_eq!(ledger.held_by("a"), 0);
+    }
+}

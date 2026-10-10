@@ -4,11 +4,11 @@
 //!
 //! One authority — every number the custody state machine decides a lifecycle step ON —
 //! and it is separated because none of these terms is safe to compute in the obvious way.
-//! [`CustodyConfig`](super::CustodyConfig) carries `ttl` and `overlap` as bare `i64`
-//! fields; the `0 < overlap < ttl <= MAX_DELEGATED_TTL_SECS` guard that bounds them belongs
-//! to the proxy's configuration owner and does not reach this type, so any other
-//! construction site — an embedder, a test, a future caller — can present values these
-//! operations cannot take.
+//! [`CustodyConfig`](super::CustodyConfig) carries the TTL and overlap as a
+//! [`DelegatedKeyWindow`](super::DelegatedKeyWindow), which holds `0 < overlap < ttl`; the
+//! `ttl <= MAX_DELEGATED_TTL_SECS` ceiling belongs to the proxy's configuration owner and
+//! does not reach this type. These terms take bare `i64`s, so any caller — an embedder, a
+//! test, a future caller — can present values these operations cannot take.
 //!
 //! Every one of them therefore fails in the RESTRICTIVE direction. A rotation threshold
 //! that cannot be computed reads as reached, not as far away. An expiry or an ordinal that
@@ -55,16 +55,6 @@ pub(super) fn mintable(now: i64, ttl: i64, counter: u64) -> Result<(i64, u64), C
         .ok_or(CustodyError::FailClosedIssuance)
 }
 
-/// The instant a signature made now may claim validity until: `now + ttl`, never past the
-/// credential's own `exp`, and `exp` alone when that sum leaves `i64`.
-///
-/// `exp` is the fail-closed bound — a signer MUST stop signing off a snapshot once
-/// `now >= exp` — so a signature whose stated validity outlived it would advertise a
-/// freshness window longer than the credential authorizing the key that made it.
-pub(super) fn signature_valid_until(now: i64, ttl: i64, exp: i64) -> i64 {
-    now.checked_add(ttl).map_or(exp, |until| until.min(exp))
-}
-
 /// When a failed root may be approached again, given the moment it declined.
 ///
 /// Saturating IS the rule: this only ever delays the next approach to a root that is
@@ -105,14 +95,6 @@ mod tests {
         assert!(mintable(1_000, i64::MAX, u64::MAX).is_err());
         assert!(mintable(0, i64::MAX, u64::MAX).is_err());
         assert_eq!(mintable(1_000, 300, 7), Ok((1_300, 8)));
-
-        assert_eq!(
-            signature_valid_until(1_000, i64::MAX, 1_300),
-            1_300,
-            "an uncomputable window clamps to the credential"
-        );
-        assert_eq!(signature_valid_until(1_000, 300, 1_300), 1_300);
-        assert_eq!(signature_valid_until(1_000, 100, 1_300), 1_100);
 
         assert_eq!(
             next_attempt_after(i64::MAX, 600),

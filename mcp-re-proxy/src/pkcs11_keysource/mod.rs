@@ -59,6 +59,7 @@ use crate::key_source::ResponseSigner;
 use crate::pkcs11_native::ObjectClass;
 use crate::pkcs11_native::Pkcs11Context;
 use crate::pkcs11_native::SessionRef;
+use crate::pkcs11_native::TokenIdentity;
 
 /// The session vocabulary: what a transient fault is, and what opening one costs.
 mod session;
@@ -83,6 +84,7 @@ use session::SessionOpError;
 use session_pool::SessionPool;
 use session_pool::TLS_SESSION_POOL_SIZE;
 use token::find_key;
+use token::find_token_bound_private_key;
 use token::find_token_slot;
 use token::raw_ed25519_point;
 
@@ -155,6 +157,9 @@ struct Pkcs11Token {
     context: Arc<Pkcs11Context>,
     /// The id of the slot whose token holds the key objects.
     slot: CK_SLOT_ID,
+    /// The label and serial the token reported when it was selected; every login
+    /// re-checks the slot still holds it.
+    identity: TokenIdentity,
     /// The token User PIN, scrubbed on drop.
     pin: Zeroizing<String>,
 }
@@ -170,7 +175,7 @@ struct Pkcs11Token {
 //   * the only mutable shared state is the cached logged-in session handles, each
 //     behind its own `AmortizedSession` `Mutex`, which serializes the token operations
 //     on that session; the pool's cursor is an atomic that only selects one.
-// The slot and PIN (`Zeroizing<String>`) are ordinary `Send + Sync` values.
+// The slot, token identity and PIN (`Zeroizing<String>`) are ordinary `Send + Sync` values.
 unsafe impl Send for Pkcs11Token {}
 unsafe impl Sync for Pkcs11Token {}
 
@@ -183,7 +188,7 @@ impl LoginSessionFactory for Pkcs11Token {
     fn open_logged_in(&self) -> Result<LoggedInSession, KeyError> {
         let handle = self
             .context
-            .open_logged_in_handle(self.slot, &self.pin)
+            .open_logged_in_handle(self.slot, &self.identity, &self.pin)
             .map_err(|e| KeyError::NotFound(format!("pkcs11: open+login session: {e}")))?;
         Ok(LoggedInSession {
             handle,
@@ -208,7 +213,9 @@ impl Pkcs11KeySource {
     /// object (distinct from `key_label` — a separate security principal) custodies
     /// the TLS server key, and a [`Pkcs11TlsSigner`] is opened over it so the TLS
     /// handshake is signed ON the token (the TLS private key never leaves the
-    /// device, and `tls` then holds no exported key). `None` keeps the
+    /// device), and a `tls` that holds an exported TLS key is refused before the module
+    /// is loaded, so the source carries no file-backed TLS credential beside the token's.
+    /// `None` keeps the
     /// file-backed TLS path. The object-signing label and TLS label are independent:
     /// neither requires the other, and a label resolving to multiple or non-Ed25519
     /// objects fails closed at `open` (proven by the live lane).
@@ -226,6 +233,13 @@ impl Pkcs11KeySource {
                     .to_string(),
             ));
         }
+        if tls_key_label.is_some() && tls.holds_tls_key() {
+            return Err(KeyError::Malformed(
+                "pkcs11: the TLS key is delegated to the token; the file source must not also \
+                 hold an exported TLS server key"
+                    .to_string(),
+            ));
+        }
         // Load the module and C_Initialize with OS locking (CKF_OS_LOCKING_OK)
         // through the owned safe wrapper over the raw cryptoki-sys FFI bindings.
         let context = Pkcs11Context::load_and_initialize(module_path).map_err(|e| {
@@ -233,7 +247,7 @@ impl Pkcs11KeySource {
                 "pkcs11: load+initialize module '{module_path}': {e}"
             ))
         })?;
-        let slot = find_token_slot(&context, token_label)?;
+        let (slot, identity) = find_token_slot(&context, token_label)?;
 
         // ONE token, several sessions: one for the cold issuance path and a pool for
         // the handshake path. PKCS#11 login is per-token-per-application, so they all
@@ -252,19 +266,21 @@ impl Pkcs11KeySource {
             tls_sessions: SessionPool::new(TLS_SESSION_POOL_SIZE),
             context,
             slot,
+            identity,
             pin: Zeroizing::new(pin.to_string()),
         });
 
         // Prove, at construction, that the PIN logs in and BOTH response-signing key
-        // objects exist — and that the public one IS Ed25519: `CKK_EC_EDWARDS` in the
-        // lookup template covers Ed448 too, so the discriminator is the 32-byte point
-        // `verification_key` establishes. That point becomes the pinned response key.
+        // objects exist, that the token reports the private one as unable to leave it, and
+        // that the public one IS Ed25519: `CKK_EC_EDWARDS` in the lookup template covers
+        // Ed448 too, so the discriminator is the 32-byte point `verification_key`
+        // establishes. That point becomes the pinned response key.
         // A misconfiguration fails closed at startup, not on the first signed response,
         // and this primes the shared login.
         let key_label = key_label.to_string();
         let response_key = token.session.with_session(token.as_ref(), |logged_in| {
             let view = token.context.with_handle(logged_in.handle);
-            find_key(&view, &key_label, ObjectClass::Private)?;
+            find_token_bound_private_key(&view, &key_label)?;
             verification_key(&view, &key_label)
         })?;
 
@@ -433,6 +449,45 @@ mod tests {
     use super::ED25519_SIGNATURE_LEN;
     use super::TLS_SESSION_POOL_SIZE;
     use crate::communication_assurance::ED25519_PUBLIC_KEY_LEN;
+
+    /// A delegated TLS key and an exported one cannot both be held: with a TLS key label
+    /// configured, a file source holding a TLS key is refused before the module is even
+    /// loaded. Without a label the same file source is the legitimate exported-key path,
+    /// and `open` goes on to load the module (and here fails to find it).
+    #[cfg(unix)]
+    #[test]
+    fn a_delegated_tls_source_refuses_a_file_source_holding_a_tls_key() {
+        use crate::capability_materialization::key_file_custody::CheckedKeyFile;
+        use crate::config_state::KeyFileAccessPolicy;
+        use crate::key_source::FileKeySource;
+        use std::os::unix::fs::PermissionsExt;
+
+        let pem = rcgen::KeyPair::generate().expect("keypair").serialize_pem();
+        let keyed = |name: &str| {
+            let path =
+                std::env::temp_dir().join(format!("mcp_re_p11_tls_{}_{name}", std::process::id()));
+            std::fs::write(&path, pem.as_bytes()).expect("write");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+            let key = CheckedKeyFile::open(&path.to_string_lossy(), KeyFileAccessPolicy::OwnerOnly)
+                .expect("admitted");
+            let _ = std::fs::remove_file(&path);
+            FileKeySource::tls_only("/dev/null", Some(key), "/dev/null").expect("valid key")
+        };
+        let open = |tls, label| {
+            super::Pkcs11KeySource::open("/nonexistent/module.so", "pin", "t", "sign", tls, label)
+                .err()
+                .expect("no module at that path")
+        };
+        let delegated = open(keyed("a"), Some("tls"));
+        assert!(
+            matches!(&delegated, KeyError::Malformed(m) if m.contains("must not also hold")),
+            "{delegated:?}"
+        );
+        let exported = open(keyed("b"), None);
+        assert!(matches!(exported, KeyError::NotFound(_)), "{exported:?}");
+        let keyless = FileKeySource::tls_only("/dev/null", None, "/dev/null").expect("no key");
+        assert!(matches!(open(keyless, Some("tls")), KeyError::NotFound(_)));
+    }
 
     /// Issue #59 (test b, no token): the SPKI the TLS signer exports from a token's
     /// raw `CKA_EC_POINT` is a well-formed RFC 8410 Ed25519 `SubjectPublicKeyInfo`
@@ -812,7 +867,7 @@ mod tests {
         let peak = AtomicUsize::new(0);
 
         std::thread::scope(|scope| {
-            for _ in 0..TLS_SESSION_POOL_SIZE {
+            for _ in 0..TLS_SESSION_POOL_SIZE.get() {
                 scope.spawn(|| {
                     pool.with_session(&factory, |_session| {
                         let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
@@ -829,7 +884,7 @@ mod tests {
 
         assert_eq!(
             peak.load(Ordering::SeqCst),
-            TLS_SESSION_POOL_SIZE,
+            TLS_SESSION_POOL_SIZE.get(),
             "handshake signatures must overlap; one session serializes them all"
         );
     }
@@ -844,7 +899,7 @@ mod tests {
         let pool: SessionPool<FakeSession> = SessionPool::new(TLS_SESSION_POOL_SIZE);
 
         let mut generations = Vec::new();
-        for _ in 0..TLS_SESSION_POOL_SIZE * 10 {
+        for _ in 0..TLS_SESSION_POOL_SIZE.get() * 10 {
             generations.push(
                 pool.with_session(&factory, |session| {
                     Ok::<u32, SessionOpError>(session.generation)
@@ -855,13 +910,13 @@ mod tests {
 
         assert_eq!(
             factory.logins.load(std::sync::atomic::Ordering::SeqCst) as usize,
-            TLS_SESSION_POOL_SIZE,
+            TLS_SESSION_POOL_SIZE.get(),
             "the pool must log each of its sessions in ONCE, not once per operation"
         );
         let distinct: std::collections::BTreeSet<u32> = generations.iter().copied().collect();
         assert_eq!(
             distinct.len(),
-            TLS_SESSION_POOL_SIZE,
+            TLS_SESSION_POOL_SIZE.get(),
             "every session in the pool must be used, got {generations:?}"
         );
     }

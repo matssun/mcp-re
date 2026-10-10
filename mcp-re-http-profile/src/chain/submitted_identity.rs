@@ -68,7 +68,7 @@ use super::RetainedHop;
 /// submissions whose retained bytes differ are two submissions.
 pub(super) fn submitted_commitment(hops: &[RetainedHop]) -> String {
     let mut h = Sha256::new();
-    h.update(SUBMITTED_COMMITMENT_DOMAIN.len().to_be_bytes());
+    h.update((SUBMITTED_COMMITMENT_DOMAIN.len() as u64).to_be_bytes());
     h.update(SUBMITTED_COMMITMENT_DOMAIN);
     h.update((hops.len() as u64).to_be_bytes());
     for hop in hops {
@@ -110,6 +110,10 @@ pub(super) fn submitted_commitment(hops: &[RetainedHop]) -> String {
 
 /// Domain separator for [`submitted_commitment`], so its digests can never be confused
 /// with any other SHA-256 this profile takes over evidence.
+///
+/// The `v3` here versions the submitted-chain preimage layout alone. It is independent of
+/// `EVIDENCE_PROFILE` (in `crate::scitt`), which versions the receipt/statement contract
+/// and the position commitment; the two move independently and neither derives from the other.
 const SUBMITTED_COMMITMENT_DOMAIN: &[u8] = b"mcp-re-evidence/v3:submitted-chain";
 #[cfg(test)]
 mod tests {
@@ -196,5 +200,47 @@ mod tests {
         let empty = submitted_commitment(&[]);
         assert!(!empty.is_empty());
         assert_ne!(empty, submitted_commitment(&[hop(200, "{}")]));
+    }
+
+    /// Two submissions of the SAME JSON under different signatures are different
+    /// submissions. Without this the commitment would identify the content rather than
+    /// the act of submitting it.
+    #[test]
+    fn the_signature_is_part_of_the_submitted_identity() {
+        let mut other = hop(200, "{}");
+        other.response.headers = vec![("signature".to_string(), "sig=:CCCC:".to_string())];
+        assert_ne!(
+            submitted_commitment(&[hop(200, "{}")]),
+            submitted_commitment(&[other])
+        );
+    }
+
+    /// The length prefixes are load-bearing: moving a byte across a field boundary must
+    /// change the digest. Without them `("ab", "")` and `("a", "b")` would hash the same
+    /// concatenation and two distinct submissions would share one identity.
+    #[test]
+    fn field_boundaries_cannot_be_shifted_without_changing_the_commitment() {
+        let mut left = hop(200, "{}");
+        left.request.method = "POSTX".to_string();
+        left.request.target_uri = "https://mcp.example.com/mcp".to_string();
+
+        let mut right = hop(200, "{}");
+        right.request.method = "POST".to_string();
+        right.request.target_uri = "Xhttps://mcp.example.com/mcp".to_string();
+
+        assert_ne!(
+            submitted_commitment(&[left]),
+            submitted_commitment(&[right])
+        );
+    }
+
+    /// The hop COUNT is committed, so a chain is not confusable with a prefix of a longer
+    /// one carrying the same hops.
+    #[test]
+    fn the_hop_count_is_part_of_the_submitted_identity() {
+        assert_ne!(
+            submitted_commitment(&[hop(200, "{}")]),
+            submitted_commitment(&[hop(200, "{}"), hop(200, "{}")])
+        );
     }
 }

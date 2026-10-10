@@ -1,0 +1,25 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "Where a request carries a continuation, the retained open-leg evidence handles are read\nWITHOUT being spent, and no way they can be absent yields a binding: the dispatcher fails closed rather than\nadmitting an unbound continuation.\n\nThe absences are ATTRIBUTED, not merely detected. A store that does not ANSWER, and a\ndeployment that holds no correlation capability while this leg needs one, are refused before\nadmission and named as facts about the DEPLOYMENT. Only the caller-side absences \u2014 the request\nnames no `requestState`, or the store answered and the entry was never opened, has expired, or\nwas already answered \u2014 leave no binding and let the leg be refused as the caller's.\n\nThe spend is the store's atomic consume and has four outcomes, because the store's error is\nnot its negative answer: nothing was at stake, this call spent the approval, the store\nanswered and there was nothing live to spend, or the store did not answer and whether the\nentry is gone cannot be determined by anything downstream.\n",
+      "old": "Where a request carries a continuation, the retained open-leg bases are read WITHOUT being\nspent, and no way they can be absent yields a binding: the dispatcher fails closed rather than\nadmitting an unbound continuation.\n\nThe absences are ATTRIBUTED, not merely detected. A store that does not ANSWER, and a\ndeployment that holds no correlation capability while this leg needs one, are refused before\nadmission and named as facts about the DEPLOYMENT. Only the caller-side absences \u2014 the request\nnames no `requestState`, or the store answered and the entry was never opened, has expired, or\nwas already answered \u2014 leave no binding and let the leg be refused as the caller's.\n\nThe spend is the store's atomic consume and has four outcomes, because the store's error is\nnot its negative answer: nothing was at stake, this call spent the approval, the store\nanswered and there was nothing live to spend, or the store did not answer and whether the\nentry is gone cannot be determined by anything downstream.\n",
+      "reason": "THM-0093 statement, replaced by the owner's Ruling 34 \u00a73 text."
+    }
+  ],
+  "from_fingerprint": "sha256:71f828ea7b38984997095f293887bd5b5304b2f5c8e5b7f6911f08d81367e29a",
+  "packet": "docs/security/owner-approvals-2026-10-07.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "OWN-CLAIM CORRECTION, owner-ratified (Ruling 34 \u00a73). Since ab761689 the correlation store retains evidence handles and never a signature base; the statement said the retained open-leg bases are read without being spent.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5. The authority covering this record is the owner's Ruling 34 \u00a73 (2026-10-07), recorded in docs/security/owner-approvals-2026-10-07.jsonl. A correction record is not an approval: it does not make the specification-review axis fresh.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0093",
+  "to_fingerprint": "sha256:e029781cbb4998fccc2267490667836c4336018d30cb7af829b8c4850fe21c40"
+}

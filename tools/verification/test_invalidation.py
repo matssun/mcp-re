@@ -623,22 +623,36 @@ def test_the_committed_manifest_declares_no_inadmissible_contract_edge():
 
 
 def _while_manifest_has(edge_toml: str, observe):
-    """Append one `[[edge]]` block to the REAL manifest, observe, restore.
+    """Observe the real loader while the manifest it reads carries one more `[[edge]]` block.
 
-    The observation happens INSIDE the edit window, because a helper that restores first and
+    The manifest file is never written: `_manifest._load` is answered, for that one path,
+    with the parse of the manifest's bytes plus the block, and everything after the read —
+    every validation `load_verification` performs — runs unchanged. Writing the tracked
+    file and restoring it in a `finally` leaves a broken manifest in the tree whenever the
+    process dies inside the window.
+
+    The observation happens INSIDE the window, because a helper that restores first and
     measures afterwards measures the restored file against itself — this suite's sibling made
-    exactly that mistake once. Restoration is byte-for-byte and in a `finally`, and the caller
-    below re-loads afterwards so a test cannot leave a tree that no longer parses.
+    exactly that mistake once.
     """
-    from _manifest import VERIFICATION_TOML
+    import tomllib
 
-    path = pathlib.Path(VERIFICATION_TOML)
-    original = path.read_bytes()
+    import _manifest
+
+    path = pathlib.Path(_manifest.VERIFICATION_TOML)
+    perturbed = path.read_bytes() + edge_toml.encode("utf-8")
+    real = _manifest._load
+
+    def load(candidate):
+        if pathlib.Path(candidate) == path:
+            return tomllib.loads(perturbed.decode("utf-8"))
+        return real(candidate)
+
+    _manifest._load = load
     try:
-        path.write_bytes(original + edge_toml.encode("utf-8"))
         return observe()
     finally:
-        path.write_bytes(original)
+        _manifest._load = real
 
 
 def test_the_real_loader_refuses_an_inadmissible_contract_edge():

@@ -59,10 +59,8 @@ pub mod crypto;
 pub mod encoding;
 pub mod error;
 pub mod hash;
-// `ids` retained ONLY for the profile-agnostic constants (the Ed25519 alg string,
-// extension id). The object `_meta` key constants it also holds are NOT re-exported
-// — nothing on the RFC 9421 path uses them; they are trimmed when the last object
-// consumer is gone.
+// `ids` holds the profile-agnostic constants: the extension id and the digest algorithm
+// token.
 pub mod ids;
 pub mod replay;
 pub mod resolver;
@@ -88,17 +86,16 @@ pub use error::ALL_ERRORS;
 pub use hash::parse_hash_id;
 pub use hash::sha256_hash_id;
 pub use ids::EXTENSION_ID;
-pub use ids::SIG_ALG_ED25519;
 pub use replay::InMemoryReplayCache;
 pub use replay::ReplayCache;
 pub use replay::ReplayCacheError;
 pub use replay::ReplayDecision;
 pub use replay::ReplayDurabilityClass;
-pub use replay::ReplayKey;
 pub use resolver::InMemoryTrustResolver;
 pub use resolver::TrustResolver;
 pub use resolver::TrustResolverError;
 pub use time::parse_rfc3339_utc;
 pub use time::unix_to_rfc3339_utc;
+pub use time::MaxClockSkew;
 pub use wire::json_rpc_error_object;
 pub use wire::MCP_RE_JSON_RPC_ERROR_CODE;

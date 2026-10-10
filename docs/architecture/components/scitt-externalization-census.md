@@ -132,8 +132,9 @@ Both are #841's, both are recorded at the code they govern rather than only here
   cutting a new pin). There is no missing enum or configuration feature. Both variants stay;
   no default-to-`Bound`; no duplicate serving-proxy switch, because the
   `ScittServiceTrustPin` consumed by the auditor owns the receipt-position contract for the
-  service it selects. Legacy deserialization keeps the weaker default for pins cut before the
-  field existed (`scitt/trust_pin/document.rs`).
+  service it selects. A pin document that omits `position_profile` or `leaf_profile` is
+  refused at deserialization, with no default (`scitt/trust_pin/document.rs`), and the tool
+  requires `--leaf-profile` as it requires `--position-profile`.
 
 ## What this census licenses
 

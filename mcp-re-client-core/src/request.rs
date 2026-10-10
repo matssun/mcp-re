@@ -10,7 +10,7 @@
 //! The signed evidence is `Signature`/`Signature-Input` (RFC 9421) + `Content-Digest`
 //! (RFC 9530) on the HTTP message, not a JSON-RPC `_meta` block. The returned
 //! [`SignedRequest`] exposes the
-//! resulting [`RequestEvidence`] handle so the caller can bind the signed response
+//! resulting [`RequestRoleEvidence`] handle so the caller can bind the signed response
 //! (`response.request_evidence == request.evidence`).
 //!
 //! Purity: this module builds and signs in-process only. Nonce generation, clock
@@ -24,7 +24,7 @@ use mcp_re_http_profile::sign_request_full_with_signer;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::PROFILE_TAG;
 use serde_json::json;
 use serde_json::Map;
@@ -32,12 +32,12 @@ use serde_json::Value;
 
 /// A fully signed RFC 9421 request: the reconstructed [`HttpRequest`] (method +
 /// `@target-uri` + headers carrying `Signature`/`Signature-Input`/`Content-Digest` +
-/// body with the composed evidence block) plus the [`RequestEvidence`] handle that
+/// body with the composed evidence block) plus the [`RequestRoleEvidence`] handle that
 /// binds a later signed response.
 #[derive(Debug, Clone)]
 pub struct SignedRequest {
     request: HttpRequest,
-    evidence: RequestEvidence,
+    evidence: RequestRoleEvidence,
 }
 
 impl SignedRequest {
@@ -57,9 +57,9 @@ impl SignedRequest {
         &self.request.headers
     }
 
-    /// The [`RequestEvidence`] handle (digest over the RFC 9421 signature base) that
+    /// The [`RequestRoleEvidence`] handle (digest over the RFC 9421 signature base) that
     /// binds a later signed response (`response.request_evidence == this`).
-    pub fn evidence(&self) -> &RequestEvidence {
+    pub fn evidence(&self) -> &RequestRoleEvidence {
         &self.evidence
     }
 
@@ -109,7 +109,7 @@ pub fn build_signed_request(
 /// The shared request-construction core, generic over HOW the RFC 9421 message is
 /// signed. `sign` receives the reconstructed [`HttpRequest`] (body already the
 /// clean JSON-RPC) and the evidence block, composes + signs, and returns the
-/// [`RequestEvidence`]. This is the single seam every signing mechanism (in-process
+/// [`RequestRoleEvidence`]. This is the single seam every signing mechanism (in-process
 /// key, KMS/HSM via [`sign_request_with_signer`], delegated service) flows through.
 /// The shortest nonce this core will SIGN: 128 bits of base64url is 22 characters.
 ///
@@ -126,7 +126,7 @@ pub(crate) fn build_signed_request_with(
     sign: impl FnOnce(
         &mut HttpRequest,
         &HttpRequestEvidenceBlock,
-    ) -> Result<RequestEvidence, HttpProfileError>,
+    ) -> Result<RequestRoleEvidence, HttpProfileError>,
 ) -> Result<SignedRequest, HttpProfileError> {
     // The @target-uri the client signs MUST match the audience tuple's target_uri
     // (the verifier cross-checks them); a mismatch is a client misconfiguration —
@@ -448,16 +448,82 @@ mod evidence_precondition_tests {
     }
 
     #[test]
-    fn signing_with_a_structurally_invalid_binding_is_refused_locally() {
-        // Not just emptiness: the client reuses the verifier's whole predicate, so a
-        // present-but-malformed binding is caught here too. An empty digest value can
-        // never satisfy the binding's own validation.
-        let mut broken = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"token");
-        broken.digest_value = String::new();
-        assert!(
-            sign(vec![broken]).is_err(),
-            "a structurally invalid binding is refused before signing"
+    fn a_structurally_invalid_binding_cannot_reach_signing() {
+        // The client reuses the binding's own construction, so a present-but-malformed
+        // binding does not exist to be signed: an empty digest value is refused where the
+        // binding would be made.
+        assert!(ArtifactBinding::opaque_from_digest(ArtifactType::OauthDpop, "").is_err());
+    }
+
+    fn sign_triple(
+        target: &str,
+        nonce: &str,
+        created: i64,
+        expires: i64,
+    ) -> Result<SignedRequest, HttpProfileError> {
+        let params: Map<String, Value> = serde_json::json!({ "name": "read" })
+            .as_object()
+            .cloned()
+            .unwrap();
+        build_signed_request(
+            &Value::from(1),
+            "tools/call",
+            params,
+            target,
+            &RequestSigningInputs::new(
+                "client-key-1",
+                audience(),
+                vec![ArtifactBinding::opaque_digest(
+                    ArtifactType::OauthDpop,
+                    b"access-token",
+                )],
+                nonce,
+                created,
+                expires,
+            ),
+            &SigningKey::from_seed_bytes(&[11u8; 32]),
+        )
+    }
+
+    const PADDED_NONCE: &str = "nonce-1-padded-to-the-128-bit-floor";
+
+    #[test]
+    fn a_target_uri_the_audience_does_not_name_is_refused_locally() {
+        assert_eq!(
+            sign_triple(
+                "https://mcp.example.com/mcp?route=b",
+                PADDED_NONCE,
+                1_000,
+                1_300
+            )
+            .err(),
+            Some(HttpProfileError::AudienceMismatch)
         );
+        assert!(sign_triple(TARGET, PADDED_NONCE, 1_000, 1_300).is_ok());
+    }
+
+    #[test]
+    fn a_non_positive_signature_window_is_refused_locally() {
+        let refused = Some(HttpProfileError::MalformedEvidence(
+            "signature window expires at or before created",
+        ));
+        assert_eq!(
+            sign_triple(TARGET, PADDED_NONCE, 1_000, 1_000).err(),
+            refused
+        );
+        assert_eq!(sign_triple(TARGET, PADDED_NONCE, 1_000, 999).err(), refused);
+        assert!(sign_triple(TARGET, PADDED_NONCE, 1_000, 1_001).is_ok());
+    }
+
+    #[test]
+    fn a_nonce_below_the_128_bit_floor_is_refused_locally() {
+        let refused = Some(HttpProfileError::MalformedEvidence(
+            "nonce is below the 128-bit entropy floor",
+        ));
+        let short = "a".repeat(MIN_NONCE_CHARS - 1);
+        assert_eq!(sign_triple(TARGET, &short, 1_000, 1_300).err(), refused);
+        assert_eq!(sign_triple(TARGET, "", 1_000, 1_300).err(), refused);
+        assert!(sign_triple(TARGET, &"a".repeat(MIN_NONCE_CHARS), 1_000, 1_300).is_ok());
     }
 
     #[test]

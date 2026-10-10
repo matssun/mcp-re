@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `Admission` configuration machine — `work/CONFIG-STATE-ATLAS.md` §C.4.
+//! The `Admission` configuration machine — unit `proxy.admission_configuration_state`.
 //!
 //! What a call carrying no admission evidence means here (MCPRE-493). Three states, and a
 //! sub-state on the two that enforce:
@@ -42,6 +42,7 @@
 
 use crate::deployment_request::{
     AdmissionAvailabilityRequest, AdmissionRequest, DeploymentRequest, RedactedLocator,
+    SharedStoreRequest,
 };
 use mcp_re_core::VerificationKey;
 use std::num::NonZeroU64;
@@ -156,7 +157,7 @@ enum AdmissionKindState {
 struct ValidatedGate {
     authority_kid: String,
     authority: VerificationKey,
-    record_store: String,
+    record_store: SharedStoreRequest,
     availability: AdmissionAvailability,
     currentness: AdmissionRecordCurrentness,
 }
@@ -183,7 +184,7 @@ pub struct EnforcedAdmission<'a> {
     posture: AdmissionPosture,
     authority_kid: &'a str,
     authority: &'a VerificationKey,
-    record_store: &'a str,
+    record_store: &'a SharedStoreRequest,
     availability: AdmissionAvailability,
     currentness: AdmissionRecordCurrentness,
 }
@@ -206,7 +207,7 @@ impl<'a> EnforcedAdmission<'a> {
 
     /// The shared authoritative record currency is compared against.
     pub fn record_store(&self) -> &'a str {
-        self.record_store
+        self.record_store.locator()
     }
 
     /// What this deployment does when that record cannot be reached.
@@ -361,7 +362,7 @@ pub(crate) struct AdmissionAuthority {
     /// The key that verifies it.
     pub(crate) key: VerificationKey,
     /// The shared authoritative record currency is compared against.
-    pub(crate) record_store: String,
+    pub(crate) record_store: SharedStoreRequest,
     /// What this deployment does when that record cannot be reached. Derived here because
     /// the two flags behind it are legal only in the combinations this function accepts.
     pub(crate) availability: AdmissionAvailability,
@@ -437,17 +438,46 @@ pub(crate) fn validated_admission_authority(
     Ok(Some(AdmissionAuthority {
         kid: gate.authority_kid.clone(),
         key,
-        record_store: record_store.to_string(),
-        availability: match gate.availability {
-            AdmissionAvailabilityRequest::FailClosed => AdmissionAvailability::FailClosed,
-            AdmissionAvailabilityRequest::Degraded { bound_secs } => {
-                AdmissionAvailability::BoundedDegraded { bound_secs }
-            }
-        },
+        record_store: gate.store.clone(),
+        availability: validated_availability(gate.availability)?,
         currentness: AdmissionRecordCurrentness {
             max_age_secs: gate.record_max_age_secs,
         },
     }))
+}
+
+/// The longest degraded window P a deployment may declare, in seconds.
+///
+/// A degraded window is a fail-open interval: while it is open, a revoked workload is
+/// served on last-known state. One hour is the longest a bounded credential lives anywhere
+/// else in the proxy — the delegated signing credential (`MAX_DELEGATED_TTL_SECS`) — so no
+/// declared outage tolerance outlives every other bounded authority here. An authority
+/// unreachable for longer is an incident for an operator, not a window to keep serving in.
+pub(crate) const MAX_DEGRADED_ADMISSION_BOUND_SECS: u64 = 3600;
+
+/// The availability a validated gate carries.
+///
+/// A window above [`MAX_DEGRADED_ADMISSION_BOUND_SECS`] is refused, never clamped: a
+/// deployment that asked for a longer window has not asked for this one.
+fn validated_availability(
+    requested: AdmissionAvailabilityRequest,
+) -> Result<AdmissionAvailability, String> {
+    match requested {
+        AdmissionAvailabilityRequest::FailClosed => Ok(AdmissionAvailability::FailClosed),
+        AdmissionAvailabilityRequest::Degraded { bound_secs }
+            if bound_secs.get() > MAX_DEGRADED_ADMISSION_BOUND_SECS =>
+        {
+            Err(format!(
+                "--admission-degraded-bound-secs must be at most \
+                 {MAX_DEGRADED_ADMISSION_BOUND_SECS} (got {bound_secs}): while the authority \
+                 is unreachable a revoked workload is served on last-known state for the \
+                 whole window, so a longer one is a fail-open the deployment cannot bound"
+            ))
+        }
+        AdmissionAvailabilityRequest::Degraded { bound_secs } => {
+            Ok(AdmissionAvailability::BoundedDegraded { bound_secs })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -514,6 +544,29 @@ mod tests {
             );
             assert!(state.is_enforced());
         }
+    }
+
+    #[test]
+    fn an_admission_state_and_its_gate_debug_print_carries_no_credential() {
+        let url = "redis://alice:hunter2@h:6379/0?token=s3cr3t";
+        let (state, violations) = run(|c| {
+            c.admission =
+                AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                    store: SharedStoreRequest::redis(url),
+                    ..gate()
+                });
+        });
+        assert!(violations.is_empty(), "{violations:?}");
+        let state = state.expect("a complete admission configuration names a state");
+        let gate = state
+            .enforced()
+            .expect("a complete admission configuration selects the enforcing state");
+        for printed in [format!("{state:?}"), format!("{gate:?}")] {
+            for secret in ["hunter2", "alice", "s3cr3t", url] {
+                assert!(!printed.contains(secret), "{secret} leaked: {printed}");
+            }
+        }
+        assert_eq!(gate.record_store(), url);
     }
 
     /// An enforcing state carries every fact it cannot be inhabited without, and carries
@@ -613,6 +666,42 @@ mod tests {
         });
         assert!(state.is_none(), "a state was built over an empty kid");
         assert!(!violations.is_empty(), "an empty kid was accepted silently");
+    }
+
+    /// A degraded window past the ceiling names no state, and the refusal names the flag
+    /// and the ceiling; the ceiling itself is accepted unchanged, not clamped to it.
+    #[test]
+    fn a_degraded_window_past_the_ceiling_names_no_state_and_the_ceiling_does() {
+        let at = |secs: u64| {
+            run(move |c| {
+                c.admission =
+                    AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                        availability: AdmissionAvailabilityRequest::Degraded {
+                            bound_secs: NonZeroU64::new(secs).expect("positive"),
+                        },
+                        ..gate()
+                    });
+            })
+        };
+        for past in [MAX_DEGRADED_ADMISSION_BOUND_SECS + 1, u64::MAX] {
+            let (state, violations) = at(past);
+            assert!(state.is_none(), "a window of {past}s was accepted");
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("--admission-degraded-bound-secs")
+                        && v.contains(&MAX_DEGRADED_ADMISSION_BOUND_SECS.to_string())),
+                "the refusal must name the flag and the ceiling: {violations:?}"
+            );
+        }
+        let (state, violations) = at(MAX_DEGRADED_ADMISSION_BOUND_SECS);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(
+            state.and_then(|s| s.enforced().map(|g| g.availability())),
+            Some(AdmissionAvailability::BoundedDegraded {
+                bound_secs: NonZeroU64::new(MAX_DEGRADED_ADMISSION_BOUND_SECS).expect("positive"),
+            })
+        );
     }
 
     #[test]

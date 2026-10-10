@@ -34,7 +34,9 @@
 //! while breaking the equality, which is why the test pins `>=` and records that equality
 //! is the current policy rather than the claim.
 
+use super::replica_clock::ReplicaClockDivergence;
 use crate::deployment_request::DeploymentRequest;
+use mcp_re_core::MaxClockSkew;
 
 /// The accepted temporal uncertainty, and what each mechanism derives from it.
 ///
@@ -42,28 +44,51 @@ use crate::deployment_request::DeploymentRequest;
 /// producer, so possessing one IS the statement that the skew is within the §5.1 bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FreshnessWindow {
-    max_clock_skew_secs: i64,
+    max_clock_skew: MaxClockSkew,
+    /// How far two replicas' clocks may disagree. A second dimension of temporal
+    /// uncertainty beside the skew, and it widens only the STORE's retention: the verifier's
+    /// window above does not move.
+    replica_clock_divergence: ReplicaClockDivergence,
 }
 
 impl FreshnessWindow {
     /// The only public constructor, and it performs the check.
     ///
-    /// `None` outside the §5.1 bound: construction itself validates, so possessing a
+    /// `None` outside the §5.1 bound [`MaxClockSkew`] owns: construction itself validates, so
+    /// possessing a
     /// `FreshnessWindow` means the skew was bounded no matter which crate built it. That is
     /// what lets this be public without weakening the seal — an embedding binary or an
     /// integration test gets the same guarantee the classifier gets, rather than a way
     /// around it.
     pub fn new(max_clock_skew_secs: i64) -> Option<Self> {
-        (0..=mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
-            .contains(&max_clock_skew_secs)
-            .then_some(Self {
-                max_clock_skew_secs,
-            })
+        MaxClockSkew::new(max_clock_skew_secs).map(|max_clock_skew| Self {
+            max_clock_skew,
+            replica_clock_divergence: ReplicaClockDivergence::deployment_default(),
+        })
+    }
+
+    /// The same window under a declared inter-replica clock divergence bound.
+    pub fn with_replica_clock_divergence(self, bound: ReplicaClockDivergence) -> Self {
+        Self {
+            replica_clock_divergence: bound,
+            ..self
+        }
+    }
+
+    /// The bound a shared replay store pads every record's retention by, because it expires
+    /// the record on the writing replica's own clock.
+    pub fn replica_clock_divergence(&self) -> ReplicaClockDivergence {
+        self.replica_clock_divergence
     }
 
     /// The skew the RFC 9421 verifier applies to `created` and `expires` (§5.1).
     pub fn verifier_skew_secs(&self) -> i64 {
-        self.max_clock_skew_secs
+        self.max_clock_skew.secs()
+    }
+
+    /// The bounded skew itself, for a replay store that derives its own retain-until.
+    pub fn max_clock_skew(&self) -> MaxClockSkew {
+        self.max_clock_skew
     }
 
     /// How long a replay record for a request expiring at `expires_at_unix` must be kept.
@@ -72,16 +97,7 @@ impl FreshnessWindow {
     /// the verifier would still accept the request carrying it, which is a statement about
     /// the verifier's window and therefore about the same skew.
     pub fn replay_retain_until(&self, expires_at_unix: i64) -> i64 {
-        expires_at_unix.saturating_add(self.max_clock_skew_secs)
-    }
-
-    /// The last instant the verifier may still accept a request that expires at
-    /// `expires_at_unix`.
-    ///
-    /// The upper edge of the acceptance window, named so the relation between the two
-    /// projections is assertable rather than implied by both calling `saturating_add`.
-    pub fn verifier_accepts_until(&self, expires_at_unix: i64) -> i64 {
-        expires_at_unix.saturating_add(self.max_clock_skew_secs)
+        expires_at_unix.saturating_add(self.max_clock_skew.secs())
     }
 }
 
@@ -103,7 +119,13 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<FreshnessWin
             )],
         );
     };
-    (Some(window), Vec::new())
+    match ReplicaClockDivergence::resolve(config.replay.replica_clock_divergence_secs) {
+        Ok(bound) => (
+            Some(window.with_replica_clock_divergence(bound)),
+            Vec::new(),
+        ),
+        Err(refusal) => (None, vec![refusal]),
+    }
 }
 
 #[cfg(test)]
@@ -116,7 +138,8 @@ mod tests {
         classify_and_validate(&config).0
     }
 
-    /// THE invariant, stated as the relation rather than as today's equality.
+    /// THE invariant, stated as the relation rather than as today's equality, and asserted
+    /// against the verifier's own §5.1 predicate rather than a local formula.
     ///
     /// A replay record that expires before the verifier stops accepting the request it
     /// stands for leaves a window in which the nonce is forgotten and the request is still
@@ -125,14 +148,38 @@ mod tests {
     /// `retention = window + propagation_margin` must keep this passing.
     #[test]
     fn retention_never_ends_before_the_verifier_stops_accepting() {
-        let w = window(300).expect("a bounded skew resolves");
-        for expires in [0_i64, 1, 1_000, 1_787_000_000, i64::MAX - 1] {
-            assert!(
-                w.replay_retain_until(expires) >= w.verifier_accepts_until(expires),
-                "retention {} < acceptance {} at expires={expires}",
-                w.replay_retain_until(expires),
-                w.verifier_accepts_until(expires)
-            );
+        for skew in [
+            0_i64,
+            1,
+            45,
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+        ] {
+            let w = window(skew).expect("a bounded skew resolves");
+            let policy =
+                mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], w.verifier_skew_secs())
+                    .expect("a resolved skew is within the verifier's bound");
+            for expires in [1_i64, 1_000, 1_787_000_000, i64::MAX - 1, i64::MAX] {
+                let created = expires.checked_sub(1).expect("expires is at least 1");
+                let retain = w.replay_retain_until(expires);
+                assert!(
+                    mcp_re_http_profile::verify::window_is_fresh(
+                        created,
+                        expires,
+                        created,
+                        policy.max_clock_skew()
+                    ),
+                    "the verifier refuses inside its own window at skew={skew} expires={expires}"
+                );
+                assert!(
+                    !mcp_re_http_profile::verify::window_is_fresh(
+                        created,
+                        expires,
+                        retain,
+                        policy.max_clock_skew()
+                    ),
+                    "verifier still accepts at retention horizon {retain} (skew={skew}, expires={expires})"
+                );
+            }
         }
     }
 
@@ -142,7 +189,6 @@ mod tests {
         let w = window(45).expect("a bounded skew resolves");
         assert_eq!(w.verifier_skew_secs(), 45);
         assert_eq!(w.replay_retain_until(1_000), 1_045);
-        assert_eq!(w.verifier_accepts_until(1_000), 1_045);
     }
 
     /// The horizon saturates rather than wrapping: a wrapped horizon is a retain_until in
@@ -168,6 +214,30 @@ mod tests {
                 .verifier_skew_secs(),
             30
         );
+    }
+
+    /// A declared divergence travels with the window, and an undeclared one resolves to the
+    /// deployment default rather than to zero.
+    #[test]
+    fn the_declared_replica_clock_divergence_is_part_of_the_resolved_window() {
+        let mut config = crate::config_state::test_support::legal_config();
+        let undeclared = classify_and_validate(&config).0.expect("legal");
+        assert_eq!(
+            undeclared.replica_clock_divergence(),
+            ReplicaClockDivergence::deployment_default()
+        );
+        config.replay.replica_clock_divergence_secs = Some(11);
+        let declared = classify_and_validate(&config).0.expect("legal");
+        assert_eq!(declared.replica_clock_divergence().secs(), 11);
+        assert_eq!(
+            declared.verifier_skew_secs(),
+            undeclared.verifier_skew_secs(),
+            "the divergence widens store retention and never the verifier's window"
+        );
+        config.replay.replica_clock_divergence_secs = Some(-1);
+        let (state, violations) = classify_and_validate(&config);
+        assert!(state.is_none());
+        assert!(violations[0].contains("--replay-clock-divergence-secs"));
     }
 
     /// Outside §5.1 there is no window, so none is constructed.

@@ -980,6 +980,7 @@ dependencies = [
  "mcp-re-http-profile",
  "mcp-re-proxy",
  "mcp-re-transport",
+ "rcgen",
  "serde",
  "serde_json",
  "tokio",
@@ -1034,6 +1035,7 @@ dependencies = [
  "verus_builtin",
  "verus_builtin_macros",
  "vstd",
+ "zeroize",
 ]
 
 [[package]]
@@ -1118,6 +1120,7 @@ dependencies = [
  "rcgen",
  "redis",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -1127,6 +1130,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls",
+ "tower-service",
  "ureq",
  "x509-cert",
  "x509-ocsp",

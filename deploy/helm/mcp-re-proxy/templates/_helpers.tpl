@@ -77,6 +77,17 @@ to land on — every replay state is shared — so this is required regardless o
 {{- fail "fleet=true requires replay.durabilityTier of redis-wait-quorum:<q>:<ms> or linearizable (the strict-production minimum)" -}}
 {{- end -}}
 {{- end -}}
+{{/*
+Delegated response signing is the only response mode, and across replicas its only kill
+switch is the shared trust-epoch counter: without one no replica can be moved to a new
+delegated-credential label. More than one replica, or fleet=true, therefore requires the
+push tier with a networked epoch source. There is no override.
+*/}}
+{{- if or .Values.fleet (gt (int .Values.replicaCount) 1) -}}
+{{- if not (and .Values.revocation.trustEpochRedisUrl (hasPrefix "push" .Values.revocation.tier)) -}}
+{{- fail "more than one replica (or fleet=true) with delegated response signing requires revocation.tier push:<T> and revocation.trustEpochRedisUrl: the shared trust epoch is the fleet's only kill switch for delegated keys" -}}
+{{- end -}}
+{{- end -}}
 {{- if eq .Values.keySource "gcpKms" -}}
 {{- if not .Values.gcpKms.keyVersion -}}
 {{- fail "keySource=gcpKms requires gcpKms.keyVersion (the Cloud KMS key-version resource path)" -}}

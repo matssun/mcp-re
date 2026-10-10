@@ -356,8 +356,12 @@ per-request contract:
 | Version ∈ the deployment's supported set | ✅ otherwise ⇒ `unsupported_version` — a client's claim is not consent |
 | `MCP-Protocol-Version` = body `io.modelcontextprotocol/protocolVersion` | ✅ disagreement ⇒ `malformed_envelope` |
 | `Mcp-Method` = body `method` | ✅ (always on, policy or not) ⇒ `malformed_envelope` |
-| `Mcp-Name` present for `tools/call` / `resources/read` | ✅ absent ⇒ `missing_envelope` |
-| `Mcp-Name` = `params.name` (`tools/call`) / `params.uri` (`resources/read`) | ✅ disagreement ⇒ `malformed_envelope` |
+| `Mcp-Name` present for `tools/call`, `prompts/get`, `resources/read`, `resources/subscribe`, `resources/unsubscribe` | ✅ absent ⇒ `missing_envelope` |
+| `Mcp-Name` = `params.name` (`tools/call`, `prompts/get`) / `params.uri` (`resources/*`) | ✅ disagreement ⇒ `malformed_envelope` |
+| `Mcp-Name` on a message whose body names no target | ✅ refused ⇒ `malformed_envelope` |
+| Body `method` a case or whitespace variant of a listed method | ✅ refused ⇒ `malformed_envelope` |
+| Bodyless GET/DELETE: `MCP-Protocol-Version` present and supported | ✅ absent ⇒ `missing_envelope`; otherwise ⇒ `unsupported_version` |
+| Bodyless GET/DELETE: no `Mcp-Method` / `Mcp-Name` | ✅ present ⇒ `malformed_envelope` |
 
 **Every check runs after the signature, against protected values.** Before it, both
 a header and the body are attacker-chosen, so their agreement — or a version
@@ -365,15 +369,13 @@ string's value — proves nothing. After it, a present header is covered (the
 closed-allowlist gate enforced present ⇒ covered), so a required header that is
 present is signed, and a disagreement is the *signer* contradicting itself.
 
-**`allow_legacy_header_omission` gates ABSENCE only.** A deployment still serving
-pre-2026-07-28 clients sets it: a request carrying *none* of these headers is
-served as legacy rather than rejected. Any header it *does* carry is still validated
-in full — the flag waives "you must send it", never "it may lie".
-
-**Opt-in and additive.** The default `VerifierPolicy` attaches no transport policy,
-so a deployment that has not opted in behaves exactly as before (present-header
-integrity only, absence allowed). Supported versions are a constructor input rather
-than hardcoded, so the policy does not bake in a spec that is not yet final.
+**Mandatory.** There is no waiver for absence and no state without a transport policy:
+every `VerifierPolicy` carries one, the request floor enforces it on every request, and
+a request omitting a required header is refused. The signer derives the three headers
+from the body it protects and covers them, so a request signed through the profile
+satisfies the contract. Supported versions are a constructor input rather than
+hardcoded (`--mcp-protocol-version`, required), so the policy does not bake in a spec
+that is not yet final.
 
 **Proven by.** `mcp_transport_headers_test` — the full contract through the real
 verify path (`a_required_header_absent_is_rejected_through_verify`,

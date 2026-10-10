@@ -2,15 +2,49 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:3ef2d6a95a4d63749870acea5c085d5ca21fd989b5ff99c4df526f303aebe4e0",
+    "theorem_claim": "sha256:6d284ebefad58c6ed62145ee2524b2d8f8ea4bcc45c864ece545443f8c7c5b37",
     "theorem_dependencies": {
       "THM-0088": "sha256:33ff0b40ae6653e2564b29c668cdb320d5946d60e475f0409d08d96849a42bf3"
     },
     "theorem_id": "THM-0113",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Recorded under the owner's ruling of 2026-09-29 on the Bazel-only migration: the pure \u201cdefault Cargo lane\u201d \u2192 Bazel wording changes are ONE bounded review event, valid only where the proposition and its scope are unchanged. The claim moved only in how it names the lane that measures it \u2014 the lane is now a Bazel test target, and nothing Cargo runs exists: scope: -Executable, class V0, measured in the default cargo lane. | scope: +Executable, class V0, measured in the default Bazel lane (`bazel test //...`). The statement, the security consequence and every scope exclusion are otherwise byte-identical to the reviewed text. Previously reviewed at sha256:b81b709eb1d9d052ba159914936bddadb9ded2e8d27cb47e13e22e56ab92da35.",
-  "reviewed_fingerprint": "sha256:a3e85c0709f241ccb9a7783759bf48c6c99adf0cafcceead96c69c5db8ca0f32",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G9.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0037": "sha256:611dd9a92a61738cb6513f511b933830952389c9c6d8c380ad03511f24406cf0"
+    },
+    "supporting_semantics": {
+      "proxy.evidence_attestation": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:f8b49f71d775f2bec67260071495ea8b6a9a586480b9e652813cfe423d8f9a28",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:1b0120b78ee1d2cf0aaac6763ba5f8d6d5b07a6421ef1ab2810c1b8315ca04e8",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:a601758fc7977575a5a104a3bcca2915f20e3955630f306a650ea6cc48121251",
+        "test_selection": "sha256:9e1726d12391f1f75bd6c31d733f4f5ac117acc6aa56017879c84eeb5963095b",
+        "test_sources": "sha256:598bae3a2279b7805c8c451885acfc1f7f69684757cb23feeab4837eacf2452f",
+        "trusted_assumptions": "sha256:7ad822c4a9a79fd06d9deab57cd75a2b50474a7554bd5e4a504548769b56e1d1",
+        "unit_id": "sha256:24a7d0f4e7457870bd377599626a399c2678cf0df1b802c765edacba4a3e753c"
+      }
+    },
+    "theorem_claim": "sha256:6d284ebefad58c6ed62145ee2524b2d8f8ea4bcc45c864ece545443f8c7c5b37",
+    "theorem_dependencies": {
+      "THM-0088": "sha256:33ff0b40ae6653e2564b29c668cdb320d5946d60e475f0409d08d96849a42bf3"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:12ae4bd7314170ec7bb6ac2329140374441806fbc19dc75c58f3f5b72e14a6aa",
+  "reviewed_fingerprint": "sha256:95c28f72283a689eaeaf430a7942e8a483e6cb5231168fb6c568d562558f76f4",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0113"
 }

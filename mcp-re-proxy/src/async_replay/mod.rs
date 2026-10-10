@@ -27,7 +27,7 @@ use std::sync::Arc;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
-use mcp_re_core::ReplayKey;
+use mcp_re_http_profile::replay::ReplayKey;
 
 use crate::config_state::FreshnessWindow;
 use crate::shared_replay::composite_replay_key;
@@ -89,22 +89,21 @@ pub struct ReplayInsert<'a> {
     /// the charge buys.
     pub actor: &'a str,
     /// The skew-folded retain-until the tier computed.
-    pub expires_at_unix: i64,
+    pub retain_until: i64,
     /// The instant the VERIFIER used for this request, and never a constant. The DEFAULT
-    /// in-memory backend judges an already-past `expires_at_unix` against it (MCPS-08);
-    /// one deriving a server-side TTL reads its own clock and ignores it. The sync
-    /// `AtomicReplayStore` carries a vestigial `0` here and this contract does not, so a
-    /// caller passing one disables that guard in the backend a default build selects.
+    /// in-memory backend judges an already-past `retain_until` against it (MCPS-08);
+    /// one deriving a server-side TTL reads its own clock and ignores it. A caller
+    /// passing a constant disables that guard in the backend a default build selects.
     pub now_unix: i64,
 }
 
 impl<'a> ReplayInsert<'a> {
     /// Build an insert charged to `actor`.
-    pub fn new(key: &'a str, actor: &'a str, expires_at_unix: i64, now_unix: i64) -> Self {
+    pub fn new(key: &'a str, actor: &'a str, retain_until: i64, now_unix: i64) -> Self {
         ReplayInsert {
             key,
             actor,
-            expires_at_unix,
+            retain_until,
             now_unix,
         }
     }
@@ -116,7 +115,7 @@ impl<'a> ReplayInsert<'a> {
 /// worker.
 pub trait AsyncAtomicReplayStore: Send + Sync {
     /// Atomically insert `insert.key` iff absent, with a TTL derived from the
-    /// skew-folded `insert.expires_at_unix` relative to the store's OWN clock.
+    /// skew-folded `insert.retain_until` relative to the store's OWN clock.
     ///
     /// `Fresh` iff the key was absent and is now recorded (this caller won the
     /// insert), `Replay` if already present, or [`ReplayStoreError`] on operational
@@ -139,10 +138,10 @@ pub trait AsyncAtomicReplayStore: Send + Sync {
 
 /// The async replay TIER the proxy's async serving path awaits (ADR-MCPRE-051
 /// §4): the async analogue of [`crate::shared_replay::SharedReplayCache`]. Given a
-/// `mcp_re_core::ReplayKey` (projected from the RFC 9421 five-tuple via
-/// `HttpReplayKey::to_core_replay_key`), it composes the collision-safe composite
-/// key and folds the clock skew IDENTICALLY to the sync path (via the shared
-/// [`composite_replay_key`] / [`skew_folded_retain_until`] helpers), then AWAITS the
+/// `ReplayKey` (projected from the RFC 9421 five-tuple via
+/// `PreparedDispatch::to_replay_key`), it composes the collision-safe composite
+/// key and folds the clock skew IDENTICALLY to the sync path (the shared
+/// [`composite_replay_key`] and [`FreshnessWindow::replay_retain_until`]), then AWAITS the
 /// authoritative [`AsyncAtomicReplayStore`] insert. The store round-trip is the ONLY
 /// awaited I/O on the request path.
 ///
@@ -199,16 +198,16 @@ impl AsyncReplayTier {
         key: &ReplayKey,
         now_unix: i64,
     ) -> Result<ReplayDecision, ReplayCacheError> {
-        let composite = composite_replay_key(&key.signer, &key.audience, &key.nonce);
-        let retain_until = self.freshness.replay_retain_until(key.expires_at_unix);
-        // Charged to the resolved PRINCIPAL, not to the signer slot: the slot carries
-        // the keyid so distinct keys can never share a replay key, which would hand a
-        // subject one budget per key it holds. Passed explicitly so a store never has
-        // to recover it by parsing a key it did not compose.
-        //
-        // The charge is taken HERE, above the backend seam, so the bound holds for
-        // every deployable adapter — see [`RetentionLedger`].
-        let charge = Charge::reserve(&self.ledger, &key.principal, now_unix, retain_until)
+        let composite = composite_replay_key(key.signer(), key.audience(), key.nonce());
+        let retain_until = self.freshness.replay_retain_until(key.expires_at_unix());
+        // Charged to the resolved PRINCIPAL, not the signer slot, whose keyid would give a
+        // subject one budget per key; passed explicitly so no store parses a key it did not
+        // compose. Taken HERE, above the backend seam, so the bound holds for every
+        // deployable adapter (see [`RetentionLedger`]), and on the retention timeline the
+        // shared stores expire records on, so a charge lasts as long as its record.
+        let divergence = self.freshness.replica_clock_divergence();
+        let retention_now = divergence.held_back(now_unix);
+        let charge = Charge::reserve(&self.ledger, key.principal(), retention_now, retain_until)
             .map_err(ReplayCacheError::from)?;
         // Scoped to the STORE round trip alone, so the span does not also cover the
         // charge accounting around it. This is the only awaited I/O a request performs,
@@ -221,7 +220,7 @@ impl AsyncReplayTier {
             self.store
                 .atomic_insert_if_absent(ReplayInsert::new(
                     &composite,
-                    &key.principal,
+                    key.principal(),
                     retain_until,
                     now_unix,
                 ))
@@ -299,13 +298,65 @@ mod tests {
     }
 
     fn replay_key(actor: &str, nonce: &str, expires_at_unix: i64) -> ReplayKey {
-        ReplayKey {
-            // The signer slot carries the keyid; the budget is charged to `principal`.
-            signer: format!("{actor}#key-1"),
-            principal: actor.to_string(),
-            audience: "did:example:verifier".to_string(),
-            nonce: nonce.to_string(),
-            expires_at_unix,
+        // The signer slot carries the keyid; the budget is charged to the principal.
+        keyed(actor, "key-1", nonce, expires_at_unix)
+    }
+
+    /// The ledger identity the tier charges `subject` to: the principal its keys project to.
+    fn principal_of(subject: &str) -> String {
+        replay_key(subject, "n", 0).principal().to_owned()
+    }
+
+    /// The key a prepared dispatch hands the tier — the only public way to one — for a
+    /// request by `subject` under `keyid`.
+    fn keyed(subject: &str, keyid: &str, nonce: &str, expires_at_unix: i64) -> ReplayKey {
+        let mut verified = crate::authorization::action_harness::verified_over_as(
+            crate::authorization::action_harness::LIST,
+            subject,
+            keyid,
+        )
+        .verified;
+        verified.floor.nonce = nonce.to_string();
+        mcp_re_http_profile::DispatchConfig {
+            fleet_strict: false,
+        }
+        .admit_replay_tier(ReplayDurabilityClass::Durable)
+        .expect("outside fleet-strict every store class is admitted")
+        .prepare(&verified, None)
+        .expect("a request carrying no continuation prepares")
+        .to_replay_key(expires_at_unix)
+    }
+
+    /// The store key the serving tier actually writes, derived from prepared dispatches:
+    /// requests differing in subject, keyid or nonce — including splits that move bytes
+    /// across a field boundary — compose distinct store keys, and the same request composes
+    /// the same one. Measured on `composite_replay_key` over `to_replay_key`, the path
+    /// `check_and_insert` takes, not on a cache's raw tuple.
+    #[test]
+    fn distinct_prepared_requests_compose_distinct_store_keys() {
+        let store_key = |subject: &str, keyid: &str, nonce: &str| {
+            let key = keyed(subject, keyid, nonce, 9_000);
+            composite_replay_key(key.signer(), key.audience(), key.nonce())
+        };
+        let base = store_key("alice", "key-1", "n-1");
+        assert_eq!(
+            base,
+            store_key("alice", "key-1", "n-1"),
+            "one request, one store key"
+        );
+        let variants = [
+            store_key("bob", "key-1", "n-1"),
+            store_key("alice", "key-2", "n-1"),
+            store_key("alice", "key-1", "n-2"),
+            store_key("alice", "key-1n", "-1"),
+            store_key("alicek", "ey-1", "n-1"),
+        ];
+        let mut seen = std::collections::HashSet::from([base]);
+        for key in variants {
+            assert!(
+                seen.insert(key),
+                "two distinct requests composed one store key"
+            );
         }
     }
 
@@ -346,7 +397,7 @@ mod tests {
                 admitted, 8,
                 "one actor must stop at its budget, not at the global ceiling"
             );
-            assert_eq!(tier.ledger.held_by(GREEDY), 8);
+            assert_eq!(tier.ledger.held_by(&principal_of(GREEDY)), 8);
 
             // THE PROPERTY: a signer that has sent nothing is still served while the
             // greedy one is refused.
@@ -404,11 +455,70 @@ mod tests {
                     .await;
             }
             assert_eq!(
-                tier.ledger.held_by(ACTOR),
+                tier.ledger.held_by(&principal_of(ACTOR)),
                 1,
                 "one retained nonce is one charge, however often it is presented"
             );
         });
+    }
+
+    /// A charge lapses when the record it accounts for leaves a shared store, and no
+    /// earlier.
+    ///
+    /// The shared stores expire a record on the replica's clock held back by the declared
+    /// divergence `d`, so they keep it until `retain_until + d` in true time. An account
+    /// pruning on the verifier's bare reading would hand the charge back `d` seconds early,
+    /// and one actor could hold `(W + d) / W` times its budget in the store.
+    #[test]
+    fn a_charge_is_held_until_the_padded_store_horizon() {
+        const D: i64 = 7;
+        let freshness = crate::config_state::test_support::freshness(0)
+            .with_replica_clock_divergence(
+                crate::config_state::ReplicaClockDivergence::new(D).expect("inside the ceiling"),
+            );
+        let tier = AsyncReplayTier::new_bounded(
+            Arc::new(UnboundedDurableStore::default()),
+            freshness,
+            10_000,
+        );
+        const ACTOR: &str = "did:example:held";
+        const FILLER: &str = "did:example:filler";
+        let retain_until = 1_000;
+        // Every reservation at `now` takes the ledger one step toward its cadence prune.
+        let drive_prune_at = |now: i64, round: &str| {
+            let tier = tier.clone();
+            let round = round.to_owned();
+            block(async move {
+                for i in 0..super::bounds::ASYNC_PRUNE_EVERY_N_INSERTS {
+                    tier.check_and_insert(
+                        &replay_key(FILLER, &format!("{round}-{i}"), now + 1_000),
+                        now,
+                    )
+                    .await
+                    .expect("filler admitted");
+                }
+            });
+        };
+        block(async {
+            assert_eq!(
+                tier.check_and_insert(&replay_key(ACTOR, "kept", retain_until), 900)
+                    .await
+                    .expect("admitted"),
+                ReplayDecision::Fresh
+            );
+        });
+        drive_prune_at(retain_until + D - 1, "inside");
+        assert_eq!(
+            tier.ledger.held_by(&principal_of(ACTOR)),
+            1,
+            "the store still holds the record, so the account must still hold its charge"
+        );
+        drive_prune_at(retain_until + D + 1, "past");
+        assert_eq!(
+            tier.ledger.held_by(&principal_of(ACTOR)),
+            0,
+            "the record has left the store, so its charge is handed back"
+        );
     }
 
     /// The budget is charged to the RESOLVED PRINCIPAL, never to the signer slot.
@@ -431,13 +541,7 @@ mod tests {
             let mut admitted = 0usize;
             for i in 0..20 {
                 // A DIFFERENT signer slot every time, the same subject behind all of them.
-                let key = ReplayKey {
-                    signer: format!("{SUBJECT}#key-{i}"),
-                    principal: SUBJECT.to_string(),
-                    audience: "did:example:verifier".to_string(),
-                    nonce: format!("nonce-{i}"),
-                    expires_at_unix: 9_000,
-                };
+                let key = keyed(SUBJECT, &format!("key-{i}"), &format!("nonce-{i}"), 9_000);
                 match tier.check_and_insert(&key, 1_000).await {
                     Ok(ReplayDecision::Fresh) => admitted += 1,
                     Err(ReplayCacheError::Unavailable { .. }) => break,
@@ -448,7 +552,7 @@ mod tests {
                 admitted, 8,
                 "one subject gets one budget, not one budget per key it holds"
             );
-            assert_eq!(tier.ledger.held_by(SUBJECT), 8);
+            assert_eq!(tier.ledger.held_by(&principal_of(SUBJECT)), 8);
         });
     }
 
@@ -488,7 +592,7 @@ mod tests {
                     .is_err(),
                 "a clone must not hand the same actor a second budget"
             );
-            assert_eq!(second.ledger.held_by(SUBJECT), 8);
+            assert_eq!(second.ledger.held_by(&principal_of(SUBJECT)), 8);
         });
     }
 
@@ -540,7 +644,7 @@ mod tests {
                 "fail closed on the frozen token, never an allow"
             );
             assert_eq!(
-                tier.ledger.held_by(ACTOR),
+                tier.ledger.held_by(&principal_of(ACTOR)),
                 1,
                 "an error is not proof the write did not land, so the charge is kept"
             );
@@ -595,14 +699,14 @@ mod tests {
                 .await;
             }
             assert!(
-                tier.ledger.held_by(ACTOR) > 0,
+                tier.ledger.held_by(&principal_of(ACTOR)) > 0,
                 "entries the shared store may be retaining must be charged to somebody"
             );
 
             // Cancelling is not a way to buy more than a fair share: the per-actor budget
             // refuses the greedy actor before the tier's reserve is spent...
             assert!(
-                tier.ledger.held_by(ACTOR) < 10,
+                tier.ledger.held_by(&principal_of(ACTOR)) < 10,
                 "the cancelling actor is bounded by its own budget, not by the ceiling"
             );
             // ...so a quiet second actor is still admitted. A charge that closed the tier
@@ -639,13 +743,13 @@ mod tests {
                 .await;
             }
             assert!(
-                tier.ledger.held_by(ACTOR) > 0,
+                tier.ledger.held_by(&principal_of(ACTOR)) > 0,
                 "held while it may be retained"
             );
             // A prune at a `now` past the retain-until reclaims them.
             tier.ledger.state.lock().expect("ledger").prune(2_000);
             assert_eq!(
-                tier.ledger.held_by(ACTOR),
+                tier.ledger.held_by(&principal_of(ACTOR)),
                 0,
                 "an indeterminate charge drains with the freshness window"
             );
@@ -670,7 +774,7 @@ mod tests {
                     .unwrap();
             }
             assert_eq!(
-                tier.ledger.held_by(ACTOR) as u64,
+                tier.ledger.held_by(&principal_of(ACTOR)) as u64,
                 ASYNC_PRUNE_EVERY_N_INSERTS - 1
             );
 
@@ -679,7 +783,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(
-                tier.ledger.held_by(ACTOR),
+                tier.ledger.held_by(&principal_of(ACTOR)),
                 1,
                 "only the still-live entry is still charged"
             );

@@ -21,6 +21,18 @@ use crate::startup_transcript;
 
 use serving_fixtures::Material;
 
+/// `extra` appended to `base`, each single-valued flag stated once: a flag `extra` states is
+/// dropped from `base` first, because a repeated single-valued flag is refused at parse.
+fn stated_once(mut base: Vec<String>, extra: Vec<String>) -> Vec<String> {
+    for flag in extra.iter().filter(|a| a.starts_with("--")) {
+        while let Some(at) = base.iter().position(|a| a == flag) {
+            base.drain(at..=(at + 1).min(base.len() - 1));
+        }
+    }
+    base.extend(extra);
+    base
+}
+
 /// The flags every case below shares: enough to get through parsing and preflight, with
 /// a replay tier that cannot be opened — either because the backend is not compiled into
 /// this build, or because nothing answers on `127.0.0.1:1`. Startup therefore always
@@ -30,6 +42,7 @@ fn base_args(m: &Material) -> Vec<String> {
     [
         "--bind",
         "127.0.0.1:0",
+        "--allow-example-fixtures",
         "--audience",
         serving_fixtures::AUDIENCE,
         "--server-signer",
@@ -50,6 +63,8 @@ fn base_args(m: &Material) -> Vec<String> {
         &m.trust_path.to_string_lossy(),
         "--target-uri",
         serving_fixtures::TARGET_URI,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--trust-domain",
         serving_fixtures::TRUST_DOMAIN,
         "--inner-http-url",
@@ -127,7 +142,7 @@ fn enabling_trust_reload_changes_the_tier_line_and_the_reload_line_together() {
 }
 
 /// A push tier with no networked event source says so, immediately after the tier it
-/// qualifies — the honesty control that stops a deployment reading a near-zero
+/// qualifies — the honesty control that stops a deployment reading a pushed
 /// revocation window it is not actually getting.
 ///
 /// `--trust-reload-secs` is not incidental here: `push` (and `live`) are REFUSED without
@@ -522,9 +537,10 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
     let trust = m.trust_path.to_string_lossy().into_owned();
 
     let mk = |case: &[&str]| -> Vec<String> {
-        let mut v: Vec<String> = [
+        let v: Vec<String> = [
             "--bind",
             "127.0.0.1:0",
+            "--allow-example-fixtures",
             "--audience",
             AUDIENCE,
             "--server-signer",
@@ -547,6 +563,8 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
             &trust,
             "--target-uri",
             TARGET_URI,
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--trust-domain",
             TRUST_DOMAIN,
             "--inner-http-url",
@@ -559,8 +577,7 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
         .iter()
         .map(|s| s.to_string())
         .collect();
-        v.extend(case.iter().map(|s| s.to_string()));
-        v
+        stated_once(v, case.iter().map(|s| s.to_string()).collect())
     };
     let app_err = |argv: Vec<String>| -> String {
         let config = mcp_re_proxy::cli::parse_args(&argv).expect("args parse");
@@ -568,24 +585,33 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
         mcp_re_proxy::app::run(config, sd).expect_err("config must be refused before serving")
     };
 
+    // A non-file custody never reads a seed, so the argv names none.
+    let without_seed = |mut argv: Vec<String>| -> Vec<String> {
+        let at = argv
+            .iter()
+            .position(|a| a == "--signing-key-seed")
+            .expect("the base names a seed");
+        argv.drain(at..at + 2);
+        argv
+    };
     // Cloud/HSM key sources that are not compiled into this build fail closed.
-    assert!(app_err(mk(&[
+    assert!(app_err(without_seed(mk(&[
         "--key-source",
         "aws-kms",
         "--aws-kms-region",
         "r",
         "--aws-kms-key-id",
         "k"
-    ]))
+    ])))
     .contains("aws_kms"));
-    assert!(app_err(mk(&[
+    assert!(app_err(without_seed(mk(&[
         "--key-source",
         "gcp-kms",
         "--gcp-kms-key-version",
         "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
-    ]))
+    ])))
     .contains("gcp_kms"));
-    assert!(app_err(mk(&[
+    assert!(app_err(without_seed(mk(&[
         "--key-source",
         "pkcs11",
         "--pkcs11-module",
@@ -596,7 +622,7 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
         "t",
         "--pkcs11-key-label",
         "k",
-    ]))
+    ])))
     .to_lowercase()
     .contains("pkcs11"));
     // The linearizable (CP) tier needs a cpstore_etcd build. The Redis replay locator is
@@ -1006,9 +1032,8 @@ fn a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host() 
         "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
         "https://kms.emulator.svc.cluster.local:8443",
         "http://127.0.0.1:4566/",
-        "http://localhost:4566",
         "http://[::1]:4566",
-        "http://localhost",
+        "http://127.0.0.1",
     ] {
         for select in [
             aws_endpoint as fn(&mut mcp_re_proxy::deployment_request::DeploymentRequest, String),
@@ -1279,8 +1304,7 @@ fn pdp_flags(trust: &std::path::Path) -> Vec<String> {
 fn a_deployment_can_install_the_authorization_authority_and_the_transcript_declares_it() {
     let m = serving_fixtures::write_material();
     let trust = trust_with_authority(&m, true);
-    let mut args = base_args(&m);
-    args.extend(pdp_flags(&trust));
+    let args = stated_once(base_args(&m), pdp_flags(&trust));
     let t = startup_transcript::capture(&args);
     let _ = std::fs::remove_file(&trust);
 
@@ -1319,8 +1343,7 @@ fn a_configured_profile_with_no_enrolled_authority_refuses_to_start() {
     // The same key, enrolled for the REQUEST slot: present in the file, and not an
     // authority. This is the shape that would silently "work" if the slot were ignored.
     let trust = trust_with_authority(&m, false);
-    let mut args = base_args(&m);
-    args.extend(pdp_flags(&trust));
+    let args = stated_once(base_args(&m), pdp_flags(&trust));
     let t = startup_transcript::capture(&args);
     let _ = std::fs::remove_file(&trust);
 

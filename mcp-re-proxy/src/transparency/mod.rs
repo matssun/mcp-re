@@ -184,3 +184,27 @@ impl std::fmt::Display for RetentionError {
 }
 
 impl std::error::Error for RetentionError {}
+#[cfg(test)]
+mod tests {
+    use super::RetentionError;
+    use std::collections::HashSet;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn every_retention_fault_renders_its_own_operator_sentence() {
+        let store = RetentionError::Store(Error::from(ErrorKind::WouldBlock)).to_string();
+        let retired = RetentionError::StoreRetired(Error::from(ErrorKind::BrokenPipe)).to_string();
+        let unresolved = RetentionError::Unresolved(Error::from(ErrorKind::Other)).to_string();
+        let lines = [
+            store.clone(),
+            retired.clone(),
+            RetentionError::Malformed("fixture").to_string(),
+            RetentionError::AlreadyCompleted.to_string(),
+            unresolved.clone(),
+        ];
+        assert_eq!(lines.iter().collect::<HashSet<_>>().len(), 5);
+        assert!(unresolved.contains("could not be established or withdrawn"));
+        assert!(retired.contains("retired its writer"));
+        assert!(!store.contains("retired") && !store.contains("withdrawn"));
+    }
+}

@@ -14,7 +14,6 @@ pub(super) struct TotalStates {
     pub(super) audit: crate::config_state::AuditState,
     pub(super) in_flight_limit: crate::config_state::InFlightLimitBasis,
     pub(super) key_file_access: crate::config_state::KeyFileAccessPolicy,
-    pub(super) mcp_transport_contract: crate::config_state::McpTransportContractState,
     pub(super) retention: crate::config_state::RetentionState,
     pub(super) shard_topology: crate::config_state::ShardTopologyRequest,
     pub(super) topology: crate::config_state::DeploymentTopology,
@@ -35,7 +34,6 @@ pub(super) fn classify_total(config: &DeploymentRequest) -> TotalStates {
         verified_context,
         topology,
         shard_topology,
-        mcp_transport_contract: m::mcp_transport_contract::classify(config),
         // The request states one of three things and the default makes the third a basis
         // too; the illegal combination is not representable.
         in_flight_limit: m::in_flight_limit::classify(config),

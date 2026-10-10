@@ -19,8 +19,8 @@ pub fn content_digest_sha256(body: &[u8]) -> String {
 
 /// Verify that `header_value` is this profile's sha-256 digest of `body`.
 ///
-/// Fail-closed: the value must contain a well-formed `sha-256` member whose
-/// bytes equal the recomputed digest. Unknown additional members are ignored
+/// Fail-closed: the value must contain exactly one `sha-256` member, a bare byte
+/// sequence whose bytes equal the recomputed digest. Unknown additional members are ignored
 /// for verification (RFC 9530 permits multiple algorithms) but a wrong-valued
 /// `sha-256` member rejects, and a `Content-Digest` header that is present yet
 /// carries no `sha-256` member is malformed evidence (MCPRE-92) — a downgrade
@@ -30,38 +30,40 @@ pub fn verify_content_digest_sha256(
     body: &[u8],
 ) -> Result<(), HttpProfileError> {
     let expected = content_digest_sha256(body);
-    // Exact-member comparison: find a `sha-256=:...:` member among the
-    // comma-separated dictionary members and require byte equality with the
-    // recomputed serialization.
-    // A DUPLICATED `sha-256` member is malformed, not first-wins. RFC 8941 forbids a
-    // repeated dictionary key, and resolving it by taking the first meant one signed
-    // message could bind two different bodies: an intermediary appending a second
-    // member (or two implementations disagreeing on which to read) would have the same
-    // signature accept different content. Counted before any comparison, so the
-    // refusal does not depend on which one happened to match.
-    let members = header_value.split(',').filter(|m| {
-        let m = m.trim();
-        m.strip_prefix("sha-256=").is_some()
-    });
-    if members.count() > 1 {
+    let expected_value = expected.strip_prefix("sha-256=").unwrap_or(&expected);
+    // Framing and the duplicate-label refusal belong to the dictionary reader, which is
+    // quote- and escape-aware; a present header without a `sha-256` member is malformed
+    // (MCPRE-92), not absent.
+    let value = crate::verify::floor::sf_dictionary::member_value(header_value, "sha-256")
+        .map_err(|e| match e {
+            HttpProfileError::MissingEvidence(_) => {
+                HttpProfileError::MalformedEvidence("content-digest sha-256 member")
+            }
+            other => other,
+        })?;
+    if !is_bare_byte_sequence(value) {
         return Err(HttpProfileError::MalformedEvidence(
-            "content-digest carries more than one sha-256 member",
+            "content-digest sha-256 value",
         ));
     }
-    for member in header_value.split(',') {
-        let member = member.trim();
-        if member.starts_with("sha-256=") {
-            // Class B: compared whole. Byte equality of the members IS byte equality of
-            // what follows the prefix once both carry it, so nothing needs stripping.
-            if member == expected {
-                return Ok(());
-            }
-            return Err(HttpProfileError::ContentDigestMismatch);
-        }
+    if value == expected_value {
+        return Ok(());
     }
-    Err(HttpProfileError::MalformedEvidence(
-        "content-digest sha-256 member",
-    ))
+    Err(HttpProfileError::ContentDigestMismatch)
+}
+
+/// `:` + one or more base64 characters + `:`, with no parameters after it.
+fn is_bare_byte_sequence(value: &str) -> bool {
+    let Some(inner) = value
+        .strip_prefix(':')
+        .and_then(|rest| rest.strip_suffix(':'))
+    else {
+        return false;
+    };
+    !inner.is_empty()
+        && inner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '='))
 }
 
 #[cfg(test)]
@@ -90,5 +92,44 @@ mod tests {
         let err = verify_content_digest_sha256("sha-512=:AAAA:", b"x").unwrap_err();
         assert!(matches!(err, HttpProfileError::MalformedEvidence(_)));
         assert_eq!(err.wire_code(), "mcp-re.malformed_envelope");
+    }
+
+    fn malformed(header: &str, body: &[u8]) -> bool {
+        matches!(
+            verify_content_digest_sha256(header, body),
+            Err(HttpProfileError::MalformedEvidence(_))
+        )
+    }
+
+    #[test]
+    fn duplicate_sha256_member_is_malformed_in_either_order() {
+        let body = b"one";
+        let good = content_digest_sha256(body);
+        let bad = content_digest_sha256(b"two");
+        assert!(malformed(&format!("{good}, {bad}"), body));
+        assert!(malformed(&format!("{bad}, {good}"), body));
+    }
+
+    #[test]
+    fn sha256_text_inside_a_quoted_parameter_is_not_a_member() {
+        let body = b"one";
+        let good = content_digest_sha256(body);
+        assert!(malformed(&format!("unknown=?1;p=\"a,{good},b\""), body));
+    }
+
+    #[test]
+    fn genuine_member_beside_a_quoted_comma_is_read_once() {
+        let body = b"one";
+        let good = content_digest_sha256(body);
+        let bad = content_digest_sha256(b"two");
+        verify_content_digest_sha256(&format!("unknown=?1;p=\"x,{bad}\", {good}"), body)
+            .expect("one genuine member");
+    }
+
+    #[test]
+    fn parameterised_sha256_member_is_malformed_not_mismatch() {
+        let body = b"one";
+        let good = content_digest_sha256(body);
+        assert!(malformed(&format!("{good};q=1"), body));
     }
 }

@@ -25,39 +25,49 @@
 //! consent to serve it. That is why the supported-version set lives here and not
 //! on the wire.
 //!
-//! **`allow_legacy_header_omission` gates ABSENCE only, never agreement.** A
-//! deployment that still serves pre-2026-07-28 clients sets it: a request that
-//! omits these headers is then treated as a legacy client rather than rejected.
-//! Whatever headers such a request DOES carry are still validated in full — the
-//! flag waives "you must send it", never "it may lie".
+//! **The contract is mandatory.** A deployment cannot opt out of it and no waiver lets a
+//! request omit a header it requires: presence, version and agreement are checked for every
+//! request the verifier admits.
 
 use serde_json::Value;
 
 use crate::error::HttpProfileError;
+use crate::ids::MCP_METHOD_HEADER;
+use crate::ids::MCP_NAME_HEADER;
 use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
-use crate::mcp_name_source::mcp_name_source;
-use crate::mcp_name_source::McpNameSource;
 use crate::message::single_header;
 use crate::message::HttpRequest;
 
 /// The bodied contract: three covered headers, each checked against the protected body it
 /// claims to describe.
 mod agreement;
+/// The producer's half: the three headers a signed request carries, derived from its body.
+mod request_headers;
+pub(crate) use request_headers::add_contract_headers;
+pub use request_headers::MCP_PROTOCOL_VERSION;
 
 /// The verifier-local MCP transport contract (§4.1).
 ///
-/// Construct with [`McpTransportPolicy::mcp_2026_07_28`] for the strict per-request
-/// contract, or build one field-by-field for a mixed-version deployment. All fields
-/// are private and read-only after construction.
+/// [`McpTransportPolicy::mcp_2026_07_28`] is the only constructor; it takes the
+/// deployment's accepted protocol-version set. All fields are private and read-only after
+/// construction: no method derives a policy with a different set from an existing one.
+///
+/// ```compile_fail
+/// use mcp_re_http_profile::McpTransportPolicy;
+/// let _ = McpTransportPolicy::profile_default().with_supported_versions(&["1999-01-01"]);
+/// ```
+///
+/// Enforcement is the verifier's, after the signature, and is not callable from outside:
+///
+/// ```compile_fail
+/// use mcp_re_http_profile::{HttpRequest, McpTransportPolicy};
+/// fn hostile(policy: &McpTransportPolicy, unverified: &HttpRequest) {
+///     let _ = policy.enforce(unverified);
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct McpTransportPolicy {
     supported_protocol_versions: Vec<String>,
-    require_protocol_version_header: bool,
-    require_mcp_method: bool,
-    /// `(method, where its Mcp-Name must agree)` — the methods for which `Mcp-Name`
-    /// is mandatory and what it binds to.
-    mcp_name_required: Vec<(String, McpNameSource)>,
-    allow_legacy_header_omission: bool,
     /// The `_meta` key carrying the protocol version in the body, checked under
     /// top-level `_meta` and under `params._meta`.
     protocol_version_body_key: String,
@@ -65,9 +75,10 @@ pub struct McpTransportPolicy {
 
 impl McpTransportPolicy {
     /// The strict 2026-07-28 per-request contract: `Mcp-Method` and
-    /// `MCP-Protocol-Version` mandatory on every POST, `Mcp-Name` mandatory for
-    /// `tools/call` (→ `params.name`) and `resources/read` (→ `params.uri`), no
-    /// legacy omission. `supported_versions` is the deployment's accepted set —
+    /// `MCP-Protocol-Version` mandatory on every POST, `Mcp-Name` mandatory for every
+    /// method the protocol table ([`McpMethodTarget`](crate::mcp_name_source::McpMethodTarget))
+    /// says names a target, and agreeing with the params member it names it under.
+    /// `supported_versions` is the deployment's accepted set —
     /// its consent, not the client's claim.
     pub fn mcp_2026_07_28(supported_versions: &[&str]) -> Self {
         McpTransportPolicy {
@@ -75,31 +86,14 @@ impl McpTransportPolicy {
                 .iter()
                 .map(|s| (*s).to_owned())
                 .collect(),
-            require_protocol_version_header: true,
-            require_mcp_method: true,
-            // Built from the protocol fact rather than restated, so the contract and the
-            // authorization coordinate can never disagree about where a target is named.
-            mcp_name_required: ["tools/call", "resources/read"]
-                .into_iter()
-                .filter_map(|m| mcp_name_source(m).map(|s| (m.to_owned(), s)))
-                .collect(),
-            allow_legacy_header_omission: false,
             protocol_version_body_key: "io.modelcontextprotocol/protocolVersion".to_owned(),
         }
     }
 
-    /// A mixed-version deployment: the same contract, but a request omitting the
-    /// transport headers is served as a legacy client rather than rejected.
-    /// Present headers are still validated in full.
-    pub fn with_legacy_header_omission(mut self, allow: bool) -> Self {
-        self.allow_legacy_header_omission = allow;
-        self
-    }
-
-    /// Override the accepted protocol-version set.
-    pub fn with_supported_versions(mut self, versions: &[&str]) -> Self {
-        self.supported_protocol_versions = versions.iter().map(|s| (*s).to_owned()).collect();
-        self
+    /// The contract a [`VerifierPolicy`](crate::VerifierPolicy) carries until a deployment
+    /// names its accepted versions: this profile's own protocol version.
+    pub fn profile_default() -> Self {
+        Self::mcp_2026_07_28(&[MCP_PROTOCOL_VERSION])
     }
 
     /// Enforce the part of the transport contract that applies to a VERIFIED request
@@ -107,41 +101,52 @@ impl McpTransportPolicy {
     ///
     /// [`enforce`](Self::enforce) cannot serve this shape: it parses the body first,
     /// and every one of its agreement checks compares a covered header against a
-    /// covered body member that does not exist here. The arms that survive the loss of
-    /// a body are exactly the ones that constrain the header on its own — the
-    /// supported-version set — so those are what this applies.
+    /// covered body member that does not exist here. What survives the loss of a body:
     ///
-    /// `Mcp-Method` and `Mcp-Name` presence is deliberately NOT required here even
-    /// when the deployment requires it for POSTs. Those requirements exist so a header
-    /// can be checked against the body it claims to describe; demanding them of a
-    /// message with nothing to describe would refuse conforming GETs and DELETEs.
-    /// A version header that IS present must still name a version the deployment
-    /// accepts, because that check never needed a body.
-    pub fn enforce_bodyless(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {
-        if let Some(h) = single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)? {
-            let v = h.trim();
-            if !self.supported_protocol_versions.iter().any(|s| s == v) {
-                return Err(HttpProfileError::McpProtocolVersionUnsupported);
-            }
+    /// - `MCP-Protocol-Version` never needed one. It is required on this shape exactly as
+    ///   on a POST, and must name a version the deployment accepts.
+    /// - `Mcp-Method` and `Mcp-Name` describe a body. Here there is none for them to agree
+    ///   with, so a covered one would be an unconstrained routing claim: it is refused,
+    ///   not passed through. Their absence is what a conforming GET or DELETE sends.
+    ///
+    /// Crate-private: the one caller, `bodyless::verify_bodyless_request`, runs it after
+    /// the signature verified, so every header it reads is covered.
+    pub(crate) fn enforce_bodyless(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {
+        for routing in [MCP_METHOD_HEADER, MCP_NAME_HEADER] {
+            single_header(&request.headers, routing)?.map_or(Ok(()), |_| {
+                Err(HttpProfileError::McpTransportDivergence(routing))
+            })?;
+        }
+        let Some(h) = single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)? else {
+            return Err(HttpProfileError::McpTransportHeaderMissing(
+                MCP_PROTOCOL_VERSION_HEADER,
+            ));
+        };
+        if !self
+            .supported_protocol_versions
+            .iter()
+            .any(|s| s == h.trim())
+        {
+            return Err(HttpProfileError::McpProtocolVersionUnsupported);
         }
         Ok(())
     }
 
-    /// Find the protocol version the body declares, under top-level `_meta` or
-    /// `params._meta`. Absent → agreement is not checkable (the header presence and
+    /// Every protocol version the body states, under top-level `_meta` and under
+    /// `params._meta`. None stated → agreement is not checkable (the header presence and
     /// supported-set checks still apply); this mirrors the method-divergence rule,
     /// which also does nothing when there is no body value to disagree with.
-    fn body_protocol_version<'a>(
-        &self,
+    fn body_protocol_versions<'a>(
+        &'a self,
         body: &'a Value,
         params: Option<&'a Value>,
-    ) -> Option<&'a str> {
-        let from = |v: &'a Value| -> Option<&'a str> {
+    ) -> impl Iterator<Item = &'a str> + 'a {
+        let from = move |v: &'a Value| -> Option<&'a str> {
             v.get("_meta")
                 .and_then(|m| m.get(&self.protocol_version_body_key))
                 .and_then(Value::as_str)
         };
-        from(body).or_else(|| params.and_then(from))
+        [Some(body), params].into_iter().flatten().filter_map(from)
     }
 }
 
@@ -203,16 +208,6 @@ mod tests {
         );
         assert_eq!(
             strict().enforce(&r).unwrap_err(),
-            HttpProfileError::McpTransportHeaderMissing("mcp-protocol-version"),
-        );
-
-        // Carrying SOME transport headers is not legacy: the same request is
-        // refused by a deployment that permits legacy omission.
-        assert_eq!(
-            strict()
-                .with_legacy_header_omission(true)
-                .enforce(&r)
-                .unwrap_err(),
             HttpProfileError::McpTransportHeaderMissing("mcp-protocol-version"),
         );
     }
@@ -321,6 +316,37 @@ mod tests {
         );
     }
 
+    /// The bodyless contract requires the version header a POST requires, and refuses the
+    /// routing headers a body would be needed to check.
+    #[test]
+    fn a_bodyless_request_states_a_supported_version_and_no_routing_header() {
+        let bodyless = |headers: Vec<(&str, &str)>| strict().enforce_bodyless(&req(headers, ""));
+        assert_eq!(
+            bodyless(vec![("MCP-Protocol-Version", "2026-07-28")]),
+            Ok(())
+        );
+        assert_eq!(
+            bodyless(vec![]),
+            Err(HttpProfileError::McpTransportHeaderMissing(
+                "mcp-protocol-version"
+            )),
+        );
+        assert_eq!(
+            bodyless(vec![("MCP-Protocol-Version", "2025-06-18")]),
+            Err(HttpProfileError::McpProtocolVersionUnsupported),
+        );
+        for (routing, refused) in [("Mcp-Method", "mcp-method"), ("Mcp-Name", "mcp-name")] {
+            assert_eq!(
+                bodyless(vec![
+                    ("MCP-Protocol-Version", "2026-07-28"),
+                    (routing, "tools/call")
+                ]),
+                Err(HttpProfileError::McpTransportDivergence(refused)),
+                "{routing}"
+            );
+        }
+    }
+
     #[test]
     fn a_params_meta_version_divergence_is_rejected() {
         // No top-level `_meta`: the body states its protocol version only under
@@ -340,27 +366,26 @@ mod tests {
     }
 
     #[test]
-    fn legacy_omission_waives_absence_but_never_agreement() {
-        let policy = strict().with_legacy_header_omission(true);
-
-        // A request with NONE of the headers is served as legacy.
-        let bare = req(
-            vec![],
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
-        );
-        policy
-            .enforce(&bare)
-            .expect("legacy client omitting all headers is accepted");
-
-        // But a legacy-eligible deployment still rejects a PRESENT header that lies.
-        let lying = req(
-            vec![("Mcp-Method", "tools/list")],
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
+    fn a_params_meta_version_contradicting_an_agreeing_top_level_meta_is_rejected() {
+        let headers = || {
+            vec![
+                ("Mcp-Method", "tools/call"),
+                ("Mcp-Name", "read"),
+                ("MCP-Protocol-Version", "2026-07-28"),
+            ]
+        };
+        let split = req(
+            headers(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"},"params":{"name":"read","_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18"}}}"#,
         );
         assert_eq!(
-            policy.enforce(&lying).unwrap_err(),
-            HttpProfileError::McpMethodDivergence,
-            "the flag waives 'must send', never 'may lie'"
+            strict().enforce(&split).unwrap_err(),
+            HttpProfileError::McpTransportDivergence("mcp-protocol-version"),
         );
+        let agreeing = req(
+            headers(),
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"},"params":{"name":"read","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#,
+        );
+        assert!(strict().enforce(&agreeing).is_ok());
     }
 }

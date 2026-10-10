@@ -89,7 +89,7 @@ ALLOW_NAMING_COLLISION = {
 # generated Bazel target would compile empty (misleading) or attempt real cloud
 # calls in CI. Cargo-only. Some ({aws,gcp}_kms_http_profile_live_test,
 # {aws,gcp}_kms_delegated_signing_live_test) also carry a hermetic
-# `for_test_with_local_seed` offline lane; those modules are compiled into
+# local-key offline lane; those modules are compiled into
 # :integration_live_test, where the offline lanes run and the live ones stay ignored.
 #
 # NOT allowlisted, and deliberately so: `aws_irsa_web_identity_test`. It drives the

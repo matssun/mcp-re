@@ -37,6 +37,7 @@ use std::thread;
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
 
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::FileKeySource;
@@ -136,6 +137,7 @@ impl MockToken {
             "EC:edwards25519" | "ed25519" => "ed25519",
             "EC:prime256v1" | "ec" => "ec",
             "ed25519-misbound" => "ed25519-misbound",
+            "ed25519-extractable" => "ed25519-extractable",
             other => panic!("unsupported mock key type {other:?}"),
         };
         self.objects.push(format!("{label},{kt},{id}"));
@@ -240,6 +242,37 @@ fn pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify() {
     }
 }
 
+/// A TLS key object whose `C_Sign` result does not verify against its own advertised
+/// public key is refused before the signature is returned.
+#[test]
+fn pkcs11_tls_signer_refuses_a_token_signature_that_does_not_verify() {
+    let module = mock_module();
+    let _guard = provisioning_lock();
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcp-re-response-signing", "01");
+    token.keygen("ed25519-misbound", "mcp-re-tls", "02");
+
+    let source = Pkcs11KeySource::open(
+        &module,
+        &token.pin,
+        &token.token_label,
+        "mcp-re-response-signing",
+        placeholder_tls(),
+        Some("mcp-re-tls"),
+    )
+    .expect("startup reads only the public point");
+    let signer = source.tls_delegated_signer().expect("delegated signer");
+
+    match signer.sign_tls_ed25519(b"tls handshake transcript") {
+        Err(KeyError::Malformed(m)) => assert!(
+            m.contains("did NOT verify"),
+            "the refusal must name the verification failure, got {m:?}"
+        ),
+        Err(_) => panic!("an unverifiable token signature must be Malformed"),
+        Ok(_) => panic!("an unverifiable token signature must never be emitted"),
+    }
+}
+
 /// The TLS key and the response-signing key are distinct principals: naming one
 /// token object for both is refused at the constructor.
 #[test]
@@ -260,6 +293,56 @@ fn pkcs11_tls_label_equal_to_response_label_is_refused() {
     assert!(
         matches!(result, Err(KeyError::Malformed(_))),
         "one token object may not custody both the TLS key and the response-signing key"
+    );
+}
+
+/// The response-signing key must be one the token binds: a private key object the token
+/// reports as extractable or not sensitive is refused at open, naming both attributes.
+#[test]
+fn pkcs11_a_response_key_the_token_would_export_is_refused() {
+    let module = mock_module();
+    let _guard = provisioning_lock();
+    let mut token = MockToken::init();
+    token.keygen("ed25519-extractable", "mcp-re-sign", "01");
+
+    let result = Pkcs11KeySource::open(
+        &module,
+        &token.pin,
+        &token.token_label,
+        "mcp-re-sign",
+        placeholder_tls(),
+        None,
+    );
+    match result {
+        Err(KeyError::Malformed(msg)) => assert!(
+            msg.contains("CKA_SENSITIVE=false") && msg.contains("CKA_EXTRACTABLE=true"),
+            "the refusal must name the custody attributes, got: {msg}"
+        ),
+        Err(_) => panic!("an exportable response key must be refused as Malformed"),
+        Ok(_) => panic!("an exportable response key must be refused at open"),
+    }
+}
+
+/// The same for the TLS key: a delegated TLS key the token would export is refused at open.
+#[test]
+fn pkcs11_a_tls_key_the_token_would_export_is_refused() {
+    let module = mock_module();
+    let _guard = provisioning_lock();
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcp-re-sign", "01");
+    token.keygen("ed25519-extractable", "mcp-re-tls", "02");
+
+    let result = Pkcs11KeySource::open(
+        &module,
+        &token.pin,
+        &token.token_label,
+        "mcp-re-sign",
+        placeholder_tls(),
+        Some("mcp-re-tls"),
+    );
+    assert!(
+        matches!(result, Err(KeyError::Malformed(ref msg)) if msg.contains("CKA_EXTRACTABLE=true")),
+        "an exportable TLS key must be refused at open"
     );
 }
 
@@ -332,6 +415,22 @@ impl Ca {
     }
 }
 
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(
+        std::time::Duration::from_secs(3600),
+        std::time::Duration::from_secs(300),
+    )
+    .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - std::time::Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + std::time::Duration::from_secs(1800)).into();
+}
+
 fn make_ca() -> Ca {
     let key = KeyPair::generate().expect("ca key");
     let mut params =
@@ -368,6 +467,7 @@ fn make_client_leaf(ca: &Ca, uri: &str) -> (Vec<CertificateDer<'static>>, Privat
     let mut params = CertificateParams::new(Vec::new()).expect("client params");
     params.subject_alt_names = vec![SanType::URI(uri.try_into().expect("uri"))];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    short_lived(&mut params);
     let cert = params
         .signed_by(&key, &ca.issuer())
         .expect("client leaf signed");
@@ -485,9 +585,12 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
     let server_key = remote_subject_key_from_spki(&spki);
     let ca = make_ca();
     let server_cert = make_server_leaf_for(&ca, &server_key);
-    TlsListenerSecurityState::new(vec![ca.cert.der().clone()])
-        .build_delegated_config(vec![server_cert], signer, Vec::new())
-        .expect("matching cert must build the validated delegated config");
+    TlsListenerSecurityState::new(
+        vec![ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_delegated_config(vec![server_cert], signer, Vec::new())
+    .expect("matching cert must build the validated delegated config");
 }
 
 /// (b) The validated build path (#58) FAILS CLOSED for the PKCS#11 signer when the
@@ -515,11 +618,11 @@ fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
     let other = gen_ed25519();
     let ca = make_ca();
     let mismatching_cert = make_server_leaf_for(&ca, &other);
-    let result = TlsListenerSecurityState::new(vec![ca.cert.der().clone()]).build_delegated_config(
-        vec![mismatching_cert],
-        signer,
-        Vec::new(),
-    );
+    let result = TlsListenerSecurityState::new(
+        vec![ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_delegated_config(vec![mismatching_cert], signer, Vec::new());
     assert!(
         matches!(result, Err(TlsError::DelegatedKeyMismatch(_))),
         "a cert whose key differs from the token TLS key must fail closed, got {result:?}"
@@ -616,9 +719,12 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
     let server_key = remote_subject_key_from_spki(&spki);
     let server_cert = make_server_leaf_for(&server_ca, &server_key);
     let server_config = Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_delegated_config(vec![server_cert], signer, Vec::new())
-            .expect("validated delegated server config (cert matches token key)"),
+        TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_delegated_config(vec![server_cert], signer, Vec::new())
+        .expect("validated delegated server config (cert matches token key)"),
     );
 
     let (client_chain, client_key) = make_client_leaf(&client_ca, "spiffe://example.org/agent-1");
@@ -629,7 +735,7 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
         serve_once(
             &listener,
             server_config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, _identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()

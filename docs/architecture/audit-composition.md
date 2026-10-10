@@ -449,8 +449,16 @@ decision*. That is not the `Off == Allow` ambiguity — nothing claims anything.
 The only emitting sink formats a flat line:
 
 ```text
-mcp-re-proxy: audit seq=… event=… decision=… reason=… actor=… status=… at=…
+mcp-re-proxy: audit stream started run=…
+mcp-re-proxy: audit seq=… run=… event=… decision=… reason=… actor=… status=… at=…
+mcp-re-proxy: audit dropped=… run=… (…)
+mcp-re-proxy: audit stream drained at shutdown run=…: …
 ```
+
+A record's position is `(run, seq)`. `run` is 128 random bits drawn once per process, and
+`seq` counts from 0 within that run, so two runs' records stay distinguishable in one
+collector and `seq` orders records only within a run. A run with a start line and no shutdown
+line ended with an unknown tail.
 
 There is **no JSON audit record anywhere in the product**. `security-boundary.md` §9 shows
 `{ "event_type": …, "reason": … }`, but that example illustrates the *vocabulary*, not a wire

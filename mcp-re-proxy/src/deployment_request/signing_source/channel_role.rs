@@ -77,3 +77,23 @@ pub enum DelegatedChannelKeyRequest {
     /// A second, distinct GCP Cloud KMS key version.
     GcpKms(GcpKmsChannelKeyRequest),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_channel_key_is_an_exported_file_naming_nothing() {
+        let nothing = ChannelKeyRequest::ExportedFile(ExportedChannelKeyRequest {
+            key_path: String::new(),
+        });
+        assert_eq!(ChannelKeyRequest::default(), nothing);
+        assert_eq!(
+            ChannelCredentialRequest::default(),
+            ChannelCredentialRequest {
+                credential_chain: String::new(),
+                key: nothing,
+            }
+        );
+    }
+}

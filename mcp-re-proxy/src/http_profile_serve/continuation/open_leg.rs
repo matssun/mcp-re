@@ -7,14 +7,15 @@
 
 use mcp_re_core::McpReError;
 
-use crate::continuation_store::continuation_key;
+use crate::continuation_store::ContinuationKey;
 use crate::continuation_store::Creation;
-use crate::continuation_store::RetainedBases;
+use crate::continuation_store::RetainedHandles;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 
 /// The event a recorded open leg establishes, by the short name the match arm needs.
 const OPEN_LEG_RECORDED: ExchangeEvent = ExchangeEvent::OpenLegRecorded;
+use crate::http_profile_serve::retention::fault_report::{report, Fault};
 use crate::http_profile_serve::Exchange;
 use crate::refusal::Refusal;
 
@@ -28,12 +29,17 @@ use super::ContinuationPlane;
 /// unbounded stall in front of a response the backend has already produced.
 const RECORD_ATTEMPTS: usize = 3;
 
+/// What a full live set is reported as.
+const AT_CAPACITY: &str = "the continuation store holds its --continuation-max-live-entries \
+                           of live entries";
+
 impl ContinuationPlane {
     /// CONTINUATION-RECORDED — make an open leg answerable on any replica.
     ///
     /// ```text
-    /// ensures   Ok  => the retained bases THIS leg produced are in the shared tier
-    ///           Err => 503 (shared tier unavailable) or 409 (the key is taken), bound
+    /// ensures   Ok  => the retained handles THIS leg produced are in the shared tier
+    ///           Err => 503 (shared tier unavailable or at its live-entry bound) or
+    ///                  409 (the key is taken), bound
     /// refusal   NOT free
     /// ```
     ///
@@ -60,7 +66,7 @@ impl ContinuationPlane {
     /// [`McpReError::ReplayCacheUnavailable`] at 503 means the tier could not answer and a
     /// retry may well work. [`McpReError::ContinuationConflict`] at 409 means it answered,
     /// correctly, that the key is taken — so a retry finds the same thing, and 503's
-    /// "try again" would be advice that cannot come true. Both are `after_admission`: the
+    /// "try again" would be advice that cannot come true. Both are served past the accepted record: the
     /// backend produced the elicitation before either could be reached, so the exchange
     /// machine's `possibly_executed` disposition stands over both and neither token may be
     /// read as "nothing ran".
@@ -80,33 +86,36 @@ impl ContinuationPlane {
         // The dependent leg does fail closed either way. What it cannot do is fail closed
         // in TIME, which is why the refusal belongs here.
         let Some(store) = &self.store else {
-            return Err(Refusal::after_admission(
-                McpReError::ReplayCacheUnavailable,
-                503,
-            ));
+            return Err(Refusal::new(McpReError::ReplayCacheUnavailable, 503));
         };
-        let bases = RetainedBases {
-            previous_request_base: ex.verified.request_signature_base().to_vec(),
-            input_required_response_base: response_base,
-        };
-        let key = continuation_key(audience_id, ex.actor_id, state.as_bytes());
+        let bases = RetainedHandles::over(ex.verified.request_signature_base(), &response_base);
+        let key = ContinuationKey::for_request(audience_id, ex.verified, state.as_bytes());
         // Named so the arm below stays an EXPRESSION: a block arm is a nesting level, and
         // this function is inside a loop inside a method already.
-        let conflict = || Refusal::after_admission(McpReError::ContinuationConflict, 409);
+        let conflict = || Refusal::new(McpReError::ContinuationConflict, 409);
+        // A full live set is the store answering, not an outage, so it is not retried: the
+        // slots free as entries are answered or expire, not in the microseconds a retry
+        // spends. It is reported, since an operator sizing the bound needs to see it.
+        let full = || {
+            report(
+                Fault::ContinuationRecord,
+                "record the open leg",
+                &AT_CAPACITY,
+            );
+            Refusal::new(McpReError::ReplayCacheUnavailable, 503)
+        };
         // Arms as expressions, not blocks: `Err` spends an attempt (the transient case the
         // budget exists for), `Collision` stops immediately (a taken key answers the same
         // way every time), `Stored` is the only way out with an answerable leg.
         for _ in 0..RECORD_ATTEMPTS {
-            match store.create(&key, &bases, self.ttl_secs).await {
+            match store.create(&key, &bases, i64::from(self.ttl.get())).await {
                 Ok(Creation::Stored) => return Ok(Established::new((), OPEN_LEG_RECORDED)),
                 Ok(Creation::Collision) => return Err(conflict()),
-                Err(_) => (),
+                Ok(Creation::AtCapacity) => return Err(full()),
+                Err(e) => report(Fault::ContinuationRecord, "record the open leg", &e),
             }
         }
-        Err(Refusal::after_admission(
-            McpReError::ReplayCacheUnavailable,
-            503,
-        ))
+        Err(Refusal::new(McpReError::ReplayCacheUnavailable, 503))
     }
 }
 
@@ -126,13 +135,13 @@ mod tests {
         use super::super::answer_leg::tests as fixtures;
         use std::sync::Mutex;
 
-        struct CapturingStore(Mutex<Vec<String>>);
+        struct CapturingStore(Mutex<Vec<ContinuationKey>>);
 
         impl crate::continuation_store::AsyncContinuationStore for CapturingStore {
             fn create<'a>(
                 &'a self,
-                key: &'a str,
-                _bases: &'a RetainedBases,
+                key: &'a ContinuationKey,
+                _bases: &'a RetainedHandles,
                 _ttl_secs: i64,
             ) -> crate::continuation_store::ContinuationFuture<'a, Creation> {
                 self.0.lock().expect("keys").push(key.to_owned());
@@ -141,22 +150,28 @@ mod tests {
 
             fn peek<'a>(
                 &'a self,
-                _key: &'a str,
-            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>>
+                _key: &'a ContinuationKey,
+            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>>
             {
                 Box::pin(async { Ok(None) })
             }
 
             fn consume<'a>(
                 &'a self,
-                _key: &'a str,
-            ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
-                Box::pin(async { Ok(false) })
+                _key: &'a ContinuationKey,
+            ) -> crate::continuation_store::ContinuationFuture<
+                'a,
+                crate::continuation_store::Consumption,
+            > {
+                Box::pin(async { Ok(crate::continuation_store::Consumption::NoLiveEntry) })
             }
         }
 
         let store = std::sync::Arc::new(CapturingStore(Mutex::new(Vec::new())));
-        let plane = ContinuationPlane::wired(store.clone(), 300);
+        let plane = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
         let verified = fixtures::verified_as("did:example:host-a", "key-1");
         let actor_id = verified.resolved_actor().actor_id();
         let http_req = fixtures::http_request(fixtures::BODY_ASSERTING_ANOTHER_ACTOR);
@@ -165,7 +180,6 @@ mod tests {
             verified: &verified,
             actor_id: &actor_id,
             now: 1,
-            key: None,
             verdicts: Default::default(),
         };
 
@@ -177,18 +191,14 @@ mod tests {
 
         assert_eq!(
             store.0.lock().expect("keys").clone(),
-            vec![continuation_key(
-                "aud",
-                &verified.resolved_actor().actor_id(),
-                b"s-1"
-            )]
+            vec![ContinuationKey::for_request("aud", &verified, b"s-1")]
         );
     }
 
     /// R11-348 — a COLLISION fails the leg closed, and does not spend the retry budget.
     ///
     /// The two halves are one property. Failing closed is what keeps an answerable
-    /// continuation from being returned over another approval's retained bases; doing it
+    /// continuation from being returned over another approval's retained handles; doing it
     /// on the FIRST answer is what distinguishes a collision from the transient fault the
     /// budget exists for. A retrying implementation would still refuse in the end, so a
     /// test that only checked the refusal would pass over the wrong behaviour — hence the
@@ -204,8 +214,8 @@ mod tests {
         impl crate::continuation_store::AsyncContinuationStore for CollidingStore {
             fn create<'a>(
                 &'a self,
-                _key: &'a str,
-                _bases: &'a RetainedBases,
+                _key: &'a ContinuationKey,
+                _bases: &'a RetainedHandles,
                 _ttl_secs: i64,
             ) -> crate::continuation_store::ContinuationFuture<'a, Creation> {
                 self.0.fetch_add(1, Ordering::SeqCst);
@@ -214,22 +224,28 @@ mod tests {
 
             fn peek<'a>(
                 &'a self,
-                _key: &'a str,
-            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>>
+                _key: &'a ContinuationKey,
+            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>>
             {
                 Box::pin(async { Ok(None) })
             }
 
             fn consume<'a>(
                 &'a self,
-                _key: &'a str,
-            ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
-                Box::pin(async { Ok(false) })
+                _key: &'a ContinuationKey,
+            ) -> crate::continuation_store::ContinuationFuture<
+                'a,
+                crate::continuation_store::Consumption,
+            > {
+                Box::pin(async { Ok(crate::continuation_store::Consumption::NoLiveEntry) })
             }
         }
 
         let store = std::sync::Arc::new(CollidingStore(AtomicUsize::new(0)));
-        let plane = ContinuationPlane::wired(store.clone(), 300);
+        let plane = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
         let verified = fixtures::verified_as("did:example:host-a", "key-1");
         let actor_id = verified.resolved_actor().actor_id();
         let http_req = fixtures::http_request(fixtures::BODY_ASSERTING_ANOTHER_ACTOR);
@@ -238,7 +254,6 @@ mod tests {
             verified: &verified,
             actor_id: &actor_id,
             now: 1,
-            key: None,
             verdicts: Default::default(),
         };
 
@@ -248,7 +263,7 @@ mod tests {
         // `Established<()>` is deliberately not `Debug` (it is a capability, not data), so
         // the refusal is taken by pattern rather than by `expect_err`.
         let Err(refusal) = outcome else {
-            panic!("a leg whose bases were not retained must never be returned as answerable")
+            panic!("a leg whose handles were not retained must never be returned as answerable")
         };
         // The token is the point, not merely that it refused. A collision reported as
         // `replay_cache_unavailable`/503 tells a client the tier is down and to retry —
@@ -257,10 +272,6 @@ mod tests {
         assert_eq!(refusal.status, 409);
         // Past the execution threshold, so the exchange machine's disposition stands: the
         // token must not be readable as "the backend did not run".
-        assert_eq!(
-            refusal.posture,
-            crate::refusal::RefusalPosture::AfterAdmission
-        );
         assert_eq!(refusal.execution_refinement, None);
         assert_eq!(
             store.0.load(Ordering::SeqCst),
@@ -269,11 +280,126 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_record_budget_is_bounded_and_small() {
-        // The bound is the point: past the execution threshold an unbounded retry would
-        // stall a response the backend has already produced, while zero retries would fail
-        // a leg on a blip the tier answered microseconds earlier.
-        assert_eq!(RECORD_ATTEMPTS, 3);
+    /// Runs `record_open_leg` over `plane` for the standard fixture exchange.
+    async fn record_over(plane: &ContinuationPlane) -> crate::refusal::Refusal {
+        use super::super::answer_leg::tests as fixtures;
+
+        let verified = fixtures::verified_as("did:example:host-a", "key-1");
+        let actor_id = verified.resolved_actor().actor_id();
+        let http_req = fixtures::http_request(fixtures::BODY_ASSERTING_ANOTHER_ACTOR);
+        let ex = Exchange {
+            http_req: &http_req,
+            verified: &verified,
+            actor_id: &actor_id,
+            now: 1,
+            verdicts: Default::default(),
+        };
+        let outcome = plane
+            .record_open_leg(&ex, "aud", "s-1", b"irr".to_vec())
+            .await;
+        // `Established<()>` is deliberately not `Debug`, so the refusal is taken by pattern.
+        let Err(refusal) = outcome else {
+            panic!("a leg whose handles were not retained must never be returned as answerable")
+        };
+        refusal
+    }
+
+    fn assert_unavailable_after_admission(refusal: &crate::refusal::Refusal) {
+        assert_eq!(refusal.cause.wire_code(), "mcp-re.replay_cache_unavailable");
+        assert_eq!(refusal.status, 503);
+        assert_eq!(refusal.execution_refinement, None);
+    }
+
+    /// The loop honours `RECORD_ATTEMPTS`: past the execution threshold an unbounded retry
+    /// would stall a response the backend has already produced, while zero retries would
+    /// fail a leg on a blip the tier answered microseconds earlier.
+    #[tokio::test]
+    async fn the_record_budget_is_bounded_and_small() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::atomic::Ordering;
+
+        struct FailingStore(AtomicUsize);
+
+        impl crate::continuation_store::AsyncContinuationStore for FailingStore {
+            fn create<'a>(
+                &'a self,
+                _key: &'a ContinuationKey,
+                _bases: &'a RetainedHandles,
+                _ttl_secs: i64,
+            ) -> crate::continuation_store::ContinuationFuture<'a, Creation> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async {
+                    Err(
+                        crate::continuation_store::ContinuationStoreError::Unavailable {
+                            details: "down".to_owned(),
+                        },
+                    )
+                })
+            }
+
+            fn peek<'a>(
+                &'a self,
+                _key: &'a ContinuationKey,
+            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedHandles>>
+            {
+                Box::pin(async { Ok(None) })
+            }
+
+            fn consume<'a>(
+                &'a self,
+                _key: &'a ContinuationKey,
+            ) -> crate::continuation_store::ContinuationFuture<
+                'a,
+                crate::continuation_store::Consumption,
+            > {
+                Box::pin(async { Ok(crate::continuation_store::Consumption::NoLiveEntry) })
+            }
+        }
+
+        let store = std::sync::Arc::new(FailingStore(AtomicUsize::new(0)));
+        let plane = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
+        let refusal = record_over(&plane).await;
+        assert_unavailable_after_admission(&refusal);
+        assert_eq!(store.0.load(Ordering::SeqCst), RECORD_ATTEMPTS);
+        assert!((2..=5).contains(&RECORD_ATTEMPTS));
+    }
+
+    /// A full store refuses the leg with the retryable 503 on its FIRST answer, records
+    /// nothing, and leaves the incumbent entries alone.
+    #[tokio::test]
+    async fn a_store_at_its_live_entry_bound_refuses_the_open_leg() {
+        use crate::continuation_store::AsyncContinuationStore;
+        use crate::continuation_store::ContinuationCapacity;
+        use crate::continuation_store::InMemoryContinuationStore;
+
+        let store = std::sync::Arc::new(InMemoryContinuationStore::with_capacity(
+            ContinuationCapacity::new(1).expect("in range"),
+        ));
+        let incumbent = ContinuationKey::of_parts("aud", "someone-else", b"s-0");
+        let handles = RetainedHandles::over(b"prev", b"irr");
+        assert_eq!(
+            store.create(&incumbent, &handles, 300).await.ok(),
+            Some(Creation::Stored)
+        );
+        let plane = ContinuationPlane::wired(
+            store.clone(),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
+        let refusal = record_over(&plane).await;
+        assert_unavailable_after_admission(&refusal);
+        assert_eq!(
+            store.peek(&incumbent).await.ok(),
+            Some(Some(handles)),
+            "the incumbent stays answerable"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_store_less_plane_refuses_the_open_leg_after_admission() {
+        let refusal = record_over(&ContinuationPlane::disabled()).await;
+        assert_unavailable_after_admission(&refusal);
     }
 }

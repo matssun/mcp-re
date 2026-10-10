@@ -16,6 +16,7 @@
 //! and what the delegation record still owns is the CREDENTIAL's own window and scope,
 //! which is a different fact.
 
+use crate::block::ResolvedActor;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::error::HttpProfileError;
@@ -62,9 +63,16 @@ impl<'a, R: Into<ResolverOutcome>> Verifier<'a, R> {
         self.policy
     }
 
-    /// The trust seam, for the crate's own operations that resolve a slot directly.
-    pub(crate) fn resolve_actor(&self) -> &'a dyn Fn(&str, SignerSlot) -> R {
-        self.resolve_actor
+    /// Resolve `key_id` through the trust seam and cross-check it against `slot`
+    /// (MCPRE-100). Crate-wide access is legitimate only for a resolution that has
+    /// passed that cross-check, never for the bare seam: `pub(in crate::bodyless)` is
+    /// not available because `bodyless` is not an ancestor of this module.
+    pub(crate) fn resolve_for_slot(
+        &self,
+        key_id: &str,
+        slot: SignerSlot,
+    ) -> Result<ResolvedActor, HttpProfileError> {
+        crate::verify::floor::trust_slot::resolve_actor_for_slot(self.resolve_actor, key_id, slot)
     }
 
     /// Establish the request's cryptographic floor only.

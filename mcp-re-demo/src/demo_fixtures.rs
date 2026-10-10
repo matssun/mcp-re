@@ -160,8 +160,9 @@ fn make_ca(common_name: &str) -> Ca {
 
 /// A leaf signed by `ca`, with the given SANs / CN and (client or server) EKU.
 /// Uses a bounded, currently-valid window (≈15y) matching the proxy test idiom so
-/// the cert passes the handshake date check and a generous `--max-client-cert-
-/// lifetime` ceiling.
+/// the cert passes the handshake date check. A client leaf this long-lived exceeds the
+/// lifetime ceiling a live proxy enforces; client leaves a proxy serves use
+/// [`make_leaf_windowed`].
 fn make_leaf(
     ca: &Ca,
     sans: Vec<SanType>,
@@ -256,6 +257,14 @@ pub struct DemoFixtures {
 impl DemoFixtures {
     /// Mint the full material set from `spec`. Pure in-memory generation (no I/O);
     /// use [`Self::write_files`] to materialize the proxy CLI's file inputs.
+    //
+    // Ruling 14.4 campaign waiver (EX-017 in docs/architecture/review-dispositions.md):
+    // 64/60 lines, approved at exactly that size and expiring at the post-campaign
+    // decomposition run. Its length is the fixture set it mints — one `make_*` call per
+    // material, in the order the later certificates chain to the earlier CAs — not a
+    // decision. Scoped to this function so anything else here past the threshold still
+    // reports.
+    #[allow(clippy::too_many_lines)]
     pub fn generate(spec: DemoFixtureSpec) -> Self {
         assert!(
             spec.mismatched_identity != spec.subject() && spec.signer_seed != spec.server_seed,
@@ -278,18 +287,29 @@ impl DemoFixtures {
         // valid from ~1min ago to +50min so it is currently valid AND its lifetime
         // (window duration) is ≤ 3600s. `now`-relative — expires ~50min out.
         let now = OffsetDateTime::now_utc();
+        let not_before = now
+            .checked_sub(time::Duration::seconds(60))
+            .expect("not_before in range");
+        let not_after = now
+            .checked_add(time::Duration::seconds(SHORT_LIVED_CLIENT_CERT_SECS))
+            .expect("not_after in range");
         let (short_client_leaf, short_client_leaf_key) = make_leaf_windowed(
             &client_ca,
             vec![uri(&client_subject)],
             None,
             true,
-            now.checked_sub(time::Duration::seconds(60))
-                .expect("not_before in range"),
-            now.checked_add(time::Duration::seconds(SHORT_LIVED_CLIENT_CERT_SECS))
-                .expect("not_after in range"),
+            not_before,
+            not_after,
         );
-        let (mismatched_leaf, mismatched_leaf_key) =
-            make_leaf(&client_ca, vec![uri(&spec.mismatched_identity)], None, true);
+        // The same window, so the identity binding refuses T3 and not the lifetime ceiling.
+        let (mismatched_leaf, mismatched_leaf_key) = make_leaf_windowed(
+            &client_ca,
+            vec![uri(&spec.mismatched_identity)],
+            None,
+            true,
+            not_before,
+            not_after,
+        );
 
         // trust.json: the request signer the proxy trusts at the OBJECT layer.
         // The server signs responses with the server seed; the client trusts that

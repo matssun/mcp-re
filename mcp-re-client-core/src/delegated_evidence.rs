@@ -39,19 +39,19 @@ impl DelegatedResponseEvidence {
     /// chain authorized the key that actually signed.
     pub fn accepted_signer(&self) -> &mcp_re_http_profile::AcceptedResponseSigner {
         match self {
-            DelegatedResponseEvidence::Bound(v) => &v.signature_facts.accepted_signer,
-            DelegatedResponseEvidence::Unbound(v) => &v.signature_facts.accepted_signer,
+            DelegatedResponseEvidence::Bound(v) => &v.signature_facts().accepted_signer,
+            DelegatedResponseEvidence::Unbound(v) => &v.signature_facts().accepted_signer,
         }
     }
 
     /// The response signature-base handle — the answer leg of an MRT exchange binds to it.
-    pub fn response_signature_base_digest(&self) -> &mcp_re_http_profile::RequestEvidence {
+    pub fn response_signature_base_digest(&self) -> &mcp_re_http_profile::ResponseRoleEvidence {
         match self {
             DelegatedResponseEvidence::Bound(v) => {
-                &v.signature_facts.response_signature_base_digest
+                &v.signature_facts().response_signature_base_digest
             }
             DelegatedResponseEvidence::Unbound(v) => {
-                &v.signature_facts.response_signature_base_digest
+                &v.signature_facts().response_signature_base_digest
             }
         }
     }
@@ -68,8 +68,8 @@ impl DelegatedResponseEvidence {
     /// The ROOT issuer kid the credential chained to, available on both shapes.
     pub fn delegation_issuer_kid(&self) -> &str {
         match self {
-            DelegatedResponseEvidence::Bound(v) => &v.delegation_issuer_kid,
-            DelegatedResponseEvidence::Unbound(v) => &v.delegation_issuer_kid,
+            DelegatedResponseEvidence::Bound(v) => v.delegation_issuer_kid(),
+            DelegatedResponseEvidence::Unbound(v) => v.delegation_issuer_kid(),
         }
     }
 }

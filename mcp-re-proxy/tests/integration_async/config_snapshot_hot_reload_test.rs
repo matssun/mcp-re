@@ -28,6 +28,7 @@ use std::time::Duration;
 
 use mcp_re_proxy::async_serve;
 use mcp_re_proxy::config_snapshot::ServerConfigSnapshot;
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 
 use mcp_re_proxy::ServerLimits;
@@ -58,6 +59,19 @@ use rustls_pki_types::ServerName;
 use rustls_pki_types::UnixTime;
 
 const CLIENT_URI_SAN: &str = "spiffe://example.org/agent-1";
+
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(Duration::from_secs(3600), Duration::from_secs(300))
+        .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + Duration::from_secs(1800)).into();
+}
 
 struct Ca {
     cert: rcgen::Certificate,
@@ -95,6 +109,9 @@ fn make_leaf(ca: &Ca, sans: Vec<SanType>, client_auth: bool) -> (rcgen::Certific
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    if client_auth {
+        short_lived(&mut params);
+    }
     let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     (cert, key)
 }
@@ -112,9 +129,12 @@ fn server_config_trusting(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
     let (server_cert, server_key) = make_leaf(&server_ca, vec![dns("localhost")], false);
     let server_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(server_key.serialize_der()));
     Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
-            .expect("server config"),
+        TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_exported_key_config(vec![server_cert.der().clone()], server_key_der, Vec::new())
+        .expect("server config"),
     )
 }
 
@@ -251,13 +271,13 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>) -> Server {
                 };
             let options = ServerOptions {
                 limits: ServerLimits::default(),
-                ..Default::default()
+                ..ServerOptions::new(window())
             };
             // The handshake bound comes from the pool that built this runtime (4 workers),
             // never from a constant that never saw the depth.
             let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
                 mcp_re_proxy::async_fleet::ShardDepth::stated(4),
-                &options,
+                snapshot.key_exposure(),
             )
             .expect("a stated depth above one is a shape every custody has")
             .handshake_bound();
@@ -290,7 +310,10 @@ fn swapped_server_config_is_in_force_on_the_next_connection() {
     let ca_a = make_ca("client-ca-A");
     let ca_b = make_ca("client-ca-B");
 
-    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&ca_a)));
+    let (snapshot, publisher) = ServerConfigSnapshot::establish(
+        server_config_trusting(&ca_a),
+        mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+    );
     let server = spawn(Arc::clone(&snapshot));
 
     let client_a = client_config(&ca_a);
@@ -307,7 +330,7 @@ fn swapped_server_config_is_in_force_on_the_next_connection() {
     );
 
     // Swap in a config that trusts only CA-B — the shape of a CRL/trust reload.
-    snapshot.store(server_config_trusting(&ca_b));
+    publisher.store(server_config_trusting(&ca_b));
 
     // After the swap, with NO restart: the new config governs.
     assert_eq!(

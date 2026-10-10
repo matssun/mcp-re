@@ -126,13 +126,13 @@ impl From<InvalidTransition> for String {
 }
 
 impl RuntimeState {
-    /// Whether this state admits new request lifecycles (ADR-MCPRE-057 §8.2).
-    ///
-    /// No production consumer yet: the request lifecycle it gates is ADR-MCPRE-058 §17A
-    /// step 7. Stated and tested here because it is the parent half of the hierarchy —
-    /// §8.2 is a property of the RUNTIME state, and defining it beside the states it
-    /// classifies is what keeps it from being re-derived, differently, at the request
-    /// seam later.
+    /// Whether this state admits new request lifecycles (ADR-MCPRE-057 §8.2) — a
+    /// DEFINITION, not a gate: nothing in production consults it, and the recorded state is
+    /// never `Serving` while the fleet serves (the serving events are applied only after
+    /// `serve_fleet` returns `Ok`), so a consumer wired here today would refuse everything.
+    /// Admission is confined by resource ownership: the listener exists only inside
+    /// `serve_fleet`. Defined beside the states it classifies so the request seam
+    /// (ADR-MCPRE-058 §17A step 7) cannot re-derive it differently.
     #[allow(dead_code)]
     pub(crate) fn admits_requests(self) -> bool {
         matches!(self, RuntimeState::Serving)

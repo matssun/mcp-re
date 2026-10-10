@@ -59,14 +59,23 @@ pub(crate) fn evaluator(
     }
     let line = format!(
         "authorization = PDP-DECISION enforced ({} trusted authority key(s) from {}, \
-         accepted scope {}, decisions accepted up to {}s old). A request carrying no \
+         accepted scope {}, decisions accepted up to {}s old plus the {}s --max-clock-skew tolerance). A request carrying no \
          applicable decision is REFUSED. Authority keys are read ONCE at startup: a --trust \
          reload does not refresh them, so withdrawing an authority needs a restart.",
         issuers.len(),
         trust.path(),
         scope_name(enforced.accepted_scope()),
         enforced.max_decision_age_secs(),
+        max_clock_skew,
     );
+    let max_decision_age = i64::try_from(enforced.max_decision_age_secs().get()).map_err(|_| {
+        format!(
+            "--authz-max-decision-age-secs {} exceeds the largest staleness bound the decision \
+             verifier can enforce ({}s); refusing to start rather than accept decisions of any age",
+            enforced.max_decision_age_secs(),
+            i64::MAX
+        )
+    })?;
     let policy = PdpDecisionPolicy {
         resolve_authority: Arc::new(move |kid: &str| issuers.get(kid).cloned()),
         accepted_scope: enforced.accepted_scope(),
@@ -76,10 +85,10 @@ pub(crate) fn evaluator(
             // it does the RFC 9421 freshness gate. Reusing it keeps a deployment from
             // agreeing with a peer's clock on the request and disagreeing on the decision.
             max_clock_skew,
-            // Saturating rather than fallible: layer A narrowed the bound to a positive
-            // `i64` before it became a `NonZeroU64`, so the conversion back cannot fail.
-            max_decision_age: i64::try_from(enforced.max_decision_age_secs().get())
-                .unwrap_or(i64::MAX),
+            // The owner's bound is a `NonZeroU64` and the verifier reads an `i64`, so a
+            // bound the verifier cannot represent refuses startup rather than widening to
+            // unbounded.
+            max_decision_age,
         },
     };
     let evaluator = PdpDecisionEvaluator::new(
@@ -215,6 +224,10 @@ mod tests {
             line.contains("read ONCE at startup"),
             "the ON line must admit its refresh window: {line}"
         );
+        assert!(
+            line.contains("plus the 30s --max-clock-skew tolerance"),
+            "the ON line must state the skew-inclusive staleness bound: {line}"
+        );
     }
 
     #[test]
@@ -319,12 +332,14 @@ mod tests {
     /// The digest algorithm the evidence binding declares, read off the binding producer
     /// the request itself uses rather than restated as a literal.
     fn binding_alg() -> String {
-        ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, b"any").digest_alg
+        ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, b"any")
+            .digest_alg()
+            .to_owned()
     }
 
     /// A verified request carrying `decision`, bound to it in the evidence form.
     fn request_carrying(decision: Option<&str>) -> VerifiedMcpRequest {
-        let mut verified = crate::authorization::action_harness::verified_over(CALL);
+        let mut verified = crate::authorization::action_harness::verified_over(CALL).verified;
         if let Some(d) = decision {
             verified
                 .request_block
@@ -336,6 +351,11 @@ mod tests {
             verified.request_block.authorization_decision = Some(d.to_owned());
         }
         verified
+    }
+
+    /// The bytes a request signed over [`CALL`] covers: `CALL` with its evidence block.
+    fn signed_call() -> Vec<u8> {
+        crate::authorization::action_harness::verified_over(CALL).body
     }
 
     /// The evaluator a `--authz pdp-decision` deployment installs, over the fixture
@@ -365,7 +385,7 @@ mod tests {
     fn a_configured_deployment_permits_a_correctly_bound_permit() {
         let d = decision(PdpDecisionOutcome::Permit, "read");
         let verified = request_carrying(Some(&d));
-        let posture = authorize(Some(installed().as_ref()), &verified, CALL, None)
+        let posture = authorize(Some(installed().as_ref()), &verified, &signed_call(), None)
             .expect("a permit decision authorizes");
         let facts = posture
             .authorized()
@@ -378,7 +398,7 @@ mod tests {
         let d = decision(PdpDecisionOutcome::Deny, "read");
         let verified = request_carrying(Some(&d));
         assert!(
-            authorize(Some(installed().as_ref()), &verified, CALL, None).is_err(),
+            authorize(Some(installed().as_ref()), &verified, &signed_call(), None).is_err(),
             "a signed deny is a refusal, never a fall-through to the unconfigured posture"
         );
     }
@@ -389,7 +409,7 @@ mod tests {
         // not-configured posture. There is no permissive reading of a missing decision.
         let verified = request_carrying(None);
         assert!(
-            authorize(Some(installed().as_ref()), &verified, CALL, None).is_err(),
+            authorize(Some(installed().as_ref()), &verified, &signed_call(), None).is_err(),
             "an undecorated request must not pass an installed authority"
         );
     }
@@ -411,7 +431,7 @@ mod tests {
         let first = authorize(
             Some(evaluator.as_ref()),
             &request_carrying(Some(&read)),
-            CALL,
+            &signed_call(),
             None,
         )
         .expect("permit")
@@ -421,7 +441,7 @@ mod tests {
         let second = authorize(
             Some(evaluator.as_ref()),
             &request_carrying(Some(&other)),
-            CALL,
+            &signed_call(),
             None,
         )
         .expect("permit")
@@ -454,7 +474,7 @@ mod tests {
         let once = authorize(
             Some(evaluator.as_ref()),
             &request_carrying(Some(&d)),
-            CALL,
+            &signed_call(),
             None,
         )
         .expect("permit")
@@ -467,7 +487,7 @@ mod tests {
         let again = authorize(
             Some(evaluator.as_ref()),
             &request_carrying(Some(&d)),
-            CALL,
+            &signed_call(),
             None,
         )
         .expect("permit")
@@ -488,14 +508,28 @@ mod tests {
     #[test]
     fn the_audit_record_answers_which_decision_and_which_evidence_separately() {
         let d = decision(PdpDecisionOutcome::Permit, "read");
-        let facet = authorize(
+        let posture = authorize(
             Some(installed().as_ref()),
             &request_carrying(Some(&d)),
-            CALL,
+            &signed_call(),
             None,
         )
-        .expect("permit")
-        .audit_facet();
+        .expect("permit");
+        let facet = posture.audit_facet();
+        let record = crate::audit_record::AuditRecord {
+            subject: crate::audit_record::AuditSubject::request_accepted(
+                &posture,
+                crate::admission_enforcer::AdmissionFacet::LiveConfirmed,
+            ),
+            actor_id: None,
+            status: 200,
+            at_unix: 1,
+        };
+        let mut names: Vec<&str> = record.audit_fields().iter().map(|f| f.name).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "duplicate field name in {names:?}");
         let line = crate::audit_record::text::render_record(&facet.audit_fields());
         assert!(
             line.contains("authz_decision_id=decision-1"),
@@ -512,7 +546,7 @@ mod tests {
         let d = decision(PdpDecisionOutcome::Permit, "delete");
         let verified = request_carrying(Some(&d));
         assert!(
-            authorize(Some(installed().as_ref()), &verified, CALL, None).is_err(),
+            authorize(Some(installed().as_ref()), &verified, &signed_call(), None).is_err(),
             "the action coordinate comes from the signed body, not from the decision"
         );
     }

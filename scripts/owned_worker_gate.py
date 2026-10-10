@@ -74,13 +74,11 @@ OWNER_MODULE = "src/managed_worker/mod.rs"
 # stale entry as loudly as a new spawn ("allowlisted for N ... but has 0"), which is what
 # made the three moves visible rather than silently permissive.
 ALLOWED = {
-    "mcp-re-proxy/src/main.rs": (1, (
-        "the SIGTERM/SIGINT bridge thread belongs to the PROCESS, not to any runtime: it "
-        "outlives `app::run` by design and exits when the signal flag flips"
-    )),
-    "mcp-re-proxy/src/redis_store.rs": (1, (
-        "the bounded-abandonment connect worker is a PER-OPERATION timeout thread, not a "
-        "runtime worker; its permit releases the in-flight slot even when it finishes late"
+    "mcp-re-proxy/src/signing_plane/bounded_root_issuer.rs": (1, (
+        "the root-issuer call worker is a PER-CALL timeout thread, not a runtime worker: the "
+        "caller waits on it for at most the call bound, and the in-flight flag it holds "
+        "refuses a second call while an abandoned one is still running, so at most one is "
+        "ever outstanding"
     )),
     "mcp-re-client/src/startup.rs": (1, (
         "the client binary's SIGTERM bridge, the same process-lifetime signal thread as "
@@ -347,23 +345,24 @@ def selftest() -> int:
 
         # An allowlisted file is exempt at its reviewed site count.
         plane.unlink()
-        main = crate / "src" / "main.rs"
-        main.write_text("fn main() { std::thread::spawn(|| {}); }\n")
+        allowed = crate / "src" / "signing_plane" / "bounded_root_issuer.rs"
+        allowed.parent.mkdir(parents=True)
+        allowed.write_text("fn call() { std::thread::spawn(|| {}); }\n")
         if check(root):
             print("selftest FAIL: an allowlisted file was rejected at its reviewed count")
             return 1
 
         # ...and only at that count: a SECOND spawn in the same file is a new thread
         # nobody reviewed, which a file-granular exemption would have waved through.
-        main.write_text(
-            "fn main() { std::thread::spawn(|| {}); }\n"
+        allowed.write_text(
+            "fn call() { std::thread::spawn(|| {}); }\n"
             "fn extra() { std::thread::spawn(move || loop {}); }\n"
         )
         found = check(root)
         if len(found) != 1 or "allowlisted for 1 reviewed spawn site" not in found[0]:
             print(f"selftest FAIL: extra spawn in an allowlisted file not caught: {found}")
             return 1
-        main.write_text("fn main() { std::thread::spawn(|| {}); }\n")
+        allowed.write_text("fn call() { std::thread::spawn(|| {}); }\n")
 
         # A crate BELOW the top level is scanned. The SDK bindings live at sdk/<lang>,
         # and a depth-1 crate walk reports a clean tree having read none of them.

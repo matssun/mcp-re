@@ -147,7 +147,7 @@ pub use crate::trust_plan::TrustReloadPlan;
 /// The shared trust-epoch mechanism, interpreted ONCE (CF-09).
 ///
 /// Two planes act on this fact: trust flushes its cache when the epoch advances, and
-/// delegated signing mints under the resulting label so an operator's `INCR` revokes
+/// delegated signing mints under the resulting label so an operator's `mcp-re-proxy trust-epoch advance` revokes
 /// fleet-wide. They are consumers. Before this type they were two authorities — each
 /// reading `--trust-epoch-redis-url`, each defaulting `--trust-epoch-key`, each with its
 /// own build refusal — and the only reason they agreed was that they read the same fields
@@ -259,8 +259,8 @@ impl TrustEpochPlan {
                 "--trust-epoch-redis-url requires a build with the `redis_replay` feature. \
                  Without it the trust cache has no networked invalidation channel, and \
                  delegated credentials would be minted under the bare --delegated-trust-epoch \
-                 label — which the operator's INCR kill switch cannot revoke. Refusing to \
-                 start (fail closed, ADR-MCPRE-052 §7)"
+                 label — which the trust-epoch kill switch (`mcp-re-proxy trust-epoch \
+                 advance`) cannot revoke. Refusing to start (fail closed, ADR-MCPRE-052 §7)"
                     .to_string(),
             ),
         }
@@ -270,7 +270,7 @@ impl TrustEpochPlan {
 /// What response-signing custody must establish (ADR-MCPRE-052).
 ///
 /// Delegated signing is the only response mode, so this is a STRUCT and not an enum: the
-/// atlas classifies it as guard-only, with one state, and manufacturing variants for
+/// layer A classifies it as guard-only, with one state, and manufacturing variants for
 /// symmetry with `ClientRevocationPlan` would describe postures that do not exist.
 ///
 /// The plan holds the normalized custody policy itself. Every default is applied here,
@@ -318,7 +318,7 @@ impl SigningPlan {
                 profile: mcp_re_http_profile::PROFILE_TAG.to_string(),
                 aud: values.audience.clone(),
                 audience_hash: facts.audience_hash().to_string(),
-                trust_epoch: facts.trust_epoch().to_string(),
+                trust_epoch: facts.trust_epoch().clone(),
                 // The three identity components come from the ONE derived identity rather
                 // than from the primitives; a second assembly here is what let this and
                 // `app::run_validated` disagree about what the server's actor identity is.
@@ -363,6 +363,9 @@ pub struct ChannelEstablishmentPlan {
     /// How long a client credential authorizes traffic, and how long one connection may
     /// serve on a single handshake — the pair that makes the exposure window honest.
     pub credential_window: crate::config_state::ClientCredentialWindow,
+    /// The capacity of the listener's handshake-signature budget: a global ceiling on the
+    /// signing backend, not a per-peer allowance.
+    pub handshake_signing: crate::delegated_tls::HandshakeSignCapacity,
 }
 
 impl ChannelEstablishmentPlan {
@@ -377,6 +380,7 @@ impl ChannelEstablishmentPlan {
             custody: config.state().channel_credential_custody().clone(),
             client_revocation: config.state().crl_revocation().client_revocation_plan(),
             credential_window: config.state().client_credential_window(),
+            handshake_signing: config.config().limits.tls_handshake_signing,
         }
     }
 }
@@ -442,9 +446,9 @@ mod tests {
             "--bind",
             "127.0.0.1:0",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "k1",
             "--delegated-trust-epoch",
@@ -461,6 +465,8 @@ mod tests {
             "/nonexistent/trust",
             "--target-uri",
             "https://localhost/",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--trust-domain",
             "example.org",
             "--inner-http-url",
@@ -1111,6 +1117,28 @@ mod tests {
             "the plan cannot hold a connection age that outlives the credential"
         );
         assert!(!plan.client_revocation.is_enforced());
+    }
+
+    /// The operator's handshake-signing capacity reaches the plan the TLS plane builds the
+    /// listener from, and stating none leaves the defaults.
+    #[test]
+    fn the_channel_plan_carries_the_operators_handshake_signing_capacity() {
+        use crate::delegated_tls::HandshakeSignCapacity;
+        let stated = validated(&[
+            "--tls-handshake-sign-rate",
+            "250",
+            "--tls-handshake-sign-burst",
+            "40",
+        ]);
+        assert_eq!(
+            ChannelEstablishmentPlan::from_validated(&stated).handshake_signing,
+            HandshakeSignCapacity::new(250, 40).expect("in bounds")
+        );
+        let unstated = validated(&[]);
+        assert_eq!(
+            ChannelEstablishmentPlan::from_validated(&unstated).handshake_signing,
+            HandshakeSignCapacity::default()
+        );
     }
 
     /// A COMPLETE admission configuration. Setting only `admission` used to be enough

@@ -13,6 +13,15 @@ Run it BEFORE the first batch of a run (`--files` empty): the lane's attribution
 rests on starting from a tree measured green. Run it AFTER each batch with the
 files the batch touched.
 
+It also runs every `tools/verification/test_*.py` self-test suite once. They read the
+registry and pin measured facts about it — premise totals, the controls each record states —
+so a registry-only change moves them while no Rust target notices; they are not per-file
+work, and leaving them out let two suites stay red under a green batch gate.
+
+And it runs every Python gate the merge-path workflow (`.github/workflows/ci.yml`) invokes
+with bare flags, read from the workflow so the two lists cannot drift. A hand-picked subset
+let six merge-path gates go red across many green batches.
+
 Two lanes are left to the pre-handover gate (`scripts/local_gate.sh`) and are NOT
 claimed here: `bazel test //...` (the only lane that runs the `async_serve` drain
 tests) and the SLO lane.
@@ -33,13 +42,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rust_gate  # noqa: E402
+import size_debt  # noqa: E402
 
 RATCHET = "scripts/clippy_ratchet_gate.py"
+# Gates whose size-only failures are recorded, not blocking, during a remediation run.
+SIZE_GATES = {"scripts/module_size_gate.py", RATCHET}
 STRUCTURAL = [
     [RATCHET],
     ["scripts/module_size_gate.py"],
@@ -54,6 +67,94 @@ STRUCTURAL = [
     ["scripts/control_census_gate.py"],
     ["tools/verification/control-census", "--gate"],
 ]
+
+
+VERIFICATION_SUITES = "tools/verification"
+
+#: The merge-path workflow whose Python gates the batch gate also runs.
+CI_WORKFLOW = ".github/workflows/ci.yml"
+
+#: CI invocations the batch gate does NOT run: the clippy ratchet and its compile probes
+#: (authorized only at an integration boundary, and STRUCTURAL already carries the ratchet),
+#: and the workspace-lints probe, which compiles a crate of its own.
+CI_EXCLUDED = {
+    ("scripts/clippy_ratchet_gate.py",),
+    ("scripts/clippy_ratchet_gate.py", "--activation-probe"),
+    ("scripts/clippy_ratchet_gate.py", "--nesting-probe"),
+    ("scripts/clippy_ratchet_gate.py", "--selftest"),
+    ("scripts/workspace_lints_gate.py", "--probe"),
+}
+
+#: A gate is either a Python file run as `python3 <path>`, or a `tools/verification`
+#: executable run directly (`tools/verification/rust-targets --check`); every executable
+#: there is a Python script, so both forms run under this interpreter.
+_CI_INVOCATION = re.compile(r"(?:python3\s+|^[ \t-]*(?:run:[ \t]+)?(?:\./)?(?=tools/verification/))"
+                            r"((?:scripts|tools)/[A-Za-z0-9_./-]+)((?:[ \t]+--[a-z-]+)*)[ \t]*$",
+                            re.M)
+
+
+def _structural_suites() -> set[str]:
+    """The self-test suites STRUCTURAL already runs, by file name."""
+    return {os.path.basename(cmd[0]) for cmd in STRUCTURAL
+            if os.path.dirname(cmd[0]) == VERIFICATION_SUITES}
+
+
+def verification_suites(work_dir: str, root: str = VERIFICATION_SUITES,
+                        already: set[str] | None = None) -> dict:
+    """Every `test_*.py` self-test suite under `root`, each run once, as one gate result.
+
+    A suite in `already` (by default the ones STRUCTURAL runs) is not run twice. No suite
+    found is `infra`, not `ok`: an empty set would be a green that measured nothing.
+    """
+    already = _structural_suites() if already is None else already
+    suites = sorted(f for f in os.listdir(root) if f.startswith("test_") and f.endswith(".py")
+                    and f not in already) if os.path.isdir(root) else []
+    if not suites:
+        return {"gate": root + "/test_*.py", "verdict": "infra", "why": "no suite found"}
+    failed = []
+    for suite in suites:
+        log = os.path.join(work_dir, "batch-verification-%s.log" % suite)
+        if _run([sys.executable, os.path.join(root, suite)], log):
+            failed.append({"suite": suite, "log": log, "tail": _tail(log)})
+    return {"gate": root + "/test_*.py", "suites": len(suites),
+            "verdict": "new-failures" if failed else "ok",
+            **({"failed": failed} if failed else {})}
+
+
+def ci_gates(workflow: str = CI_WORKFLOW) -> list[tuple[str, ...]]:
+    """Every Python gate invocation in `workflow` that takes only bare flags, in file
+    order and once each. An invocation whose flag takes a value (`--base <sha>`) is the
+    workflow's to parameterize and is left out, and so is anything in CI_EXCLUDED."""
+    if not os.path.isfile(workflow):
+        return []
+    seen: list[tuple[str, ...]] = []
+    for m in _CI_INVOCATION.finditer(open(workflow, encoding="utf-8").read()):
+        cmd = (m.group(1), *m.group(2).split())
+        if cmd not in seen and cmd not in CI_EXCLUDED:
+            seen.append(cmd)
+    return seen
+
+
+def merge_path_gates(work_dir: str, workflow: str = CI_WORKFLOW,
+                     already: set[tuple[str, ...]] | None = None) -> dict:
+    """Every gate `ci_gates` finds, each run once, as one gate result.
+
+    The merge path runs these on every push, and a batch gate that ran only its own subset
+    let a red one sit unseen through many batches. A gate STRUCTURAL already runs is not
+    run twice. No gate found is `infra`, not `ok`."""
+    already = {tuple(cmd) for cmd in STRUCTURAL} if already is None else already
+    gates = [cmd for cmd in ci_gates(workflow) if cmd not in already]
+    if not gates:
+        return {"gate": workflow, "verdict": "infra", "why": "no gate invocation found"}
+    failed = []
+    for cmd in gates:
+        name = "-".join(os.path.basename(part) for part in cmd)
+        log = os.path.join(work_dir, "batch-ci-%s.log" % name)
+        if _run([sys.executable, *cmd], log):
+            failed.append({"gate": " ".join(cmd), "log": log, "tail": _tail(log)})
+    return {"gate": workflow, "gates": len(gates),
+            "verdict": "new-failures" if failed else "ok",
+            **({"failed": failed} if failed else {})}
 
 
 def _run(cmd: list[str], log: str) -> int:
@@ -84,8 +185,23 @@ def main() -> int:
             continue
         log = os.path.join(a.work_dir, "batch-%s.log" % os.path.basename(cmd[0]))
         rc = _run([sys.executable, *cmd], log)
-        results.append({"gate": cmd[0], "verdict": "ok" if rc == 0 else "new-failures",
-                        "log": log, **({} if rc == 0 else {"tail": _tail(log)})})
+        verdict, debt = "ok" if rc == 0 else "new-failures", []
+        if rc and cmd[0] in SIZE_GATES:
+            soft, debt = size_debt.classify(cmd[0], open(log, encoding="utf-8",
+                                                         errors="replace").read())
+            if soft:
+                # Recorded, not blocking (size_debt.py); a row no writer registered — a hand
+                # commit — joins the register under HEAD.
+                verdict = "size-debt"
+                head = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                                      capture_output=True, text=True).stdout.strip()
+                size_debt.register_rows(debt, head)
+        results.append({"gate": cmd[0], "verdict": verdict, "log": log,
+                        **({} if rc == 0 else {"tail": _tail(log)}),
+                        **({"debt": debt} if verdict == "size-debt" else {})})
+
+    results.append(verification_suites(a.work_dir))
+    results.append(merge_path_gates(a.work_dir))
 
     files = [f.strip() for f in a.files.split(",") if f.strip()]
     labels = [lbl for lbl in (rust_gate.file_label(f) for f in files) if lbl]
@@ -106,11 +222,19 @@ def main() -> int:
             results.append({"gate": name, "targets": len(targets),
                             "verdict": "ok" if rc == 0 else "new-failures", "log": log,
                             **({} if rc == 0 else {"tail": _tail(log)})})
+        # The merge path's format lane is a Bazel build, which `merge_path_gates` does not
+        # read; the closure's lint targets are the ones whose sources it formats.
+        if rust:
+            results.append({"gate": "format the touched closure", "targets": len(rust),
+                            **rust_gate._rustfmt(rust, files,
+                                                 os.path.join(a.work_dir, "batch-format.log"))})
 
     worst = "new-failures" if any(r["verdict"] == "new-failures" for r in results) else \
         "infra" if any(r["verdict"] == "infra" for r in results) else "ok"
     skipped = [r["gate"] for r in results if r["verdict"] == "skipped"]
-    print(json.dumps({"verdict": worst, "skipped": skipped, "gates": results}, indent=1))
+    debt = [d for r in results for d in r.get("debt", [])]
+    print(json.dumps({"verdict": worst, "skipped": skipped, "size_debt": debt,
+                      "gates": results}, indent=1))
     return {"ok": 0, "new-failures": 1}.get(worst, 2)
 
 

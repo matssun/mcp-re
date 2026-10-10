@@ -13,7 +13,7 @@
 //! FIRST value is not a well-formed identity, interpretation refuses. It never reads
 //! another field, and it never reads a later value of the same field. Both halves matter
 //! and they fail differently: searching another field silently downgrades a URI SAN
-//! deployment to a CN one, while searching a later value of the same field lets an issuer
+//! deployment to a DNS SAN one, while searching a later value of the same field lets an issuer
 //! that can mint two SANs choose which identity the proxy binds to by making the first one
 //! unusable.
 //!
@@ -50,7 +50,6 @@ pub(super) fn interpret_certificate_identity(
     let readout = match policy {
         CertificateIdentityPolicy::UriSan => fields.first_uri_san(),
         CertificateIdentityPolicy::DnsSan => fields.first_dns_san(),
-        CertificateIdentityPolicy::CommonNameLegacy => fields.common_name(),
     };
 
     // Refusal precedence, in order and by construction: a representation must be readable
@@ -88,10 +87,9 @@ mod tests {
     use crate::communication_assurance::certificate_identity_policy::CertificateIdentitySource;
     use crate::communication_assurance::peer_identity_value::PeerIdentityValueRefusal;
 
-    const EVERY_POLICY: [CertificateIdentityPolicy; 3] = [
+    const EVERY_POLICY: [CertificateIdentityPolicy; 2] = [
         CertificateIdentityPolicy::UriSan,
         CertificateIdentityPolicy::DnsSan,
-        CertificateIdentityPolicy::CommonNameLegacy,
     ];
 
     /// A field set in which every field carries a distinct well-formed value, so a
@@ -100,7 +98,6 @@ mod tests {
         CertificateIdentityFields::readable(
             vec!["spiffe://example.org/uri-value".to_string()],
             vec!["dns-value.example.org".to_string()],
-            Some("cn-value.example.org".to_string()),
         )
     }
 
@@ -117,11 +114,6 @@ mod tests {
                 CertificateIdentityPolicy::DnsSan,
                 "dns-value.example.org",
                 CertificateIdentitySource::DnsSan,
-            ),
-            (
-                CertificateIdentityPolicy::CommonNameLegacy,
-                "cn-value.example.org",
-                CertificateIdentitySource::CommonName,
             ),
         ] {
             let evidence =
@@ -146,14 +138,13 @@ mod tests {
 
     #[test]
     fn an_absent_selected_field_refuses_while_the_other_fields_are_populated() {
-        // One field missing at a time; the other two hold well-formed decoys.
+        // One field missing at a time; the other holds a well-formed decoy.
         let cases = [
             (
                 CertificateIdentityPolicy::UriSan,
                 CertificateIdentityFields::readable(
                     Vec::new(),
                     vec!["dns-value.example.org".to_string()],
-                    Some("cn-value.example.org".to_string()),
                 ),
             ),
             (
@@ -161,15 +152,6 @@ mod tests {
                 CertificateIdentityFields::readable(
                     vec!["spiffe://example.org/uri-value".to_string()],
                     Vec::new(),
-                    Some("cn-value.example.org".to_string()),
-                ),
-            ),
-            (
-                CertificateIdentityPolicy::CommonNameLegacy,
-                CertificateIdentityFields::readable(
-                    vec!["spiffe://example.org/uri-value".to_string()],
-                    vec!["dns-value.example.org".to_string()],
-                    None,
                 ),
             ),
         ];
@@ -186,24 +168,19 @@ mod tests {
     fn an_unreadable_representation_refuses_as_uninterpretable_never_as_absent() {
         // The control for the distinction the adapter must preserve. It is stated over the
         // FIELD SET rather than over DER because the X.509 encoder cannot readily mint a
-        // duplicated SAN extension or a CN whose encoding the parser refuses — and the
-        // property must not be weakened to whatever a test fixture can express.
+        // duplicated SAN extension — and the property must not be weakened to whatever a
+        // test fixture can express.
         let fields = CertificateIdentityFields::new(
             FieldReadout::Uninterpretable,
             FieldReadout::Read(Vec::new()),
-            FieldReadout::Uninterpretable,
         );
-        for policy in [
-            CertificateIdentityPolicy::UriSan,
-            CertificateIdentityPolicy::CommonNameLegacy,
-        ] {
-            assert_eq!(
-                interpret_certificate_identity(&fields, policy),
-                Err(LeafIdentityRefusal::SelectedFieldUninterpretable { selected: policy }),
-                "a representation the parser refused must not be reported as a field the \
-                 certificate did not carry"
-            );
-        }
+        let policy = CertificateIdentityPolicy::UriSan;
+        assert_eq!(
+            interpret_certificate_identity(&fields, policy),
+            Err(LeafIdentityRefusal::SelectedFieldUninterpretable { selected: policy }),
+            "a representation the parser refused must not be reported as a field the \
+             certificate did not carry"
+        );
         assert_eq!(
             interpret_certificate_identity(&fields, CertificateIdentityPolicy::DnsSan),
             Err(LeafIdentityRefusal::SelectedFieldAbsent {
@@ -220,11 +197,10 @@ mod tests {
         let unreadable = CertificateIdentityFields::new(
             FieldReadout::Uninterpretable,
             FieldReadout::Read(Vec::new()),
-            FieldReadout::Read(None),
         );
-        let absent = CertificateIdentityFields::readable(Vec::new(), Vec::new(), None);
+        let absent = CertificateIdentityFields::readable(Vec::new(), Vec::new());
         let malformed =
-            CertificateIdentityFields::readable(vec!["bad\rvalue".to_string()], Vec::new(), None);
+            CertificateIdentityFields::readable(vec!["bad\rvalue".to_string()], Vec::new());
         let policy = CertificateIdentityPolicy::UriSan;
         assert_eq!(
             interpret_certificate_identity(&unreadable, policy),
@@ -251,7 +227,6 @@ mod tests {
                 "spiffe://example.org/second".to_string(),
             ],
             Vec::new(),
-            None,
         );
         assert_eq!(
             interpret_certificate_identity(&fields, CertificateIdentityPolicy::UriSan),
@@ -273,7 +248,6 @@ mod tests {
         let fields = CertificateIdentityFields::readable(
             vec!["spiffe://example.org/agent-1\r\n".to_string()],
             Vec::new(),
-            None,
         );
         let evidence = interpret_certificate_identity(&fields, CertificateIdentityPolicy::UriSan)
             .expect("a trailing CRLF is trimmed away");
@@ -289,7 +263,6 @@ mod tests {
             let fields = CertificateIdentityFields::readable(
                 vec![first.to_string(), "spiffe://example.org/valid".to_string()],
                 Vec::new(),
-                None,
             );
             assert_eq!(
                 interpret_certificate_identity(&fields, CertificateIdentityPolicy::UriSan),
@@ -318,7 +291,7 @@ mod tests {
 
     #[test]
     fn an_empty_field_set_refuses_under_every_policy_as_absence() {
-        let fields = CertificateIdentityFields::readable(Vec::new(), Vec::new(), None);
+        let fields = CertificateIdentityFields::readable(Vec::new(), Vec::new());
         for policy in EVERY_POLICY {
             assert_eq!(
                 interpret_certificate_identity(&fields, policy),

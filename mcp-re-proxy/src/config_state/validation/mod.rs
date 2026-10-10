@@ -33,6 +33,7 @@ mod total_machines;
 use recognition::Recognised;
 mod residue;
 
+use crate::config_state::cross_machine::CrossMachineViolations;
 use crate::config_state::DeploymentConfigState;
 use crate::deployment_request::DeploymentRequest;
 use machine_violations::MachineViolations;
@@ -42,7 +43,7 @@ use machine_violations::MachineViolations;
 /// The guards themselves are not new — [`unsafe_config_violations`] has always run at
 /// the end of [`parse_args`]. What was missing is that passing through `parse_args` was
 /// the ONLY thing that ran them. `DeploymentRequest` has 76 public fields, so any caller that built
-/// one in code and handed it to `app::run` got a proxy with cn_legacy identity, a
+/// one in code and handed it to `app::run` got a proxy with a
 /// non-durable replay tier or a disabled client-cert lifetime — every posture the
 /// project refuses — with nothing to stop it. The guard was
 /// at the wrong altitude: on one path into the runtime rather than on the runtime.
@@ -131,8 +132,7 @@ impl TryFrom<DeploymentRequest> for ValidatedDeployment {
 /// `max_client_cert_lifetime == None`) is likewise rejected.
 ///
 /// The postures rejected here are the pure-config, platform-independent fail-open
-/// ones: a non-durable/weak replay tier (#90/ADR-MCPS-020), lb-assertion binding, and
-/// cn_legacy identity.
+/// ones: a non-durable/weak replay tier (#90/ADR-MCPS-020) and lb-assertion binding.
 ///
 /// The violations alone. [`validate_configuration`] is the boundary proper — it runs the
 /// same single pass and additionally returns what that pass RECOGNISED, which is what the
@@ -146,7 +146,7 @@ pub fn unsafe_config_violations(config: &DeploymentRequest) -> Vec<String> {
 /// One pass, two products. A validator that recognises `TrustRevocation::PushNetworked`,
 /// checks it, and throws the recognition away leaves every downstream stage to re-derive
 /// the same fact from the same fields — one deployment fact with two derivations, free to
-/// disagree. So the classification is returned (`work/CONFIG-STATE-ATLAS.md` CF-10) and
+/// disagree. So the classification is returned and
 /// becomes what plans project from.
 ///
 /// **Order is a separate contract.** Every violation is reported, not the first, and the
@@ -160,8 +160,8 @@ pub fn validate_configuration(
 ) -> Result<DeploymentConfigState, Vec<String>> {
     // PASS 1 — each machine recognises its own state and checks that state's columns.
     let recognised = Recognised::classify(config);
-    // PASS 2 — the relations between machines, asked of the RECOGNISED states rather than
-    // of the fields again.
+    // PASS 2 — the relations between machines: X9 over the recognised trust-revocation
+    // state, X2a and X6 over request selections no machine re-decides here.
     let cross =
         crate::config_state::cross_machine::validate(recognised.states.trust_revocation(), config);
     let violations = legality_violations(config, recognised.refusals.with_cross(cross));
@@ -175,11 +175,37 @@ pub fn validate_configuration(
 
 /// The clause list, in the order an operator reads it.
 ///
-/// Nothing here decides anything about a machine that has one: `decided` arrives already
-/// checked, and this function only places each result where its clauses were read before
+/// Nothing here decides anything about a machine that has one: each owner's result is
+/// bound by an exhaustive pattern, so an added field is E0027 and a dropped splice is an
+/// unused binding. The results arrive already checked, and this function only places each result where its clauses were read before
 /// the machine owned them — see [`validate_configuration`] on why the position is
 /// load-bearing. Clauses still stated inline belong to machines not yet implemented.
-fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -> Vec<String> {
+fn legality_violations(
+    config: &DeploymentRequest,
+    MachineViolations {
+        admission,
+        authorization,
+        channel_binding,
+        continuation_control,
+        crl_revocation,
+        custody,
+        delegated_signing,
+        freshness,
+        mcp_transport_contract,
+        replay,
+        trust_document,
+        client_credential_window,
+        server_identity,
+        channel_credential_custody,
+        trust_revocation,
+        cross:
+            CrossMachineViolations {
+                x2a_delegated_selector,
+                x6_unenforceable_deny_list,
+                x9_trust_epoch_posture,
+            },
+    }: MachineViolations,
+) -> Vec<String> {
     let mut violations = Vec::new();
     // Online OCSP cannot be honored on the production data plane. Checked HERE, because
     // this is the boundary the runtime actually goes through: `peer_revocation` is one of
@@ -189,13 +215,13 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // The mode's one parameter, immediately after it.
     violations.extend(residue::ocsp_responder_url_violations(config));
     // Same shape, second instance: a deny-list nothing enforces, on a public field.
-    violations.extend(decided.cross.x6_unenforceable_deny_list);
+    violations.extend(x6_unenforceable_deny_list);
     // Third instance of the same shape. This one was not a bypass — the composition root
     // refused it too — but it was stated twice, in two places, with two messages.
     violations.extend(residue::authz_profile_violations(config));
     // The `Authorization` machine, immediately after the selector's own refusal: an
     // operator who set a decision parameter beside no authority reads both facts together.
-    violations.extend(decided.authorization);
+    violations.extend(authorization);
     // X2b — TlsCustody × Tls. A delegated handshake key and an exported copy of it are
     // contradictory rather than redundant, and the contradiction is between two machines,
     // so it is decided in pass 2 and only placed here.
@@ -204,8 +230,8 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // clauses used to sit at the END of this list; they are emitted here now, which is a
     // DELIBERATE precedence change — the mode's own undeployability is what an operator
     // needs first, and it was previously reported after every unrelated limit.
-    violations.extend(decided.freshness);
-    violations.extend(decided.channel_binding);
+    violations.extend(freshness);
+    violations.extend(channel_binding);
     // The deployment's own identity coordinates, immediately before `--target-uri`, which is
     // one of them and was the only one checked here. Each is a REQUIRED `String` that
     // nothing downstream ever dereferences — they are minted into what the proxy signs and
@@ -217,7 +243,7 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // and collapsing them would fix the ordering of that machine's diagnostics in advance.
     // The `ServerIdentity` owner's two coordinates, at the position the identity clauses
     // have always been read.
-    violations.extend(decided.server_identity);
+    violations.extend(server_identity);
     // `--audience` is not one of them: it is consumed as an audience parameter, not as part
     // of the identity, so its guard stays where no owner claims it. `--server-key-id` is not
     // guarded here at all — `DelegatedSigning` owns the resolved issuer kid, and the
@@ -233,6 +259,8 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // scheme-less `--target-uri` does not weaken the request-target reconstruction check,
     // it disables it for every request.
     violations.extend(residue::target_uri_violations(config));
+    // The transport contract is mandatory: the accepted version set must name a version.
+    violations.extend(mcp_transport_contract);
     // Seventh, and it arrives here from the TRUST plane, where it had no business being:
     // whether a deployment names an inner server is a statement about the request, not
     // about trust, and refusing it there meant the trust plane could reject a
@@ -249,7 +277,7 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // downstream re-checked the degraded window, so a programmatic config reached the
     // serving path with `allow_degraded` on and P zero — a revoked workload served for
     // the clock-skew tolerance on a deployment that configured no window at all.
-    violations.extend(decided.admission);
+    violations.extend(admission);
     // The KMS/STS endpoint overrides. These carry the root-key trust bootstrap: the
     // `GetPublicKey` answer from the named host becomes the ROOT verify key the
     // verify-before-return guardrail is measured against, so a substituted endpoint
@@ -258,12 +286,12 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // The `Custody` machine: which key material this deployment claims to hold, and every
     // parameter that claim requires or excludes. Its endpoint guards come first because an
     // overridden KMS endpoint substitutes the root verify key itself.
-    violations.extend(decided.custody);
+    violations.extend(custody);
     // X2a — Custody × TlsCustody: a delegated selector names a key object in one specific
     // backend, so which one is legal depends on the custody state.
-    violations.extend(decided.cross.x2a_delegated_selector);
+    violations.extend(x2a_delegated_selector);
     // The `TlsCustody` machine's own column: the exported state has no key without one.
-    violations.extend(decided.channel_credential_custody);
+    violations.extend(channel_credential_custody);
     // Ingress-assertion coherence: whether the operator's belief about a request-binding
     // ingress control matches what runs.
     if let Some(refusal) = crate::config_state::transport::ingress_assertion_violation(config) {
@@ -271,29 +299,29 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     }
     // The `CrlRevocation` machine: whether offline revocation is off, loaded once, or
     // re-read, and what each of those states requires.
-    violations.extend(decided.crl_revocation);
+    violations.extend(crl_revocation);
     // ADR-MCPRE-052 delegated custody, decided by its own owner. The epoch was refused in
     // `delegated_wiring` — the last deterministic layer-A invalidity left, raised after two
     // planes had already established resources — while its two siblings were checked here,
     // so the family was split across two layers with no reason beyond history. It is one
     // owner now, and this is where an operator has always read it.
-    violations.extend(decided.delegated_signing);
+    violations.extend(delegated_signing);
     // ADR-MCPS-023 §A1 (MCPS-57) and the old relation X5, now one owner: `None` disables
     // enforcement on either side, a lifetime above the ceiling would let a NOT-short-lived
     // cert be audited as `short_lived_cert`, and a connection age above the lifetime means
     // a connection outlives the credential that authenticated it. All fail closed, and
     // they are spliced where the two clause groups have always been read.
-    violations.extend(decided.client_credential_window);
+    violations.extend(client_credential_window);
     // The trust locator, immediately before the posture over it. It left the required-
     // locator group when it acquired an owner: `TrustDocumentSource` is what a `TrustPlan`
     // now carries instead of a bare string, so the refusal belongs where the trust plane's
     // other clauses are rather than among three locators it shares nothing else with.
-    violations.extend(decided.trust_document);
+    violations.extend(trust_document);
     // The `TrustRevocation` machine (ADR-MCPS-021 Axis 2): the declared tier, the reload
     // cadence that IS its revocation window, and the epoch source that splits Push into
     // its inert and networked states. Spliced here because this is where its clauses have
     // always been read.
-    violations.extend(decided.trust_revocation);
+    violations.extend(trust_revocation);
     // MCPS-093/094: the socket timeouts and the aggregate read-phase deadline ARE the
     // slow-loris defense — a peer trickling bytes just under `read_timeout` is stopped by
     // `request_deadline`, and with either gone a handful of connections pin serve slots up
@@ -318,12 +346,12 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // that store requires or excludes. Spliced where the `memory` refusal and the
     // tier-strength refusal were read, in that order — the machine emits the input-form
     // refusal first for exactly that reason.
-    violations.extend(decided.replay);
+    violations.extend(replay);
     // The `ContinuationControl` machine (CF-12). A NEW position: this clause has no
     // predecessor to preserve, because until the alias was split there was no
     // configuration of its own to refuse. Placed beside Replay because that is where an
     // operator reading about shared stores is looking, not because the two are related.
-    violations.extend(decided.continuation_control);
+    violations.extend(continuation_control);
     // MCPS-79 (ADR-MCPS-049 clause 1) needed a clause here while a replay store could be
     // node-local: `--fleet` had to reject the kinds a peer verifier could not see. No such
     // kind is representable now — every classifiable replay state is shared, and a request
@@ -332,7 +360,7 @@ fn legality_violations(config: &DeploymentRequest, decided: MachineViolations) -
     // X9 — TrustRevocation × DelegatedSigning. The epoch posture is decided once, by the
     // `TrustRevocation` machine, and carried in the classification; nothing is re-derived
     // here (CF-09).
-    violations.extend(decided.cross.x9_trust_epoch_posture);
+    violations.extend(x9_trust_epoch_posture);
     violations
 }
 
@@ -348,21 +376,19 @@ mod required_coordinate_tests {
     /// downstream cannot function without belongs here, and the test below is what says
     /// whether the boundary refuses it — so the answer is measured rather than assumed.
     /// A coordinate's name, and how to blank it on a request built in code.
-    type Coordinate = (&'static str, fn(&mut DeploymentRequest));
+    type Coordinate = (&'static str, fn(&mut DeploymentRequest, String));
 
     const REQUIRED: &[Coordinate] = &[
-        ("bind", |c| c.bind = String::new()),
-        ("audience", |c| c.audience = String::new()),
-        ("server_signer", |c| c.server_signer = String::new()),
-        ("server_key_id", |c| c.server_key_id = String::new()),
-        ("target_uri", |c| c.target_uri = String::new()),
-        ("trust_domain", |c| c.trust_domain = String::new()),
-        ("peer_trust_anchors", |c| {
-            c.peer_trust_anchors = String::new()
-        }),
-        ("trust_path", |c| c.trust_path = String::new()),
-        ("credential_chain", |c| {
-            c.channel_credential.credential_chain = String::new();
+        ("bind", |c, v| c.bind = v),
+        ("audience", |c, v| c.audience = v),
+        ("server_signer", |c, v| c.server_signer = v),
+        ("server_key_id", |c, v| c.server_key_id = v),
+        ("target_uri", |c, v| c.target_uri = v),
+        ("trust_domain", |c, v| c.trust_domain = v),
+        ("peer_trust_anchors", |c, v| c.peer_trust_anchors = v),
+        ("trust_path", |c, v| c.trust_path = v),
+        ("credential_chain", |c, v| {
+            c.channel_credential.credential_chain = v
         }),
     ];
 
@@ -378,9 +404,9 @@ mod required_coordinate_tests {
     /// otherwise-legal request and the boundary must refuse it.
     #[test]
     fn every_required_coordinate_is_refused_when_empty_however_the_request_was_built() {
-        for (name, empty_it) in REQUIRED {
+        for (name, set) in REQUIRED {
             let mut config = legal_config();
-            empty_it(&mut config);
+            set(&mut config, String::new());
             assert!(
                 !unsafe_config_violations(&config).is_empty(),
                 "{name} is empty and the boundary admitted the deployment — a coordinate \
@@ -394,19 +420,9 @@ mod required_coordinate_tests {
     /// nothing, which is precisely the gap between the parser's rule and this one.
     #[test]
     fn a_whitespace_coordinate_is_refused_like_an_empty_one() {
-        for (name, _) in REQUIRED {
+        for (name, set) in REQUIRED {
             let mut config = legal_config();
-            match *name {
-                "bind" => config.bind = "   ".to_string(),
-                "audience" => config.audience = "   ".to_string(),
-                "server_signer" => config.server_signer = "   ".to_string(),
-                "server_key_id" => config.server_key_id = "   ".to_string(),
-                "target_uri" => config.target_uri = "   ".to_string(),
-                "trust_domain" => config.trust_domain = "   ".to_string(),
-                "peer_trust_anchors" => config.peer_trust_anchors = "   ".to_string(),
-                "trust_path" => config.trust_path = "   ".to_string(),
-                _ => config.channel_credential.credential_chain = "   ".to_string(),
-            }
+            set(&mut config, "   ".to_string());
             assert!(
                 !unsafe_config_violations(&config).is_empty(),
                 "{name} of whitespace must be refused: it passes a presence check and names \

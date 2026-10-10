@@ -32,8 +32,9 @@ use serde::Serialize;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
-use mcp_re_http_profile::sign_delegated_response_full;
+use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
 use mcp_re_http_profile::sign_request_full;
+use mcp_re_http_profile::sign_response_with_signer;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -44,10 +45,11 @@ use mcp_re_http_profile::DelegatedJwk;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::DelegationHeader;
+use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -268,7 +270,7 @@ fn response_body() -> Vec<u8> {
     br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
 }
 
-fn signed_request() -> (HttpRequest, RequestEvidence) {
+fn signed_request() -> (HttpRequest, RequestRoleEvidence) {
     let mut req = base_request();
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
@@ -398,9 +400,14 @@ fn from_wire_response(w: &WireMessage) -> HttpResponse {
 /// Sign a fresh delegated response embedding `credential`, signed by
 /// `delegated_signing_key` under RFC 9421 `keyid`, with the block's
 /// `server_signer.keyid == block_signer_kid`.
+///
+/// The library's delegated signer refuses a block naming another key than the one it
+/// signs under, so a vector where the two differ is forged: the block is emitted by the
+/// signer under `block_signer_kid`, then the signature is re-made under `keyid` over the
+/// same body. Ed25519 is deterministic, so the bytes are those a single emission under the
+/// two kids would have produced.
 fn delegated_response(
     req: &HttpRequest,
-    ev: &RequestEvidence,
     credential: &str,
     delegated_signing_key: &SigningKey,
     keyid: &str,
@@ -411,18 +418,31 @@ fn delegated_response(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_delegated_response_full(
+    sign_delegated_response_full_with_owned_key(
         &mut rsp,
         req,
-        ev,
         &server_signer_for(block_signer_kid),
         credential,
         delegated_signing_key,
-        keyid,
+        block_signer_kid,
         CREATED,
         EXPIRES,
     )
     .expect("sign delegated response");
+    if keyid != block_signer_kid {
+        sign_response_with_signer(
+            &mut rsp,
+            req,
+            |base| {
+                mcp_re_core::b64url_decode(&delegated_signing_key.sign(base))
+                    .map_err(|_| HttpProfileError::InvalidSignature)
+            },
+            keyid,
+            CREATED,
+            EXPIRES,
+        )
+        .expect("re-sign under the wire keyid");
+    }
     rsp
 }
 
@@ -458,7 +478,6 @@ fn build_fixtures() -> Vec<Fixture> {
     // --- 1. valid → accept -------------------------------------------------
     let valid_rsp = delegated_response(
         &req,
-        &ev,
         &valid_credential(),
         &delegated_key(),
         DELEGATED_KID,
@@ -478,7 +497,6 @@ fn build_fixtures() -> Vec<Fixture> {
     c.exp = CREATED - 10_000;
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(&root_key(), &good_header(), &c),
         &delegated_key(),
         DELEGATED_KID,
@@ -498,7 +516,6 @@ fn build_fixtures() -> Vec<Fixture> {
     c.exp = NOW + 20_000;
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(&root_key(), &good_header(), &c),
         &delegated_key(),
         DELEGATED_KID,
@@ -517,7 +534,6 @@ fn build_fixtures() -> Vec<Fixture> {
     c.mcp_re_key_use = "request-signing".into();
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(&root_key(), &good_header(), &c),
         &delegated_key(),
         DELEGATED_KID,
@@ -536,7 +552,6 @@ fn build_fixtures() -> Vec<Fixture> {
     c.mcp_re_profile = "some-other-profile".into();
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(&root_key(), &good_header(), &c),
         &delegated_key(),
         DELEGATED_KID,
@@ -636,7 +651,6 @@ fn build_fixtures() -> Vec<Fixture> {
     // --- 7. substituted key: RFC 9421 keyid ≠ delegated_kid ----------------
     let rsp = delegated_response(
         &req,
-        &ev,
         &valid_credential(),
         &delegated_key(),
         "some-other-kid",
@@ -653,7 +667,6 @@ fn build_fixtures() -> Vec<Fixture> {
     // --- 7'. substituted key: signed by a key other than cnf.jwk -----------
     let rsp = delegated_response(
         &req,
-        &ev,
         &valid_credential(),
         &attacker_key(),
         DELEGATED_KID,
@@ -705,7 +718,6 @@ fn build_fixtures() -> Vec<Fixture> {
     );
     let rsp = delegated_response(
         &req,
-        &ev,
         &foreign,
         &delegated_key(),
         DELEGATED_KID,
@@ -726,7 +738,6 @@ fn build_fixtures() -> Vec<Fixture> {
     c.issuer_kid = "untrusted-root".into();
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(&root_key(), &h, &c),
         &delegated_key(),
         DELEGATED_KID,
@@ -745,7 +756,6 @@ fn build_fixtures() -> Vec<Fixture> {
     h.alg = "none".into();
     let rsp = delegated_response(
         &req,
-        &ev,
         &mint(
             &root_key(),
             &h,
@@ -771,7 +781,6 @@ fn build_fixtures() -> Vec<Fixture> {
     );
     let rsp = delegated_response(
         &req,
-        &ev,
         &forged,
         &delegated_key(),
         DELEGATED_KID,
@@ -802,7 +811,6 @@ fn build_fixtures() -> Vec<Fixture> {
     );
     let rsp_b = delegated_response(
         &req,
-        &ev,
         &cred_b,
         &delegated2_key(),
         DELEGATED2_KID,
@@ -817,7 +825,7 @@ fn build_fixtures() -> Vec<Fixture> {
     ));
 
     // --- 12. response body tamper (content-digest floor) -------------------
-    let mut tampered = valid_rsp_clone(&req, &ev);
+    let mut tampered = valid_rsp_clone(&req);
     let last = tampered.body.len() - 2;
     tampered.body[last] ^= 0x01;
     fx.push(fixture(
@@ -829,7 +837,7 @@ fn build_fixtures() -> Vec<Fixture> {
     ));
 
     // --- 12'. response signature-bytes tamper (verify under cnf fails) ------
-    let mut sig_tampered = valid_rsp_clone(&req, &ev);
+    let mut sig_tampered = valid_rsp_clone(&req);
     tamper_response_signature(&mut sig_tampered);
     fx.push(fixture(
         "d22_response_signature_tamper",
@@ -844,10 +852,9 @@ fn build_fixtures() -> Vec<Fixture> {
 
 /// A fresh copy of the valid delegated response (its own signed bytes) so a
 /// post-signing tamper does not disturb the shared `valid_rsp`.
-fn valid_rsp_clone(req: &HttpRequest, ev: &RequestEvidence) -> HttpResponse {
+fn valid_rsp_clone(req: &HttpRequest) -> HttpResponse {
     delegated_response(
         req,
-        ev,
         &valid_credential(),
         &delegated_key(),
         DELEGATED_KID,

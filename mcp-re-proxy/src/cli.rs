@@ -5,8 +5,8 @@
 //!
 //! - [`Flags`], the accumulator, and its routing table: each flag is dispatched to the one
 //!   family that owns its meaning. The families are the `cli::*_flags` children.
-//! - [`refused_or_unknown`], the answer for a flag no family owns, including the one
-//!   spelling recognised only to refuse it.
+//! - [`argv`], the reader: which token is a value, and the answer for a flag no family
+//!   owns.
 //! - [`parse_args`], which composes the families' products into a request and hands it to
 //!   the layer-A boundary.
 //!
@@ -21,6 +21,7 @@
 //! module: the configuration state machines read a request without depending on the parser.
 
 mod admission_flags;
+mod argv;
 mod audit_flags;
 mod authorization_flags;
 mod channel_flags;
@@ -66,8 +67,27 @@ impl Flags {
     /// Route one valueless flag to the family that owns it, reporting whether one did.
     fn take_switch(&mut self, flag: &str) -> bool {
         self.signing_source.take_switch(flag)
+            || self.identity.take_switch(flag)
             || self.serving.take_switch(flag)
             || self.peer_identity.take_switch(flag)
+    }
+
+    /// The routing set of `take`.
+    fn owns(flag: &str) -> bool {
+        identity_flags::IdentityFlags::owns(flag)
+            || serving_flags::ServingFlags::owns(flag)
+            || protocol_flags::ProtocolFlags::owns(flag)
+            || runtime_flags::RuntimeFlags::owns(flag)
+            || channel_flags::ChannelFlags::owns(flag)
+            || signing_source_flags::SigningSourceFlags::owns(flag)
+            || peer_identity_flags::PeerIdentityFlags::owns(flag)
+            || revocation_flags::RevocationFlags::owns(flag)
+            || storage_flags::StorageFlags::owns(flag)
+            || currency_flags::CurrencyFlags::owns(flag)
+            || admission_flags::AdmissionFlags::owns(flag)
+            || authorization_flags::AuthorizationFlags::owns(flag)
+            || audit_flags::AuditFlags::owns(flag)
+            || delegated_signing_flags::DelegatedSigningFlags::owns(flag)
     }
 
     /// Route one value-taking flag to the family that owns it.
@@ -104,7 +124,7 @@ impl Flags {
         } else if delegated_signing_flags::DelegatedSigningFlags::owns(flag) {
             self.delegated_signing.take(flag, value)?;
         } else {
-            return Err(refused_or_unknown(flag));
+            return Err(argv::refused_or_unknown(flag));
         }
         Ok(())
     }
@@ -142,6 +162,7 @@ impl Flags {
             mcp_protocol_versions: protocol.versions,
             target_uri: protocol.target_uri,
             trust_domain: identity.trust_domain,
+            allow_example_fixtures: identity.allow_example_fixtures,
             route: serving.route,
             response_signing,
             channel_credential: channel.credential,
@@ -150,7 +171,7 @@ impl Flags {
             peer_revocation: self.revocation.finish()?,
             peer_identity: self.peer_identity.finish()?,
             trust_path: serving.trust_path,
-            inner_http_urls: serving.inner_http_urls,
+            inner_http_urls: serving.inner_http_urls.into(),
             fleet: serving.fleet,
             allow_group_readable_key_files: serving.allow_group_readable_key_files,
             cores: runtime.cores,
@@ -173,27 +194,6 @@ impl Flags {
     }
 }
 
-/// A flag no family owns.
-///
-/// One spelling is recognised only to REFUSE it with the reason and the replacement.
-/// Falling through to "unknown flag" would be a worse error for the one operator who most
-/// needs to understand what changed — and worse, it would report a secret-handling decision
-/// as a typo.
-fn refused_or_unknown(flag: &str) -> String {
-    if flag == "--pkcs11-pin" {
-        // The PIN has already been exposed at this point (it is in this process's argv,
-        // which is world-readable): the refusal is about not making it a standing exposure,
-        // and the operator should treat that PIN as compromised and change it.
-        return "--pkcs11-pin is refused: a process command line is world-readable \
-                (ps, /proc/<pid>/cmdline), so the PIN unlocking the token that holds the \
-                signing keys would be published to every local user for the lifetime of the \
-                process. Use --pkcs11-pin-file <path> with a 0600 file. Treat any PIN \
-                previously passed this way as compromised."
-            .to_string();
-    }
-    format!("unknown flag {flag}")
-}
-
 /// A required value, or the flag that would have supplied it.
 fn require(value: Option<String>, flag: &str) -> Result<String, String> {
     value.ok_or_else(|| format!("missing required {flag}"))
@@ -206,20 +206,7 @@ fn require(value: Option<String>, flag: &str) -> Result<String, String> {
 /// request they describe. Both halves are one line each, because every flag's grammar lives
 /// with the family that owns its meaning (ADR-MCPRE-067 §16, Phase 7).
 pub fn parse_args(args: &[String]) -> Result<DeploymentRequest, String> {
-    let mut flags = Flags::default();
-    let mut i = 0usize;
-    #[allow(clippy::arithmetic_side_effects)] // class C: every read of `args` is a `get`
-    while let Some(flag) = args.get(i).map(String::as_str) {
-        if flags.take_switch(flag) {
-            i += 1;
-            continue;
-        }
-        let value = args
-            .get(i + 1)
-            .ok_or_else(|| format!("flag {flag} requires a value"))?;
-        flags.take(flag, value)?;
-        i += 2;
-    }
+    let flags = argv::read(args)?;
     // Whether the deployment this argument list describes is one that may run is not the
     // parser's question, and the answer is the same however the request was built. Every
     // violation is reported, not the first — a command line missing four things is worth
@@ -252,7 +239,7 @@ mod tests {
             "--ingress-identity",
             "spiffe://example.org/ingress-1",
             "--ingress-audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--ingress-pinned-mtls",
         ])
     }
@@ -357,11 +344,7 @@ mod tests {
     /// cannot carry a credential off the machine.
     #[test]
     fn a_loopback_http_kms_endpoint_is_accepted_for_emulators() {
-        for endpoint in [
-            "http://localhost:4566",
-            "http://127.0.0.1:4566/",
-            "http://[::1]:4566",
-        ] {
+        for endpoint in ["http://127.0.0.1:4566/", "http://[::1]:4566"] {
             assert!(
                 with_kms_endpoint("--aws-kms-endpoint", endpoint).is_ok(),
                 "{endpoint} is a loopback emulator and must be accepted"
@@ -442,14 +425,25 @@ mod tests {
         a
     }
 
+    /// `minimal()` for a command line whose custody mechanism never reads a seed.
+    fn minimal_without_seed() -> Vec<String> {
+        let mut a = minimal();
+        let at = a
+            .iter()
+            .position(|arg| arg == "--signing-key-seed")
+            .expect("minimal names a seed");
+        a.drain(at..at + 2);
+        a
+    }
+
     fn minimal() -> Vec<String> {
         args(&[
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--signing-key-seed",
@@ -469,6 +463,8 @@ mod tests {
             // tautology, so it is refused at parse.
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             // Delegated-signing is the only response mode; the trust epoch is required
             // for every config (ADR-MCPRE-052 §7).
             "--delegated-trust-epoch",
@@ -489,9 +485,9 @@ mod tests {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--signing-key-seed",
@@ -506,6 +502,8 @@ mod tests {
             "/trust.json",
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--delegated-trust-epoch",
             "epoch-min",
             "--trust-domain",
@@ -830,6 +828,50 @@ mod tests {
         }
     }
 
+    /// The replica clock divergence is declared at the command line and reaches the
+    /// resolved window; saying nothing leaves the request's field empty so the replay owner
+    /// can tell a chosen value from a default.
+    #[test]
+    fn a_declared_replay_clock_divergence_reaches_the_resolved_window() {
+        let silent = parse_args(&minimal_durable()).expect("parses");
+        assert_eq!(silent.replay.replica_clock_divergence_secs, None);
+        for declared in [0, 5, mcp_re_proxy_divergence_ceiling()] {
+            let mut a = minimal_durable();
+            a.push("--replay-clock-divergence-secs".into());
+            a.push(declared.to_string());
+            let config =
+                parse_args(&a).unwrap_or_else(|e| panic!("divergence {declared} must parse: {e}"));
+            assert_eq!(config.replay.replica_clock_divergence_secs, Some(declared));
+        }
+    }
+
+    fn mcp_re_proxy_divergence_ceiling() -> i64 {
+        crate::config_state::replica_clock::MAX_REPLICA_CLOCK_DIVERGENCE_SECS
+    }
+
+    /// A divergence outside the ceiling is refused at the command line, because a negative
+    /// one would shorten retention and so reopen the window it exists to close.
+    #[test]
+    fn an_out_of_bounds_replay_clock_divergence_is_refused_at_parse() {
+        for declared in [-1, -30, mcp_re_proxy_divergence_ceiling() + 1, 3600] {
+            let mut a = minimal_durable();
+            a.push("--replay-clock-divergence-secs".into());
+            a.push(declared.to_string());
+            let err = parse_args(&a)
+                .err()
+                .unwrap_or_else(|| panic!("divergence {declared} must be refused"));
+            assert!(
+                err.contains("--replay-clock-divergence-secs must be"),
+                "got: {err}"
+            );
+        }
+        let mut a = minimal_durable();
+        a.push("--replay-clock-divergence-secs".into());
+        a.push("soon".into());
+        let err = parse_args(&a).expect_err("not an integer");
+        assert!(err.contains("must be an integer"), "got: {err}");
+    }
+
     /// An empty `--target-uri` would make the audience/target conjunction compare
     /// `"" == ""` on every request. Refused at parse rather than served.
     #[test]
@@ -1043,10 +1085,9 @@ mod tests {
     }
 
     #[test]
-    fn mcp_protocol_version_is_repeatable_and_absent_by_default() {
+    fn mcp_protocol_version_is_repeatable_and_required() {
+        // `minimal_durable` declares one; each further occurrence adds an accepted version.
         let mut a = minimal_durable();
-        a.push("--mcp-protocol-version".into());
-        a.push("2026-07-28".into());
         a.push("--mcp-protocol-version".into());
         a.push("2025-06-18".into());
         let config = parse_args(&a).expect("parse");
@@ -1054,6 +1095,16 @@ mod tests {
             config.mcp_protocol_versions,
             vec!["2026-07-28", "2025-06-18"]
         );
+
+        // The transport contract is mandatory: with no version there is nothing to start.
+        let mut bare = minimal_durable();
+        let at = bare
+            .iter()
+            .position(|x| x == "--mcp-protocol-version")
+            .expect("the fixture declares one");
+        bare.drain(at..at + 2);
+        let err = parse_args(&bare).expect_err("no protocol version is not a posture");
+        assert!(err.contains("--mcp-protocol-version"), "got: {err}");
     }
 
     // --- ADR-MCPRE-052 (MCPRE-122) delegated-signing (the only mode) -----------
@@ -1102,23 +1153,24 @@ mod tests {
         // durable replay backend; every other value here is a plain default.
         let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(config.bind, "127.0.0.1:8443");
-        assert_eq!(config.audience, "did:example:server-1");
+        assert_eq!(config.audience, "did:web:server-1.mcp.example.com");
         // The default skew is the profile's own, so the freshness gate the verifier
         // runs and the retention the replay tier applies cannot drift apart.
         assert_eq!(
             config.max_clock_skew,
             mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW
         );
-        assert!(config.mcp_protocol_versions.is_empty());
+        assert_eq!(config.mcp_protocol_versions, vec!["2026-07-28"]);
         assert!(matches!(
             config.response_signing.source,
             SigningSourceRequest::File(_)
         ));
         assert_eq!(config.peer_identity.flag_value(), "exact");
-        // Safe defaults: URI SAN identity, bounded resources.
+        // Safe defaults: no identity field named (the channel-binding owner holds it to the
+        // URI SAN), bounded resources.
         assert_eq!(
-            config.peer_identity.credential_identity_field(),
-            Some(IdentityPolicy::UriSan)
+            config.peer_identity.credential_identity().map(|c| c.field),
+            Some(None)
         );
         assert_eq!(config.authorization.kind, AuthzKind::Off);
         assert_eq!(config.limits.max_header_bytes, 64 * 1024);
@@ -1136,8 +1188,8 @@ mod tests {
             Some(std::time::Duration::from_secs(3600))
         );
         assert_eq!(
-            config.inner_http_urls,
-            vec!["http://127.0.0.1:8080/mcp".to_string()]
+            config.inner_http_urls.expose(),
+            ["http://127.0.0.1:8080/mcp".to_string()]
         );
     }
 
@@ -1202,17 +1254,18 @@ mod tests {
 
     #[test]
     fn parses_identity_source_selection() {
-        // uri_san (default) and dns_san are the production-acceptable sources; the
-        // deprecated cn_legacy is always rejected (strict_rejects_cn_legacy_...).
+        // uri_san (default) and dns_san are the only sources; any other value is
+        // rejected (strict_rejects_cn_legacy_...).
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "uri_san"]));
         assert_eq!(
             parse_args(&a)
                 .expect("parse")
                 .peer_identity
-                .credential_identity_field()
-                .expect("the channel-credential form"),
-            IdentityPolicy::UriSan
+                .credential_identity()
+                .expect("the channel-credential form")
+                .field,
+            Some(IdentityPolicy::UriSan)
         );
 
         let mut a = minimal_durable();
@@ -1221,9 +1274,10 @@ mod tests {
             parse_args(&a)
                 .expect("parse")
                 .peer_identity
-                .credential_identity_field()
-                .expect("the channel-credential form"),
-            IdentityPolicy::DnsSan
+                .credential_identity()
+                .expect("the channel-credential form")
+                .field,
+            Some(IdentityPolicy::DnsSan)
         );
     }
 
@@ -1376,7 +1430,7 @@ mod tests {
         let mut config = parse_args(&minimal_durable()).expect("the base config parses");
         config.peer_identity = mode_c_form(
             vec!["spiffe://example.org/ingress-1".to_string()],
-            "did:example:server-1".to_string(),
+            "did:web:server-1.mcp.example.com".to_string(),
         );
         let violations = unsafe_config_violations(&config);
         assert!(
@@ -1402,7 +1456,7 @@ mod tests {
                 "--ingress-identity",
                 "spiffe://example.org/ingress-1",
                 "--ingress-audience",
-                "did:example:server-1",
+                "did:web:server-1.mcp.example.com",
                 // no --ingress-pinned-mtls
             ]),
         );
@@ -1458,7 +1512,10 @@ mod tests {
                 "--ingress-identity",
                 "spiffe://example.org/ingress-1".to_string(),
             ),
-            ("--ingress-audience", "did:example:server-1".to_string()),
+            (
+                "--ingress-audience",
+                "did:web:server-1.mcp.example.com".to_string(),
+            ),
         ] {
             let mut a = minimal();
             a.splice(0..0, args(&[flag, &val]));
@@ -1484,30 +1541,27 @@ mod tests {
                 "--ingress-identity",
                 "spiffe://example.org/ingress-1",
                 "--ingress-audience",
-                "did:example:server-1",
+                "did:web:server-1.mcp.example.com",
                 "--ingress-pinned-mtls",
             ]),
         );
         assert!(parse_args(&a).unwrap_err().contains("Ed25519 public key"));
     }
 
-    // In a production build (no `dev_env_key_source` feature) the env key source does
-    // not exist at all — `--key-source env` is an unknown value, not a togglable
-    // downgrade. The dev feature is the ONLY way to compile it in.
-    #[cfg(not(feature = "dev_env_key_source"))]
+    /// MCPS-076: the process environment carries no key material, so no `--key-source`
+    /// reads it. `env` is refused as an unknown value, exactly like a typo, and the
+    /// refusal does not offer it among the mechanisms that exist.
     #[test]
-    fn env_key_source_rejected_in_production_build() {
+    fn env_is_an_unknown_key_source() {
         let mut a = minimal();
         a.splice(0..0, args(&["--key-source", "env"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("unknown --key-source"), "got: {err}");
-        assert!(err.contains("env"), "got: {err}");
+        assert!(err.contains("unknown --key-source 'env'"), "got: {err}");
+        assert!(
+            err.contains("(file|pkcs11|aws-kms|gcp-kms)"),
+            "the refusal lists exactly the mechanisms that exist, got: {err}"
+        );
     }
-
-    // NOTE: the env key source is never accepted (the `--allow-env-keysource`
-    // opt-out qualifier is rejected and the unconditional strict posture refuses env
-    // key material), so `--key-source env` cannot reach a built key source — the
-    // `env_key_source_requires_explicit_opt_in` guard above is the operative gate.
 
     // --- #4034 PKCS#11 key source (CLI parsing + fail-closed gate) -----------
 
@@ -1529,7 +1583,7 @@ mod tests {
 
     #[test]
     fn parses_pkcs11_key_source_flags() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, pkcs11_flags());
         let config = parse_args(&a).expect("parse");
         let token = token_payload(&config);
@@ -1564,7 +1618,7 @@ mod tests {
                 .position(|f| f == missing)
                 .expect("flag present");
             flags.drain(idx..idx + 2);
-            let mut a = minimal();
+            let mut a = minimal_durable_without("--signing-key-seed");
             a.splice(0..0, flags);
             let err = parse_args(&a).unwrap_err();
             assert!(
@@ -1580,7 +1634,7 @@ mod tests {
         // is still recognised so the refusal explains WHY and what to use instead —
         // falling through to "unknown flag" would report a secret-handling decision as
         // a typo.
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, pkcs11_flags());
         a.extend(args(&["--pkcs11-pin", "1234"]));
         let err = parse_args(&a).unwrap_err();
@@ -1612,11 +1666,11 @@ mod tests {
     // not compiled and `build_key_source` must FAIL CLOSED on
     // `KeySourceKind::Pkcs11` with a clear, actionable error — `--key-source
     // pkcs11` still parses so the message is precise, but no token-backed key is
-    // built. Mirrors `default_build_rejects_env_key_source`.
+    // built.
     #[cfg(not(feature = "pkcs11_keysource"))]
     #[test]
     fn default_build_rejects_pkcs11_key_source() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, pkcs11_flags());
         let config = parse_args(&a).expect("parse");
         assert!(matches!(
@@ -1643,8 +1697,10 @@ mod tests {
     /// to end. Its own properties are tested with it.
     fn key_source_from(
         config: &DeploymentRequest,
-    ) -> Result<Box<dyn crate::key_source::KeySource + Send + Sync>, crate::key_source::KeyError>
-    {
+    ) -> Result<
+        crate::capability_materialization::MaterializedSigningRoles,
+        crate::key_source::KeyError,
+    > {
         let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
         assert!(violations.is_empty(), "fixture refused: {violations:?}");
         let (channel_credential_custody, violations) =
@@ -1663,7 +1719,6 @@ mod tests {
             &config.channel_credential.credential_chain,
             &config.peer_trust_anchors,
         )
-        .map(crate::capability_materialization::MaterializedSigningRoles::into_key_source)
     }
 
     // MCPS-076: the File key source is always constructible (default + dev builds) —
@@ -1726,7 +1781,7 @@ mod tests {
 
     #[test]
     fn parses_aws_kms_key_source_flags() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, aws_kms_flags());
         let config = parse_args(&a).expect("parse");
         let kms = aws_payload(&config);
@@ -1743,7 +1798,7 @@ mod tests {
                 .position(|f| f == missing)
                 .expect("flag present");
             flags.drain(idx..idx + 2);
-            let mut a = minimal();
+            let mut a = minimal_durable_without("--signing-key-seed");
             a.splice(0..0, flags);
             let err = parse_args(&a).unwrap_err();
             assert!(
@@ -1763,9 +1818,9 @@ mod tests {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--key-source",
@@ -1774,8 +1829,6 @@ mod tests {
             "us-east-1",
             "--aws-kms-key-id",
             "alias/mcp-re-response-signing",
-            "--signing-key-seed",
-            "/unused-seed",
             "--tls-cert",
             "/cert",
             "--client-ca",
@@ -1784,6 +1837,8 @@ mod tests {
             "/trust.json",
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--delegated-trust-epoch",
             "epoch-min",
             "--trust-domain",
@@ -1826,12 +1881,12 @@ mod tests {
             "redis-wait-quorum:1:100",
         ]);
 
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, durable.clone());
         a.splice(0..0, aws_kms_flags());
         assert!(!aws_payload(&parse_args(&a).unwrap()).use_web_identity);
 
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, durable);
         a.splice(0..0, aws_kms_flags());
         a.splice(0..0, args(&["--aws-kms-use-web-identity"]));
@@ -1854,7 +1909,7 @@ mod tests {
     /// while nothing consulted it.
     #[test]
     fn aws_sts_endpoint_without_web_identity_fails_closed() {
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, aws_kms_flags());
         a.splice(
             0..0,
@@ -1870,7 +1925,7 @@ mod tests {
     fn aws_kms_tls_key_id_plus_exported_tls_key_fails_closed() {
         // minimal() carries an exported `--tls-key`; adding a delegated TLS key id
         // alongside it must be rejected.
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, aws_kms_flags());
         a.splice(0..0, args(&["--aws-kms-tls-key-id", "alias/mcp-re-tls"]));
         let err = parse_args(&a).unwrap_err();
@@ -1895,7 +1950,7 @@ mod tests {
 
     #[test]
     fn parses_gcp_kms_key_source_flags() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, gcp_kms_flags());
         let config = parse_args(&a).expect("parse");
         let kms = gcp_payload(&config);
@@ -1909,7 +1964,7 @@ mod tests {
 
     #[test]
     fn gcp_kms_requires_key_version() {
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, args(&["--key-source", "gcp-kms"]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--gcp-kms-key-version"), "got: {err}");
@@ -1931,17 +1986,15 @@ mod tests {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--key-source",
             "gcp-kms",
             "--gcp-kms-key-version",
             "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
-            "--signing-key-seed",
-            "/unused-seed",
             "--tls-cert",
             "/cert",
             "--client-ca",
@@ -1950,6 +2003,8 @@ mod tests {
             "/trust.json",
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--delegated-trust-epoch",
             "epoch-min",
             "--trust-domain",
@@ -1992,7 +2047,7 @@ mod tests {
     fn gcp_kms_tls_key_version_plus_exported_tls_key_fails_closed() {
         // minimal() carries an exported `--tls-key`; adding a delegated TLS key
         // version alongside it must be rejected.
-        let mut a = minimal();
+        let mut a = minimal_without_seed();
         a.splice(0..0, gcp_kms_flags());
         a.splice(
             0..0,
@@ -2044,7 +2099,7 @@ mod tests {
     #[cfg(not(feature = "aws_kms_keysource"))]
     #[test]
     fn default_build_rejects_aws_kms_key_source() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, aws_kms_flags());
         let config = parse_args(&a).expect("parse");
         assert!(matches!(
@@ -2064,7 +2119,7 @@ mod tests {
     #[cfg(not(feature = "gcp_kms_keysource"))]
     #[test]
     fn default_build_rejects_gcp_kms_key_source() {
-        let mut a = minimal_durable();
+        let mut a = minimal_durable_without("--signing-key-seed");
         a.splice(0..0, gcp_kms_flags());
         let config = parse_args(&a).expect("parse");
         assert!(matches!(
@@ -2178,7 +2233,7 @@ mod tests {
             assert!(
                 !matches!(
                     config.response_signing.source,
-                    SigningSourceRequest::File(_) | SigningSourceRequest::Environment(_)
+                    SigningSourceRequest::File(_)
                 ),
                 "{source}: a non-exporting selection must not be a seed-bearing one"
             );
@@ -2217,7 +2272,15 @@ mod tests {
         // is accepted; cap+1 is rejected.
         let cap = super::runtime_flags::MAX_INNER_READ_TIMEOUT_SECS;
         let mut at_cap = minimal_durable();
-        at_cap.splice(0..0, args(&["--request-deadline-secs", &cap.to_string()]));
+        at_cap.splice(
+            0..0,
+            args(&[
+                "--request-deadline-secs",
+                &cap.to_string(),
+                "--drain-grace-secs",
+                &cap.to_string(),
+            ]),
+        );
         let config = parse_args(&at_cap).expect("the cap value itself is accepted");
         assert_eq!(
             config.limits.request_deadline,
@@ -2494,7 +2557,7 @@ mod tests {
         }
     }
 
-    /// A tier that advertises a near-zero window must have a store that can change.
+    /// A tier whose window is bounded by the re-read cadence must have a store that can change.
     /// Read-once `--trust` makes both LIVE and PUSH claims the binary cannot keep.
     #[test]
     fn live_and_push_tiers_require_a_trust_reload_cadence() {
@@ -2513,7 +2576,7 @@ mod tests {
 
     /// PRESENCE is not the guarantee. A cadence longer than the window the tier
     /// advertises leaves the same over-claim the absent-cadence refusal exists to stop:
-    /// the startup line promises near-zero while the store changes once a week.
+    /// the startup line promises a one-minute bound while the store changes once a week.
     #[test]
     fn a_cadence_longer_than_the_declared_window_is_refused() {
         for (tier, secs) in [
@@ -2642,8 +2705,8 @@ mod tests {
         ]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(
-            config.inner_http_urls,
-            vec![
+            config.inner_http_urls.expose(),
+            [
                 "http://10.0.0.1:8080/mcp".to_string(),
                 "http://10.0.0.2:8080/mcp".to_string(),
                 "http://10.0.0.3:8080/mcp".to_string(),
@@ -2988,6 +3051,12 @@ mod tests {
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
                 "redis-wait-quorum:2:500",
+                "--revocation-tier",
+                "push:60",
+                "--trust-reload-secs",
+                "30",
+                "--trust-epoch-redis-url",
+                "redis://127.0.0.1:6379",
             ]),
         );
         let config = parse_args(&a).expect("--fleet + shared wait-quorum must parse");
@@ -3061,7 +3130,8 @@ mod tests {
             config
                 .request_signer_currency
                 .epoch()
-                .and_then(crate::deployment_request::TrustEpochStoreRequest::key),
+                .and_then(|epoch| epoch.source.as_ref())
+                .and_then(crate::deployment_request::TrustEpochSource::key),
             Some("mcp-re:trust:epoch")
         );
     }
@@ -3183,7 +3253,10 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "cn_legacy"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("cn_legacy"), "got: {err}");
+        assert!(
+            err.contains("unknown --transport-identity-source 'cn_legacy'"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -3191,21 +3264,12 @@ mod tests {
         // The error aggregates every parse-time violation so the operator can fix
         // the whole posture in one pass, not one error per restart. A command line that
         // declares no replay configuration is itself a violation and aggregates alongside
-        // the cert-lifetime and cn_legacy ones.
+        // the cert-lifetime one.
         let mut a = minimal(); // declares no replay configuration
-        a.splice(
-            0..0,
-            args(&[
-                "--max-client-cert-lifetime",
-                "none",
-                "--transport-identity-source",
-                "cn_legacy",
-            ]),
-        );
+        a.splice(0..0, args(&["--max-client-cert-lifetime", "none"]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--replay-durability-tier"), "got: {err}");
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
-        assert!(err.contains("cn_legacy"), "got: {err}");
     }
 
     // --- #4082 (MCP-RE-MED-1) additional strict/production posture rejections -----
@@ -3232,9 +3296,9 @@ mod tests {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--key-source",
@@ -3247,8 +3311,6 @@ mod tests {
             "mcp-re-test",
             "--pkcs11-key-label",
             "mcp-re-response-signing",
-            "--signing-key-seed",
-            "/unused-seed",
             "--tls-cert",
             "/cert",
             "--client-ca",
@@ -3257,6 +3319,8 @@ mod tests {
             "/trust.json",
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--delegated-trust-epoch",
             "epoch-min",
             "--trust-domain",
@@ -3490,12 +3554,9 @@ mod tests {
             "https://kms.emulator.svc.cluster.local:8443",
             "https://10.0.0.5:8443",
             // The LocalStack / KMS-emulator lane, in every spelling.
-            "http://localhost:4566",
-            "http://localhost:4566/",
             "http://127.0.0.1:4566",
             "http://127.0.0.1:4566/",
             "http://[::1]:4566",
-            "http://localhost",
             "http://127.0.0.1",
             "http://[::1]",
         ];

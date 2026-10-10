@@ -34,7 +34,7 @@ use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -89,6 +89,7 @@ fn delegated_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "127.0.0.1:8443",
         "--audience",
         AUDIENCE,
+        "--allow-example-fixtures",
         "--server-signer",
         "did:example:server",
         "--server-key-id",
@@ -107,6 +108,8 @@ fn delegated_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "http://127.0.0.1:9",
         "--target-uri",
         TARGET,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--route",
         "a",
         "--replay-redis-url",
@@ -137,7 +140,7 @@ fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Syn
         Some(ResolvedActor {
             identity: ActorIdentity {
                 role: role.into(),
-                trust_domain: "example.com".into(),
+                trust_domain: "mcp.example.com".into(),
                 subject: format!("did:example:{role}"),
                 keyid: key_id.into(),
             },
@@ -153,9 +156,12 @@ fn actor_resolver() -> ActorResolver {
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
-    Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        |_forwarded: &[u8]| -> Vec<u8> {
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 /// Build the serving proxy the SAME way `app::run` does in delegated-required mode:
@@ -165,7 +171,8 @@ fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
 fn build_proxy(
     config: &mcp_re_proxy::deployment_request::DeploymentRequest,
 ) -> (HttpProfileProxy, mcp_re_proxy::ProdDelegatedRotor) {
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(config), root_key());
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(config), root_key())
+        .expect("the root states its key");
     let expected_audience = AudienceTuple {
         audience_id: config.audience.clone(),
         target_uri: config.target_uri.clone(),
@@ -197,7 +204,7 @@ fn signed_request_at(
     created: i64,
     expires: i64,
     verify_now: i64,
-) -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
+) -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
@@ -239,7 +246,7 @@ fn signed_request_at(
 }
 
 /// A request whose freshness window is centered on `at` (±100s).
-fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
+fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
     signed_request_at(nonce, at - 100, at + 200, at)
 }
 
@@ -306,14 +313,15 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
         // delegated key, NOT the root — rather than a kid literal.
         first_delegated_kid = Some(
             verified
-                .signature_facts
+                .signature_facts()
                 .accepted_signer
                 .identity
                 .keyid
                 .clone(),
         );
         assert_ne!(
-            verified.signature_facts.accepted_signer.identity.keyid, ROOT_KID,
+            verified.signature_facts().accepted_signer.identity.keyid,
+            ROOT_KID,
             "signed by the delegated key, not the root"
         );
     }
@@ -366,11 +374,13 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     // distinct RFC 7638 thumbprint, so the kid changing is itself the proof that
     // rotation minted a new key rather than re-serving the old one.
     assert_ne!(
-        verified.signature_facts.accepted_signer.identity.keyid, first_delegated_kid,
+        verified.signature_facts().accepted_signer.identity.keyid,
+        first_delegated_kid,
         "signed by the SUCCESSOR delegated key, not the predecessor"
     );
     assert_ne!(
-        verified.signature_facts.accepted_signer.identity.keyid, ROOT_KID,
+        verified.signature_facts().accepted_signer.identity.keyid,
+        ROOT_KID,
         "and still not the root"
     );
 

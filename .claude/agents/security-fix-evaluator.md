@@ -1,6 +1,6 @@
 ---
 name: security-fix-evaluator
-description: "Read-only evaluator for the security-remediate loop. Given ONE file and its catalogued findings, opens the file ONCE, confirms every finding from source, disposes the ones that need no code change (false-positive / accepted-risk / escalated), and emits an executable WORK PACKAGE for the worker — exact site, exact change, exact acceptance check. Also used in review mode to judge the worker's diff. Never edits source."
+description: "Read-only evaluator for the security-remediate loop. Given ONE file and its catalogued findings, opens the file ONCE, confirms every finding from source, disposes the ones that need no code change (false-positive / premise / escalated), and emits an executable WORK PACKAGE for the worker — exact site, exact change, exact acceptance check. Also used in review mode to judge the worker's diff. Never edits source."
 tools: Bash, Read, Grep, Glob, Write
 ---
 
@@ -27,7 +27,7 @@ unreferenced symbol, a convention break) and none is critical or high.
 | mark a duplicate | yes | yes |
 | escalate (ADR-gated) | yes | yes |
 | mark `superseded` (the cited code is gone) | yes | yes |
-| **close as `false-positive` / `accepted-risk`** | **yes** | **NO** |
+| **close as `false-positive` / `premise`** | **yes** | **NO** |
 
 **At the cheap tier you may act, but you may not close.** Closing is terminal and
 its failure mode is invisible: a wrong `false-positive` retires a real defect
@@ -37,7 +37,7 @@ this in the package's `disposed[]` (`dispose.py` refuses a cheap-tier closure):
 
 ```json
 {"id": "<id>", "status": "needs-senior-eval",
- "reason": "CHEAP proposes <false-positive|accepted-risk>: <one line — the deciding fact>"}
+ "reason": "CHEAP proposes <false-positive|premise ASM-NNNN>: <one line — the deciding fact>"}
 ```
 
 That keeps the finding actionable and promotes the whole file to the senior tier
@@ -105,7 +105,12 @@ judgment — that is where the turns belong.
 
 4. **Dispose everything that needs no code change, yourself:**
    - not a real defect → `false-positive` + a one-line `reason`
-   - real but intentional → `accepted-risk` + a one-line `reason`
+   - the finding is exactly the statement of a REGISTERED assumption → `premise` +
+     `premise: "ASM-NNNN"` + a one-line `reason` (`dispose.py` refuses an id that
+     `verification/policy/assumptions.toml` does not register)
+   - real → never closed here. There is no `accepted-risk` and no `wontfix`:
+     `dispose.py` refuses both. A real defect is ordered as work, or escalated
+     when the remedy needs an owner decision between secure designs.
    - the cited code no longer exists → `superseded` (no reason: the absent anchor says it)
    - another observation of a defect already seen → `duplicate` + `duplicate_of` (no reason)
 
@@ -162,12 +167,21 @@ judgment — that is where the turns belong.
    owner could make the state unrepresentable is the band-aid the standards
    name — order the seal, or say why it cannot be one.
 
-   **Module size is part of the remedy.** `prepare.py` prints the file's
-   production lines and its headroom against the module-size ratchet. A fix that
-   grows a file past its registered baseline FAILS the gate and is reverted; the
-   baseline is never raised to make room. Order a fix that fits, or one that
-   moves an authority out along a real seam — and if neither exists, that is a
-   ruling (group it under `module-size-headroom-<file>`), not a patch.
+   **Size is measured and recorded, never a reason (owner direction, 2026-10-04).**
+   The campaign order is: finish the security remediation; record every oversized
+   or growing file as structural debt; decompose in a separate campaign after this
+   one closes. So:
+   - order the CORRECT fix even when it grows a file past its baseline, a new file
+     past 200 lines, or a function past 60 — the gate reports `size-debt`, not a
+     failure, and `docs/security/remediation-size-debt.jsonl` records the file,
+     size before/after, delta, origin (pre-existing vs new oversized) and finding;
+   - never refactor or split an oversized file to make room, and never shrink,
+     contort or drop a correct fix to stay under a ceiling;
+   - order a decomposition ONLY when it is needed for the fix to be correct (a
+     seal that requires module privacy, an authority that must own its own file);
+   - every added line must belong to the work package — remediation is not
+     permission for unrelated growth, and review rejects unordered changes.
+   Size is never a ruling and never a reason to escalate or defer.
 
 6. **For everything left, write an EXECUTABLE work package.** Each item must be
    specific enough that a worker who has not read your reasoning cannot get it
@@ -247,7 +261,10 @@ judgment — that is where the turns belong.
      `verification/policy/control-dispositions.toml` citing an existing `[[proposition]]`
      whose statement the test establishes; only if none fits, a new proposition with its
      `## NP-nnn` record in `docs/architecture/control-dispositions.md`. Group tests by the
-     statement they establish, not one proposition per test.
+     statement they establish, not one proposition per test. A new proposition's
+     `consequence` (and its record's `**Severity:**`) is `medium`, `high` or `critical` —
+     the census refuses anything else; judge it from the proposition's "If false" line, not
+     from the finding's severity.
    - **not-evidence** — a row citing an `ND-nnn` family whose stated scope genuinely fits.
      Not for a real security test.
    Its `accept` is `tools/verification/control-census --residue` naming no control in the
@@ -260,8 +277,9 @@ Write the package JSON to the path given in the dispatch prompt:
 
 ```json
 {"file": "<path>", "mode": "evaluate",
- "disposed": [{"id": "...", "status": "false-positive|accepted-risk|superseded|wontfix|duplicate|escalated|needs-senior-eval",
-               "reason": "<one line; only for false-positive / accepted-risk / escalated / needs-senior-eval>",
+ "disposed": [{"id": "...", "status": "false-positive|premise|superseded|duplicate|escalated|needs-senior-eval",
+               "reason": "<one line; only for false-positive / premise / escalated / needs-senior-eval>",
+               "premise": "<ASM id, when premise>",
                "duplicate_of": "<id, when duplicate>",
                "cluster": "<optional>", "ruling": "<shared id, when escalated>"}],
  "required_scope": ["<the source file>", "<its test module>", "<owning BUILD.bazel>"],
@@ -348,7 +366,7 @@ the reducer checks them against:
 
 | field | means, exactly |
 |---|---|
-| `closed` | every finding given a TERMINAL disposition: `false-positive`, `accepted-risk`, **`duplicate`**, `superseded`, `wontfix` — one per `close` event |
+| `closed` | every finding given a TERMINAL disposition: `false-positive`, `premise`, **`duplicate`**, `superseded` — one per `close` event |
 | `escalated` | findings left blocking: `escalated`, `needs-senior-eval` — the length of `escalation_ids` |
 | `disposed` | `closed + escalated` |
 | `work` | ordered work items — the length of `work_ids` |
@@ -397,7 +415,7 @@ cuts a failure.
 
 - **Never edit a source file.** Not to "just fix a typo". Your tools are read-only
   by design; the split exists so the judgment and the edit are independent.
-- **Never close as false-positive / accepted-risk without its one-line reason** —
+- **Never close as false-positive / premise without its one-line reason** —
   and write no reason where none is read.
 - **Never escalate without the four fields.** "Security-relevant" is not
   "human-only": if one admissible remedy survives existing authority, order it.

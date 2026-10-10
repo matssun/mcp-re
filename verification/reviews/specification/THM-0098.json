@@ -2,13 +2,66 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:ab7d6f400ba80eb0efe73b45929d4a4bd68456de580eb12ae948be58b277f56b",
+    "theorem_claim": "sha256:80e839d206ca19b0d64ffb3f6e662e144a1bb0f1e5cadb3b13ad91fbeee29288",
     "theorem_dependencies": {},
     "theorem_id": "THM-0098",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "SPECIFICATION REVIEW RECORDED UNDER THE OWNER'S AFK MANDATE OF 2026-09-06, by the implementing agent, as routine owner-review maintenance for a class whose semantic rules the owner has already ruled \u2014 not as a transcription of a ruling naming this fingerprint. The mandate authorises a subordinate non-root theorem for the trust_document.rs correspondence provided it broadens no published boundary and introduces no trust assumption; this theorem does neither: no assumption in its closure, depends_on empty, composed at THM-0074 beside THM-0097 which the owner approved at sha256:5e1a9e152078dd177d1a5c2f1806824809b0a15b3ec7c3b8eabd9e5e68bd257b with the snapshot as an INPUT authority. RULES ALREADY ON RECORD that this theorem states: duplicate (signer, key_id) refused rather than last-write-wins (audit ledger 54aadf7b6257f126); slots present authoritative, slots absent = request only, an absent slots never an authority (ADR-MCPRE-065 section 8); the closed slot vocabulary refusing a typo (a startup failure rather than a silently narrower key); response_kid excluded from both maps. TWO CONJUNCTS EXTEND THOSE RULINGS and are flagged for the owner to overturn (packet verification/reviews/packets/trust-document-interpretation-2026-09-06.md section 8): (1) key_id unique across the WHOLE document, because the serving seam resolves a request signer by key_id alone and a document binding one key_id to two signers was silently resolved by file order; (2) the member vocabulary closed \u2014 unknown or duplicated JSON members refused \u2014 because a misspelt slots left a key enrolled WIDER than written, the same shape the slot-typo ruling refuses. Both are one-line reversals. The fingerprint was recomputed on the tree before this record was written and equals the value above. Reviewed tree: assurance/trust-document-interpretation rebased on main 67ee9f30.",
-  "reviewed_fingerprint": "sha256:c63fde3bf946b70c85f78bd0676fd7df53d4a80d18d4f6be9d1d6a0a7f62b08c",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G6.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0079": "sha256:76577d2a06cbfe3bbe4eeb2eb7c70e03317ce1578ce40af9f27f2d7f98c1e822",
+      "ASM-0083": "sha256:db0883a85371116eca5d1c25a23f5eb07b1323910b3131b396d9d51918e3bfe4"
+    },
+    "supporting_semantics": {
+      "proxy.trust_document_interpretation": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:cacb3466f29a65ae5fa8795401d8d57887c519b4875599a2a9b56e238440e097",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:1837d480d73edae26a9707b3096d04919d3debe19165bfdfe2f0976493b615d6",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:a2cdb3acd6414182ecd439866e1621b7f5a66a48f0c893edd866f24b9f22a908",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:22a5472eb4c4ef51eddca7435890afc1f5ebab3fa0ef3cf14d4780aed08fd351",
+        "test_selection": "sha256:a28cd41d0a0ddbcc0be858db573984fa0de870a63b48012f64ebc14f8f6e6018",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:a3935db470b3510e71805ed10076bee5d41b8736e047e0a09f685d2b8a319e14",
+        "unit_id": "sha256:6e7a46c4c3530c0fdbc8ba9d7c6e7b31acbf67c24bbe080196a18f36a7fd2b55"
+      },
+      "proxy.trust_resolution_window": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:4f27199bc6ce1adb2d72ab19b33e12d1b70b0cffbe4f1f2caca598ab480420e1",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:a1d651369a9cf9d3d2fcdfe2fb6a7b82e69db22c4a63f25b9141e2677a99f9dc",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:f6d12abf0da14c48e2c77fe1145392ecce4727444663d04066b42dd49c7491b3",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:e66fa2ee3922f28d677bedb5108a7ae929f396ade24c8a7e58bd0ea4773254f4",
+        "test_selection": "sha256:bb761ccdf457274c92fabf1c57242f24de2c448abf64d088f758e0c47900964d",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:c8c36058b1d2ecc1163e20c6a5e0c0be1db6dc59eb8f5fc7836d462346dc230f",
+        "unit_id": "sha256:b741f62abb8cd8c1190f215fb2fe3c65b115046f2093ab1e4113e014ed231aa4"
+      }
+    },
+    "theorem_claim": "sha256:80e839d206ca19b0d64ffb3f6e662e144a1bb0f1e5cadb3b13ad91fbeee29288",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:dbbd49cba971ddc07467763c7cf0aa43ffc5da6a311632f396e3a79109fd6840",
+  "reviewed_fingerprint": "sha256:f4c1f2628fa3a8fe0e1781b1539a118c7f52bdb63d18147361eae2d9460f48ed",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0098"
 }

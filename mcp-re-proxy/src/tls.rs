@@ -112,27 +112,14 @@ pub struct ServerLimits {
     /// Idle keep-alive connections carry no in-flight request and do not extend the
     /// drain — an idle drain returns promptly.
     pub drain_grace: Duration,
-    /// The maximum age of a single mTLS connection before it is gracefully closed,
-    /// forcing the peer to re-handshake.
-    ///
-    /// What this bounds is CHAIN re-validation for an already-established peer.
-    /// Client-certificate chain building happens at the handshake and nowhere else, so
-    /// a change to the trusted client CAs — a CA withdrawn, a CA expired — reaches a
-    /// keep-alive or HTTP/2 connection only when the peer re-handshakes.
-    ///
-    /// Revocation and the certificates' own validity windows no longer depend on it:
-    /// both are re-checked on EVERY request whenever a per-request certificate control
-    /// is configured, and to the same depth the handshake checks — the whole presented
-    /// chain, not just the leaf (see
-    /// [`client_revocation`](crate::client_revocation)). Chain BUILDING is what remains
-    /// bound by this age instead: whether a path to a trusted anchor still exists —
-    /// signatures, name constraints, anchor membership — is settled by the handshake
-    /// verifier and nowhere else.
-    ///
-    /// Graceful: in-flight requests on the connection finish; only new requests are
-    /// refused, and the peer reconnects transparently. `None` disables the bound,
-    /// which restores the unbounded behaviour and is refused under `--fleet`.
+    /// The requested maximum age of one mTLS connection. The boundary resolves it with
+    /// the certificate lifetime into
+    /// [`ClientCredentialWindow`](crate::config_state::ClientCredentialWindow), and the
+    /// serving path reads [`ServerOptions::client_credential_window`], never this field.
     pub max_connection_age: Option<Duration>,
+    /// The rate and burst of the listener's delegated handshake-signature budget. Read
+    /// once, by [`ChannelEstablishmentPlan`](crate::startup_plan::ChannelEstablishmentPlan).
+    pub tls_handshake_signing: crate::delegated_tls::HandshakeSignCapacity,
 }
 
 impl Default for ServerLimits {
@@ -165,10 +152,11 @@ impl Default for ServerLimits {
             // production, < k8s terminationGracePeriodSeconds.
             drain_grace: Duration::from_secs(30),
             // Bounds how long a peer keeps serving on a certificate validated only at
-            // its handshake. 300s is well inside the 1h `max_client_cert_lifetime`
+            // its handshake. 300s is well inside the 1h certificate-lifetime
             // ceiling and short enough that a CRL reload takes effect within one
             // cadence, while being long enough that re-handshake cost is negligible.
             max_connection_age: Some(Duration::from_secs(300)),
+            tls_handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
         }
     }
 }
@@ -184,7 +172,7 @@ pub const MCP_INGRESS_ASSERTION_HEADER: &str = "mcp-ingress-assertion";
 /// How the serve loop turns a connection into a served request: which client-cert
 /// field is the authoritative identity, the resource limits, and the maximum
 /// client-certificate lifetime.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ServerOptions {
     /// The authoritative client-certificate identity field (no implicit fallback).
     /// Used for [`PeerIdentityProvenance::ChannelCredential`].
@@ -194,19 +182,10 @@ pub struct ServerOptions {
     pub peer_identity_provenance: PeerIdentityProvenance,
     /// Connection resource limits (DoS defense).
     pub limits: ServerLimits,
-    /// Maximum allowed client-certificate validity span
-    /// (`not_after - not_before`). This is the v1 revocation posture: with no
-    /// online CRL/OCSP, a compromised client cert is usable until expiry, so the
-    /// proxy ENFORCES short lifetimes — a cert whose span exceeds this (or whose
-    /// validity cannot be parsed) is rejected with `mcp-re.transport_binding_failed`.
-    /// `None` disables the check. The production CLI defaults this to 1 hour; this
-    /// library `Default` leaves it `None` so existing callers are unchanged.
-    ///
-    /// Exposure window of a compromised transport credential is bounded by
-    /// `max_client_cert_lifetime`. The end-to-end request-authority exposure
-    /// window is `cert_lifetime + resolver_cache_ttl + request_lifetime +
-    /// max_clock_skew`.
-    pub max_client_cert_lifetime: Option<Duration>,
+    /// The lifetime ceiling and the connection-age bound, one owner-sealed fact. There is
+    /// no options value without it, so the per-request currency check always evaluates
+    /// the lifetime ceiling.
+    pub client_credential_window: crate::config_state::ClientCredentialWindow,
     /// PER-REQUEST offline CRL revocation: the revoked-serial index built from the
     /// SAME CRLs the handshake verifier holds, behind an atomic swap so a reload
     /// reaches connections that are already open.
@@ -221,8 +200,8 @@ pub struct ServerOptions {
     /// ONLINE OCSP client-cert revocation (#4030), the online sibling of #3839's
     /// offline CRL posture. When `Some`, after the handshake the serve loop asks
     /// the leaf's OCSP responder whether it is revoked, BEFORE the handler, and
-    /// fails closed (rejects) on `Revoked`/`Unknown`/error unless the checker is
-    /// in soft-fail mode (see [`ocsp_rejection_for_chain`]). `None` disables the online
+    /// fails closed (rejects) on `Revoked`/`Unknown`/error (see [`ocsp_rejection_for_chain`]).
+    /// `None` disables the online
     /// check (the default). This field — and the entire online check — exists
     /// ONLY in a build with the `online_ocsp` feature; the default build has no
     /// such field and the hook is a compile-time no-op, so it is byte-for-byte
@@ -234,22 +213,27 @@ pub struct ServerOptions {
     /// verifier checks it against the request evidence block's audience tuple. Empty
     /// when unset (the audience/target check then fails closed).
     pub target_uri: String,
-    /// Whether producing the handshake signature may BLOCK — set when the TLS server
-    /// key is delegated to a KMS or a PKCS#11 token (ADR-MCPS-028 §G).
+}
+
+impl ServerOptions {
+    /// Options with every field at its default except the required window.
     ///
-    /// rustls' `Signer::sign` is synchronous, so on those custody paths the
-    /// CertificateVerify signature is a blocking HTTPS round trip or an FFI `C_Sign`
-    /// executed inside a single `poll`. On the per-core `current_thread` runtime that
-    /// freezes the WHOLE core — its accept loop, its keep-alive connections and every
-    /// in-flight request — for the duration, and `tokio::time::timeout` cannot preempt
-    /// it because the timer never gets to run. Any peer opening connections triggers
-    /// it; a stalled KMS costs seconds per connection and a wedged token is unbounded.
-    ///
-    /// When set, the handshake is run on the blocking pool instead of the runtime
-    /// thread (see `async_serve::serve_connection`). Left `false` for the exported-key
-    /// path, where signing is in-memory and the async handshake is both correct and
-    /// cheaper.
-    pub tls_signing_may_block: bool,
+    /// `pub` because it replaces the public `Default` for out-of-crate embedders
+    /// (`serve_once` callers): a window is required, so no inhabitant leaves currency
+    /// unexamined. The composition root keeps an exhaustive literal, so an omitted
+    /// revocation index or custody flag stays a compile error there.
+    pub fn new(client_credential_window: crate::config_state::ClientCredentialWindow) -> Self {
+        ServerOptions {
+            identity_policy: IdentityPolicy::RECOMMENDED,
+            peer_identity_provenance: PeerIdentityProvenance::default(),
+            limits: ServerLimits::default(),
+            client_credential_window,
+            client_revocation: None,
+            #[cfg(feature = "online_ocsp")]
+            ocsp_checker: None,
+            target_uri: String::new(),
+        }
+    }
 }
 
 /// Errors building the TLS server configuration.
@@ -303,7 +287,7 @@ pub(crate) fn validated_delegated_resolver(
 /// The strategy dispatch is the only decision here. Under [`PeerIdentityProvenance::ChannelCredential`]
 /// the peer comes from the ADR-MCPRE-064 authorities: the mechanism's own acceptance plus
 /// the configured identity policy authenticate it, and the deployment's currency policy
-/// then either makes it a CURRENT peer or leaves it explicitly unexamined. Under
+/// then makes it a CURRENT peer or refuses it. Under
 /// [`PeerIdentityProvenance::IngressAssertion`] there is no channel peer, unchanged.
 ///
 /// **Nothing but the acceptance and the deployment's own policies is supplied.** There is
@@ -314,8 +298,8 @@ pub(crate) fn validated_delegated_resolver(
 ///
 /// One evaluation per request. A credential the currency controls REFUSE never becomes a
 /// peer at all — the caller renders that as the transport-boundary refusal, exactly as
-/// before — and a deployment configuring no control yields the unexamined arm rather than
-/// a silently current one.
+/// before — and a `ServerOptions` always evaluates the ceiling, so the unexamined outcome
+/// remains only for an absent acceptance.
 pub(crate) fn resolve_channel_peer(
     accepted: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
@@ -370,10 +354,8 @@ fn authenticated_peer(
 /// bound to the request id — the reason is typed, and rendering it on the wire is a
 /// separate decision this migration does not take.
 ///
-/// NOTE: online-OCSP revocation (`#[cfg(feature = "online_ocsp")]`) needs the full peer
-/// chain and is NOT yet wired on the async path — combining `async_serve` with
-/// `online_ocsp` is a tracked follow-up; the default and shared-replay tier builds have
-/// full parity.
+/// Online-OCSP revocation is refused at the legality boundary in every build, so no
+/// validated deployment reaches this path with an OCSP checker.
 pub(crate) fn served_channel_peer(
     accepted: Option<&MechanismVerifiedCredentialEvidence>,
     options: &ServerOptions,
@@ -386,21 +368,22 @@ pub(crate) fn served_channel_peer(
 
 /// The deployment's configured currency controls, classified.
 ///
-/// A TOTAL selector: every `ServerOptions` is exactly one policy, and the classification
-/// cannot fail. The revocation index is SNAPSHOTTED here, once per request, so the leaf
-/// check and the issuer check cannot read two different indexes across a reload.
+/// The deployment's currency controls, classified.
+///
+/// A TOTAL selector over the two policies a `ServerOptions` can state: the window's
+/// ceiling alone, or the ceiling with revocation; `NotEvaluated` and revocation-only are
+/// unconstructible from one. The revocation index is SNAPSHOTTED here, once per request,
+/// so the leaf check and the issuer check cannot read two different indexes across a
+/// reload.
 fn currency_policy(options: &ServerOptions) -> CredentialCurrencyPolicy {
+    let ceiling = options.client_credential_window.cert_lifetime();
     let index = options
         .client_revocation
         .as_ref()
         .map(|revocation| revocation.load());
-    match (options.max_client_cert_lifetime, index) {
-        (None, None) => CredentialCurrencyPolicy::NotEvaluated,
-        (Some(ceiling), None) => CredentialCurrencyPolicy::Ceiling(ceiling),
-        (None, Some(index)) => CredentialCurrencyPolicy::Revocation(index),
-        (Some(ceiling), Some(index)) => {
-            CredentialCurrencyPolicy::CeilingAndRevocation(ceiling, index)
-        }
+    match index {
+        None => CredentialCurrencyPolicy::Ceiling(ceiling),
+        Some(index) => CredentialCurrencyPolicy::CeilingAndRevocation(ceiling, index),
     }
 }
 
@@ -485,13 +468,12 @@ pub(crate) fn routing_header_rejection(
 /// `None` when no checker is configured or the leaf is admitted.
 ///
 /// Fail-closed posture (mirrors the offline CRL deny-unknown default): the leaf
-/// is REJECTED when the responder reports `Revoked` (always), or `Unknown`, or
-/// the check errors (unreachable / timeout / parse), UNLESS the checker is in
-/// soft-fail mode — in which case only `Revoked` rejects. The issuer is taken
-/// from the verified peer chain (the cert directly after the leaf); a leaf with
-/// no chained issuer cannot be checked and is treated as an indeterminate
-/// result (rejected unless soft-fail). The HTTP fetch carries the checker's
-/// mandatory timeout so this can never wedge the blocking serve thread.
+/// is REJECTED unless a verified responder answered `Good` within that answer's own
+/// window — `Revoked`, `Unknown`, an error (unreachable / timeout / parse), and a leaf
+/// the supplied issuer did not sign all reject. The issuer is taken from the verified
+/// peer chain (the cert directly after the leaf); a leaf with no chained issuer cannot
+/// be checked and is rejected. The HTTP fetch carries the checker's timeout over
+/// connect, send and the body read, not over name resolution (see `crate::ocsp`).
 ///
 /// The chain is handed in leaf-first, exactly as the channel-associated credential
 /// evidence carries it, so the decision does not depend on who holds the connection. The
@@ -517,32 +499,19 @@ pub(crate) fn ocsp_rejection_for_chain(
 
     let leaf = chain.first()?;
     // The issuer is the next cert in the verified chain. Without it we cannot
-    // build a CertID; treat as an indeterminate (Unknown) result and apply the
-    // fail-closed policy (reject unless soft-fail).
+    // build a CertID, so nothing can be established: reject.
     let Some(issuer) = chain.get(1) else {
-        return if checker.allows_on_error() {
-            None
-        } else {
-            reject()
-        };
+        return reject();
     };
 
-    match checker.check(leaf, issuer) {
-        Ok(status) => {
-            if checker.allows(status) {
-                None
-            } else {
-                reject()
-            }
-        }
-        // Transport/codec error: indeterminate, fail closed unless soft-fail.
-        Err(_) => {
-            if checker.allows_on_error() {
-                None
-            } else {
-                reject()
-            }
-        }
+    // A transport/codec error establishes nothing either: only an answer admits.
+    let admitted = checker
+        .check(leaf, issuer)
+        .is_ok_and(|evidence| checker.allows(evidence, std::time::SystemTime::now()));
+    if admitted {
+        None
+    } else {
+        reject()
     }
 }
 
@@ -559,44 +528,42 @@ mod currency_policy_tests {
     use crate::client_revocation::ClientRevocationIndex;
     use crate::client_revocation::SharedClientRevocation;
     use crate::communication_assurance::CredentialCurrencyPolicy;
+    use crate::config_state::ClientCredentialWindow;
 
-    fn shared() -> Arc<SharedClientRevocation> {
-        Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()))
+    fn shared() -> (
+        Arc<SharedClientRevocation>,
+        crate::client_revocation::ClientRevocationPublisher,
+    ) {
+        let (reader, publisher) = SharedClientRevocation::establish(ClientRevocationIndex::empty());
+        (Arc::new(reader), publisher)
+    }
+
+    fn window(lifetime_secs: u64) -> ClientCredentialWindow {
+        ClientCredentialWindow::new(Duration::from_secs(lifetime_secs), Duration::from_secs(300))
+            .expect("a legal credential window")
     }
 
     #[test]
     fn every_deployment_classifies_to_exactly_one_policy() {
-        // A total selector, and the reason the policy is an enum: the fifth combination two
-        // `Option`s would admit — evaluating with nothing configured — cannot be written.
-        let ceiling = Duration::from_secs(3600);
-        let revocation = shared();
+        // A total selector, and the reason the policy is an enum: evaluating with nothing
+        // configured, or revocation without the ceiling, cannot be written. The ceiling
+        // is the window's, not a constant.
+        let (revocation, _publisher) = shared();
 
-        assert!(matches!(
-            currency_policy(&ServerOptions::default()),
-            CredentialCurrencyPolicy::NotEvaluated
-        ));
-        assert!(matches!(
-            currency_policy(&ServerOptions {
-                max_client_cert_lifetime: Some(ceiling),
-                ..Default::default()
-            }),
-            CredentialCurrencyPolicy::Ceiling(_)
-        ));
-        assert!(matches!(
-            currency_policy(&ServerOptions {
-                client_revocation: Some(Arc::clone(&revocation)),
-                ..Default::default()
-            }),
-            CredentialCurrencyPolicy::Revocation(_)
-        ));
-        assert!(matches!(
-            currency_policy(&ServerOptions {
-                max_client_cert_lifetime: Some(ceiling),
-                client_revocation: Some(revocation),
-                ..Default::default()
-            }),
-            CredentialCurrencyPolicy::CeilingAndRevocation(_, _)
-        ));
+        for secs in [3600, 1800] {
+            let expected = Duration::from_secs(secs);
+            assert!(matches!(
+                currency_policy(&ServerOptions::new(window(secs))),
+                CredentialCurrencyPolicy::Ceiling(d) if d == expected
+            ));
+            assert!(matches!(
+                currency_policy(&ServerOptions {
+                    client_revocation: Some(Arc::clone(&revocation)),
+                    ..ServerOptions::new(window(secs))
+                }),
+                CredentialCurrencyPolicy::CeilingAndRevocation(d, _) if d == expected
+            ));
+        }
     }
 
     #[test]
@@ -605,10 +572,10 @@ mod currency_policy_tests {
         // index as a value. The broken implementation this catches is hoisting `load()` out
         // of the per-request decision — caching it per connection is exactly the
         // handshake-only posture the per-request check exists to replace.
-        let revocation = shared();
+        let (revocation, publisher) = shared();
         let options = ServerOptions {
             client_revocation: Some(Arc::clone(&revocation)),
-            ..Default::default()
+            ..ServerOptions::new(window(3600))
         };
         let before = currency_policy(&options);
         assert!(
@@ -618,7 +585,7 @@ mod currency_policy_tests {
             "the first snapshot is the empty index that was in force"
         );
 
-        revocation.store(ClientRevocationIndex::empty());
+        publisher.publish(ClientRevocationIndex::empty());
         let after = currency_policy(&options);
         assert!(
             !std::ptr::eq(
@@ -656,6 +623,39 @@ mod routing_header_tests {
 
         let malformed = RequestHeaders::from_pairs([("Mcp-Name", "echo\r\nX-Spoof: evil")]);
         assert!(super::routing_header_rejection(&malformed, req).is_some());
+    }
+
+    #[test]
+    fn the_ingress_assertion_header_is_read_only_when_exactly_one_is_present() {
+        use crate::communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
+        use crate::config_state::ClientCredentialWindow;
+        use crate::transport::RequestHeaders;
+
+        let window = ClientCredentialWindow::new(
+            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_secs(300),
+        )
+        .expect("a legal credential window");
+        let asserting = super::ServerOptions {
+            peer_identity_provenance: PeerIdentityProvenance::IngressAssertion,
+            ..super::ServerOptions::new(window)
+        };
+        let name = super::MCP_INGRESS_ASSERTION_HEADER;
+        let one = RequestHeaders::from_pairs([(name, "token-a")]);
+        assert_eq!(super::assertion_header(&asserting, &one), Some("token-a"));
+
+        let two =
+            RequestHeaders::from_pairs([(name, "token-a"), (&name.to_uppercase(), "token-b")]);
+        assert_eq!(super::assertion_header(&asserting, &two), None);
+
+        let none = RequestHeaders::from_pairs([("x-other", "v")]);
+        assert_eq!(super::assertion_header(&asserting, &none), None);
+
+        let channel = super::ServerOptions {
+            peer_identity_provenance: PeerIdentityProvenance::ChannelCredential,
+            ..super::ServerOptions::new(window)
+        };
+        assert_eq!(super::assertion_header(&channel, &one), None);
     }
 }
 
@@ -826,7 +826,7 @@ mod delegated_credential_key_correspondence_tests {
     }
 
     fn budget() -> Arc<crate::delegated_tls::TlsHandshakeSignBudget> {
-        Arc::new(crate::delegated_tls::TlsHandshakeSignBudget::new(64, 64))
+        Arc::new(crate::delegated_tls::tests::sized_budget(64, 64))
     }
 
     /// A self-signed leaf and the SPKI DER of the key it presents.
@@ -1074,21 +1074,25 @@ mod channel_peer_resolution_tests {
     use crate::communication_assurance::mechanism_verified_credential::EstablishmentPath;
     use crate::communication_assurance::CertificateIdentitySource;
 
+    use crate::config_state::ClientCredentialWindow;
     use rustls::HandshakeKind;
 
     use crate::communication_assurance::channel_associated_credential::mechanism_harness::*;
     use crate::communication_assurance::mechanism_verified_credential::rustls_adapter::verified_credential;
 
-    const NOW: i64 = 1_800_000_000;
-
     const IDENTITY_A: &str = "spiffe://example.org/A";
     const IDENTITY_B: &str = "spiffe://example.org/B";
+
+    fn window() -> ClientCredentialWindow {
+        ClientCredentialWindow::new(Duration::from_secs(3600), Duration::from_secs(300))
+            .expect("a legal credential window")
+    }
 
     fn direct_tls(policy: IdentityPolicy) -> ServerOptions {
         ServerOptions {
             identity_policy: policy,
             peer_identity_provenance: PeerIdentityProvenance::ChannelCredential,
-            ..Default::default()
+            ..ServerOptions::new(window())
         }
     }
 
@@ -1101,7 +1105,7 @@ mod channel_peer_resolution_tests {
         let intermediate = make_intermediate(&root, "serving-intermediate", decoy);
         let server_ca = make_ca("serving-server-ca");
         let (server_leaf, server_key) = make_leaf(&server_ca, "localhost", false);
-        let (client_leaf, client_key) = make_uri_leaf(&intermediate, uri_san);
+        let (client_leaf, client_key) = make_short_lived_uri_leaf(&intermediate, uri_san);
         let server = server_config(&[root.der()], vec![server_leaf], server_key);
         let client = client_config(
             &server_ca.der(),
@@ -1115,10 +1119,13 @@ mod channel_peer_resolution_tests {
     #[test]
     fn direct_tls_resolves_the_identity_the_relationship_authenticated_as() {
         let acceptance = accepted(IDENTITY_A, IDENTITY_B);
-        let peer =
-            resolve_channel_peer(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan), NOW)
-                .expect("no currency control is configured")
-                .expect("the accepted credential's leaf carries the configured field");
+        let peer = resolve_channel_peer(
+            Some(&acceptance),
+            &direct_tls(IdentityPolicy::UriSan),
+            wall_clock_unix(),
+        )
+        .expect("the short-lived credential is current under the window")
+        .expect("the accepted credential's leaf carries the configured field");
 
         assert_eq!(peer.identity().as_str(), IDENTITY_A);
         assert_eq!(peer.identity_source(), CertificateIdentitySource::UriSan);
@@ -1130,10 +1137,13 @@ mod channel_peer_resolution_tests {
         // answer the policy, and reading "some certificate the peer presented" binds the
         // deployment to the CA rather than to the workload.
         let acceptance = accepted(IDENTITY_A, IDENTITY_B);
-        let peer =
-            resolve_channel_peer(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan), NOW)
-                .expect("no currency control is configured")
-                .expect("resolution succeeds");
+        let peer = resolve_channel_peer(
+            Some(&acceptance),
+            &direct_tls(IdentityPolicy::UriSan),
+            wall_clock_unix(),
+        )
+        .expect("the short-lived credential is current under the window")
+        .expect("resolution succeeds");
         assert_ne!(peer.identity().as_str(), IDENTITY_B);
     }
 
@@ -1146,11 +1156,11 @@ mod channel_peer_resolution_tests {
         let second = accepted(IDENTITY_B, IDENTITY_A);
         let options = direct_tls(IdentityPolicy::UriSan);
 
-        let from_first = resolve_channel_peer(Some(&first), &options, NOW)
-            .expect("no currency control is configured")
+        let from_first = resolve_channel_peer(Some(&first), &options, wall_clock_unix())
+            .expect("the short-lived credential is current under the window")
             .expect("first resolves");
-        let from_second = resolve_channel_peer(Some(&second), &options, NOW)
-            .expect("no currency control is configured")
+        let from_second = resolve_channel_peer(Some(&second), &options, wall_clock_unix())
+            .expect("the short-lived credential is current under the window")
             .expect("second resolves");
         assert_eq!(from_first.identity().as_str(), IDENTITY_A);
         assert_eq!(from_second.identity().as_str(), IDENTITY_B);
@@ -1161,7 +1171,7 @@ mod channel_peer_resolution_tests {
         // Resumption restores the stored peer chain, so it is the same peer and must
         // resolve to the same identity — while the establishment path stays DIFFERENT,
         // which is what a consumer needing "the verifier ran in this establishment" reads.
-        let peers = mutually_authenticated_peers();
+        let peers = short_lived_peers();
         let full = verified_credential(&handshake(&peers.client, &peers.server)).expect("accepts");
         let resumed_conn = handshake(&peers.client, &peers.server);
         assert_eq!(
@@ -1172,11 +1182,11 @@ mod channel_peer_resolution_tests {
         let resumed = verified_credential(&resumed_conn).expect("accepts");
         let options = direct_tls(IdentityPolicy::DnsSan);
 
-        let from_full = resolve_channel_peer(Some(&full), &options, NOW)
-            .expect("no currency control is configured")
+        let from_full = resolve_channel_peer(Some(&full), &options, wall_clock_unix())
+            .expect("the short-lived credential is current under the window")
             .expect("a peer");
-        let from_resumed = resolve_channel_peer(Some(&resumed), &options, NOW)
-            .expect("no currency control is configured")
+        let from_resumed = resolve_channel_peer(Some(&resumed), &options, wall_clock_unix())
+            .expect("the short-lived credential is current under the window")
             .expect("a peer");
 
         assert_eq!(
@@ -1201,24 +1211,31 @@ mod channel_peer_resolution_tests {
         // No-fallback, at the serving boundary. The peer's leaf carries a DNS SAN and the
         // deployment configured URI SANs: the request must reach the fail-closed core with
         // no identity rather than with a weaker field's value.
-        let peers = mutually_authenticated_peers();
+        let peers = short_lived_peers();
         let acceptance =
             verified_credential(&handshake(&peers.client, &peers.server)).expect("accepts");
         assert!(
-            resolve_channel_peer(Some(&acceptance), &direct_tls(IdentityPolicy::UriSan), NOW)
-                .expect("no currency control is configured")
-                .is_none(),
+            resolve_channel_peer(
+                Some(&acceptance),
+                &direct_tls(IdentityPolicy::UriSan),
+                wall_clock_unix()
+            )
+            .expect("the short-lived credential is current under the window")
+            .is_none(),
             "a present DNS SAN is not a reason to answer under a URI-SAN policy"
         );
     }
 
     #[test]
     fn an_absent_acceptance_resolves_no_identity() {
+        // Every serving configuration states a currency window, and an absent acceptance
+        // cannot be shown current under it: no peer, and no silent pass.
         assert!(
-            resolve_channel_peer(None, &direct_tls(IdentityPolicy::UriSan), NOW)
-                .expect("no currency control is configured")
-                .is_none(),
-            "no acceptance is no authenticated peer"
+            matches!(
+                resolve_channel_peer(None, &direct_tls(IdentityPolicy::UriSan), wall_clock_unix()),
+                Err(CredentialCurrencyRefusal::CredentialUnreadable)
+            ),
+            "no acceptance is no authenticated peer, refused under the configured window"
         );
     }
 
@@ -1230,10 +1247,12 @@ mod channel_peer_resolution_tests {
         let options = ServerOptions {
             identity_policy: IdentityPolicy::UriSan,
             peer_identity_provenance: PeerIdentityProvenance::IngressAssertion,
-            ..Default::default()
+            ..ServerOptions::new(window())
         };
-        assert!(resolve_channel_peer(Some(&acceptance), &options, NOW)
-            .expect("no currency control is configured")
-            .is_none());
+        assert!(
+            resolve_channel_peer(Some(&acceptance), &options, wall_clock_unix())
+                .expect("the short-lived credential is current under the window")
+                .is_none()
+        );
     }
 }

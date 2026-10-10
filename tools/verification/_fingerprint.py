@@ -149,6 +149,7 @@ from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 from _lean_sources import generated_model_paths, LAKEFILE, theorem_source_paths
 import _rust_targets
+from _premise import is_model_registration
 from _manifest import (
     claims_lean_evidence,
     claims_verus_evidence,
@@ -483,7 +484,14 @@ def _mutation_probes(unit_id: str) -> dict[str, str]:
 
 
 #: The lane that decides what "a declared control went red" means.
-MUTATION_LANE_INPUTS = ("tools/verification/verify-mutations",)
+MUTATION_LANE_INPUTS = (
+    "tools/verification/verify-mutations",
+    # What a probe's `expect_red` label RUNS: the label is resolved to its crate root and
+    # features through the build-graph table, and the ecosystem adapter builds the argv and
+    # reads the result. Either one changing changes what a recorded red means.
+    "tools/verification/_rust_targets.py",
+    "tools/verification/_ecosystems.py",
+)
 
 
 def _mutation_lane_identity(unit: dict) -> dict[str, str]:
@@ -535,6 +543,13 @@ VERUS_LANE_INPUTS = (
     # position `_structural.py` holds for the structural lane and `_measured.py` for the
     # measured one, and both of those are lane inputs already.
     "tools/verification/_verus_results.py",
+    # Which crate is verified for a unit: the `verus_verify` target is chosen by the PACKAGE
+    # the build-graph table files it under. A filing change re-points a unit at another
+    # target's run without touching the runner.
+    "tools/verification/_rust_targets.py",
+    # Whether the artifact verifiers' postconditions constrain at all: the lane refuses unless
+    # the probe's negatives fail, and that adjudication lives here.
+    "tools/verification/_verus_nonvacuity.py",
 )
 
 #: The lane that decides what "the compiler refused the hostile construction" means.
@@ -838,10 +853,11 @@ def fingerprint_unit(
 # A theorem fingerprint is SEPARATE from the fingerprint of the units that support it, and
 # the separation is the whole mechanism §14.3 asks for:
 #
-#   * A theorem's supporting unit fingerprints are NOT components here. If they were,
-#     editing a line of Rust would invalidate the owner's approval of the specification —
-#     collapsing the proof axis and the specification-review axis into the single bit
-#     §14.7 exists to prevent.
+#   * A theorem's supporting unit fingerprints are NOT components here. This digest is the
+#     claim surface the correction chain and the claim-surface gate are about. What the
+#     owner read the claim against — premises and the supporting units' SEMANTIC inputs —
+#     is the separate `review_digest` below, which leaves toolchain, lane and policy
+#     identity to the evidence axis.
 #   * Conversely a unit fingerprint carries no theorem component, so restating a claim
 #     leaves the prover green. That is exactly the situation the mutation test pins: the
 #     theorem moves from F1 to F2 while the review record still names F1, so specification
@@ -918,3 +934,216 @@ def fingerprint_theorem(entry: dict, theorems: dict) -> dict:
     }
 
 
+
+
+def theorem_premises(
+    theorems: dict, unit_fingerprints: dict[str, dict], assumptions: dict
+) -> dict[str, dict[str, str] | None]:
+    """Each theorem's premise closure: assumption id -> current `assumption_digest`.
+
+    A theorem rests on the premises its supporting units are scoped to. Two attachment
+    rules, by what the assumption's `scope` names (r12 defect D):
+
+      * an assumption that names UNITS attaches to exactly those units. Its `boundary://`
+        entries say which boundary it discharges for them (`boundary_class_violations`),
+        not that every other unit crossing the boundary rests on it too;
+      * an assumption that names ONLY boundaries attaches to every unit whose files cross
+        one of them (`governing_boundaries`), because nothing narrower was stated.
+
+    Spreading a unit-scoped premise to every crosser was over-inclusive — a theorem about a
+    window comparison carried the PKCS#11 and Redis premises of every other unit in the same
+    crate — and narrowing a scope changed no closure. The converse gap, a unit that CALLS
+    into a boundary from outside its files, is closed by DATA: the premise's scope names the
+    consuming unit.
+
+    A `model-registration` (r12 Ruling 39 §4) is dropped: its trust is attributed to the
+    premise that interprets it, which `registration_problems` requires to reach every unit
+    the registration does. A theorem with a supporting unit that has no fingerprint maps to
+    None: its closure is unknown, not empty.
+    """
+    registrations = {
+        entry["id"]
+        for entry in assumptions.get("assumption", [])
+        if is_model_registration(entry)
+    }
+    by_boundary: dict[str, dict[str, str]] = {}
+    for entry in assumptions.get("assumption", []):
+        scope = [str(target) for target in entry.get("scope", [])]
+        if entry["id"] in registrations or any(t.startswith("unit://") for t in scope):
+            continue
+        for target in scope:
+            if target.startswith("boundary://"):
+                by_boundary.setdefault(target.removeprefix("boundary://"), {})[
+                    entry["id"]
+                ] = assumption_digest(entry)
+    out: dict[str, dict[str, str] | None] = {}
+    for row in theorems.get("theorem", []):
+        closure: dict[str, str] | None = {}
+        for target in row.get("supported_by", []):
+            unit = str(target).removeprefix("unit://")
+            fingerprint = unit_fingerprints.get(unit)
+            if fingerprint is None:
+                closure = None
+                break
+            components = fingerprint["components"]
+            closure.update(
+                (asm_id, digest)
+                for asm_id, digest in components["trusted_assumptions"].items()
+                if asm_id not in registrations
+            )
+            for boundary in components["governing_boundaries"]:
+                closure.update(by_boundary.get(boundary, {}))
+        out[row["id"]] = dict(sorted(closure.items())) if closure is not None else None
+    return out
+
+
+# ---------------------------------------------------------------------------
+# The semantic review digest — Ruling 35 §3
+# ---------------------------------------------------------------------------
+#
+# Two questions about a theorem, answered by two digests:
+#
+#   REVIEW_CURRENT        is what the owner READ still what the tree says? The claim, its
+#                         premises, and the semantic inputs of the units that support it:
+#                         the code and specifications the claim is about, the tests and
+#                         probes the review relied on, the proved and extracted symbols.
+#   EVIDENCE_ESTABLISHED  does a successful run vouch for the tree AS IT STANDS? The full
+#                         unit fingerprint — the semantic inputs plus every lane's identity,
+#                         the toolchain, the generated model, the policy revisions — matched
+#                         by an attestation (`_graph.derive_unit_state`).
+#
+# A toolchain bump moves the second and not the first: the evidence must be re-run, and the
+# owner has nothing new to read. An edit to supporting source moves both. The partition
+# below is what decides which component is which, and it is CLOSED: a unit component that
+# appears in neither set is treated as semantic (`semantic_unit_components`), so a new
+# component can only cause extra review, never false currency, and the census in
+# `test_theorem_review` fails until someone places it.
+
+#: Unit components that determine WHAT A CLAIM IS ABOUT, and so participate in the review
+#: digest. Source and specification inputs, the selection of tests and probes the review
+#: relied on, the formal statement surface, the premises and the trust boundary they hang
+#: on.
+#:
+#: `proof_dependencies` is here, not on the evidence side: it is the SOURCE of the crates a
+#: formal unit's prover run quantifies over — the types and helpers a verified function's
+#: contract is stated in terms of. That over-approximates (an unrelated edit to such a crate
+#: asks for a re-read), which is the safe direction.
+SEMANTIC_UNIT_COMPONENTS = frozenset(
+    {
+        "unit_id",
+        "class",
+        "source_inputs",
+        "enabled_features",
+        "proof_dependencies",
+        "gate_controls",
+        "exported_contracts",
+        "consumed_contracts",
+        "proved_symbols",
+        "extracted_symbols",
+        "lean_theorems",
+        "lean_theorem_sources",
+        "test_evidence_definition",
+        "test_selection",
+        "test_sources",
+        "mutation_probes",
+        "structural_probes",
+        "measurements",
+        "trusted_assumptions",
+        "governing_boundaries",
+    }
+)
+
+#: Unit components that decide whether a RUN still vouches for the semantic inputs, and
+#: nothing about what is claimed: the encoding, the generated model (derived from source
+#: that is itself semantic), the build configuration, each lane's own instrument, the
+#: toolchain, and the policy revisions. A change here re-runs evidence; it does not ask the
+#: owner to re-read.
+EVIDENCE_UNIT_COMPONENTS = frozenset(
+    {
+        "encoding_version",
+        "generated_inputs",
+        "build_configuration",
+        "test_lane_identity",
+        "mutation_lane_identity",
+        "structural_lane_identity",
+        "measured_lane_identity",
+        "verus_lane_identity",
+        "lean_lane_identity",
+        "generated_model_lane_identity",
+        "toolchain_identity",
+        "formal_model_revision",
+        "threat_model_revision",
+        "review_policy_revision",
+    }
+)
+
+#: Versioned on its own: the review digest certifies something neither the unit nor the
+#: theorem encoding does, and bumping one must not silently re-mean the others.
+REVIEW_ENCODING_VERSION = 1
+
+
+def semantic_unit_components(unit_fingerprint: dict) -> dict[str, str]:
+    """One supporting unit's semantic inputs, each component mapped to its digest.
+
+    Everything not on the evidence side, including a component nobody has placed yet —
+    unplaced is semantic, so the failure mode of a forgotten classification is a re-read.
+    Digested per component so a stale review can name WHAT moved.
+    """
+    return {
+        name: canonical_digest(value)
+        for name, value in sorted(unit_fingerprint["components"].items())
+        if name not in EVIDENCE_UNIT_COMPONENTS
+    }
+
+
+def review_digest(
+    theorem_fingerprint: dict,
+    premises: dict[str, str] | None,
+    unit_fingerprints: dict[str, dict],
+    supported_by: list[str],
+) -> dict | None:
+    """The semantic evidence digest a specification review is current against.
+
+        review_digest = H(claim, dependency claims, review requirement, premises,
+                          semantic inputs of every supporting unit)
+
+    None when it cannot be computed — a supporting unit with no fingerprint, or an unknown
+    premise closure. None is not an empty digest: nothing can be current against it.
+    """
+    if premises is None:
+        return None
+    semantics: dict[str, dict[str, str]] = {}
+    for target in supported_by:
+        unit = str(target).removeprefix("unit://")
+        fingerprint = unit_fingerprints.get(unit)
+        if fingerprint is None:
+            return None
+        semantics[unit] = semantic_unit_components(fingerprint)
+    theorem = theorem_fingerprint["components"]
+    components = {
+        "encoding_version": REVIEW_ENCODING_VERSION,
+        "theorem_claim": theorem["theorem_claim"],
+        "theorem_dependencies": theorem["theorem_dependencies"],
+        "theorem_review_requirement": theorem["theorem_review_requirement"],
+        "premises": dict(sorted(premises.items())),
+        "supporting_semantics": semantics,
+    }
+    return {"fingerprint": canonical_digest(components), "components": components}
+
+
+def theorem_review_digests(
+    theorems: dict,
+    theorem_fingerprints: dict[str, dict],
+    premises: dict[str, dict[str, str] | None],
+    unit_fingerprints: dict[str, dict],
+) -> dict[str, dict | None]:
+    """`review_digest` for every declared theorem."""
+    return {
+        row["id"]: review_digest(
+            theorem_fingerprints[row["id"]],
+            premises.get(row["id"]),
+            unit_fingerprints,
+            list(row.get("supported_by", [])),
+        )
+        for row in theorems.get("theorem", [])
+    }

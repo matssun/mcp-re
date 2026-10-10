@@ -115,7 +115,7 @@ fn request_roundtrip_verifies_and_yields_split_form_evidence() {
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request_floor(&req, NOW)
         .expect("verifies");
-    assert_eq!(verified.evidence().digest_alg, "sha256");
+    assert_eq!(verified.evidence().digest_alg(), "sha256");
     assert_eq!(verified.nonce(), "nonce-1");
     assert_eq!(verified.key_id(), "client-key-1");
 }
@@ -525,10 +525,10 @@ fn verified_response_exposes_resolved_server_actor() {
     let v = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_bound_response_floor(&rsp, &req, NOW)
         .expect("verifies");
-    assert_eq!(v.resolved_server_actor.identity.role, "server");
-    assert_eq!(v.resolved_server_actor.slot, SignerSlot::Response);
-    assert!(v.resolved_server_actor.actor_id().starts_with("server:"));
-    assert_eq!(v.response_signature_base_digest.digest_alg, "sha256");
+    assert_eq!(v.resolved_server_actor().identity.role, "server");
+    assert_eq!(v.resolved_server_actor().slot, SignerSlot::Response);
+    assert!(v.resolved_server_actor().actor_id().starts_with("server:"));
+    assert_eq!(v.response_signature_base_digest().digest_alg(), "sha256");
     // "the floor path carries no request binding" is no longer an assertion about a
     // field's absence — the floor product has no such field to inspect.
 }
@@ -653,8 +653,8 @@ fn unbound_response_floor_verifies_a_receipt_with_no_request() {
     let v = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_unbound_response_floor(&rsp, NOW)
         .expect("an unbound receipt verifies with no request context");
-    assert_eq!(v.resolved_server_actor.slot, SignerSlot::Response);
-    assert_eq!(v.resolved_server_actor.identity.keyid, "server-key-1");
+    assert_eq!(v.resolved_server_actor().slot, SignerSlot::Response);
+    assert_eq!(v.resolved_server_actor().identity.keyid, "server-key-1");
 }
 
 /// THE SLOT CONJUNCT, ON THE UNBOUND ARM. THM-0017 says the presented keyid resolved
@@ -724,4 +724,28 @@ fn the_unbound_floor_content_digest_check_is_load_bearing() {
         .verify_unbound_response_floor(&rsp, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::ContentDigestMismatch);
+}
+
+/// The freshness conjunct on the BOUND floor. THM-0001 states the window property of every
+/// parameter set the verifier admits, and that holds only while each verify path asks
+/// `check_params`; this is the bound response path's witness that it does.
+#[test]
+fn a_bound_response_outside_its_signature_window_is_refused_on_the_floor() {
+    let (req, rsp) = signed_exchange();
+    let skew = VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_bound_response_floor(&rsp, &req, EXPIRES + skew + 1)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::StaleWindow);
+}
+
+/// The same conjunct on the UNBOUND floor.
+#[test]
+fn an_unbound_receipt_outside_its_signature_window_is_refused_on_the_floor() {
+    let rsp = unbound_signed_response();
+    let skew = VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_unbound_response_floor(&rsp, EXPIRES + skew + 1)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::StaleWindow);
 }

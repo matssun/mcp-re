@@ -12,6 +12,26 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — a SCITT trust pin states both of its profiles
+
+A `mcp-re-scitt-service-trust-pin/v1` document that omits `leaf_profile` or
+`position_profile` is refused when it is loaded; neither field has a default any more.
+Re-cut such a pin with `tools/scitt_fetch_service_key.py`, which writes both, or add the
+fields by hand: a pin that omitted them was read as `statement-bytes` and `unbound`.
+The tool now refuses to overwrite an existing pin whose key, leaf profile or position
+profile differs from the one it would write unless `--replace-pin` is given.
+
+### Changed — the MCP transport contract is mandatory
+
+`--mcp-protocol-version` is a required flag (repeatable) and the `Unconstrained` posture is
+gone. Every request must carry `Mcp-Method` and `MCP-Protocol-Version`, `Mcp-Name` for
+`tools/call` and `resources/read` must agree with `params.name`, and a version outside the
+accepted set is refused — enforced unconditionally by the request floor, not by an optional
+policy. The profile's signer derives the three headers from the body it protects and covers
+them, so a client signing through the profile satisfies the contract without stating them. The
+mixed-version waiver (`with_legacy_header_omission`) is deleted with the posture. The Helm chart
+defaults `mcpProtocolVersions` to `2026-07-28` and refuses an empty list.
+
 ### Changed — the exchange model now REFUSES a success instead of asserting about one
 
 The exchange machine's cross-machine invariants — an open leg served with no durable

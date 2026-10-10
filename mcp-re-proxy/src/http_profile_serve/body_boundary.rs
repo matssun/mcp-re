@@ -196,63 +196,23 @@ impl ForwardedBody {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mcp_re_core::SigningKey;
-    use mcp_re_http_profile::content_digest_sha256;
-    use mcp_re_http_profile::ActorIdentity;
-    use mcp_re_http_profile::AudienceTuple;
-    use mcp_re_http_profile::CryptographicFloorVerifiedRequest;
-    use mcp_re_http_profile::HttpRequestEvidenceBlock;
-    use mcp_re_http_profile::ResolvedActor;
-    use mcp_re_http_profile::SignerSlot;
+    use crate::authorization::action_harness::sign_and_verify;
+    use crate::authorization::action_harness::RequestSpec;
+    use crate::authorization::action_harness::Signed;
     use mcp_re_http_profile::VERIFIED_CONTEXT_BLOCK_KEY;
 
-    const NOW: i64 = 1_700_000_100;
+    use crate::authorization::action_harness::NOW;
 
-    fn audience() -> AudienceTuple {
-        AudienceTuple {
-            audience_id: "aud".into(),
-            target_uri: "https://example.test/mcp".into(),
-            route: None,
-        }
-    }
-
-    /// A verified request that COVERS `body` — the pairing `prepare` now requires.
-    fn verified_for(body: &[u8]) -> VerifiedMcpRequest {
-        let key = SigningKey::from_seed_bytes(&[7u8; 32]);
-        VerifiedMcpRequest {
-            floor: CryptographicFloorVerifiedRequest {
-                profile_id: "p".into(),
-                signature_label: "mcpre".into(),
-                resolved_actor: ResolvedActor {
-                    identity: ActorIdentity {
-                        role: "client".into(),
-                        trust_domain: "example.com".into(),
-                        subject: "did:example:a".into(),
-                        keyid: "k".into(),
-                    },
-                    verification_key: key.public_key(),
-                    slot: SignerSlot::Request,
-                },
-                evidence: mcp_re_http_profile::RequestEvidence::from_signature_base(b"base"),
-                request_signature_base: b"base".to_vec(),
-                content_digest: content_digest_sha256(body),
-                created: 1_700_000_000,
-                expires: 1_700_000_300,
-                nonce: "n".into(),
-                key_id: "k".into(),
-            },
-            audience: audience(),
-            audience_hash: audience().audience_hash(),
-            request_block: HttpRequestEvidenceBlock {
-                profile: "p".into(),
-                audience: audience(),
-                artifact_bindings: Vec::new(),
-                continuation: None,
-                admission: None,
-                admission_assertion: None,
-                authorization_decision: None,
-            },
-        }
+    /// A request signed over `body` by `did:example:a` under `k`, as the verifier returned
+    /// it, with the signed bytes: the pairing `prepare` requires.
+    fn signed(body: &[u8]) -> Signed {
+        sign_and_verify(RequestSpec {
+            body,
+            subject: "did:example:a",
+            keyid: "k",
+            audience_id: "aud",
+            continuation: None,
+        })
     }
 
     fn seeded_body() -> Vec<u8> {
@@ -263,7 +223,8 @@ mod tests {
     }
 
     fn prepared(body: &[u8], policy: VerifiedContextPolicy) -> ForwardedBody {
-        ForwardedBody::prepare(body, &verified_for(body), policy, NOW)
+        let signed = signed(body);
+        ForwardedBody::prepare(&signed.body, &signed.verified, policy, NOW)
             .expect("an ordinary verified body prepares")
     }
 
@@ -393,11 +354,11 @@ mod tests {
     #[test]
     fn prepare_refuses_a_body_the_verified_request_does_not_cover() {
         let body = seeded_body();
-        let other = br#"{"jsonrpc":"2.0","id":2,"method":"tools/call"}"#;
+        let other = signed(br#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
         assert!(
             ForwardedBody::prepare(
-                other,
-                &verified_for(&body),
+                &other.body,
+                &signed(&body).verified,
                 VerifiedContextPolicy::Trusted,
                 NOW
             )
@@ -406,8 +367,8 @@ mod tests {
         );
         // POSITIVE CONTROL: the matching pair still prepares.
         assert!(ForwardedBody::prepare(
-            other,
-            &verified_for(other),
+            &other.body,
+            &other.verified,
             VerifiedContextPolicy::Trusted,
             NOW
         )
@@ -415,26 +376,24 @@ mod tests {
     }
 
     /// FAIL CLOSED: under `Trusted`, a body whose top-level `_meta` occupies the PEP's
-    /// write position makes the composer refuse rather than forward a context-free
-    /// request that looks ordinary. Under `Disabled` the same body is forwarded, because
-    /// nothing is written.
+    /// write position makes the write refuse rather than forward a context-free request
+    /// that looks ordinary. Under `Disabled` the same body is forwarded, because nothing
+    /// is written.
+    ///
+    /// Exercised on the write itself: a request verification covers carries its evidence
+    /// block in an object `_meta`, so no verified request pairs with this body.
     #[test]
-    fn prepare_fails_closed_under_trusted_when_the_block_cannot_be_written() {
+    fn the_write_fails_closed_under_trusted_when_the_block_cannot_be_written() {
         let body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","_meta":[1,2]}"#;
-        assert!(ForwardedBody::prepare(
-            body,
-            &verified_for(body),
-            VerifiedContextPolicy::Trusted,
-            NOW
-        )
-        .is_err());
-        assert!(ForwardedBody::prepare(
-            body,
-            &verified_for(body),
-            VerifiedContextPolicy::Disabled,
-            NOW
-        )
-        .is_ok());
+        let stripped = strip_pep_owned(body).expect("the guard walks this body");
+        let ctx = VerifiedContext::from_verified(&signed(&seeded_body()).verified, NOW);
+        let trusted = VerifiedContextPolicy::Trusted
+            .trusted_inner_channel()
+            .expect("Trusted authorizes the write");
+        assert!(insert_verified_context(&stripped, &ctx, trusted).is_err());
+        assert!(VerifiedContextPolicy::Disabled
+            .trusted_inner_channel()
+            .is_none());
     }
 
     /// The report a caller's attempt produces is a value, so what the operator's only

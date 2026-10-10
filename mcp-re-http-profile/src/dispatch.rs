@@ -140,14 +140,14 @@ pub fn dispatch_request(
 
 /// Dispatch steps 2–3 — everything EXCEPT the one side-effecting replay admission
 /// (step 4): build the five-tuple [`HttpReplayKey`] from the verified evidence and
-/// verify any MRTR continuation against the caller-retained bases.
+/// verify any MRTR continuation against the caller-retained evidence handles.
 ///
 /// Split out so BOTH serving paths share this identical, security-critical key
 /// construction + continuation binding and differ ONLY in which tier performs the
 /// side-effecting admission: the sync [`dispatch_request`] admits against a
 /// `&dyn ReplayCache`; the async data plane (ADR-MCPRE-051 §4) AWAITS its
 /// authoritative async tier with
-/// [`HttpReplayKey::to_core_replay_key`](crate::HttpReplayKey::to_core_replay_key).
+/// [`PreparedDispatch::to_replay_key`].
 ///
 /// Private to this module, and reached only through
 /// [`ReplayTierAdmitted::prepare`]. The fleet-strict single-process refusal
@@ -159,7 +159,7 @@ pub fn dispatch_request(
 /// burns a legitimate nonce.
 // ADR-MCPRE-059 WP2 — continuation unbypassability. If a request carries a continuation
 // and this function returns Ok, the continuation WAS verified against the caller-retained
-// bases. The pair (continuation present, continuation_verified == false) is not a state
+// evidence handles. The pair (continuation present, continuation_verified == false) is not a state
 // any successful preparation can produce, which is the invariant ADR-MCPRE-056/057/058
 // eliminate dynamically, stated here over every input rather than over the fixtures.
 //
@@ -197,14 +197,14 @@ fn prepare_http_dispatch(
     let continuation_verified = match (continuation, continuation_ctx) {
         (Some(c), Some(ctx)) => {
             c.verify(
-                ctx.previous_request_base,
-                ctx.input_required_response_base,
+                ctx.previous_request_evidence,
+                ctx.input_required_response_evidence,
                 ctx.request_state,
             )
             .map_err(|e| DispatchError::Profile(e))?;
             true
         }
-        // A continuation to verify but no retained bases to verify against: we
+        // A continuation to verify but no retained handles to verify against: we
         // cannot prove the binding, so fail closed as a continuation-binding
         // failure rather than admit an unverifiable splice.
         (Some(_), None) => {
@@ -212,10 +212,10 @@ fn prepare_http_dispatch(
                 HttpProfileError::ContinuationBindingFailed,
             ))
         }
-        // Retained bases offered for a request whose block claims NO continuation. The
+        // Retained handles offered for a request whose block claims NO continuation. The
         // caller believes it is resuming a correlation and the signed request does not,
         // and this seam is not the authority that can pick between them — so it refuses
-        // rather than discard the bases and return an ordinary first-leg admission the
+        // rather than discard the handles and return an ordinary first-leg admission the
         // caller would read as a resumption. Free, like the refusal above: it precedes
         // the replay `check_and_insert`, so no nonce is burned, and it precedes the
         // caller's continuation consume and retention marker, both of which run after
@@ -242,7 +242,9 @@ mod tests {
     use crate::block::HttpRequestEvidenceBlock;
     use crate::block::ResolvedActor;
     use crate::block::SignerSlot;
-    use crate::evidence::RequestEvidence;
+    use crate::evidence::EvidenceRole;
+    use crate::evidence::RequestEvidenceDigest;
+    use crate::evidence::RequestRoleEvidence;
     use crate::AudienceTuple;
     use mcp_re_core::SigningKey;
 
@@ -276,7 +278,7 @@ mod tests {
                     verification_key: key.public_key(),
                     slot: SignerSlot::Request,
                 },
-                evidence: RequestEvidence::from_signature_base(PREV),
+                evidence: RequestRoleEvidence::from_signature_base(PREV),
                 request_signature_base: PREV.to_vec(),
                 content_digest: "sha-256=:AAAA:".into(),
                 created: 1_000,
@@ -298,8 +300,12 @@ mod tests {
         }
     }
 
-    fn retained() -> RetainedContinuation<'static> {
-        RetainedContinuation::from_correlation(PREV, IRR, STATE)
+    /// The two retained handles, minted under their own role labels as the open leg does.
+    fn handles() -> (RequestEvidenceDigest, RequestEvidenceDigest) {
+        (
+            RequestEvidenceDigest::over_labeled(EvidenceRole::Request, PREV),
+            RequestEvidenceDigest::over_labeled(EvidenceRole::Response, IRR),
+        )
     }
 
     #[test]
@@ -361,17 +367,21 @@ mod tests {
         // The other positive control: the refusals are not satisfied by a seam that
         // refuses everything.
         let ev = verified(Some(HttpContinuation::build(PREV, IRR, STATE)));
+        let (prev, irr) = handles();
+        let retained = RetainedContinuation::from_correlation(&prev, &irr, STATE);
         let (_key, continuation_verified) =
-            prepare_http_dispatch(&ev, Some(retained())).expect("a matching answer leg prepares");
+            prepare_http_dispatch(&ev, Some(retained)).expect("a matching answer leg prepares");
         assert!(continuation_verified);
     }
 
     #[test]
     fn retained_bases_offered_for_a_request_that_claims_no_continuation_are_refused() {
-        // The R12-288/289 repair. `(None, _) => false` discarded the bases and returned an
+        // The R12-288/289 repair. `(None, _) => false` discarded the handles and returned an
         // ordinary first-leg admission, so a caller that believed it was resuming a
         // correlation received no signal at all that it was not.
-        let refusal = prepare_http_dispatch(&verified(None), Some(retained()))
+        let (prev, irr) = handles();
+        let retained = RetainedContinuation::from_correlation(&prev, &irr, STATE);
+        let refusal = prepare_http_dispatch(&verified(None), Some(retained))
             .expect_err("a correlation the request does not claim must not be discarded");
         assert_eq!(
             refusal,

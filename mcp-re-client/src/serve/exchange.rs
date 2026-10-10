@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! One local exchange, from the accepted socket to the plain reply.
 //!
-//! The listener''s dispatch half: read, sign-forward-verify through [`ClientProxy`], and
+//! The listener's dispatch half: read, sign-forward-verify through [`ClientProxy`], and
 //! render what came back as something an ordinary MCP client can act on. The local client
 //! never sees an MCP-RE field — that transparency is the point.
 //!
@@ -9,9 +9,9 @@
 //!
 //! * an UNVERIFIABLE response is not a server verdict. The channel is compromised or
 //!   misconfigured, so it is reported as a gateway failure, never as a result.
-//! * a verified REJECTION rides in a 200 on purpose: it IS the server''s answer, and a
+//! * a verified REJECTION rides in a 200 on purpose: it IS the server's answer, and a
 //!   JSON-RPC error is how a plain MCP client is told a call did not succeed. A 5xx would
-//!   read as a channel failure and invite the retry the receipt''s own `retry_safety` may
+//!   read as a channel failure and invite the retry the receipt's own `retry_safety` may
 //!   be refusing.
 
 use std::net::TcpStream;
@@ -24,6 +24,7 @@ use super::render::local_error;
 use super::render::render_gateway_failure;
 use super::render::render_verified;
 
+use super::accepted_authority::AcceptedHttpAuthority;
 use super::close::drain;
 use super::close::drain_pending;
 use super::deadlines::DeadlineWriter;
@@ -44,14 +45,18 @@ fn write_budget() -> Instant {
         .unwrap_or_else(Instant::now)
 }
 
-pub(super) fn handle_connection(mut stream: TcpStream, context: &ServeContext) {
+pub(super) fn handle_connection(
+    mut stream: TcpStream,
+    context: &ServeContext,
+    authority: &AcceptedHttpAuthority,
+) {
     // Class R: a whole-phase budget, so an unrepresentable one is no budget at all and
     // the connection is closed rather than served without one.
     let Some(deadline) = Instant::now().checked_add(EXCHANGE_DEADLINE) else {
         return;
     };
     let _ = stream.set_nonblocking(false);
-    let request = match read_request(&mut stream, deadline, &context.accepted_authority) {
+    let request = match read_request(&mut stream, deadline, authority) {
         Ok(request) => request,
         Err(status) => {
             let write_deadline = write_budget();
@@ -132,7 +137,7 @@ fn dispatch(
         nonce: (context.nonce)(),
         created: now,
         expires,
-        now_unix: now,
+        verification_clock: &*context.clock,
     };
 
     match context.proxy.handle(&route_id, &plain, &params) {

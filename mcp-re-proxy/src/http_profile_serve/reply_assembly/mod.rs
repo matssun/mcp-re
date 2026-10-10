@@ -25,10 +25,10 @@ use crate::exchange_state::OpenLeg;
 use crate::refusal::Refusal;
 use crate::request_stages::RetentionDisposition;
 
+use super::receipt::Accepted;
 use super::reply::ReplyClass;
 use super::reply::ValidatedReply;
 use super::signing_window::SigningWindow;
-use super::Exchange;
 use super::HttpProfileProxy;
 
 /// The bodyless 202 terminal a one-way message reaches.
@@ -57,7 +57,7 @@ impl HttpProfileProxy {
     /// verified instruction to continue an exchange that cannot be continued.
     async fn record_continuation_leg(
         &self,
-        ex: &Exchange<'_>,
+        acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
         class: &ReplyClass,
         response_base: Vec<u8>,
@@ -68,7 +68,12 @@ impl HttpProfileProxy {
         };
         match self
             .continuations
-            .record_open_leg(ex, self.requests.audience_id(), state, response_base)
+            .record_open_leg(
+                acc.exchange(),
+                self.requests.audience_id(),
+                state,
+                response_base,
+            )
             .await
         {
             Ok(recorded) => {
@@ -76,7 +81,7 @@ impl HttpProfileProxy {
                 progress.establish(recorded);
                 Ok(())
             }
-            Err(refusal) => Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => Err(self.refuse_accepted(acc, refusal, progress)),
         }
     }
 
@@ -96,7 +101,7 @@ impl HttpProfileProxy {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn assemble_reply(
         &self,
-        ex: &Exchange<'_>,
+        acc: &Accepted<'_>,
         progress: &mut ExchangeProgress,
         outcome: DispatchedOutcome,
         outstanding: &OutstandingId,
@@ -106,28 +111,33 @@ impl HttpProfileProxy {
         let inner_bytes = match self.inner_async.observe_reply(progress, outcome) {
             Ok(bytes) => progress.establish(bytes),
             Err(refusal) => {
-                return Err(self.refuse_retained(ex, refusal, progress, retention).await)
+                return Err(self
+                    .refuse_retained(acc, refusal, progress, retention)
+                    .await)
             }
         };
-        let mut response = HttpResponse {
+        let response = HttpResponse {
             status: 200,
             headers: vec![("content-type".into(), "application/json".into())],
             body: inner_bytes,
         };
-        let class = match self.read_reply(progress, &response, outstanding) {
-            Ok(class) => class,
+        let (validated, class) = match self.read_reply(progress, response, outstanding) {
+            Ok(read) => read,
             Err(refusal) => {
-                return Err(self.refuse_retained(ex, refusal, progress, retention).await)
+                return Err(self
+                    .refuse_retained(acc, refusal, progress, retention)
+                    .await)
             }
         };
-        let response_base = match self.responses.sign_reply(ex, &mut response, window) {
-            Ok(base) => progress.establish(base),
-            // SIGNING failed, so there is no signed terminal to retain. The marker stays,
-            // and it is the true statement: this exchange crossed and no durable retained
-            // terminal discharges it.
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
-        };
-        self.record_continuation_leg(ex, progress, &class, response_base)
+        let (response, response_base) =
+            match self.responses.sign_reply(acc.exchange(), validated, window) {
+                Ok((response, base)) => (response, progress.establish(base)),
+                // SIGNING failed, so there is no signed terminal to retain. The marker stays,
+                // and it is the true statement: this exchange crossed and no durable retained
+                // terminal discharges it.
+                Err(refusal) => return Err(self.refuse_accepted(acc, refusal, progress)),
+            };
+        self.record_continuation_leg(acc, progress, &class, response_base)
             .await?;
         Ok(SignedReply { response, class })
     }
@@ -140,9 +150,9 @@ impl HttpProfileProxy {
     fn read_reply(
         &self,
         progress: &mut ExchangeProgress,
-        response: &HttpResponse,
+        response: HttpResponse,
         outstanding: &OutstandingId,
-    ) -> Result<ReplyClass, Refusal> {
+    ) -> Result<(ValidatedReply, ReplyClass), Refusal> {
         let validated = progress.establish(Established::new(
             ValidatedReply::of(response, outstanding)?,
             ExchangeEvent::EnvelopeValidated,
@@ -158,7 +168,7 @@ impl HttpProfileProxy {
             ReplyClass::Terminal => OpenLeg::NotApplicable,
             ReplyClass::Open(_) => OpenLeg::Required,
         });
-        Ok(class)
+        Ok((validated, class))
     }
 }
 

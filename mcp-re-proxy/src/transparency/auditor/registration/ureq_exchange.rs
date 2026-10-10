@@ -18,10 +18,16 @@
 //! responder or a KMS endpoint, and inventing a parallel one would mean two answers to
 //! *where may this process connect*.
 //!
+//! Every request's URL must sit under the vetted base (equal to it, or beneath it at a
+//! `/` boundary), and one that does not is refused before any connection.
+//!
+//! Every exchange is bounded by the deadline its request carries, which is the one the
+//! registration's policy set; one that arrives past it is refused before any connection.
+//!
 //! Redirects are refused by that agent, for every provenance. The first URL is the only
 //! one any guard saw.
 
-use std::time::Duration;
+use std::time::Instant;
 
 use crate::outbound_fetch::VettedDestination;
 
@@ -29,12 +35,14 @@ use super::exchange::HttpExchange;
 use super::exchange::HttpRequest;
 use super::exchange::HttpResponse;
 
+/// Upper bound on an answer body. A COSE receipt or a capsule-anchor JSON document is
+/// kilobytes; nothing this subtree reads needs more.
+const MAX_ANSWER_BYTES: u64 = 1024 * 1024;
+
 /// A blocking HTTP transport over the workspace's outbound-network policy.
 pub struct UreqExchange {
     /// The service's base destination, which is what passed the operator-configured guard.
     service: VettedDestination,
-    /// Per-exchange timeout. The whole-registration bound is the policy's, above.
-    timeout: Duration,
 }
 
 impl UreqExchange {
@@ -42,18 +50,35 @@ impl UreqExchange {
     ///
     /// `None` is a REFUSAL and every caller must treat it as one. It is deliberately not a
     /// transport that tries anyway.
-    pub fn operator_configured(base_url: &str, timeout: Duration) -> Option<Self> {
-        VettedDestination::operator_configured(base_url)
-            .map(|service| UreqExchange { service, timeout })
+    pub fn operator_configured(base_url: &str) -> Option<Self> {
+        VettedDestination::operator_configured(base_url).map(|service| UreqExchange { service })
     }
 }
 
 impl HttpExchange for UreqExchange {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, String> {
-        let agent = self.service.agent(self.timeout);
+        let base = self.service.url().trim_end_matches('/');
+        let beneath_base = request.url == base
+            || request
+                .url
+                .strip_prefix(base)
+                .is_some_and(|rest| rest.starts_with('/'));
+        if !beneath_base {
+            return Err(
+                "the request is not addressed under the vetted service destination".to_owned(),
+            );
+        }
+        let remaining = request
+            .deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| {
+                "the registration budget was spent before this exchange began".to_owned()
+            })?;
+        let agent = self.service.agent(remaining);
         let mut call = agent
             .request(request.method, &request.url)
-            .timeout(self.timeout);
+            .timeout(remaining);
         for (name, value) in &request.headers {
             call = call.set(name, value);
         }
@@ -86,8 +111,16 @@ fn read(response: ureq::Response) -> Result<HttpResponse, String> {
         })
         .collect();
     let mut body = Vec::new();
-    std::io::Read::read_to_end(&mut response.into_reader(), &mut body)
-        .map_err(|e| format!("the response body could not be read: {e}"))?;
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(response.into_reader(), MAX_ANSWER_BYTES + 1),
+        &mut body,
+    )
+    .map_err(|e| format!("the response body could not be read: {e}"))?;
+    if u64::try_from(body.len()).map_or(true, |len| len > MAX_ANSWER_BYTES) {
+        return Err(format!(
+            "the response body exceeds the {MAX_ANSWER_BYTES}-byte bound"
+        ));
+    }
     Ok(HttpResponse {
         status,
         headers,
@@ -98,6 +131,7 @@ fn read(response: ureq::Response) -> Result<HttpResponse, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     /// A scheme the outbound-network policy does not allow is refused, not attempted.
     #[test]
@@ -108,16 +142,9 @@ mod tests {
             "not-a-url",
             "",
         ] {
-            assert!(
-                UreqExchange::operator_configured(url, Duration::from_secs(5)).is_none(),
-                "{url:?}",
-            );
+            assert!(UreqExchange::operator_configured(url).is_none(), "{url:?}",);
         }
-        assert!(UreqExchange::operator_configured(
-            "https://ts.example.test",
-            Duration::from_secs(5)
-        )
-        .is_some(),);
+        assert!(UreqExchange::operator_configured("https://ts.example.test").is_some());
     }
 
     /// The socket path, against a real listener: a non-2xx STATUS comes back as a
@@ -157,17 +184,15 @@ mod tests {
             }
         });
 
-        let exchange = UreqExchange::operator_configured(
-            &format!("http://127.0.0.1:{port}"),
-            Duration::from_secs(5),
-        )
-        .expect("a loopback destination is one an operator may configure");
+        let exchange = UreqExchange::operator_configured(&format!("http://127.0.0.1:{port}"))
+            .expect("a loopback destination is one an operator may configure");
         let response = exchange
             .send(HttpRequest {
                 method: "POST",
                 url: format!("http://127.0.0.1:{port}/entries"),
                 headers: vec![("content-type".to_owned(), "application/cose".to_owned())],
                 body: b"statement".to_vec(),
+                deadline: Instant::now() + Duration::from_secs(5),
             })
             .expect("a 429 is an answer, not a transport failure");
 
@@ -198,22 +223,108 @@ mod tests {
             }
         });
 
-        let exchange = UreqExchange::operator_configured(
-            &format!("http://127.0.0.1:{port}"),
-            Duration::from_secs(5),
-        )
-        .expect("a loopback destination");
+        let exchange = UreqExchange::operator_configured(&format!("http://127.0.0.1:{port}"))
+            .expect("a loopback destination");
         let response = exchange
             .send(HttpRequest {
                 method: "GET",
                 url: format!("http://127.0.0.1:{port}/operations/1"),
                 headers: Vec::new(),
                 body: Vec::new(),
+                deadline: Instant::now() + Duration::from_secs(5),
             })
             .expect("the exchange completes");
 
         assert_eq!(response.status, 200);
         assert_eq!(response.header("content-type"), Some("application/cose"));
         assert_eq!(response.body, b"\xd2\x84\x43\xa1\x01");
+    }
+
+    /// A request whose URL is not under the vetted base never reaches a socket.
+    #[test]
+    fn a_request_outside_the_vetted_destination_never_leaves() {
+        use std::net::TcpListener;
+
+        let a = TcpListener::bind("127.0.0.1:0").expect("bind a");
+        let b = TcpListener::bind("127.0.0.1:0").expect("bind b");
+        b.set_nonblocking(true).expect("non-blocking");
+        let port_a = a.local_addr().expect("addr").port();
+        let port_b = b.local_addr().expect("addr").port();
+        let exchange = UreqExchange::operator_configured(&format!("http://127.0.0.1:{port_a}"))
+            .expect("a loopback destination");
+        let get = |url: String| HttpRequest {
+            method: "GET",
+            url,
+            headers: Vec::new(),
+            body: Vec::new(),
+            deadline: Instant::now() + Duration::from_secs(5),
+        };
+
+        assert!(exchange
+            .send(get(format!("http://127.0.0.1:{port_b}/x")))
+            .is_err());
+        assert_eq!(
+            b.accept().expect_err("no connection was made").kind(),
+            std::io::ErrorKind::WouldBlock,
+        );
+        assert!(exchange
+            .send(get(format!("http://127.0.0.1:{port_a}0/x")))
+            .is_err());
+    }
+
+    /// An answer over the bound is refused, never truncated or buffered whole.
+    #[test]
+    fn an_answer_over_the_bound_is_refused_not_buffered() {
+        use std::io::Read;
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a listener");
+        let port = listener.local_addr().expect("addr").port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0_u8; 2048];
+                let _ = stream.read(&mut buf);
+                let len = MAX_ANSWER_BYTES + 1;
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/cose\r\nContent-Length: {len}\r\n\r\n"
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.write_all(&vec![0_u8; usize::try_from(len).unwrap_or(0)]);
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                let mut rest = Vec::new();
+                let _ = stream.read_to_end(&mut rest);
+            }
+        });
+
+        let exchange = UreqExchange::operator_configured(&format!("http://127.0.0.1:{port}"))
+            .expect("a loopback destination");
+        let outcome = exchange.send(HttpRequest {
+            method: "GET",
+            url: format!("http://127.0.0.1:{port}/operations/1"),
+            headers: Vec::new(),
+            body: Vec::new(),
+            deadline: Instant::now() + Duration::from_secs(5),
+        });
+
+        assert!(outcome.is_err());
+    }
+
+    /// An exchange whose deadline has already passed is refused before any connection.
+    #[test]
+    fn an_exchange_past_its_deadline_is_refused_before_any_connection() {
+        let exchange = UreqExchange::operator_configured("https://ts.example.test")
+            .expect("an allowed scheme");
+        let outcome = exchange.send(HttpRequest {
+            method: "GET",
+            url: "https://ts.example.test/entries".to_owned(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            deadline: Instant::now(),
+        });
+
+        assert!(outcome.expect_err("past its deadline").contains("budget"));
     }
 }

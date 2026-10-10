@@ -19,7 +19,8 @@ Two phases, because a baseline is only honest if it is taken BEFORE the edit:
         AFTER the edit, so any failure the edit caused was recorded as baseline
         debt and could never show up as `new-failures`.
 
-  post  append `fix` with the worker's counts, then run
+  post  append `fix` with the worker's counts, format every touched .rs file with
+        rustfmt (formatting is mechanical, so a writer is never failed for it), then run
           1. prescan over every touched file's src root — only hits naming a
              touched or related file are reported; the rest of the root is not
              this change's business
@@ -27,6 +28,7 @@ Two phases, because a baseline is only honest if it is taken BEFORE the edit:
              baseline, and `bazel_gate.py check` per tree.
              Rust: `rust_gate.py` — `bazel build --config=lint` over every target
              that compiles the file (plus the related files' targets above `local`),
+             `bazel build --config=rustfmt` over the targets of every touched file,
              the module-size gate, the file's own unit tests in the unit-test targets
              built from those libraries, and any `--it` integration test target.
         and append `gate` (plus `gate-failed` when a gate BLAMES the change).
@@ -58,6 +60,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -66,12 +69,14 @@ sys.path.insert(0, HERE)
 import bazel_gate  # noqa: E402
 import rust_gate  # noqa: E402
 import progress  # noqa: E402
+import size_debt  # noqa: E402
+import writer_patch  # noqa: E402
 
 GATE_SCRIPT = os.path.join(HERE, "bazel_gate.py")
 PRESCAN_SCRIPT = os.path.join(HERE, "prescan.py")
 PYRIGHT_SUMMARY = re.compile(r"(\d+) errors?, (\d+) warnings?")
 # Worst first. `no-baseline` outranks `ok` because an unmeasured tree is not a pass.
-RANK = {"new-failures": 0, "infra": 1, "no-baseline": 2, "ok": 3, "not-run": 4}
+RANK = {"new-failures": 0, "infra": 1, "no-baseline": 2, "size-debt": 3, "ok": 4, "not-run": 5}
 
 
 def _ids(spec: str) -> list[str]:
@@ -126,6 +131,9 @@ def _dirty(paths: list[str]) -> list[str]:
 
 
 def cmd_pre(a) -> int:
+    # The tree this writer starts from, so its own diff — and nothing an earlier writer
+    # left uncommitted — is what a red gate reverts and what finalize commits.
+    writer_patch.snapshot(a.store, a.file)
     if a.file.endswith(".rs"):
         # No stored baseline for Rust: the lane starts on a tree batch_gate.py
         # measured green and every writer leaves it green or reverted. What `pre`
@@ -209,14 +217,23 @@ def _bazel(a, tree: str) -> dict:
             **({"stderr_tail": err} if v == "infra" and err else {})}
 
 
-def _revert(touched: list[str], work_dir: str) -> str:
-    """Save the change as a patch, then return the touched paths to HEAD.
+def _revert(touched: list[str], work_dir: str, store: str | None = None,
+            file: str | None = None) -> str:
+    """Save the change as a patch, then return the touched paths to where this writer
+    found them.
 
     A red change left in the tree makes the next writer's gate fail on it, and the
     lane's attribution — one writer, so a failure is that writer's — collapses. The
     patch keeps the work; the tree goes back to the state the next writer expects.
+
+    With a `pre` snapshot that state is the snapshot, not HEAD: earlier writers' accepted
+    but uncommitted hunks in a shared file survive. Without one (a direct call), HEAD.
     """
     patch = os.path.join(work_dir, "gate-failed-%s.patch" % _slug(",".join(touched)))
+    own = writer_patch.patch_path(store, file) if store and file else None
+    if own and writer_patch.restore(store, file, touched):
+        shutil.copyfile(own, patch)
+        return patch
     tracked = subprocess.run(["git", "ls-files", "--", *touched], capture_output=True,
                              text=True).stdout.split()
     with open(patch, "w", encoding="utf-8") as fh:
@@ -246,10 +263,13 @@ def cmd_post(a) -> int:
         counts="applied=%d,not_applied=%d,tests_added=%d" % (a.applied, a.not_applied, a.tests_added),
         note=(a.note or "")))
 
+    _format(touched)
+    writer_patch.capture(a.store, a.file, touched)
     pre = _prescan(a, touched, related)
     parts: list[dict] = []
     if a.file.endswith(".rs"):
-        parts = rust_gate.gate(a.file, related if a.tier != "local" else [], _ids(a.it), a.work_dir)
+        parts = rust_gate.gate(a.file, related if a.tier != "local" else [], _ids(a.it), a.work_dir,
+                               touched=touched)
     else:
         if a.tier != "local":
             parts.append(dict(_pyright(a), gate="pyright"))
@@ -257,28 +277,20 @@ def cmd_post(a) -> int:
             parts.append(dict(_bazel(a, t), gate="bazel"))
     verdict = min((p["verdict"] for p in parts), key=lambda v: RANK.get(v, 1)) if parts else "not-run"
     raw_exit = max((p.get("exit") or 0 for p in parts), default=0)
+    record = [r for p in parts for r in p.get("record", [])]
+    if record:
+        # Not blocking: every oversized file this writer touched, grown or not, joins the
+        # structural-debt register when (and only if) the change is committed.
+        size_debt.record(a.work_dir, a.file, record)
 
-    def summary(p: dict) -> str:
-        if p["gate"] in ("clippy", "test", "module-size", "targets"):
-            what = p.get("lane") or p.get("target") or ""
-            bad = p.get("errors_head") or p.get("failed") or p.get("head") or p.get("why") or ""
-            return "%s%s %s%s" % (p["gate"], (":" + what) if what else "", p["verdict"],
-                                  (" — " + str(bad)[:200]) if bad and p["verdict"] != "ok" else "")
-        if p["gate"] == "pyright":
-            return "pyright %s (%s errors vs %s)" % (p["verdict"], p.get("errors", "?"),
-                                                      p.get("baseline_errors"))
-        tail = (" new: " + ",".join(p["new_failures"][:5])) if p["new_failures"] else ""
-        return "bazel %s %s%s%s" % (p["tree"], p["verdict"], tail,
-                                    (" — " + p["note"]) if p.get("note") else "")
-
-    note = "; ".join(summary(p) for p in parts) + "; prescan %s" % (
+    note = "; ".join(gate_summary(p) for p in parts) + "; prescan %s" % (
         pre["state"] if pre["state"] == "clean" else "%d hit(s)" % len(pre["hits"]))
     progress.cmd_append(argparse.Namespace(**common, event="gate",
                                            counts="exit=%d" % raw_exit, note=note))
     reverted = None
     if verdict == "new-failures":
         if not a.keep_on_fail:
-            reverted = _revert(touched, a.work_dir)
+            reverted = _revert(touched, a.work_dir, a.store, a.file)
             note += "; reverted, patch %s" % reverted
         # The reviewer is skipped on a red tree, so the worker owns the terminal
         # event. Emitting nothing here is how two tick-1 files were reported lost.
@@ -292,6 +304,46 @@ def cmd_post(a) -> int:
                       "reverted_patch": reverted},
                      indent=1))
     return 0
+
+
+def _format(touched: list[str], rustfmt: str | None = None) -> list[str]:
+    """Format each touched .rs file in place and return the ones that changed.
+
+    Each file goes through stdin, so rustfmt formats exactly that file and never follows its
+    `mod` declarations into files the writer did not touch. A file rustfmt cannot parse is
+    left as it is: the rustfmt gate part reports it, blamed on this writer."""
+    rustfmt = rustfmt or shutil.which("rustfmt")
+    if not rustfmt:
+        return []
+    changed = []
+    for path in touched:
+        if not path.endswith(".rs") or not os.path.isfile(path):
+            continue
+        src = open(path, encoding="utf-8").read()
+        proc = subprocess.run([rustfmt, "--edition", "2021", "--emit", "stdout"], input=src,
+                              capture_output=True, text=True)
+        if proc.returncode == 0 and proc.stdout and proc.stdout != src:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(proc.stdout)
+            changed.append(path)
+    return changed
+
+
+def gate_summary(p: dict) -> str:
+    """One line per gate part for the journal. Every Rust part is named here; only the
+    Python tree part carries `new_failures`."""
+    if p["gate"] in ("clippy", "rustfmt", "test", "module-size", "registry", "targets"):
+        what = p.get("lane") or p.get("target") or ""
+        bad = (p.get("errors_head") or p.get("unformatted") or p.get("failed")
+               or p.get("debt") or p.get("head") or p.get("why") or "")
+        return "%s%s %s%s" % (p["gate"], (":" + what) if what else "", p["verdict"],
+                              (" — " + str(bad)[:200]) if bad and p["verdict"] != "ok" else "")
+    if p["gate"] == "pyright":
+        return "pyright %s (%s errors vs %s)" % (p["verdict"], p.get("errors", "?"),
+                                                  p.get("baseline_errors"))
+    tail = (" new: " + ",".join(p["new_failures"][:5])) if p.get("new_failures") else ""
+    return "bazel %s %s%s%s" % (p.get("tree", "?"), p["verdict"], tail,
+                                (" — " + p["note"]) if p.get("note") else "")
 
 
 def main() -> int:

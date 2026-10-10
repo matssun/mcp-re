@@ -33,6 +33,12 @@ admission assertions, verified under the `--admission-authority-kid` /
 `--admission-authority-pubkey` the deployment already configured. No second trust root, and
 no private key anywhere near a serving replica: publication is control-plane work.
 
+**The authority is fixed for the life of a running process.** The kid and key are read at
+startup and nothing re-reads them. Changing, rotating or revoking the configured authority
+governs a replica's admission decisions only after that replica is restarted or redeployed
+with the new `--admission-authority-kid` / `--admission-authority-pubkey`; there is no live
+rotation of the admission authority.
+
 A party that obtains store-write access without the signing key can delete records, corrupt
 them and take the store down — all of which a replica survives by failing closed. It cannot
 mint an admission, rewind a generation, move one workload's record onto another's key, or

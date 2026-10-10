@@ -64,6 +64,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: Why a chain terminates — ADR-MCPRE-068 §4.2, owner Ruling 2.
 PREMISE_CLASSES = ("assumed", "external-boundary", "review-obligation")
 
+#: A registration of the prover's VOCABULARY, not a premise — r12 Ruling 39 §4.
+#:
+#: An `uninterp` declaration adds no axiom: every theorem that mentions it holds for every
+#: interpretation. The mechanism census still counts it, so it is registered, and what it
+#: denotes is given by the premise it names in `interpreted_by`. Theorem premise accounting
+#: attributes the trust to that premise and never to the registration, so a registration
+#: never inflates a load-bearing count. Not in `PREMISE_CLASSES`: those answer why a chain
+#: terminates, and a registration terminates nothing.
+MODEL_REGISTRATION = "model-registration"
+
 #: What each kind of discharging event is observable OVER.
 EVENT_KINDS = ("registry-fact", "tree-fact", "owner-event")
 
@@ -117,6 +127,14 @@ def class_problem(where: str, entry: dict, live: bool) -> str | None:
             f"V0/V1/V2 tier on `[[unit]]`, and one name over two closed vocabularies in "
             f"one loader is one name meaning whichever the reader assumed."
         )
+    if declared == MODEL_REGISTRATION:
+        return _registration_problem(where, entry)
+    if entry.get("interpreted_by"):
+        return (
+            f"{where}: `interpreted_by` on a {declared!r} premise. Only a "
+            f"`{MODEL_REGISTRATION}` is given its meaning by another premise; a premise "
+            f"that carries trust of its own interprets nothing."
+        )
     if declared not in PREMISE_CLASSES:
         return (
             f"{where}: `premise_class` is {declared!r}, not one of "
@@ -138,6 +156,60 @@ def class_problem(where: str, entry: dict, live: bool) -> str | None:
             f"acceptable belongs in `justification`."
         )
     return None
+
+
+def _registration_problem(where: str, entry: dict) -> str | None:
+    """A model registration names the premise that interprets it, and nothing else."""
+    giver = entry.get("interpreted_by")
+    if not giver or not str(giver).startswith("ASM-"):
+        return (
+            f"{where}: `premise_class = '{MODEL_REGISTRATION}'` requires `interpreted_by`, "
+            f"the ASM id of the premise that gives the registered symbol its meaning. "
+            f"Without it the trust the symbol carries is attributed to nothing."
+        )
+    extra = [k for k in ("boundary_owner", "discharging_event") if entry.get(k)]
+    if extra:
+        return (
+            f"{where}: a model registration with {extra}. It trusts nothing of its own, so "
+            f"it has no owner to guarantee it and no debt to discharge."
+        )
+    return None
+
+
+def is_model_registration(entry: dict) -> bool:
+    """Whether this entry registers prover vocabulary rather than stating a premise."""
+    return entry.get("premise_class") == MODEL_REGISTRATION
+
+
+def registration_problems(assumptions: dict) -> list[str]:
+    """Registrations whose interpreting premise does not carry their trust everywhere.
+
+    Accounting drops a registration from every closure on the strength of its interpreter
+    being there instead. That is only true where the interpreter is LIVE, is itself a
+    premise, and is scoped to every unit the registration is: a registration on a unit its
+    interpreter does not reach would leave that unit's premise closure silently short.
+    """
+    by_id = {entry["id"]: entry for entry in assumptions.get("assumption", [])}
+    problems: list[str] = []
+    for entry in assumptions.get("assumption", []):
+        if not is_model_registration(entry):
+            continue
+        giver = by_id.get(str(entry.get("interpreted_by")))
+        if giver is None or not is_live(giver) or is_model_registration(giver):
+            problems.append(
+                f"{entry['id']}: `interpreted_by` {entry.get('interpreted_by')!r} is not a "
+                f"live premise. A registration's meaning must come from one."
+            )
+            continue
+        units = {str(t) for t in entry.get("scope", []) if str(t).startswith("unit://")}
+        missing = sorted(units - {str(t) for t in giver.get("scope", [])})
+        if missing:
+            problems.append(
+                f"{entry['id']}: registered on {missing}, which its interpreter "
+                f"{giver['id']} does not reach. The trust it is credited with would be "
+                f"carried by nothing there."
+            )
+    return problems
 
 
 def _boundary_problem(where: str, entry: dict) -> str | None:
@@ -346,6 +418,8 @@ def roots_reaching_premises(theorems: dict, verification: dict, assumptions: dic
                 reached |= scoped.get(unit, set())
         rows = {name: [] for name in PREMISE_CLASSES}
         for asm_id in sorted(reached):
+            if is_model_registration(by_id[asm_id]):
+                continue
             rows[by_id[asm_id]["premise_class"]].append(asm_id)
         out[str(root)] = rows
     return out

@@ -79,10 +79,11 @@ impl RetentionLedger {
 
     /// Charge one prospective entry to `actor`, or refuse fail-closed.
     ///
-    /// `now_unix` is the verifier's reading — the same instant the freshness gate used,
-    /// and the same timeline the `retain_until` values in `by_expiry` were derived on.
-    /// Pruning against a second, independent clock would evict against a different
-    /// timeline than the one the entries were recorded on.
+    /// `now_unix` is the verifier's reading held back by the declared replica clock
+    /// divergence — the retention timeline a shared store expires its records on, and the
+    /// one the `retain_until` values in `by_expiry` are judged against. Pruning on the
+    /// verifier's bare reading would hand a charge back before the record it accounts for
+    /// leaves the store.
     pub(super) fn reserve(&self, actor: &str, now_unix: i64) -> Result<Arc<str>, ReplayStoreError> {
         // A poisoned mutex is an OPERATIONAL failure — fail closed on the frozen
         // `mcp-re.replay_cache_unavailable` token, never a panic.

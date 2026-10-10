@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:09ceb771c46907b7c6912c005ca198ca24f8495d400f34c76448a803199b2c57"
+  },
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0068-scope-names-delegated-epoch-label (docs/security/owner-approvals-2026-10-06.jsonl, approved 2026-10-07, entry-text sha256 63dd6d6d9273b05e464939ef052f22dc865461caf43873d0ee9bf134e2683c5c), which signs this entry's current text. Authority: OWNER-RULINGS.md Ruling 30 (the ratified six-site text says proxy.delegated_epoch_label relies on the trust-epoch advance generation; the scope list now names that unit \u2014 scope bookkeeping consequence, text unchanged)",
+  "reviewed_fingerprint": "sha256:09ceb771c46907b7c6912c005ca198ca24f8495d400f34c76448a803199b2c57",
+  "reviewer": "mats@sundvall.name",
+  "subject": "ASM-0068"
+}

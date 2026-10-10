@@ -64,9 +64,9 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
-use mcp_re_http_profile::RequestEvidenceDigest;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResponseRoleEvidence;
 use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifierPolicy;
@@ -218,20 +218,13 @@ fn audit() -> ChainAudit<'static> {
     }
 }
 
-fn to_digest(e: &RequestEvidence) -> RequestEvidenceDigest {
-    RequestEvidenceDigest {
-        digest_alg: e.digest_alg.clone(),
-        digest_value: e.digest_value.clone(),
-    }
-}
-
 /// Sign one hop with the shipped signers and return it with the two role-labeled handles
 /// the next hop's continuation must name.
 fn hop(
     nonce: &str,
     continuation: Option<HttpContinuation>,
     body: &str,
-) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+) -> (RetainedHop, RequestRoleEvidence, ResponseRoleEvidence) {
     let mut request = HttpRequest {
         method: "POST".into(),
         target_uri: TARGET.into(),
@@ -241,7 +234,8 @@ fn hop(
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), "Bearer tok".into()),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     let req_evidence = mcp_re_http_profile::sign_request_full(
         &mut request,
@@ -260,10 +254,9 @@ fn hop(
         body: body.as_bytes().to_vec(),
     };
     // DELEGATED, because that is the only response mode the serving path has.
-    mcp_re_http_profile::sign_delegated_response_full(
+    mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key(
         &mut response,
         &request,
-        &req_evidence,
         &server_signer(),
         &credential(),
         &delegated_key(),
@@ -282,8 +275,9 @@ fn hop(
             NOW,
         )
         .expect("response verifies")
-        .signature_facts
-        .response_signature_base_digest;
+        .signature_facts()
+        .response_signature_base_digest
+        .clone();
 
     (
         RetainedHop { request, response },
@@ -298,8 +292,8 @@ fn three_hop_chain() -> Vec<RetainedHop> {
     let (h1, r1, s1) = hop(
         "retained-n1",
         Some(HttpContinuation::from_handles(
-            to_digest(&r0),
-            to_digest(&s0),
+            r0.to_digest(),
+            s0.to_digest(),
             b"state-0",
         )),
         AWAITING,
@@ -307,8 +301,8 @@ fn three_hop_chain() -> Vec<RetainedHop> {
     let (h2, _, _) = hop(
         "retained-n2",
         Some(HttpContinuation::from_handles(
-            to_digest(&r1),
-            to_digest(&s1),
+            r1.to_digest(),
+            s1.to_digest(),
             b"state-1",
         )),
         DONE,

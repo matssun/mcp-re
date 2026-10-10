@@ -13,10 +13,10 @@
 //!      entry point the shipped serving path's `answering_commitment` awaits;
 //!   4. strip the proxy-owned top-level `_meta` and forward the clean JSON-RPC to
 //!      the Streamable-HTTP backend through the proxy's real `HttpInnerPool`;
-//!   5. `sign_delegated_response_full` — sign the backend's reply with the DELEGATED
+//!   5. `sign_delegated_response_full_with_owned_key` — sign the backend's reply with the DELEGATED
 //!      key, bound to THIS request, carrying the root-signed credential that
 //!      authorizes it (ADR-MCPRE-052 delegated-required) — or, for a one-way
-//!      notification, `sign_delegated_accepted_202` (#424 / #418).
+//!      notification, `sign_delegated_accepted_202_with_owned_key` (#424 / #418).
 //!
 //! Any fail-closed step emits a DELEGATED-signed rejection receipt instead — bound to
 //! the request once it has verified, preflight (unbound) before that.
@@ -46,15 +46,16 @@ use hyper::Response;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-use mcp_re_http_profile::build_delegated_rejection;
-use mcp_re_http_profile::build_delegated_rejection_preflight;
-use mcp_re_http_profile::sign_delegated_accepted_202;
-use mcp_re_http_profile::sign_delegated_response_full;
+use mcp_re_core::McpReError;
+use mcp_re_http_profile::bodyless::sign_delegated_accepted_202_with_owned_key;
+use mcp_re_http_profile::rejection::build_delegated_rejection_preflight_with_owned_key;
+use mcp_re_http_profile::rejection::build_delegated_rejection_with_owned_key;
+use mcp_re_http_profile::sign::sign_delegated_response_full_with_owned_key;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::Verifier;
 use mcp_re_http_profile::VerifierPolicy;
 
@@ -65,11 +66,11 @@ use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::config_state::FreshnessWindow;
-use mcp_re_proxy::continuation_store::continuation_key;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
+use mcp_re_proxy::continuation_store::ContinuationKey;
 use mcp_re_proxy::continuation_store::Creation;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
-use mcp_re_proxy::continuation_store::RetainedBases;
+use mcp_re_proxy::continuation_store::RetainedHandles;
 use mcp_re_proxy::http_inner::HttpInnerPool;
 use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_async_tier;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
@@ -128,7 +129,7 @@ async fn main() {
                     // tier is a construction parameter of the store that serves.
                     let store = RedisAsyncAtomicReplayStore::connect_with_wait_quorum(
                         &url,
-                        mcp_re_proxy::redis_store::system_clock(),
+                        mcp_re_proxy::async_redis_store::system_clock(),
                         tier.wait_quorum_params(),
                     )
                     .await
@@ -222,7 +223,7 @@ async fn handle(
             return Ok(to_hyper(rejection(
                 None,
                 None,
-                "mcp-re.serialization_failed",
+                McpReError::SerializationFailed.wire_code(),
                 400,
             )))
         }
@@ -264,7 +265,7 @@ async fn handle(
     };
 
     // Step 3a — MRTR continuation prep (ADR-MCPS-047). A verified request carrying a
-    // continuation is an ANSWER leg: recover the open leg's retained signature bases from
+    // continuation is an ANSWER leg: recover the open leg's retained evidence handles from
     // the correlation store, keyed by the opaque `requestState` the client re-presents,
     // so the dispatcher can bind this answer to the exact prior exchange. `peek` has no
     // side effect — a request that fails the binding must not destroy a live
@@ -278,20 +279,16 @@ async fn handle(
         .as_ref()
         .and_then(|_| extract_request_state(&http_req.body));
     let answer_key = answer_state.as_ref().map(|state| {
-        continuation_key(
-            &expected_audience.audience_id,
-            &verified.resolved_actor().actor_id(),
-            state.as_bytes(),
-        )
+        ContinuationKey::for_request(&expected_audience.audience_id, &verified, state.as_bytes())
     });
     let retained = match &answer_key {
         Some(key) => state.continuations.peek(key).await.ok().flatten(),
         None => None,
     };
     let continuation_ctx = match (&retained, &answer_state) {
-        (Some(bases), Some(request_state)) => Some(RetainedContinuation::from_correlation(
-            &bases.previous_request_base,
-            &bases.input_required_response_base,
+        (Some(handles), Some(request_state)) => Some(RetainedContinuation::from_correlation(
+            &handles.previous_request_evidence,
+            &handles.input_required_response_evidence,
             request_state.as_bytes(),
         )),
         // A continuation was signed but nothing was retained for it: pass None so the
@@ -303,7 +300,7 @@ async fn handle(
     // point the shipped serving path awaits: a shared Redis tier detects a replay across
     // ALL replicas; the fleet-strict gate refuses a sub-minimum/undeclared tier, and a
     // store that self-reports the single-process class, before the store is touched. A
-    // continuation, when present, is verified here against the retained bases before the
+    // continuation, when present, is verified here against the retained handles before the
     // nonce is burned, and the awaited atomic admission is the last step.
     if let Err(e) = dispatch_request_with_async_tier(
         &verified,
@@ -327,13 +324,18 @@ async fn handle(
     // backend runs. This is where one-shot is enforced: `consume` reports whether this
     // call removed the live entry, so of two concurrent answer legs that both bound
     // successfully, exactly one proceeds. Refusing before the backend runs means the
-    // loser's call never takes effect.
+    // loser's call never takes effect. A store that did not answer is refused too: it
+    // is not a spend this leg may proceed on.
     if let Some(key) = &answer_key {
-        if !matches!(state.continuations.consume(key).await, Ok(true)) {
+        let consumed = state.continuations.consume(key).await;
+        if !matches!(
+            consumed,
+            Ok(mcp_re_proxy::continuation_store::Consumption::Consumed)
+        ) {
             return Ok(to_hyper(rejection(
                 Some(&http_req),
                 Some(verified.evidence()),
-                "mcp-re.continuation_binding_failed",
+                McpReError::ContinuationBindingFailed.wire_code(),
                 409,
             )));
         }
@@ -367,7 +369,7 @@ async fn handle(
     // had no reply to sign and refused the exchange the SDKs are proved against.
     if is_notification(&http_req.body) {
         return Ok(
-            match sign_delegated_accepted_202(
+            match sign_delegated_accepted_202_with_owned_key(
                 &http_req,
                 &hpp_common::delegation_credential(now),
                 &hpp_common::delegated_key(),
@@ -395,10 +397,9 @@ async fn handle(
     // The DELEGATED signer signs; the root only vouches for it via the credential the
     // response carries (ADR-MCPRE-052). The root key never touches a response, and the
     // verifier enrols only the root — it learns the delegated key from the credential.
-    match sign_delegated_response_full(
+    match sign_delegated_response_full_with_owned_key(
         &mut response,
         &http_req,
-        verified.evidence(),
         &hpp_common::delegated_server_identity(),
         &hpp_common::delegation_credential(now),
         &hpp_common::delegated_key(),
@@ -408,11 +409,11 @@ async fn handle(
     ) {
         Ok(response_base) => {
             // Step 6 — MRTR open-leg record (ADR-MCPS-047). When the signed reply is an
-            // `InputRequiredResult`, retain the two signature bases a later answer leg
-            // must bind to: THIS request's, and the reply's just produced. A reply that
-            // cannot be classified is refused rather than signed away as terminal
-            // (MCPRE-495); a continuation that cannot be recorded is refused rather than
-            // returned unanswerable.
+            // `InputRequiredResult`, retain evidence handles over the two signature bases a
+            // later answer leg must bind to: THIS request's, and the reply's just produced.
+            // A reply that cannot be classified is refused rather than signed away as
+            // terminal (MCPRE-495); a continuation that cannot be recorded is refused rather
+            // than returned unanswerable.
             let open_leg_state = match input_required_state(&response.body) {
                 Ok(state) => state,
                 Err(e) => {
@@ -425,13 +426,11 @@ async fn handle(
                 }
             };
             if let Some(request_state) = open_leg_state {
-                let bases = RetainedBases {
-                    previous_request_base: verified.request_signature_base().to_vec(),
-                    input_required_response_base: response_base,
-                };
-                let key = continuation_key(
+                let handles =
+                    RetainedHandles::over(verified.request_signature_base(), &response_base);
+                let key = ContinuationKey::for_request(
                     &expected_audience.audience_id,
-                    &verified.resolved_actor().actor_id(),
+                    &verified,
                     request_state.as_bytes(),
                 );
                 // Anything but a fresh entry fails the leg closed: an outage could not
@@ -440,14 +439,14 @@ async fn handle(
                 if !matches!(
                     state
                         .continuations
-                        .create(&key, &bases, CONTINUATION_TTL_SECS)
+                        .create(&key, &handles, CONTINUATION_TTL_SECS)
                         .await,
                     Ok(Creation::Stored)
                 ) {
                     return Ok(to_hyper(rejection(
                         Some(&http_req),
                         Some(verified.evidence()),
-                        "mcp-re.replay_cache_unavailable",
+                        McpReError::ReplayCacheUnavailable.wire_code(),
                         503,
                     )));
                 }
@@ -473,7 +472,7 @@ async fn handle(
 /// preflight form is used.
 fn rejection(
     request: Option<&HttpRequest>,
-    evidence: Option<&RequestEvidence>,
+    evidence: Option<&RequestRoleEvidence>,
     wire_code: &'static str,
     status: u16,
 ) -> HttpResponse {
@@ -484,9 +483,8 @@ fn rejection(
     );
     let credential = hpp_common::delegation_credential(now);
     match (request, evidence) {
-        (Some(req), Some(ev)) => build_delegated_rejection(
+        (Some(req), Some(_)) => build_delegated_rejection_with_owned_key(
             req,
-            ev,
             &reason,
             status,
             &hpp_common::delegated_server_identity(),
@@ -496,7 +494,7 @@ fn rejection(
             now,
             now + 300,
         ),
-        _ => build_delegated_rejection_preflight(
+        _ => build_delegated_rejection_preflight_with_owned_key(
             request,
             &reason,
             status,

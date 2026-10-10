@@ -120,9 +120,11 @@ pub(crate) fn kms_endpoint_authority(value: &str) -> Result<String, String> {
     let (host, port) = split_host_port(authority, &locator)?;
     if plaintext && !names_this_machine(host) {
         return Err(format!(
-            "may only use http:// for a loopback emulator (localhost, 127.0.0.0/8, [::1]); \
-             got host {host:?}. A plaintext endpoint exfiltrates the KMS credential and lets a \
-             substituted host supply the root verify key"
+            "may only use http:// for a loopback emulator named by address (127.0.0.0/8 or \
+             [::1], e.g. http://127.0.0.1:4566); got host {host:?}. A name such as `localhost` \
+             is answered by the host's resolver, not by this rule. A plaintext endpoint \
+             exfiltrates the KMS credential and lets a substituted host supply the root verify \
+             key"
         ));
     }
     if let Some(port) = port {
@@ -136,9 +138,12 @@ pub(crate) fn kms_endpoint_authority(value: &str) -> Result<String, String> {
 /// leave it?
 ///
 /// Decided from the parsed address, not from a spelling, so the canonicalisations a URL
-/// parser performs do not change the answer: `url` reads `[0:0:0:0:0:0:0:1]` as `[::1]` and
-/// lowercases `LOCALHOST`, and every address in 127.0.0.0/8 is loopback under RFC 1122, not
-/// just `127.0.0.1`.
+/// parser performs do not change the answer: `url` reads `[0:0:0:0:0:0:0:1]` as `[::1]`,
+/// and every address in 127.0.0.0/8 is loopback under RFC 1122, not just `127.0.0.1`.
+///
+/// Only an ADDRESS answers. A name — `localhost` included — is whatever the host's resolver
+/// returns for it, and this rule cannot see that, so a plaintext endpoint named by a name is
+/// refused.
 ///
 /// The IPv4 shorthands a URL parser also accepts — `127.1`, `0x7f.1` — are NOT recognised
 /// here, so they are refused rather than admitted as loopback. That is the safe direction
@@ -147,10 +152,7 @@ fn names_this_machine(host: &str) -> bool {
     if let Some(literal) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
         return std::net::Ipv6Addr::from_str(literal).is_ok_and(|address| address.is_loopback());
     }
-    if let Ok(address) = std::net::Ipv4Addr::from_str(host) {
-        return address.is_loopback();
-    }
-    host.eq_ignore_ascii_case("localhost")
+    std::net::Ipv4Addr::from_str(host).is_ok_and(|address| address.is_loopback())
 }
 
 /// Split a `host[:port]` authority, refusing anything that is not a literal host.
@@ -353,13 +355,16 @@ mod tests {
         }
         // Refused because a URL parser does NOT read them as written: these MOVE the host
         // (verified: url resolves each to a host other than the text before the character).
-        for c in ['#', '/', '?', '@', '\\'] {
+        assert_eq!(
+            super::kms_endpoint_authority("https://kms/internal.example").as_deref(),
+            Ok("kms"),
+            "'/' ends the authority at the text before it"
+        );
+        for c in ['#', '?', '@', '\\'] {
             let hostile = format!("https://kms{c}internal.example");
-            // `/`, `?` and `#` end the authority, so the refusal is about what is left.
             assert!(
-                super::kms_endpoint_authority(&hostile).is_err()
-                    || super::kms_endpoint_authority(&hostile).as_deref() == Ok("kms"),
-                "{c:?} must never yield an authority other than the text before it"
+                super::kms_endpoint_authority(&hostile).is_err(),
+                "{c:?} must be refused outright"
             );
         }
         // Refused, and url fails outright on them too.
@@ -498,7 +503,6 @@ mod tests {
             "http://127.0.0.1:4566",
             "http://127.0.0.2:4566",
             "http://127.255.255.254",
-            "http://LOCALHOST:4566",
             "http://[0:0:0:0:0:0:0:1]",
         ] {
             assert!(
@@ -513,6 +517,11 @@ mod tests {
             "http://[fe80::1]",
             "http://[2001:db8::1]",
             "http://localhost.attacker.example",
+            // A NAME is refused even when it is conventionally loopback: what `localhost`
+            // reaches is the host resolver's answer, which this rule cannot see.
+            "http://localhost",
+            "http://localhost:4566",
+            "http://LOCALHOST:4566",
             // The IPv4 shorthands url reads as 127.0.0.1 are refused, not admitted: a
             // refusal is the safe direction and no operator writes an emulator this way.
             "http://127.1",
@@ -523,6 +532,14 @@ mod tests {
                 "{off_machine} does not provably name this machine and must be refused"
             );
         }
+    }
+
+    /// The refusal of a loopback NAME tells the operator the address form that works.
+    #[test]
+    fn a_plaintext_name_is_refused_with_the_address_form_named() {
+        let err = super::kms_endpoint_authority("http://localhost:4566")
+            .expect_err("a plaintext endpoint named by a name must be refused");
+        assert!(err.contains("http://127.0.0.1:4566"), "{err}");
     }
 
     /// The authority the AWS SigV4 `Host` header is built from is the one a URL parser will
@@ -538,13 +555,149 @@ mod tests {
                 "https://kms.us-east-1.amazonaws.com/",
                 "kms.us-east-1.amazonaws.com",
             ),
-            ("http://localhost:4566/", "localhost:4566"),
+            ("http://127.0.0.1:4566/", "127.0.0.1:4566"),
             ("http://[::1]:4566", "[::1]:4566"),
             ("http://[::1]", "[::1]"),
         ] {
             assert_eq!(
                 super::kms_endpoint_authority(endpoint).expect("admissible"),
                 authority
+            );
+        }
+    }
+
+    /// The agreement the module exists to hold, MEASURED against the parser the client
+    /// links: every endpoint this rule admits is read by `ureq` as the same host and port
+    /// the authority names. Gated with the backends, the only builds that link `ureq` and
+    /// send a credential.
+    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
+    #[test]
+    fn every_admitted_endpoint_is_read_identically_by_the_client_url_parser() {
+        use std::net::Ipv6Addr;
+        use std::str::FromStr;
+
+        let mut corpus: Vec<String> = [
+            "https://kms.us-east-1.amazonaws.com:8443",
+            "https://kms.us-east-1.amazonaws.com",
+            "https://kms.us-east-1.amazonaws.com/",
+            "https://kms.example.com",
+            "https://kms.example.com:65535",
+            "https://kms.example.com:443",
+            "https://kms.example.com:8443",
+            "https://kms.example.com:65536",
+            "https://kms.example.com:0443",
+            "https://kms_internal.example:8443",
+            "http://kms_local:4566",
+            "https://[2001:db8::1]",
+            "https://[2001:db8::1]:8443",
+            "https://[::ffff:192.168.0.1]",
+            "http://[::1]",
+            "http://[::1]:4566",
+            "http://[0:0:0:0:0:0:0:1]:4566",
+            "http://[0:0:0:0:0:0:0:1]",
+            "https://10.0.0.5:8443",
+            "https://192.168.0.1",
+            "http://127.0.0.1:4566",
+            "http://127.0.0.2:4566",
+            "http://127.255.255.254",
+            "http://localhost:4566/",
+            "http://LOCALHOST:4566",
+            "http://128.0.0.1",
+            "http://10.0.0.5:8443",
+            "http://[fe80::1]",
+            "http://localhost.attacker.example",
+            "https://vpce-0abc123-xy1z.kms.us-east-1.vpce.amazonaws.com",
+            "https://kms-2.example.com",
+            "https://KMS.Example.COM:443",
+            "https://kms.example.com.",
+            "http://localhost:80@evil.example.com",
+            "https://kms/internal.example",
+        ]
+        .iter()
+        .map(|e| (*e).to_owned())
+        .collect();
+        for c in [
+            '!', '"', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', '`', '{', '}', '~', '#',
+            '/', '?', '@', '\\', '%', '<', '>', '^', '|',
+        ] {
+            corpus.push(format!("https://kms{c}internal.example"));
+        }
+
+        let mut admitted = 0_usize;
+        for endpoint in &corpus {
+            let Ok(authority) = super::kms_endpoint_authority(endpoint) else {
+                continue;
+            };
+            admitted += 1;
+            let request = ureq::get(endpoint);
+            let parsed = request.request_url().unwrap_or_else(|e| {
+                panic!("{endpoint} is admitted but the client refuses it: {e}")
+            });
+            let (host, port) = super::split_authority(&authority, &locator())
+                .unwrap_or_else(|e| panic!("{endpoint}: {e}"));
+            if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+                let read = parsed.host().trim_matches(|c| c == '[' || c == ']');
+                assert_eq!(
+                    Ipv6Addr::from_str(inner).ok(),
+                    Ipv6Addr::from_str(read).ok(),
+                    "{endpoint}: the client reads a different IPv6 host"
+                );
+            } else {
+                assert_eq!(
+                    parsed.host(),
+                    host.to_ascii_lowercase(),
+                    "{endpoint}: the client reads a different host"
+                );
+            }
+            let written = match port {
+                Some(p) => p.parse::<u16>().ok(),
+                None if endpoint.starts_with("https://") => Some(443),
+                None => Some(80),
+            };
+            assert_eq!(
+                parsed.as_url().port_or_known_default(),
+                written,
+                "{endpoint}: the client reads a different port"
+            );
+        }
+        assert!(
+            admitted > 0,
+            "the corpus admitted nothing; the probe measured nothing"
+        );
+
+        // POSITIVE CONTROL: the probe sees a disagreement when one exists. The client reads
+        // each of these as a host or port other than the literal text, and the rule refuses
+        // each.
+        for (endpoint, text_host, text_port) in [
+            ("https://127.1", "127.1", None),
+            ("https://0x7f.1", "0x7f.1", None),
+            ("https://2130706433", "2130706433", None),
+            ("https://1.1", "1.1", None),
+            (
+                "https://kms.example.com:0443",
+                "kms.example.com",
+                Some("0443"),
+            ),
+            (
+                "https://cloudkms.googleapis.com@evil.example.com",
+                "cloudkms.googleapis.com",
+                None,
+            ),
+        ] {
+            let request = ureq::get(endpoint);
+            let parsed = request
+                .request_url()
+                .unwrap_or_else(|e| panic!("{endpoint} must still parse in the client: {e}"));
+            let port_differs = text_port.is_some_and(|p| {
+                parsed.as_url().port().map(|n| n.to_string()).as_deref() != Some(p)
+            });
+            assert!(
+                parsed.host() != text_host || port_differs,
+                "{endpoint}: the probe failed to see the client rewrite the text"
+            );
+            assert!(
+                super::kms_endpoint_authority(endpoint).is_err(),
+                "{endpoint} is read differently by the client and must be refused"
             );
         }
     }

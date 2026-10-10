@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `DelegatedSigning` semantic owner — `work/CONFIG-STATE-ATLAS.md`, "Delegated
-//! signing".
+//! The `DelegatedSigning` semantic owner — unit `proxy.delegated_signing_configuration_state`.
 //!
 //! **A guard-only owner: no modes, and still facts of its own.** Delegated response
 //! signing is unconditional — ADR-MCPRE-052 is the only response-signing mode, so there is
@@ -9,29 +8,26 @@
 //!
 //! | Field | Kind | Rule |
 //! |---|---|---|
-//! | `delegated_trust_epoch` | required | the §7 hard gate; no default |
+//! | `delegated_trust_epoch` | required | the §7 hard gate; no default; no `#`, `<= MAX_DELEGATED_TRUST_EPOCH_BASE_LEN` |
 //! | `delegated_ttl_secs` | guard | `0 < ttl <= MAX_DELEGATED_TTL_SECS` |
 //! | `delegated_overlap_secs` | guard | `0 < overlap < ttl` |
 //! | `delegated_issuer_kid` | derived | defaults to `server_key_id` |
 //! | `delegated_audience_hash` | derived | defaults to `audience` |
 //!
-//! **The resolved values live here because the rule does.** A default applied downstream is
-//! a rule with two homes: the layer that owns it and the layer that re-applies it. Both
-//! spelled `--delegated-issuer-kid` falling back to `--server-key-id`, so they agreed —
-//! nothing made them, and a deployment could have been told it was chaining to one issuer
-//! while minting under another. [`DelegatedSigningFacts`] resolves both once, and nothing
-//! after this point can see that a default was ever involved.
+//! **The resolved values live here because the rule does.** [`DelegatedSigningFacts`]
+//! resolves both defaults once, and nothing after this point can see that a default was
+//! ever involved.
 //!
 //! **The two guards have two owners, and only one of them is here.** The CEILING
 //! `ttl <= MAX_DELEGATED_TTL_SECS` is a deployment policy number and is this owner's. The
 //! RELATION `0 < overlap < ttl` is not: it holds between two fields of
 //! `mcp_re_http_profile::custody::DelegatedKeyWindow`, and only that struct can hold a relation
-//! between its own fields. This owner produces one and never restates it — while the pair
-//! travelled as two `pub i64`s, the validated values were re-pairable one crate away, and
-//! `CustodyConfig { ttl: 60, overlap: 60 }` stayed an ordinary expression.
+//! between its own fields. This owner produces one and never restates it.
 
-use mcp_re_http_profile::custody::DelegatedKeyWindow;
+use mcp_re_http_profile::custody::{DelegatedKeyWindow, TrustEpoch, TrustEpochRefusal};
 
+use crate::config_state::coordinate;
+use crate::config_state::coordinate::CoordinateFault;
 use crate::deployment_request::{DelegatedSigningRequest, DeploymentRequest};
 
 /// The delegated-key TTL `T` an operator did not state, in seconds.
@@ -61,19 +57,17 @@ const _: () = {
 /// §7 epoch gate was satisfied and that both defaulting rules have already been applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DelegatedSigningFacts {
-    trust_epoch: String,
+    trust_epoch: TrustEpoch,
     issuer_kid: String,
     audience_hash: String,
     rotation: DelegatedKeyWindow,
 }
 
 impl DelegatedSigningFacts {
-    /// The base label delegated credentials are minted under.
-    ///
-    /// It is the whole label wherever no shared counter is configured. Where one is, the
-    /// signing plane extends it to `<base>#<counter>` before the first key is minted; that
-    /// extension is what an operator `INCR` moves, and it is not this owner's to promise.
-    pub fn trust_epoch(&self) -> &str {
+    /// The base label delegated credentials are minted under: the whole label without a
+    /// shared counter, else the signing plane extends it to `<base>#<counter>`, which an
+    /// operator's `mcp-re-proxy trust-epoch advance` moves and which is not this owner's to promise.
+    pub fn trust_epoch(&self) -> &TrustEpoch {
         &self.trust_epoch
     }
 
@@ -127,16 +121,15 @@ pub fn classify_and_validate(
              minted under and it has no default, so without it no credential names the \
              deployment whose keys a verifier is deciding about. The base alone is NOT the \
              cross-fleet kill switch: the comparable <base>#<counter> label, and with it the \
-             operator INCR that moves every replica to the next label, exist only where a \
-             shared counter is configured (--trust-epoch-redis-url). With the base alone the \
-             label never advances and a credential's exp is the only thing that ends it"
+             operator's trust-epoch advance that moves every replica to the next label, \
+             exist only where a shared counter is configured (--trust-epoch-redis-url). With \
+             the base alone the label never advances and a credential's exp is the only \
+             thing that ends it"
                 .to_string(),
         );
     }
-    // The range guards are reported whether or not an epoch was named: an operator fixing
-    // one defect should not have to run the proxy again to be told about the next. They now
-    // also GATE construction, on the same pattern as the empty-fact guards below: reporting
-    // everything and constructing nothing invalid are not in tension.
+    // The range guards are reported whether or not an epoch was named, so an operator meets
+    // every defect in one run; they also gate construction.
     let range = ttl_violations(requested);
     let window_is_valid = range.is_empty();
     violations.extend(range);
@@ -151,67 +144,92 @@ pub fn classify_and_validate(
     if !window_is_valid {
         return (None, violations);
     }
-    let facts = DelegatedSigningFacts {
-        trust_epoch,
-        rotation: window,
-        issuer_kid: requested
-            .issuer_kid
-            .clone()
-            .unwrap_or_else(|| config.server_key_id.clone()),
-        audience_hash: requested
-            .audience_hash
-            .clone()
-            .unwrap_or_else(|| config.audience.clone()),
-    };
-    // Each fact is checked AFTER resolution, which is the only place the question can be
-    // asked once. An empty value arrives two ways — an operator passing the flag empty, or a
-    // defaulting source that is itself empty — and asking of the resolved fact covers both
-    // without this owner reading `server_key_id` and `audience` a second time to guess which
-    // happened (CF-10). A present-but-empty fact is not a witness: every one of these is
-    // minted verbatim into every delegation credential, where an empty issuer names no
-    // issuer and an empty epoch names no deployment.
-    let empty_facts = empty_fact_violations(&facts);
-    if !empty_facts.is_empty() {
-        violations.extend(empty_facts);
+    let issuer_kid = (requested.issuer_kid.clone()).unwrap_or_else(|| config.server_key_id.clone());
+    let audience_hash =
+        (requested.audience_hash.clone()).unwrap_or_else(|| config.audience.clone());
+    // Each fact is checked AFTER resolution, so an empty flag and an empty defaulting source
+    // are one question (CF-10): every fact is minted verbatim into every delegation
+    // credential, where an empty issuer names no issuer and an empty epoch no deployment.
+    let fact_defects =
+        empty_fact_violations([&trust_epoch, &issuer_kid, &audience_hash].map(String::as_str));
+    let epoch = TrustEpoch::fixed(trust_epoch);
+    if !fact_defects.is_empty() || epoch.is_err() {
+        violations.extend(fact_defects);
+        violations.extend(epoch.err().and_then(epoch_base_violation));
         return (None, violations);
     }
-    (Some(facts), violations)
+    let facts = epoch.map(|trust_epoch| DelegatedSigningFacts {
+        trust_epoch,
+        rotation: window,
+        issuer_kid,
+        audience_hash,
+    });
+    (facts.ok(), violations)
 }
 
-/// The resolved facts that are present but say nothing.
+/// A base holding `#` renders a `<base>#<counter>` two pairs share (`a#1` at 2 is `a#1#2`).
+/// An empty base is [`empty_fact_violations`]'s to report.
+fn epoch_base_violation(refusal: TrustEpochRefusal) -> Option<String> {
+    (refusal != TrustEpochRefusal::Empty).then(|| {
+        format!(
+            "--delegated-trust-epoch must not contain '#' and is at most \
+             {MAX_DELEGATED_TRUST_EPOCH_BASE_LEN} bytes: `#` separates the base from the \
+             shared counter in <base>#<counter>, so a base holding one names two labels"
+        )
+    })
+}
+
+/// The longest `--delegated-trust-epoch` base, in bytes; it is minted into every credential.
+pub const MAX_DELEGATED_TRUST_EPOCH_BASE_LEN: usize = TrustEpoch::MAX_BASE_LEN;
+
+/// The resolved facts that are not canonical: empty, or unequal to their trimmed form.
 ///
 /// Separate from [`ttl_violations`] because the two gate construction differently: a TTL out
 /// of range is a defect in a posture that is otherwise fully determined, while a fact that
 /// is empty leaves the posture uninhabitable, so no `DelegatedSigningFacts` is built.
-fn empty_fact_violations(facts: &DelegatedSigningFacts) -> Vec<String> {
+///
+/// A minted fact is non-empty and equal to its trimmed form. It is refused rather than
+/// trimmed because the same string is read verbatim by other owners (`server_key_id`,
+/// `audience`), so trimming here would fork the credential's label from the one they hold.
+fn empty_fact_violations([trust_epoch, issuer_kid, audience_hash]: [&str; 3]) -> Vec<String> {
     [
         (
-            facts.trust_epoch.as_str(),
+            "--delegated-trust-epoch",
+            trust_epoch,
             "--delegated-trust-epoch is empty: the base label is minted into every delegation \
              credential — verbatim where no shared counter is configured, and as the base of \
              <base>#<counter> where one is — so an empty base names no deployment in either \
              posture",
         ),
         (
-            facts.issuer_kid.as_str(),
+            "the delegated issuer kid",
+            issuer_kid,
             "the delegated issuer kid resolves to empty: set --delegated-issuer-kid, or give \
              --server-key-id a value, since the credential chains to whichever this resolves \
              to and an empty kid names no root key for a verifier to find",
         ),
         (
-            facts.audience_hash.as_str(),
+            "the delegated audience scope",
+            audience_hash,
             "the delegated audience scope resolves to empty: set --delegated-audience-hash, \
              or give --audience a value, since an empty scope makes two deployments' \
              credentials indistinguishable to the verifier that checks them",
         ),
     ]
     .into_iter()
-    // TRIMMED, like every other required coordinate at this boundary. A label of spaces
-    // satisfies a presence check and names nothing, so the two must be one refusal: these
-    // three are minted verbatim into every delegation credential, where whitespace is
-    // indistinguishable from absence to the verifier reading them back.
-    .filter(|(value, _)| value.trim().is_empty())
-    .map(|(_, message)| message.to_string())
+    // A label of spaces satisfies a presence check and names nothing, and a padded label
+    // names a different one from the label written without the padding; these three are
+    // minted verbatim into every delegation credential, so both are refused.
+    .filter_map(
+        |(name, value, empty_message)| match coordinate::fault(value)? {
+            CoordinateFault::Blank => Some(empty_message.to_string()),
+            CoordinateFault::Padded => Some(format!(
+                "{name} {value:?} has leading or trailing whitespace: it is minted verbatim \
+             into every delegation credential, so it names a different label from the one \
+             written without it"
+            )),
+        },
+    )
     .collect()
 }
 
@@ -284,7 +302,7 @@ mod tests {
         let (facts, violations) = run(|_| {});
         assert!(violations.is_empty(), "{violations:?}");
         let facts = facts.expect("the legal fixture names an epoch");
-        assert!(!facts.trust_epoch().is_empty());
+        assert!(!facts.trust_epoch().base().is_empty());
         assert!(!facts.issuer_kid().is_empty());
         assert!(!facts.audience_hash().is_empty());
     }
@@ -308,7 +326,7 @@ mod tests {
     /// A refusal may not promise an effect the flag it asks for does not produce.
     ///
     /// `--delegated-trust-epoch` supplies a base label and nothing else. The counter that
-    /// makes the label globally comparable, and the operator `INCR` that moves every replica
+    /// makes the label globally comparable, and the operator's advance that moves every replica
     /// to the next one, come from a shared source this owner neither requires nor can
     /// observe — so a deployment naming the epoch and no source mints the bare base, which is
     /// a supported posture and not the one this refusal is describing. Any sentence here that
@@ -383,6 +401,30 @@ mod tests {
         }
     }
 
+    /// A base the `<base>#<counter>` label cannot parse back uniquely is refused, and so is
+    /// one past the length bound; a base at the bound is legal.
+    #[test]
+    fn an_epoch_base_that_renders_an_ambiguous_label_is_refused() {
+        let at_bound = "e".repeat(MAX_DELEGATED_TRUST_EPOCH_BASE_LEN);
+        let past_bound = "e".repeat(MAX_DELEGATED_TRUST_EPOCH_BASE_LEN + 1);
+        for (base, legal) in [
+            ("a#1", false),
+            (past_bound.as_str(), false),
+            (at_bound.as_str(), true),
+        ] {
+            let (facts, violations) =
+                run(|c| c.delegated_signing.trust_epoch = Some(base.to_string()));
+            assert_eq!(facts.is_some(), legal, "{base:?}: {violations:?}");
+            assert_eq!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("must not contain '#'")),
+                !legal,
+                "{base:?}: {violations:?}"
+            );
+        }
+    }
+
     /// The smallest meaningful value passes the same guard the empty one fails.
     #[test]
     fn a_one_character_fact_is_not_refused_by_the_emptiness_guard() {
@@ -393,7 +435,7 @@ mod tests {
         });
         assert!(violations.is_empty(), "{violations:?}");
         let facts = facts.expect("a one-character fact is a fact");
-        assert_eq!(facts.trust_epoch(), "e");
+        assert_eq!(facts.trust_epoch().label(), "e");
         assert_eq!(facts.issuer_kid(), "k");
         assert_eq!(facts.audience_hash(), "a");
     }
@@ -553,34 +595,49 @@ mod tests {
         }
     }
 
-    /// Whitespace is emptiness for all three minted facts.
+    /// Whitespace-only and padded values are refused for all three minted facts.
     ///
     /// They are minted VERBATIM into every delegation credential, so a label of spaces is
-    /// indistinguishable from absence to the verifier reading it back — while satisfying any
-    /// presence check on the way in. `--server-key-id "   "` was admitted until this rule was
-    /// trimmed, which made it the one required coordinate at this boundary whose emptiness
-    /// test disagreed with every other one.
+    /// indistinguishable from absence to the verifier reading it back, and a padded label
+    /// names a different one from the unpadded label other owners hold. Refusal, not
+    /// trimming, keeps the checked fact and the stored fact one value.
     #[test]
     fn a_whitespace_minted_fact_is_refused_like_an_empty_one() {
-        type MintedFact = (&'static str, fn(&mut DeploymentRequest));
-        let cases: [MintedFact; 3] = [
-            ("the base label", |c| {
+        type MintedFact = (&'static str, &'static str, fn(&mut DeploymentRequest));
+        let cases: [MintedFact; 7] = [
+            ("--delegated-trust-epoch", "blank", |c| {
                 c.delegated_signing.trust_epoch = Some("   ".to_string());
             }),
-            ("the delegated issuer kid", |c| {
+            ("--delegated-trust-epoch", "padded", |c| {
+                c.delegated_signing.trust_epoch = Some(" epoch-1".to_string());
+            }),
+            ("the delegated issuer kid", "blank server key id", |c| {
                 c.delegated_signing.issuer_kid = None;
                 c.server_key_id = "   ".to_string();
             }),
-            ("the delegated audience scope", |c| {
+            ("the delegated issuer kid", "padded override", |c| {
+                c.delegated_signing.issuer_kid = Some("kid ".to_string());
+            }),
+            ("the delegated issuer kid", "padded server key id", |c| {
+                c.delegated_signing.issuer_kid = None;
+                c.server_key_id = " server-key-1".to_string();
+            }),
+            ("the delegated audience scope", "blank", |c| {
                 c.delegated_signing.audience_hash = Some("   ".to_string());
             }),
+            ("the delegated audience scope", "padded", |c| {
+                c.delegated_signing.audience_hash = Some(" aud".to_string());
+            }),
         ];
-        for (what, mutate) in cases {
-            let mut config = crate::config_state::test_support::legal_config();
-            mutate(&mut config);
+        for (name, label, mutate) in cases {
+            let (facts, violations) = run(mutate);
             assert!(
-                !crate::config_state::validation::unsafe_config_violations(&config).is_empty(),
-                "{what} of whitespace names nothing and must be refused"
+                facts.is_none(),
+                "{name} ({label}) must not resolve to a fact"
+            );
+            assert!(
+                violations.iter().any(|v| v.contains(name)),
+                "{name} ({label}) must be named in the refusal: {violations:?}"
             );
         }
     }

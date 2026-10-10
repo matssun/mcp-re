@@ -19,10 +19,7 @@
 //! is a read-modify-write with no atomicity, and the module's own documented topology
 //! is multi-writer ("a sidecar updater, a second client"). Two writers that both read
 //! floor 5 and then persist 10 and 7 leave the floor at 7: a superseded manifest that
-//! un-revokes a withdrawn root becomes acceptable again. Writing through one fixed
-//! `<path>.tmp` made it worse — every writer truncates the same inode and writes from
-//! its own offset, so `100` and `7` can publish as `700`, which rejects every
-//! legitimate manifest until an operator repairs the file by hand.
+//! un-revokes a withdrawn root becomes acceptable again.
 //!
 //! A max over a set that only ever GROWS has neither failure. Two writers create
 //! different names and never collide; a late writer recording a lower version cannot
@@ -144,7 +141,10 @@ impl FileManifestFloor {
             }
         }
         let dir = path.into();
-        std::fs::create_dir_all(&dir)
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        std::fs::DirBuilder::create(builder.recursive(true), &dir)
             .map_err(|_| TrustManifestError::FloorNotPersisted("create trust-anchor floor dir"))?;
         let floor = FileManifestFloor {
             dir,
@@ -338,7 +338,8 @@ mod tests {
     use super::*;
 
     /// A unique scratch directory per test. No `tempfile` dependency in this crate,
-    /// and the pid keeps concurrent test runs from colliding.
+    /// and the pid keeps concurrent test runs from colliding. The test owns the path
+    /// because it creates it exclusively: a pre-existing entry or symlink fails the test.
     struct Scratch(PathBuf);
 
     impl Scratch {
@@ -346,6 +347,9 @@ mod tests {
             let path =
                 std::env::temp_dir().join(format!("mcp-re-floor-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir(&path).expect(
+                "the scratch root is created by this test; a pre-existing entry or symlink at the path fails it",
+            );
             Scratch(path)
         }
     }
@@ -594,12 +598,33 @@ mod tests {
         std::fs::set_permissions(&scratch.0, std::fs::Permissions::from_mode(0o755))
             .expect("restore");
 
-        if enforced {
-            assert!(
-                outcome.is_err(),
-                "the already-exists path must not report durability it never established",
-            );
-        }
+        assert!(
+            enforced,
+            "precondition: a 0o333 directory must refuse read_dir; with DAC override (running as root) this test cannot observe the directory fsync and must not report a pass"
+        );
+        assert!(
+            outcome.is_err(),
+            "the already-exists path must not report durability it never established",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_created_floor_directory_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = Scratch::new("owner-only");
+        let dir = scratch.0.join("floor");
+        FileManifestFloor::with_bounds(&dir, 0, None).expect("open");
+        let mode = std::fs::metadata(&dir)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "group/other access to the floor directory is the unlink/fast-forward capability the module documents",
+        );
     }
 
     /// The fast-forward: one marker named `u64::MAX` pins the floor so high that every

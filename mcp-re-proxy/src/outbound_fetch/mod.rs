@@ -21,10 +21,12 @@
 //!     → scheme allowlist
 //! ```
 //!
-//! The two are **two constructors**, not one constructor and a flag. A caller cannot assert
-//! that a certificate's URL is operator-configured, cannot obtain a destination without
-//! passing the guard its constructor applies, and cannot turn resolved-address vetting off
-//! for one it built as certificate-derived — because it never holds the switch.
+//! The two are **two constructors**, not one constructor and a flag. A caller cannot obtain
+//! a destination without passing the guard its constructor applies, and cannot turn
+//! resolved-address vetting off for one built as certificate-derived — it never holds the
+//! switch. The type cannot witness where a string came from: choosing `operator_configured`
+//! is the caller's assertion that the operator supplied the URL, so every URL read out of a
+//! certificate or other peer-supplied input must go through `certificate_derived`.
 //! [`VettedDestination::agent`] hands out the configured HTTP client rather than a boolean
 //! for the caller to act on, so the connect-time half of the guard travels with the value
 //! that earned it.
@@ -57,14 +59,15 @@ pub use address::resolved_ip_is_public;
 // Installing that policy into a `ureq` agent is a different thing, and it can only exist
 // where an HTTP client is linked. ADR-MCPS-018 keeps the default closure lean and the
 // Bazel base flavor deliberately links no HTTP client at all, so this half rides the
-// features that bring one in — the revocation client and the two cloud-KMS backends, each
+// features that bring one in — the revocation client, the etcd replay store and the two cloud-KMS backends, each
 // of which must build with the others absent. That is a real constraint on the BINDING,
 // not the accidental coupling of the guard the census objected to.
 #[cfg(any(
     feature = "online_ocsp",
     feature = "aws_kms_keysource",
     feature = "gcp_kms_keysource",
-    feature = "scitt_registration"
+    feature = "scitt_registration",
+    feature = "cpstore_etcd"
 ))]
 mod binding;
 #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
@@ -73,7 +76,8 @@ mod credential_egress;
     feature = "online_ocsp",
     feature = "aws_kms_keysource",
     feature = "gcp_kms_keysource",
-    feature = "scitt_registration"
+    feature = "scitt_registration",
+    feature = "cpstore_etcd"
 ))]
 mod resolver;
 

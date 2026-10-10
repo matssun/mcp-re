@@ -11,19 +11,17 @@
 //! against and a component that cannot be resolved must not be silently ignored. Their
 //! products are two types for the same reason.
 
-use mcp_re_core::McpReError;
-
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::ResponseRoleEvidence;
 use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
 use crate::message::reject_content_encoding;
 use crate::message::require_json_media_type;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
@@ -37,6 +35,7 @@ use super::params::check_params;
 use super::sf_dictionary::member_value;
 use super::signature::signature_value_b64url;
 use super::signature::verify_under;
+use super::signature::SignedMessage;
 use super::signature_input::parse_signature_input;
 use super::trust_slot::resolve_actor_for_slot;
 
@@ -53,12 +52,13 @@ pub(crate) fn floor_bound_response<R: Into<ResolverOutcome>>(
     // violation, not a streaming opt-in.
     require_json_media_type(&response.headers, "response content-type")?;
 
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?.ok_or(
+        HttpProfileError::MissingEvidence("response signature-input"),
+    )?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(
         &parsed.components,
@@ -83,12 +83,12 @@ pub(crate) fn floor_bound_response<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &resolved_server_actor.verification_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )?;
-    Ok(CryptographicFloorVerifiedBoundResponse {
+    Ok(CryptographicFloorVerifiedBoundResponse::new(
         resolved_server_actor,
-        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
-    })
+        ResponseRoleEvidence::from_signature_base(&base),
+    ))
 }
 /// [`verify_response_unbound`] under an explicit verifier-local [`VerifierPolicy`].
 pub(crate) fn floor_unbound_response<R: Into<ResolverOutcome>>(
@@ -102,12 +102,13 @@ pub(crate) fn floor_unbound_response<R: Into<ResolverOutcome>>(
     // violation, not a streaming opt-in.
     require_json_media_type(&response.headers, "response content-type")?;
 
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?.ok_or(
+        HttpProfileError::MissingEvidence("response signature-input"),
+    )?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {
@@ -131,10 +132,10 @@ pub(crate) fn floor_unbound_response<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &resolved_server_actor.verification_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )?;
-    Ok(CryptographicFloorVerifiedUnboundResponse {
+    Ok(CryptographicFloorVerifiedUnboundResponse::new(
         resolved_server_actor,
-        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
-    })
+        ResponseRoleEvidence::from_signature_base(&base),
+    ))
 }

@@ -7,16 +7,18 @@
 //! There is no body-declared `server_signer` to cross-check — there is no body — so the
 //! credential's own root-signed `mcp_re_server_signer` is the only value available, and
 //! feeding it back in as `expected_server_signer` makes the §3 step-5 scope comparison
-//! `x != x`, a check that cannot fail. The SUBSTANTIVE cross-check is
-//! [`check_scope_names_the_signing_key`], against a field the credential does not get to
-//! choose freely: the delegated kid the response actually signed under.
+//! `x != x`, a check that cannot fail. The root-signed scope is therefore bound to two
+//! facts it does not get to choose: the root the trust seam resolved (the scope's role,
+//! trust domain and subject must be that root's principal) and the delegated kid the
+//! response actually signed under ([`check_scope_names_the_signing_key`]).
 
+use crate::block::ActorIdentity;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::error::HttpProfileError;
 use crate::ids::PROFILE_TAG;
 use crate::message::single_header;
-use crate::verify::floor::trust_slot::resolve_actor_for_slot;
+use crate::verify::full::delegated::speaks_for;
 
 /// The delegation credential: present EXACTLY once and size-bounded.
 ///
@@ -45,7 +47,7 @@ pub(super) fn verify_credential<R: Into<ResolverOutcome>>(
     expect: &crate::verify::DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
-) -> Result<(crate::delegation::VerifiedDelegation, String), HttpProfileError> {
+) -> Result<(crate::delegation::VerifiedDelegation, ActorIdentity), HttpProfileError> {
     let server_signer = credential_server_signer(credential)?;
     let params = crate::delegation::DelegationVerifyParams {
         now,
@@ -58,13 +60,16 @@ pub(super) fn verify_credential<R: Into<ResolverOutcome>>(
     };
     let resolve_failure: std::cell::RefCell<Option<HttpProfileError>> =
         std::cell::RefCell::new(None);
+    let resolved_root: std::cell::RefCell<Option<ActorIdentity>> = std::cell::RefCell::new(None);
     let verified = crate::delegation::verify_delegation_credential(
         credential,
         &params,
         |issuer_kid| {
-            match resolve_actor_for_slot(verifier.resolve_actor(), issuer_kid, SignerSlot::Response)
-            {
-                Ok(actor) => Some(actor.verification_key),
+            match verifier.resolve_for_slot(issuer_kid, SignerSlot::Response) {
+                Ok(actor) => {
+                    *resolved_root.borrow_mut() = Some(actor.identity);
+                    Some(actor.verification_key)
+                }
                 // A definitive "not trusted" stays the credential layer's verdict; only
                 // an outage and a wrong-slot actor are propagated. See `verify.rs`.
                 Err(HttpProfileError::UnresolvedKeyId) => None,
@@ -77,33 +82,53 @@ pub(super) fn verify_credential<R: Into<ResolverOutcome>>(
         |id| is_revoked(id),
     );
     let verified = verified.map_err(|e| resolve_failure.into_inner().unwrap_or(e))?;
-    Ok((verified, server_signer))
+    let scoped = scoped_signer(&server_signer)?;
+    if !resolved_root
+        .into_inner()
+        .is_some_and(|root| speaks_for(&root, &scoped))
+    {
+        return Err(HttpProfileError::DelegationIssuerUntrusted);
+    }
+    Ok((verified, scoped))
+}
+
+/// Parse the root-signed `mcp_re_server_signer` into the [`ActorIdentity`] it denotes.
+///
+/// Exactly four `:`-separated fields, each read through the actor-field escape, and the
+/// result must re-encode to the same string so a non-canonical escape is refused.
+fn scoped_signer(server_signer: &str) -> Result<ActorIdentity, HttpProfileError> {
+    let fields: Vec<&str> = server_signer.split(':').collect();
+    let [role, trust_domain, subject, keyid] = fields.as_slice() else {
+        return Err(HttpProfileError::DelegationCredentialInvalid);
+    };
+    let identity = ActorIdentity {
+        role: unescape_actor_field(role),
+        trust_domain: unescape_actor_field(trust_domain),
+        subject: unescape_actor_field(subject),
+        keyid: unescape_actor_field(keyid),
+    };
+    if identity.actor_id() != server_signer {
+        return Err(HttpProfileError::DelegationCredentialInvalid);
+    }
+    Ok(identity)
 }
 
 /// The credential's scope names the key the response actually signed under.
 ///
 /// Two comparisons, both against the delegated kid. The response's own `keyid` must be the
-/// delegated key; and the credential's SCOPE must name that same key — the bodied path gets
-/// this from the block (`block.server_signer.keyid != verified.delegated_kid`), but here the
-/// actor id is the credential's own, so the check is on its keyid field, the last
-/// `:`-separated component of the ROOT-SIGNED `mcp_re_server_signer`.
+/// delegated key; and the keyid of the credential's ROOT-SIGNED scope must name that same
+/// key — the bodied path gets this from the block
+/// (`block.server_signer.keyid != verified.delegated_kid`).
 ///
 /// A credential scoped to one server signer but presented for a different delegated key is
 /// refused, which is the property the scope gate exists for and which comparing the value
 /// against itself could never establish.
 pub(super) fn check_scope_names_the_signing_key(
     key_id: &str,
-    server_signer: &str,
+    server_signer: &ActorIdentity,
     delegated_kid: &str,
 ) -> Result<(), HttpProfileError> {
-    if key_id != delegated_kid {
-        return Err(HttpProfileError::DelegationKeyMismatch);
-    }
-    let scoped_keyid = server_signer
-        .rsplit(':')
-        .next()
-        .ok_or(HttpProfileError::DelegationProfileMismatch)?;
-    if unescape_actor_field(scoped_keyid) != delegated_kid {
+    if key_id != delegated_kid || server_signer.keyid != delegated_kid {
         return Err(HttpProfileError::DelegationKeyMismatch);
     }
     Ok(())
@@ -149,16 +174,38 @@ mod tests {
     /// field the credential does not choose freely — is the one that carries the property.
     #[test]
     fn a_credential_scoped_to_another_signer_is_refused() {
-        let scoped = "mcp-re:server:example.org:delegated-a";
-        assert!(check_scope_names_the_signing_key("delegated-a", scoped, "delegated-a").is_ok());
+        let scoped = scoped_signer("mcp-re:server:example.org:delegated-a").expect("canonical");
+        assert!(check_scope_names_the_signing_key("delegated-a", &scoped, "delegated-a").is_ok());
         assert!(matches!(
-            check_scope_names_the_signing_key("delegated-b", scoped, "delegated-b"),
+            check_scope_names_the_signing_key("delegated-b", &scoped, "delegated-b"),
             Err(HttpProfileError::DelegationKeyMismatch)
         ));
         assert!(matches!(
-            check_scope_names_the_signing_key("delegated-b", scoped, "delegated-a"),
+            check_scope_names_the_signing_key("delegated-b", &scoped, "delegated-a"),
             Err(HttpProfileError::DelegationKeyMismatch)
         ));
+    }
+
+    /// The scope must be the canonical four-field actor id its documentation says it is.
+    #[test]
+    fn a_scope_that_is_not_a_canonical_four_field_actor_id_is_refused() {
+        for bad in [
+            "delegated-a",
+            "a:b:c:d:e",
+            "server:example.org:did%3aexample:k",
+        ] {
+            assert!(matches!(
+                scoped_signer(bad),
+                Err(HttpProfileError::DelegationCredentialInvalid)
+            ));
+        }
+        let id = ActorIdentity {
+            role: "server".into(),
+            trust_domain: "example.org".into(),
+            subject: "did:example:s".into(),
+            keyid: "k".into(),
+        };
+        assert_eq!(scoped_signer(&id.actor_id()).expect("canonical"), id);
     }
 
     /// The scoped keyid is read through the actor-field escape, so a keyid containing a

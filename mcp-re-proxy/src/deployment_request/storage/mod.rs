@@ -19,7 +19,7 @@
 //!         ↓
 //! backend payload                 RedisStoreRequest / EtcdStoreRequest
 //!         ↓
-//! adapter                         redis_store.rs / etcd_store.rs / the in-memory store
+//! adapter                         async_redis_store.rs / async_etcd_store.rs / the in-memory store
 //! ```
 //!
 //! **What is shared is the mechanism layer, and only that.** One `RedisStoreRequest` is

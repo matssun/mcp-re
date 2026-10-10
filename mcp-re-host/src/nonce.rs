@@ -32,8 +32,12 @@ pub const NONCE_BYTES: usize = 16;
 /// implementation upholds this by panicking if the OS CSPRNG is unavailable; see
 /// [`SystemNonceSource::fill`]. The input is not attacker-controlled, so this
 /// panic cannot be induced by a remote peer — it fires only on a genuinely
-/// broken host. Keeping the signature infallible makes the no-weak-nonce
-/// property unavoidable for every implementor rather than an opt-in.
+/// broken host. Keeping the signature infallible means no implementation can
+/// REPORT a partial or degraded fill for a caller to paper over; it constrains
+/// nothing about the bytes written. That the bytes are unpredictable is an
+/// obligation on each implementation that the signature cannot enforce
+/// (`SeededNonceSource` satisfies the signature and is fully predictable), and
+/// it is established in this crate only for [`SystemNonceSource`].
 pub trait NonceSource {
     /// Fill `out` with `out.len()` fresh nonce bytes.
     ///
@@ -53,6 +57,14 @@ impl SystemNonceSource {
     pub fn new() -> Self {
         SystemNonceSource
     }
+
+    /// One request nonce's worth of OS entropy: exactly `NONCE_BYTES`. The width is this
+    /// owner's, so a caller cannot draw a narrower nonce through it.
+    pub fn draw(&mut self) -> [u8; NONCE_BYTES] {
+        let mut bytes = [0u8; NONCE_BYTES];
+        self.fill(&mut bytes);
+        bytes
+    }
 }
 
 impl NonceSource for SystemNonceSource {
@@ -66,8 +78,8 @@ impl NonceSource for SystemNonceSource {
         // attacker-controlled input. A host that cannot draw entropy MUST NOT
         // emit a predictable nonce (which would silently defeat MCP-RE replay
         // freshness), so we panic and abort the signing path rather than degrade.
-        // The `NonceSource::fill` signature is infallible by design to make this
-        // no-weak-nonce property unavoidable; converting it to `Result` was
+        // The `NonceSource::fill` signature is infallible so no implementation can
+        // report degradation; converting it to `Result` was
         // considered and rejected (it would let a caller paper over the one
         // failure mode that must never be recovered from). Deterministic tests
         // inject the seeded source and never reach this path.
@@ -141,31 +153,47 @@ mod tests {
         );
     }
 
+    /// A drawn nonce is the spec width, and two draws differ: the probability that 128
+    /// bits of OS entropy repeat is 2^-128.
+    #[test]
+    fn a_drawn_nonce_is_the_spec_width_and_does_not_repeat() {
+        let mut source = SystemNonceSource::new();
+        let first = source.draw();
+        let second = source.draw();
+        assert_eq!(first.len(), NONCE_BYTES);
+        assert_ne!(first, second);
+    }
+
     /// The production source fills the WHOLE buffer. A partial fill would leave the tail at
     /// its initial value — zeros, in every caller — which is a nonce with less entropy than
     /// its length advertises and no way to notice from the outside.
     ///
-    /// Asserted over EIGHT draws rather than two, and that is not caution: two draws of ONE
-    /// byte collide once in 256, so the two-draw form is a control that fails on a correct
-    /// implementation roughly every four hundredth run. Eight draws of the shortest buffer
-    /// agree only with probability 256^-7.
+    /// Every draw pre-fills the buffer with one fixed sentinel, so a position the source never
+    /// writes keeps the sentinel on every draw. A correct source leaves a position at the
+    /// sentinel on all eight draws with probability 256^-8 per position, so the control's
+    /// false-failure rate is negligible.
     #[test]
     fn the_production_source_fills_every_byte_it_is_given() {
         const DRAWS: usize = 8;
+        const SENTINEL: u8 = 0xA5;
         let mut source = SystemNonceSource::new();
         for len in [1usize, NONCE_BYTES, 64] {
-            let mut seen: BTreeSet<Vec<u8>> = BTreeSet::new();
-            for seed in 0..DRAWS {
-                // A different initial byte each time, so a buffer left UNTOUCHED yields a
-                // distinct value and could not be mistaken for a fresh draw.
-                let mut out = vec![u8::try_from(seed).unwrap_or(0); len];
+            let mut written = vec![false; len];
+            for _ in 0..DRAWS {
+                let mut out = vec![SENTINEL; len];
                 source.fill(&mut out);
-                seen.insert(out);
+                for (seen, byte) in written.iter_mut().zip(out.iter()) {
+                    *seen |= *byte != SENTINEL;
+                }
             }
+            let untouched: Vec<usize> = written
+                .iter()
+                .enumerate()
+                .filter_map(|(position, seen)| (!*seen).then_some(position))
+                .collect();
             assert!(
-                seen.len() > 1,
-                "{DRAWS} draws of {len} byte(s) were all identical — the buffer is not \
-                 being filled"
+                untouched.is_empty(),
+                "{DRAWS} draws of {len} byte(s) never wrote positions {untouched:?}"
             );
         }
     }

@@ -58,8 +58,8 @@
 //!
 //! Rust privacy is the defining module and its descendants, so a module placed inside the
 //! credential's tree would reach the credential's PRIVATE CONSTRUCTOR — and THM-0028 claims
-//! the mechanism adapter is the only thing in the crate that can. Measured: as a second
-//! child, this module compiled a call to `associate` with an arbitrary chain. That is the
+//! the mechanism adapter is the only thing in the crate that can. From here, a sibling,
+//! that call is refused with E0624 — structural probe S39. That is the
 //! same defect the Slice-4 review caught in the opposite direction, and the rule it teaches
 //! is symmetric: **a consumer's placement is part of the producer's seal.** What this
 //! authority needs from the credential is a named projection, and a projection is
@@ -87,8 +87,9 @@ use crate::communication_assurance::peer_identity_value::PeerIdentityValue;
 /// Sealed: the representation is private to this module, so the only inhabitants are the
 /// ones [`interpret_associated_identity`] produced from a channel-associated credential. A
 /// caller cannot pair an identity it obtained elsewhere with a relationship it obtained
-/// elsewhere, because there is no constructor that would accept the pair. Measured: a
-/// sibling authority under `communication_assurance` fails to compile with E0451.
+/// elsewhere, because there is no constructor that would accept the pair. Structural probe
+/// S36 writes that literal from a sibling authority under `communication_assurance` and
+/// requires E0451.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelAssociatedCertificatePeerIdentityEvidence {
     /// The Slice-1 product, derived inside this module from the relationship's own

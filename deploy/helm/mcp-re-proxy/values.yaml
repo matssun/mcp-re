@@ -66,6 +66,13 @@ replay:
   # defensible where the hop is confined by other means (a fenced validation
   # namespace, a service mesh terminating TLS transparently).
   allowPlaintextRedis: false
+  # How far two replicas' host clocks may disagree, in seconds (0..=300). Every replay
+  # record is kept this much longer than the verifier's window, because Redis expires a
+  # record on the clock of the replica that wrote it and a replica running ahead of a
+  # correct one would otherwise let a nonce lapse before the request it stands for stops
+  # being accepted. Unset leaves the proxy's own default (5s). The bound is a premise about
+  # the fleet's clock discipline: set it no lower than that discipline delivers.
+  clockDivergenceSecs: null
 
 # MRTR continuation correlation (ADR-MCPS-047). The shared store that lets a
 # multi-round-trip answer leg be honoured by a DIFFERENT replica than the one that
@@ -81,12 +88,22 @@ replay:
 # Same scheme rule as replay.redisUrl, governed by the same `replay.allowPlaintextRedis`
 # escape hatch: the correlation record binds an answer leg to the request that opened it,
 # so an unauthenticated peer who can write it can redirect a continuation.
+#
+# `maxLiveEntries` bounds how many continuation entries the shared store holds at once;
+# an open leg past it is refused with 503 until entries are answered or expire. Null
+# renders no flag and the proxy's default (100000) applies; a stated value is passed
+# through verbatim and the proxy owns the range (1..=10000000), refusing startup outside
+# it, and refusing it with no `redisUrl` to bound. Needs Redis 5 or later.
 continuationControl:
   redisUrl: ""
+  maxLiveEntries: null
 
 # Trust revocation (ADR-MCPS-021 / MCPS-84). The push tier + a trust-epoch Redis
-# source gives near-zero cross-replica revocation lag (bounded T on outage). Set
-# trustEpochRedisUrl to "" to run the push tier inert (bounded-T only).
+# source flushes every replica's trust cache on an epoch advance (bounded T on
+# outage); the store itself is as fresh as its last --trust re-read. Set
+# trustEpochRedisUrl to "" to run the push tier inert (bounded-T only) — legal only for
+# one replica with fleet=false: the epoch is the only kill switch for delegated keys
+# across replicas, so the chart refuses more than one replica, or fleet=true, without it.
 #
 # Same scheme rule as replay.redisUrl, and the stakes are higher: the epoch value
 # read from this key drives credential minting, so an attacker who can write it
@@ -96,7 +113,7 @@ continuationControl:
 # `live` and `push` tiers: both state their revocation window in terms of consulting
 # the trust store, and with the file read once at startup the store cannot change —
 # revoking a request-signer key would need a restart of every replica while the
-# startup line claimed a near-zero window. The proxy refuses those tiers without it.
+# startup line claimed a re-read-bounded window. The proxy refuses those tiers without it.
 #
 # Note the k8s side: a Secret/ConfigMap volume update propagates on the kubelet's own
 # sync period (~60s by default), so the end-to-end revocation latency is that plus
@@ -105,11 +122,14 @@ revocation:
   tier: "push:60"
   trustEpochRedisUrl: "rediss://mcp-re-redis:6379"
   # The key MUST EXIST before the proxy starts (`SET mcp-re:trust:epoch 0`, then
-  # `INCR` to revoke). An absent key is refused at startup rather than read as
+  # `mcp-re-proxy trust-epoch advance` to revoke; raw `INCR` is not supported). An absent key is refused at startup rather than read as
   # epoch 0: a key that was never created, points at the wrong database, or was
   # lost to a restore or an eviction is indistinguishable from a live counter at 0,
   # and reading it as a baseline leaves the kill switch inert — or lets a restarted
-  # replica re-mint under an epoch the operator had already revoked.
+  # replica re-mint under an epoch the operator had already revoked. The proxy's
+  # Redis user needs GET, MGET, SET and EVAL on this key and on `<key>:generation`: a replica that reads a counter
+  # below its high-water mark moves the key one past that mark (a forward rotation),
+  # and with read-only access a rolled-back counter stops minting until it is reset by hand.
   trustEpochKey: "mcp-re:trust:epoch"
   trustReloadSeconds: 60
 
@@ -146,11 +166,28 @@ clientCrl:
   # which the connection-age bound above forces within maxConnectionAgeSeconds.
   reloadSeconds: 300
 
-# §4.1 MCP transport contract (RQ-06). Each entry adds an accepted
-# `Mcp-Protocol-Version`; with none declared there is NO transport contract, so
-# required-header presence and Mcp-Name/params.name agreement are not asserted.
-mcpProtocolVersions: []
-#  - "2026-07-28"
+# Delegated handshake-signing capacity: one token bucket per listener bounding how fast
+# full TLS handshakes can drive the remote (KMS / PKCS#11) signer, which the
+# delegated-key issuer shares. It protects the backend's GLOBAL capacity and allocates
+# nothing fairly among clients: enough handshake demand empties it, and handshakes are
+# then refused until it refills (see docs/transport-hardening-guide.md).
+#
+#   ratePerSec  `--tls-handshake-sign-rate`, sustained signatures per second
+#   burst       `--tls-handshake-sign-burst`, signatures drawn back-to-back
+#
+# null omits the flag, so the proxy's own default applies (100/s, burst 200). A set
+# value is passed through verbatim; the proxy owns the bounds (rate 1..=1000,
+# burst 1..=2000) and refuses startup on a value outside them, 0 included.
+tlsHandshakeSigning:
+  ratePerSec: null
+  burst: null
+
+# §4.1 MCP transport contract (RQ-06), mandatory: each entry adds an accepted
+# `Mcp-Protocol-Version`, and at least one is required. Every request must carry the
+# transport headers and `Mcp-Name` must agree with `params.name`; there is no setting
+# that turns the contract off.
+mcpProtocolVersions:
+  - "2026-07-28"
 
 # ADR-MCPS-035 per-request security record: `none` | `stderr`. `none` means this
 # deployment keeps NO per-request attribution — which actor was admitted, which calls
@@ -217,13 +254,18 @@ admission:
 #
 # degraded serving: with the authority unreachable every call fails closed unless
 # allowDegraded is set, and then only for degradedBoundSecs after the last successful
-# read. A degraded window is a BOUNDED policy — an unbounded or zero one is not, and
-# both the CLI and the render guard refuse it.
+# read. A degraded window is a BOUNDED policy: zero, and anything above 3600 seconds,
+# are refused by both the CLI and the render guard.
 admissionCurrency:
   mode: ""
   # The kid of the admission AUTHORITY whose assertions this boundary accepts.
   authorityKid: ""
   # That authority's Ed25519 public key, base64url, no padding.
+  #
+  # The authority is fixed for the lifetime of a running proxy process. Changing,
+  # rotating or revoking it (authorityKid or authorityPubkey) governs a replica's
+  # admission decisions only once that replica is restarted or redeployed; a running
+  # replica keeps resolving the kid and key it started with.
   authorityPubkey: ""
   # The shared authoritative record. Same scheme rule as replay.redisUrl and for the
   # same reason — this hop decides whether a caller is still admitted, so an
@@ -323,7 +365,8 @@ identity:
   # actor id, so a harness driven by those fixtures MUST deploy with the matching
   # identity — the placeholder guard would otherwise make the fixtures unusable.
   # Setting this true is a statement that the deployment is a fenced validation run,
-  # not a production boundary; leave it false everywhere else.
+  # not a production boundary; leave it false everywhere else. It also renders
+  # `--allow-example-fixtures`, without which the proxy refuses the example.com domain.
   allowExampleFixtures: false
 
 # Inner MCP plane (ADR-MCPRE-051 §3). The proxy NO LONGER launches a subprocess;

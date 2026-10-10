@@ -33,7 +33,6 @@ impl From<IdentityPolicy> for CertificateIdentityPolicy {
         match policy {
             IdentityPolicy::UriSan => CertificateIdentityPolicy::UriSan,
             IdentityPolicy::DnsSan => CertificateIdentityPolicy::DnsSan,
-            IdentityPolicy::CnLegacy => CertificateIdentityPolicy::CommonNameLegacy,
         }
     }
 }
@@ -44,7 +43,6 @@ impl From<CertificateIdentitySource> for IdentitySource {
         match source {
             CertificateIdentitySource::UriSan => IdentitySource::UriSan,
             CertificateIdentitySource::DnsSan => IdentitySource::DnsSan,
-            CertificateIdentitySource::CommonName => IdentitySource::CommonName,
         }
     }
 }
@@ -63,20 +61,12 @@ mod tests {
         for (legacy, semantic) in [
             (IdentityPolicy::UriSan, CertificateIdentityPolicy::UriSan),
             (IdentityPolicy::DnsSan, CertificateIdentityPolicy::DnsSan),
-            (
-                IdentityPolicy::CnLegacy,
-                CertificateIdentityPolicy::CommonNameLegacy,
-            ),
         ] {
             assert_eq!(CertificateIdentityPolicy::from(legacy), semantic);
         }
         for (semantic, legacy) in [
             (CertificateIdentitySource::UriSan, IdentitySource::UriSan),
             (CertificateIdentitySource::DnsSan, IdentitySource::DnsSan),
-            (
-                CertificateIdentitySource::CommonName,
-                IdentitySource::CommonName,
-            ),
         ] {
             assert_eq!(IdentitySource::from(semantic), legacy);
         }

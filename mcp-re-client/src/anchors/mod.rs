@@ -37,6 +37,7 @@ use crate::config::FloorConfig;
 use crate::config::TrustConfig;
 
 mod refresher;
+pub use refresher::refresh_at;
 pub use refresher::refresh_once;
 pub use refresher::AnchorRefresher;
 pub use refresher::RefreshOutcome;
@@ -141,7 +142,6 @@ impl AnchorLoader {
         let signed: SignedTrustAnchorManifest = serde_json::from_slice(&bytes).map_err(|e| {
             AnchorError::Unreadable(format!("{}: {e}", self.manifest_path.display()))
         })?;
-        let expires_at = signed.manifest.expires_at;
         let pins = &self.org_keys;
         let loaded = load_signed_manifest_with_floor(
             &signed,
@@ -158,7 +158,7 @@ impl AnchorLoader {
         Ok(LoadedAnchors {
             issuers: loaded.issuer_set,
             version: loaded.version,
-            expires_at,
+            expires_at: loaded.expires_at,
         })
     }
 }
@@ -372,6 +372,33 @@ mod tests {
         );
     }
 
+    /// A clock that does not read as a Unix time withdraws the anchors: every expiry
+    /// comparison reads an early instant as live.
+    #[test]
+    fn an_unreadable_clock_withdraws_the_anchors_rather_than_holding_them() {
+        let scratch = Scratch::new("unreadable_clock");
+        let trust = trust_config(&scratch, true);
+        publish(&trust.manifest_path, 1, false, NOW + 10_000);
+
+        let mut loader = AnchorLoader::new(&trust).expect("loader");
+        let initial = loader.load(NOW).expect("v1 loads");
+        let snapshot = AnchorSnapshot::new(initial.issuers);
+        let mut expires_at = initial.expires_at;
+
+        assert_eq!(
+            refresh_at(&mut loader, &snapshot, &mut expires_at, None),
+            RefreshOutcome::ClockUnreadable
+        );
+        assert!(!snapshot.load().trusts(ROOT_KID, NOW));
+
+        publish(&trust.manifest_path, 2, false, NOW + 10_000);
+        assert_eq!(
+            refresh_at(&mut loader, &snapshot, &mut expires_at, Some(NOW)),
+            RefreshOutcome::Published { version: 2 }
+        );
+        assert!(snapshot.load().trusts(ROOT_KID, NOW));
+    }
+
     /// A transient read failure must not withdraw trust — dropping the anchors would
     /// turn a truncated file into a total outage.
     #[test]
@@ -435,5 +462,36 @@ mod tests {
             snapshot.load().trusts(ROOT_KID, later),
             "a repaired manifest restores service in place"
         );
+    }
+
+    /// The deadline is inclusive of the instant the manifest names: at that instant the
+    /// anchors are still in force, one second later they are withdrawn.
+    #[test]
+    fn the_refresher_withdraws_only_after_the_instant_the_manifest_names() {
+        let scratch = Scratch::new("deadline");
+        let trust = trust_config(&scratch, true);
+        publish(&trust.manifest_path, 1, false, NOW + 100);
+
+        let mut loader = AnchorLoader::new(&trust).expect("loader");
+        let initial = loader.load(NOW).expect("v1 loads");
+        let snapshot = AnchorSnapshot::new(initial.issuers);
+        let mut expires_at = initial.expires_at;
+        // Every later refresh fails to read, so the refresher's own deadline is what decides.
+        std::fs::remove_file(&trust.manifest_path).expect("unpublish");
+
+        let at_deadline = refresh_once(&mut loader, &snapshot, &mut expires_at, NOW + 100);
+        assert!(
+            matches!(at_deadline, RefreshOutcome::KeptLastGood { .. }),
+            "unexpected: {at_deadline:?}"
+        );
+        assert!(snapshot.load().trusts(ROOT_KID, NOW + 100));
+
+        assert_eq!(
+            refresh_once(&mut loader, &snapshot, &mut expires_at, NOW + 101),
+            RefreshOutcome::Withdrawn {
+                expired_at: NOW + 100
+            }
+        );
+        assert!(!snapshot.load().trusts(ROOT_KID, NOW + 101));
     }
 }

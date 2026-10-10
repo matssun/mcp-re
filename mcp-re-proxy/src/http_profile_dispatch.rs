@@ -182,10 +182,7 @@ pub async fn dispatch_request_with_async_tier(
     // 4. Awaited atomic admission LAST — the only side-effecting step. A store
     //    failure fails closed (`replay_cache_unavailable`), never an admit.
     let decision = tier
-        .check_and_insert(
-            &prepared.replay_key().to_core_replay_key(verified.expires()),
-            now_unix,
-        )
+        .check_and_insert(&prepared.to_replay_key(verified.expires()), now_unix)
         .await
         .map_err(|_| ProxyDispatchError::Dispatch(DispatchError::ReplayCacheUnavailable))?;
     match decision {
@@ -206,13 +203,6 @@ mod tests {
     use mcp_re_core::McpReError;
     use mcp_re_core::ReplayCacheError;
     use mcp_re_core::ReplayDurabilityClass;
-    use mcp_re_http_profile::ActorIdentity;
-    use mcp_re_http_profile::AudienceTuple;
-    use mcp_re_http_profile::CryptographicFloorVerifiedRequest;
-    use mcp_re_http_profile::HttpRequestEvidenceBlock;
-    use mcp_re_http_profile::RequestEvidence;
-    use mcp_re_http_profile::ResolvedActor;
-    use mcp_re_http_profile::SignerSlot;
     use std::cell::Cell;
 
     use crate::async_replay::AsyncAtomicReplayStore;
@@ -290,50 +280,13 @@ mod tests {
         }
     }
 
-    fn audience() -> AudienceTuple {
-        AudienceTuple {
-            audience_id: "aud".into(),
-            target_uri: "https://example.test/mcp".into(),
-            route: None,
-        }
-    }
-
     fn verified() -> VerifiedMcpRequest {
-        VerifiedMcpRequest {
-            floor: CryptographicFloorVerifiedRequest {
-                profile_id: "p".into(),
-                signature_label: "mcpre".into(),
-                resolved_actor: ResolvedActor {
-                    identity: ActorIdentity {
-                        role: "client".into(),
-                        trust_domain: "example.org".into(),
-                        subject: "did:example:agent-1".into(),
-                        keyid: "key-a".into(),
-                    },
-                    verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32])
-                        .public_key(),
-                    slot: SignerSlot::Request,
-                },
-                evidence: RequestEvidence::from_signature_base(b"base"),
-                request_signature_base: b"base".to_vec(),
-                content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
-                created: 1,
-                expires: 2,
-                nonce: "n".into(),
-                key_id: "key-a".into(),
-            },
-            audience: audience(),
-            audience_hash: audience().audience_hash(),
-            request_block: HttpRequestEvidenceBlock {
-                profile: "p".into(),
-                audience: audience(),
-                artifact_bindings: Vec::new(),
-                continuation: None,
-                admission: None,
-                admission_assertion: None,
-                authorization_decision: None,
-            },
-        }
+        crate::authorization::action_harness::verified_over_as(
+            crate::authorization::action_harness::LIST,
+            "did:example:agent-1",
+            "key-a",
+        )
+        .verified
     }
 
     /// A fleet-strict deployment that declared NO shared durability tier is refused

@@ -5,7 +5,10 @@ use crate::capability_materialization::key_file_custody::CheckedKeyFile;
 use crate::deployment_request::SecretString;
 use crate::key_source::KeyError;
 
-/// The PKCS#11 User PIN, from its admitted file, as a short-lived [`SecretString`].
+/// The PKCS#11 User PIN, from its admitted file, as a [`SecretString`].
+///
+/// The file read is momentary, but the PIN is then held for the token's lifetime (copied
+/// into the token, scrubbed on drop) because re-login needs it.
 ///
 /// Takes the [`CheckedKeyFile`] rather than a path: the PIN unlocks the token holding the
 /// signing keys, so the bytes used are the bytes of the object whose permission posture
@@ -14,7 +17,10 @@ use crate::key_source::KeyError;
 /// Trailing whitespace is trimmed — a PIN file written with `echo` ends in a newline, and
 /// a token would reject the PIN with an opaque error that looks like a wrong PIN. Interior
 /// whitespace is preserved: it may be part of the PIN.
-pub fn read_pkcs11_pin(pin_file: CheckedKeyFile) -> Result<SecretString, KeyError> {
+// Its only consumer is the token arm of `key_source::pkcs11`, which exists only under
+// `pkcs11_keysource`.
+#[cfg_attr(not(feature = "pkcs11_keysource"), allow(dead_code))]
+pub(super) fn read_pkcs11_pin(pin_file: CheckedKeyFile) -> Result<SecretString, KeyError> {
     let path = pin_file.path().to_owned();
     let bytes = pin_file.into_bytes();
     let raw = std::str::from_utf8(&bytes)

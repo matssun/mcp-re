@@ -22,6 +22,12 @@ Per file in the workflow's `results`:
       carries the disposition (a registration or a `control-dispositions.toml` row)
       with the change that needs it.
 
+Writers share files and land uncommitted on top of each other, so both actions work on
+the writer's OWN diff (`writer_patch.py`, captured by `check.py`): every revert runs
+first, by reverse-applying that writer's patch, and each commit then stages exactly
+that writer's hunks. A writer with no recorded patch falls back to its paths whole —
+reverted to HEAD with new files saved into the patch, or committed whole.
+
 A finding is `fixed` only through this path — the reviewer's acceptance of a
 landed diff — never through an evaluator's or worker's own claim.
 
@@ -39,6 +45,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ledger  # noqa: E402
+import size_debt  # noqa: E402
+import writer_patch  # noqa: E402
 from _persist import exclusive  # noqa: E402
 
 HARMLESS_REJECTS = {"anchor", "scope"}
@@ -88,17 +96,39 @@ def finding_ids(package: dict, work_ids: list[str]) -> list[str]:
     return sorted(set(out))
 
 
-def _revert(paths: list[str], work_dir: str, tag: str) -> str:
+def _revert(paths: list[str], work_dir: str, tag: str, store: str | None = None,
+            file: str | None = None) -> str:
     patch = os.path.join(work_dir, "review-rejected-%s.patch" % tag)
+    if not paths:
+        # Nothing landed. An empty pathspec is NOT "no paths" to git: `ls-files --` and
+        # `checkout HEAD --` would then take the whole tree, erasing every other writer's
+        # uncommitted change (batch 64: a rejected writer with no edits did exactly that).
+        open(patch, "w").close()
+        return patch
+    own = writer_patch.patch_path(store, file) if store and file else None
+    if own:
+        ok, why = writer_patch.reverse(store, file)
+        with open(patch, "w", encoding="utf-8") as fh:
+            fh.write(open(own, encoding="utf-8").read())
+        if ok:
+            return patch
+        raise RevertConflict(why)
     tracked = _git("ls-files", "--", *paths).stdout.split()
     with open(patch, "w", encoding="utf-8") as fh:
         fh.write(_git("diff", "HEAD", "--", *tracked).stdout)
+        for f in paths:
+            if f not in tracked and os.path.isfile(f):
+                fh.write(_git("diff", "--no-index", "--binary", "/dev/null", f).stdout)
     if tracked:
         _git("checkout", "HEAD", "--", *tracked)
     for f in paths:
         if f not in tracked and os.path.isfile(f):
             os.remove(f)
     return patch
+
+
+class RevertConflict(Exception):
+    """A writer's patch no longer reverse-applies: a later writer edited the same lines."""
 
 
 def main() -> int:
@@ -108,13 +138,17 @@ def main() -> int:
     ap.add_argument("--work-dir", required=True)
     ap.add_argument("--trailer", action="append", default=[])
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--store", default=None,
+                    help="the lane's gates store holding writer snapshots (default: <work-dir>/gates)")
     a = ap.parse_args()
+    store = a.store or os.path.join(a.work_dir, "gates")
     doc = json.load(open(a.results, encoding="utf-8"))
     rows = doc.get("results", doc) if isinstance(doc, dict) else doc
     # Measured once, over the tree holding every diff the batch landed: a carrier's
     # residue is attributable to the file whose change touched it.
     residue = residue_by_carrier() if any(decide(r) == "commit" for r in rows) else {}
     report = []
+    plan = []
     for row in rows:
         action = decide(row)
         paths = row.get("files_touched") or []
@@ -127,12 +161,31 @@ def main() -> int:
             entry.update(action="revert", why="undispositioned controls (ADR-MCPRE-069)",
                          undispositioned=held)
             action = "revert"
-        if a.dry_run or action == "skip":
-            report.append(entry)
+        plan.append((row, entry, action, paths))
+    # Writer order, not report order: a writer's patch is a diff against the tree the
+    # writers before it left, so it stages onto the index only after theirs. Writers with
+    # no snapshot (committed whole) sort first, in reported order.
+    position = {id(item[0]): i for i, item in enumerate(plan)}
+    plan.sort(key=lambda item: (writer_patch.started(store, item[0]["file"]) or 0,
+                                position[id(item[0])]))
+    # Reverts first, newest writer first, so each reverse-applies onto the tree it left.
+    blocked: set[str] = set()
+    for row, entry, action, paths in reversed(plan):
+        if a.dry_run or action != "revert":
             continue
         tag = os.path.basename(row["file"]).replace(".", "-")
-        if action == "revert":
-            entry["patch"] = _revert(paths, a.work_dir, tag)
+        size_debt.drop(a.work_dir, row["file"])
+        try:
+            entry["patch"] = _revert(paths, a.work_dir, tag, store, row["file"])
+        except RevertConflict as e:
+            entry.update(action="revert-conflict", error=str(e))
+            blocked.update(paths)
+    for row, entry, action, paths in plan:
+        if a.dry_run or action != "commit":
+            report.append(entry)
+            continue
+        if blocked.intersection(paths):
+            entry.update(action="held", why="shares a path with a writer whose revert conflicted")
             report.append(entry)
             continue
         package = json.load(open(row["package"], encoding="utf-8")) if row.get("package") else {}
@@ -145,9 +198,17 @@ def main() -> int:
             lines.append("- %s: %s" % (wid, change))
         if a.trailer:
             lines += [""] + a.trailer
-        _git("add", "--", *paths)
-        c = subprocess.run(["git", "commit", "-q", "-F", "-", "--", *paths],
-                           input="\n".join(lines) + "\n", capture_output=True, text=True)
+        staged, _ = (writer_patch.stage(store, row["file"])
+                     if not _git("diff", "--cached", "--name-only").stdout.strip()
+                     else (False, "index not clean"))
+        if staged:
+            c = subprocess.run(["git", "commit", "-q", "-F", "-"],
+                               input="\n".join(lines) + "\n", capture_output=True, text=True)
+        else:
+            _git("reset", "-q")
+            _git("add", "--", *paths)
+            c = subprocess.run(["git", "commit", "-q", "-F", "-", "--", *paths],
+                               input="\n".join(lines) + "\n", capture_output=True, text=True)
         if c.returncode != 0:
             entry.update(action="commit-failed", error=(c.stderr or c.stdout).strip()[-300:])
             report.append(entry)
@@ -160,16 +221,18 @@ def main() -> int:
                     by_id[fid]["status"] = "fixed"
                     by_id[fid]["verified"] = {"method": "review-accepted", "commit": sha}
             ledger._save(a.ledger, by_id)
-        entry.update(commit=sha, fixed=fixed)
+        grew = size_debt.settle(a.work_dir, row["file"], sha, findings=fixed)
+        entry.update(commit=sha, fixed=fixed, **({"size_debt_rows": grew} if grew else {}))
         report.append(entry)
-    if not a.dry_run and _git("status", "--porcelain", "--", a.ledger).stdout.strip():
+    tracked = [a.ledger] + ([size_debt.REGISTER] if os.path.exists(size_debt.REGISTER) else [])
+    if not a.dry_run and _git("status", "--porcelain", "--", *tracked).stdout.strip():
         # Every disposition the batch wrote — the evaluators' closures and the
         # `fixed` above — in one commit of its own, after the code it describes.
         msg = "ledger: %d file(s) of a lane batch dispositioned\n" % len(report)
         if a.trailer:
             msg += "\n" + "\n".join(a.trailer) + "\n"
-        _git("add", "--", a.ledger)
-        subprocess.run(["git", "commit", "-q", "-F", "-", "--", a.ledger], input=msg,
+        _git("add", "--", *tracked)
+        subprocess.run(["git", "commit", "-q", "-F", "-", "--", *tracked], input=msg,
                        capture_output=True, text=True)
         report.append({"ledger_commit": _git("rev-parse", "--short", "HEAD").stdout.strip()})
     print(json.dumps(report, indent=1))

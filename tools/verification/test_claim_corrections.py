@@ -162,6 +162,69 @@ packet_case("a packet this tree holds is admitted", "verification/reviews/packet
 packet_case("a packet this tree lacks is refused", "verification/reviews/packets/nope.md", "does not hold")
 packet_case("an empty packet is refused", "   ", "`packet` is empty")
 
+print("\nan owner-approval ledger packet is read, not merely found")
+def ledger_case(name, rec, lines, expect, theorems_toml=""):
+    import hashlib
+    import tempfile as _t
+    with _t.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "docs" / "security").mkdir(parents=True)
+        (root / "verification" / "policy").mkdir(parents=True)
+        (root / "verification" / "policy" / "theorems.toml").write_text(theorems_toml)
+        rows = []
+        for line in lines:
+            line = {"ruling": "r", "approved_by": "o", "approved": "d", **line}
+            line.setdefault("sha256", hashlib.sha256(line["text"].encode()).hexdigest())
+            rows.append(json.dumps(line))
+        (root / "docs" / "security" / "owner-approvals-2026-01-01.jsonl").write_text(
+            "\n".join(rows) + "\n"
+        )
+        recs = root / "recs"
+        recs.mkdir()
+        (recs / "r.json").write_text(json.dumps(rec), encoding="utf-8")
+        try:
+            load_corrections(recs, root)
+        except CorrectionError as exc:
+            check(name, expect is not None and expect in str(exc), f"got {exc}")
+            return
+        check(name, expect is None, "the record was ACCEPTED")
+
+LEDGER = "docs/security/owner-approvals-2026-01-01.jsonl"
+ENTRY_SRC = 'verification/policy/theorems.toml [[theorem]] id = "THM-0001"'
+SIGNED_N = '[[theorem]]\nid = "THM-0001"\nstatement = "n"\n'
+ledger_case(
+    "an approval of something else is not this correction's authority",
+    record(packet=LEDGER),
+    [{"source": "a ruling", "text": "about THM-0002", "surfaces": ["THM-0002"]}],
+    "no line there speaks about THM-0001",
+)
+ledger_case(
+    "an entry approval signing the corrected text admits the own-claim correction",
+    record(packet=LEDGER),
+    [{"source": ENTRY_SRC, "text": SIGNED_N}],
+    None,
+)
+ledger_case(
+    "an entry approval signing OTHER text refuses the own-claim correction",
+    record(packet=LEDGER),
+    [{"source": ENTRY_SRC, "text": SIGNED_N.replace('"n"', '"something else"')}],
+    "do not sign the corrected text",
+)
+ledger_case(
+    "a dependency correction is backed by the approval of the premise that moved",
+    record(packet=LEDGER, changed_components=["theorem_dependencies"]),
+    [{"source": "a ruling", "text": "THM-0002 restated", "surfaces": ["THM-0002"]}],
+    None,
+    theorems_toml='[[theorem]]\nid = "THM-0001"\ndepends_on = ["THM-0002"]\n'
+    '[[theorem]]\nid = "THM-0002"\ndepends_on = []\n',
+)
+ledger_case(
+    "a ledger line whose sha256 does not cover its text refuses everything",
+    record(packet=LEDGER),
+    [{"source": ENTRY_SRC, "text": SIGNED_N, "sha256": "0" * 64}],
+    "does not cover",
+)
+
 print("\nthe chain")
 check("a single link from the reviewed fingerprint is accepted", chain([record()], A, B)[0])
 check(

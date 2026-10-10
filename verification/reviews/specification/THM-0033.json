@@ -4,19 +4,57 @@
     "encoding_version": 1,
     "theorem_claim": "sha256:296f6be9409c496071b7067d2fa5da72e6a6601e8e61effa0f900c55559046f6",
     "theorem_dependencies": {
-      "THM-0023": "sha256:5e77ea1098ae664608ed2e068746aeb794bc5175b771fe85489ba0b5f34d79be",
-      "THM-0024": "sha256:d3909c06931bc2b5803e94d5c4c1ab44db8b2411a5c690cc203b48e916707232",
+      "THM-0023": "sha256:f64459a633b9039c8f2a878320fdae4ee61af5527bbe21d14e1f6821cda5d4f9",
+      "THM-0024": "sha256:9288fd555240901a2ba2bb5a215e841a1306c32c418d38b5c6fdf6fc1f0d8890",
       "THM-0028": "sha256:676113645c3ffed81fa5c51bfcfbbd363b03f938a576ef77a3d6e1c32221371e",
       "THM-0029": "sha256:2a6ffb0a8dbe20456e4e8a42796814911ff4d23fc023f5dd4bb810ccecd92b67",
       "THM-0030": "sha256:35786227edf14e7e7823ee7cd789095ca0596492bb632c9f1e4c216625a35a6f",
       "THM-0031": "sha256:0125f85856d66b22ab18aaa25229e9c87479cf16ed07ba1f78d9c6bd6663e5d7",
-      "THM-0032": "sha256:2e4f71f134dbdfae3a3bb3e78dea68d5271b5fa471f6d3cc654cf255d0d3276b"
+      "THM-0032": "sha256:fe7864e6bec1bca77194b28cf1a24a1e80537de0417a7523aa3d80c18b2cca6e"
     },
     "theorem_id": "THM-0033",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C4. APPROVED after the stale scope correction ruled in the same message. The review packet's conclusion that the theorem has no production caller was FALSE on current main: `tls::resolve_channel_peer` calls `current_authenticated_peer` on the live channel-credential serving path, so the operation is a CONTROL \u2014 a currency refusal propagates out as the transport-boundary refusal \u2014 and a successful `CurrentAuthenticatedRelationshipPeerFacts` is the WITNESS, becoming `AuthenticatedChannelPeer::Current` and proceeding to request/channel binding. Per the ruling the theorem was NOT turned into a serving theorem: its proposition stays about the composition product, and whether a higher consumer admits or authorizes remains outside the claim. The stale `communication_assurance/mod.rs` prose saying per-request credential currency and channel binding do not exist here was corrected in the same change.",
-  "reviewed_fingerprint": "sha256:77e25e294daaf83cc9ea4a422aba1f3fcd99d3dab4fe12dff71235ec1fb13b8a",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G5.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {},
+    "supporting_semantics": {
+      "proxy.current_authenticated_peer": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:4d71bd9e5724a7a98cdc1f189f197c6fe0b1257a95b7333acc062836c557dd71",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:0196f1b05a3d61861d4479e183b4377b361b6eda9d5197a5696b6606a6aeb32b",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:c9307d8b0c493b20a5a4652efeec71bd3dc3875e164cf4a1f91f63138f89e567",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:ccdf51c052613925917bd98c61b5b75d99012cacc903ddcfaf1d832a2e40f040",
+        "test_selection": "sha256:c7b78a86a9a37e3e8f102edca13a9f906630123b2663008f5b29342e4d81390c",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "unit_id": "sha256:703dc416abe2ccb72af5d87e06f76287f18f2653dd7fde9358a6d68b4b26596b"
+      }
+    },
+    "theorem_claim": "sha256:296f6be9409c496071b7067d2fa5da72e6a6601e8e61effa0f900c55559046f6",
+    "theorem_dependencies": {
+      "THM-0023": "sha256:f64459a633b9039c8f2a878320fdae4ee61af5527bbe21d14e1f6821cda5d4f9",
+      "THM-0024": "sha256:9288fd555240901a2ba2bb5a215e841a1306c32c418d38b5c6fdf6fc1f0d8890",
+      "THM-0028": "sha256:676113645c3ffed81fa5c51bfcfbbd363b03f938a576ef77a3d6e1c32221371e",
+      "THM-0029": "sha256:2a6ffb0a8dbe20456e4e8a42796814911ff4d23fc023f5dd4bb810ccecd92b67",
+      "THM-0030": "sha256:35786227edf14e7e7823ee7cd789095ca0596492bb632c9f1e4c216625a35a6f",
+      "THM-0031": "sha256:0125f85856d66b22ab18aaa25229e9c87479cf16ed07ba1f78d9c6bd6663e5d7",
+      "THM-0032": "sha256:fe7864e6bec1bca77194b28cf1a24a1e80537de0417a7523aa3d80c18b2cca6e"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:40df7b5677eb2358830cb27d370007d486863235044736c90b00ca2b0c4775e1",
+  "reviewed_fingerprint": "sha256:83847f9cf1c1514f1c2cc676cc487ab50857985ec9614222ed3a77673ecefed3",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0033"
 }

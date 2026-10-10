@@ -52,15 +52,14 @@ pub(super) fn leaf_hash(statement: &SignedStatement, profile: StatementLeafProfi
 /// fold, and it destroys the property the proof is for — that the receipt pins WHICH
 /// entry was logged. So the profile comes from the pinned service artifact, which an
 /// operator wrote down and reviewed, and never from the receipt being checked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StatementLeafProfile {
     /// The entry is the Signed Statement's own COSE octets: `SHA-256(0x00 ‖ statement)`.
     ///
-    /// The default, and the more direct reading of RFC 9162 §2.1 composed with RFC 9943:
-    /// what the service registers is the statement, so the statement is the entry. The
-    /// RFC 9942 editor's own implementation (`@transmute/cose`) hashes this way.
-    #[default]
+    /// The more direct reading of RFC 9162 §2.1 composed with RFC 9943: what the service
+    /// registers is the statement, so the statement is the entry. The RFC 9942 editor's
+    /// own implementation (`@transmute/cose`) hashes this way.
     StatementBytes,
     /// The entry is a digest of the statement: `SHA-256(0x00 ‖ SHA-256(statement))`.
     ///
@@ -87,7 +86,7 @@ pub enum StatementLeafProfile {
     SigStructureDigest,
 }
 /// An interior Merkle node hash (RFC 6962 node prefix `0x01`).
-pub(super) fn node_hash(left: &[u8], right: &[u8]) -> [u8; 32] {
+pub(super) fn node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update([0x01]);
     h.update(left);
@@ -122,15 +121,13 @@ pub(super) fn node_hash(left: &[u8], right: &[u8]) -> [u8; 32] {
 /// signed tree head, it never covers `tree_size` — and both values ride in the
 /// UNSIGNED `vdp` header.
 ///
-/// The scope is not a special family, it is nearly everything. What the verifier
-/// computes is fixed by the SEQUENCE of combine directions this loop takes, so any
-/// two `(leaf_index, tree_size)` pairs producing the same sequence accept the same
-/// path and the same root. Enumerated over every pair with `tree_size <= 1024`,
-/// **98.4% lie in a class with at least one other pair**, spread over 251 distinct
-/// classes — not one right-edge family. `(1,2)`, `(2,3)`, `(4,5)`, `(8,9)` share the
-/// single-sibling class, but so do `(3,4)`, `(5,6)`, `(6,7)` at length 2, and only
-/// four pairs in that whole range are unique. Refusing the ambiguous ones is
-/// therefore not an available defence: it would refuse essentially every receipt.
+/// The scope is not a special family. What the verifier computes is fixed by the
+/// SEQUENCE of combine directions this loop takes, so any two `(leaf_index, tree_size)`
+/// pairs producing the same sequence accept the same path and the same root. Over every
+/// pair with `tree_size <= 256`, more than 90% lie in a class with at least one other
+/// pair. `(1,2)`, `(2,3)`, `(4,5)`, `(8,9)` share the single-sibling class, and `(3,4)`,
+/// `(5,6)`, `(6,7)` share one at length 2. Refusing the ambiguous ones is therefore not
+/// an available defence: it would refuse essentially every receipt.
 ///
 /// **How it is closed.** Not inside this function — no fold can separate positions that
 /// direct it identically. [`position_commitment`] puts the whole tuple in the receipt's
@@ -154,7 +151,7 @@ pub(super) fn rfc9162_root_from_inclusion_proof(
     leaf: &[u8; 32],
     leaf_index: u64,
     tree_size: u64,
-    path: &[Vec<u8>],
+    path: &[[u8; 32]],
 ) -> Result<[u8; 32], HttpProfileError> {
     if leaf_index >= tree_size {
         return Err(HttpProfileError::ReceiptInclusionInvalid);
@@ -200,56 +197,48 @@ mod tests {
     use crate::scitt::prototype::tree::mth_and_path;
     use crate::scitt::prototype::PrototypeTransparencyService;
 
-    /// The combine-direction sequence `rfc9162_root_from_inclusion_proof` takes for a
-    /// position. Two positions with the same sequence run the same computation, so one
-    /// path and one root verify for both — this is what "restatement" means here.
-    fn combine_sequence(leaf_index: u64, tree_size: u64) -> Option<Vec<bool>> {
-        if leaf_index >= tree_size {
-            return None;
-        }
-        let (mut fnode, mut snode) = (leaf_index, tree_size - 1);
-        let mut out = Vec::new();
-        while out.len() <= 64 {
-            if snode == 0 {
-                return Some(out);
-            }
-            if !fnode.is_multiple_of(2) || fnode == snode {
-                out.push(true);
-                while fnode != 0 && fnode.is_multiple_of(2) {
-                    fnode /= 2;
-                    snode /= 2;
-                }
-            } else {
-                out.push(false);
-            }
-            fnode /= 2;
-            snode /= 2;
-        }
-        None
-    }
-
     /// The property that makes "the service signs the tree size" a COMPLETE fix rather
     /// than a mitigation: within any set of positions that verify interchangeably, no
     /// two share a `tree_size`. An authenticated size therefore pins the index outright.
+    ///
+    /// Positions are classed by production's behaviour: with fixed siblings, the path
+    /// length the fold accepts and the root it returns. The same siblings and the same
+    /// combine directions give the same root.
     ///
     /// If this ever stops holding, signing the size stops being sufficient and the
     /// remedy has to change — which is why it is asserted rather than described.
     #[test]
     fn the_tree_size_determines_the_leaf_index_within_every_ambiguity_class() {
-        let mut classes: std::collections::HashMap<Vec<bool>, Vec<(u64, u64)>> =
+        let leaf = [7u8; 32];
+        let siblings: Vec<[u8; 32]> = (0u8..10).map(|i| [0x40 + i; 32]).collect();
+        let mut classes: std::collections::HashMap<[u8; 32], Vec<(u64, u64)>> =
             std::collections::HashMap::new();
         for tree_size in 1..=256u64 {
             for leaf_index in 0..tree_size {
-                if let Some(seq) = combine_sequence(leaf_index, tree_size) {
-                    classes
-                        .entry(seq)
-                        .or_default()
-                        .push((leaf_index, tree_size));
-                }
+                let accepted: Vec<[u8; 32]> = (0..=9)
+                    .filter_map(|len| {
+                        rfc9162_root_from_inclusion_proof(
+                            &leaf,
+                            leaf_index,
+                            tree_size,
+                            &siblings[..len],
+                        )
+                        .ok()
+                    })
+                    .collect();
+                assert_eq!(
+                    accepted.len(),
+                    1,
+                    "({leaf_index}, {tree_size}) must accept exactly one path length"
+                );
+                classes
+                    .entry(accepted[0])
+                    .or_default()
+                    .push((leaf_index, tree_size));
             }
         }
 
-        for (seq, members) in &classes {
+        for members in classes.values() {
             let mut sizes: Vec<u64> = members.iter().map(|(_, n)| *n).collect();
             sizes.sort_unstable();
             let before = sizes.len();
@@ -257,8 +246,27 @@ mod tests {
             assert_eq!(
                 sizes.len(),
                 before,
-                "two positions with combine sequence {seq:?} share a tree_size, so \
+                "two positions in one class share a tree_size, so \
                  authenticating the size would NOT pin the index: {members:?}"
+            );
+        }
+
+        let class_of = |pos: (u64, u64)| {
+            classes
+                .values()
+                .find(|m| m.contains(&pos))
+                .expect("every position is classed")
+        };
+        for pos in [(2, 3), (4, 5), (8, 9)] {
+            assert!(
+                class_of((1, 2)).contains(&pos),
+                "{pos:?} shares (1,2)'s class"
+            );
+        }
+        for pos in [(5, 6), (6, 7)] {
+            assert!(
+                class_of((3, 4)).contains(&pos),
+                "{pos:?} shares (3,4)'s class"
             );
         }
 
@@ -303,7 +311,7 @@ mod tests {
     /// EVERY leaf of a non-power-of-two log verifies. Leaf 2 of a 3-leaf tree sits on
     /// the short right edge, and the old index-bit fold combined its operands in the
     /// wrong order — so a conforming receipt from any real log whose size is not a
-    /// power of two was rejected.
+    /// power of two was rejected. Every leaf is folded against the signed 3-leaf root.
     #[test]
     fn every_leaf_of_a_three_leaf_log_verifies() {
         let mut svc = PrototypeTransparencyService::new(TS_KID);
@@ -323,6 +331,47 @@ mod tests {
         assert_eq!(receipt.leaf_index(), 2, "the right-edge leaf");
         verify_receipt_offline(st, receipt, ir(), tr())
             .expect("a right-edge leaf of a 3-leaf tree verifies");
+
+        let leaves: Vec<[u8; 32]> = issued
+            .iter()
+            .map(|(st, _)| leaf_hash(st, StatementLeafProfile::StatementBytes))
+            .collect();
+        let signed_root = receipt.committed_root().expect("an attached root");
+        for (target, expected_len) in [2usize, 2, 1].into_iter().enumerate() {
+            let mut path = Vec::new();
+            mth_and_path(&leaves, Some(target), &mut path);
+            assert_eq!(path.len(), expected_len, "path length of leaf {target}");
+            let folded =
+                rfc9162_root_from_inclusion_proof(&leaves[target], target as u64, 3, &path)
+                    .expect("every leaf folds under its own path");
+            assert_eq!(folded.as_slice(), signed_root, "leaf {target}");
+        }
+    }
+
+    /// Every leaf of every log up to 33 leaves folds to its tree hash under its own path.
+    /// The builder is the independent oracle (#657 ruling 3); this is the property that
+    /// every leaf of every non-power-of-two log verifies, at depth.
+    #[test]
+    fn every_leaf_of_every_log_up_to_33_leaves_folds_to_its_tree_hash() {
+        let mut longest = 0;
+        for n in 1..=33usize {
+            let leaves: Vec<[u8; 32]> = (0..n)
+                .map(|i| {
+                    let mut l = [0u8; 32];
+                    l[..8].copy_from_slice(&(i as u64).to_le_bytes());
+                    l
+                })
+                .collect();
+            for t in 0..n {
+                let mut path = Vec::new();
+                let root = mth_and_path(&leaves, Some(t), &mut path);
+                let folded =
+                    rfc9162_root_from_inclusion_proof(&leaves[t], t as u64, n as u64, &path);
+                assert_eq!(folded, Ok(root), "leaf {t} of {n}");
+                longest = longest.max(path.len());
+            }
+        }
+        assert_eq!(longest, 6, "leaf 0 of 33 is the deepest path");
     }
 
     /// `tree_size` and `leaf_index` ride in the UNSIGNED `vdp` header. The RFC 9162
@@ -331,7 +380,7 @@ mod tests {
     #[test]
     fn restating_the_log_position_at_a_different_path_length_does_not_verify() {
         let leaf = [7u8; 32];
-        let sibling = vec![9u8; 32];
+        let sibling = [9u8; 32];
         // The honest proof: leaf 1 of a 2-leaf tree, one sibling.
         let root = rfc9162_root_from_inclusion_proof(&leaf, 1, 2, std::slice::from_ref(&sibling))
             .expect("the honest position verifies");
@@ -365,7 +414,7 @@ mod tests {
     #[test]
     fn a_right_edge_restatement_is_indistinguishable_and_still_verifies() {
         let leaf = [7u8; 32];
-        let sibling = vec![9u8; 32];
+        let sibling = [9u8; 32];
         let honest = rfc9162_root_from_inclusion_proof(&leaf, 1, 2, std::slice::from_ref(&sibling))
             .expect("the honest position verifies");
 

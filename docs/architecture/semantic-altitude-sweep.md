@@ -257,7 +257,6 @@ must pick one.
 | `config_state::kms_endpoint` | its proposition genuinely is *"a KMS/STS endpoint override is held to the endpoint-authority rule"*. A mechanism with no endpoint has no question to answer here |
 | `cross_machine::x2a` | a cross-ROLE compatibility relation, expressed by matching two tagged unions. The flag names in its refusals are diagnostics, not semantics |
 | `cli::signing_source_flags` | the CLI is an adapter (ADR §16). It says `--aws-kms-region` because an operator reads a flat command line, and assembles the typed payload immediately |
-| `app::run`'s env-seed startup warning | the warning is about that mechanism and that build feature, not about a custody class. `ProcessReadable` covers files too, and files are production-legal |
 | `serving_capabilities::online_ocsp` | a BUILD fact about a protocol |
 
 ### D — legitimate mechanism leaves
@@ -288,7 +287,6 @@ names say nothing about who signs.
 | unit | ruling |
 |---|---|
 | `config_state::kms_endpoint` | **mechanism-selection boundary** (C), not a violation. The alternative reading — "an outbound authority a deployment names" — would be a genuinely different proposition, and the existing `outbound_fetch` authority already owns it. Creating a second one would be the duplicate-authority mistake ADR-MCPRE-059 rev1 made |
-| `app::run`'s env-seed warning | **boundary** (C). It matches `CustodyMaterial::EnvSeed` to warn about a dev-only build, which is a statement about that mechanism. Reading it through `PrivateKeyExposure` would make it fire for file custody too, which is production-legal |
 | `deployment_request::kinds::OcspKind` | **violation** (B, Phase 5). It is a request-level selector named for the protocol that happens to implement it; the durable proposition is whether online revocation evidence is required |
 
 ---

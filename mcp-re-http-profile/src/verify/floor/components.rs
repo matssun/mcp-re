@@ -78,3 +78,107 @@ pub(crate) fn conditionally_covered_request_headers() -> impl Iterator<Item = &'
         .into_iter()
         .chain(MCP_COVERABLE_TRANSPORT_HEADERS)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXPECTED: [&str; 5] = [
+        "authorization",
+        "dpop",
+        "mcp-method",
+        "mcp-name",
+        "mcp-protocol-version",
+    ];
+
+    fn headers(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(n, v)| ((*n).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    fn mixed_case(name: &str) -> String {
+        name.split('-')
+            .map(|part| {
+                let mut chars = part.chars();
+                chars
+                    .next()
+                    .map(|first| first.to_ascii_uppercase().to_string() + chars.as_str())
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>()
+            .join("-")
+    }
+
+    #[test]
+    fn the_conditionally_covered_set_is_exactly_the_credential_and_transport_headers() {
+        let set: Vec<&str> = conditionally_covered_request_headers().collect();
+        assert_eq!(set, EXPECTED);
+    }
+
+    #[test]
+    fn every_conditionally_covered_header_present_but_uncovered_is_refused() {
+        for name in EXPECTED {
+            let hs = headers(&[(&mixed_case(name), "x")]);
+            let uncovered = [CoveredComponent::new("@method")];
+            assert_eq!(
+                require_conditional_coverage(&hs, &uncovered),
+                Err(HttpProfileError::MissingCoveredComponent(name))
+            );
+            let covered = [
+                CoveredComponent::new("@method"),
+                CoveredComponent::new(name),
+            ];
+            assert_eq!(require_conditional_coverage(&hs, &covered), Ok(()));
+        }
+    }
+
+    #[test]
+    fn a_duplicated_conditionally_covered_header_is_refused_even_when_one_is_covered() {
+        let hs = headers(&[("Authorization", "a"), ("authorization", "b")]);
+        let covered = [CoveredComponent::new("authorization")];
+        assert_eq!(
+            require_conditional_coverage(&hs, &covered),
+            Err(HttpProfileError::DuplicateHeader("authorization"))
+        );
+    }
+
+    #[test]
+    fn a_req_flagged_component_does_not_cover_a_present_request_header() {
+        let hs = headers(&[("DPoP", "x")]);
+        let covered = [CoveredComponent::req("dpop")];
+        assert_eq!(
+            require_conditional_coverage(&hs, &covered),
+            Err(HttpProfileError::MissingCoveredComponent("dpop"))
+        );
+    }
+
+    #[test]
+    fn require_components_refuses_a_missing_component_and_admits_a_superset() {
+        assert_eq!(
+            require_components(
+                &[CoveredComponent::new("@method")],
+                &["@method", "content-digest"],
+                &[]
+            ),
+            Err(HttpProfileError::MissingCoveredComponent("content-digest"))
+        );
+        assert_eq!(
+            require_components(
+                &[
+                    CoveredComponent::new("@method"),
+                    CoveredComponent::new("content-digest"),
+                    CoveredComponent::new("content-length"),
+                ],
+                &["@method", "content-digest"],
+                &[]
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            require_components(&[CoveredComponent::req("@method")], &["@method"], &[]),
+            Err(HttpProfileError::MissingCoveredComponent("@method"))
+        );
+    }
+}

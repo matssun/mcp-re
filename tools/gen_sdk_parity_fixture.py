@@ -115,10 +115,10 @@ def build() -> dict:
     cont = dict(
         BASE,
         nonce="nonce-parity-0003-128bit",
-        cont_prev_alg="sha-256",
-        cont_prev_value="cHJldi1oYW5kbGU",
-        cont_irr_alg="sha-256",
-        cont_irr_value="aXJyLWhhbmRsZQ",
+        cont_prev_alg="sha256",
+        cont_prev_value="Imp8EIIBTYo1GafV0toSPuMJpP40j5pH5x7VDVU1il8",
+        cont_irr_alg="sha256",
+        cont_irr_value="CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA",
         cont_request_state="opaque-state-xyz",
     )
     cases["continuation_answer_leg"] = case(

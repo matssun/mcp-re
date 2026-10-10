@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 //! What one core admits work against.
 //!
-//! Four bounds and one live count, held as one value because they are one decision taken
-//! once per core and then consulted by every connection and every request on it. Passed
-//! around separately they were five parameters that always travelled together, and nothing
-//! said they had to come from the same core — which is the whole point of a per-core bound
-//! (ADR-MCPRE-051 §1, share-nothing).
+//! Four bounds, a live count of open connections and the drain signal, held as one value
+//! because they are one decision taken once per core and then consulted by every connection
+//! and every request on it. Passed around separately they were parameters that always
+//! travelled together, and nothing said they had to come from the same core — which is the
+//! whole point of a per-core bound (ADR-MCPRE-051 §1, share-nothing).
 //!
-//! The four are not interchangeable. Each answers a different question about saturation:
+//! The four bounds are not interchangeable. Each answers a different question about saturation:
 //!
 //! | bound | what it limits | what a peer is told |
 //! |---|---|---|
 //! | `handshakes` | TLS handshakes signing at once | the connection is dropped |
 //! | `in_flight` | requests being served at once | `503` — this core, not this request |
 //! | `body_budget` | attacker-supplied body bytes resident | `503` — likewise |
-//! | `in_flight_requests` | nothing; it is the live COUNT | it is what graceful drain waits on |
+//! | `connections` | nothing; it is the live COUNT | it is what graceful drain waits on |
+//!
+//! The count is of CONNECTIONS, taken at accept, and not of requests. A request used to be
+//! counted until its handler returned, which is before hyper writes the response, so the
+//! drain could reach zero with a signed reply half on the wire and the runtime drop cut it
+//! off. A connection lasts until its last response is written, so counting connections makes
+//! "the drain has ended" imply "every reply that was started has been delivered".
 //!
 //! `in_flight` and `body_budget` are two halves of one admission and neither implies the
 //! other: the count was reasoned about as if it bounded memory, and it does not.
@@ -22,6 +28,7 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use tokio::sync::watch;
 
 use crate::tls::ServerOptions;
 
@@ -42,10 +49,15 @@ pub(super) struct CoreAdmission {
     /// acquire a permit is rejected with 503 before the handler runs — fail-closed
     /// backpressure, never unbounded queuing. `None` ⇒ unbounded (historical behavior).
     pub(super) in_flight: Option<Arc<tokio::sync::Semaphore>>,
-    /// MCPRE-115: live count of requests currently BEING SERVED, past admission. Graceful
-    /// drain waits for this to reach zero — idle keep-alive connections carry no in-flight
-    /// request and so do not extend the drain.
-    pub(super) in_flight_requests: Arc<AtomicUsize>,
+    /// MCPRE-115: live count of connections this core has accepted and not yet finished
+    /// with, from accept (before the handshake) until the connection task ends. Graceful
+    /// drain waits for this to reach zero. An idle keep-alive connection is closed by the
+    /// drain signal at once, so it does not extend the drain; one with a reply being written
+    /// does, which is the point.
+    pub(super) connections: Arc<AtomicUsize>,
+    /// Flipped once, when the drain begins: every connection, including one still in its
+    /// handshake, shuts down gracefully on seeing it.
+    pub(super) drain_signal: Arc<watch::Sender<bool>>,
     /// The byte half of admission: how much attacker-supplied body those requests may hold
     /// between them.
     pub(super) body_budget: Arc<BodyByteBudget>,
@@ -70,7 +82,8 @@ impl CoreAdmission {
                 .limits
                 .max_in_flight_requests
                 .map(|n| Arc::new(tokio::sync::Semaphore::new(n))),
-            in_flight_requests: Arc::new(AtomicUsize::new(0)),
+            connections: Arc::new(AtomicUsize::new(0)),
+            drain_signal: Arc::new(watch::channel(false).0),
             body_budget: Arc::new(BodyByteBudget::new(
                 options
                     .limits
@@ -83,20 +96,24 @@ impl CoreAdmission {
         }
     }
 
-    /// MCPRE-115: wait, bounded, for the requests already in flight to finish.
+    /// MCPRE-115: signal every connection to shut down gracefully, then wait, bounded, for
+    /// them all to finish.
     ///
-    /// Called once the accept loop has stopped, so no NEW request will be admitted. Because
-    /// each in-flight request is itself bounded by `request_deadline`,
-    /// `drain_grace >= request_deadline` guarantees a clean, zero-abandoned drain; the grace
-    /// is the hard ceiling, so a wedged request cannot delay process exit past it.
+    /// Called once the accept loop has stopped, so no NEW connection will be counted. A
+    /// graceful shutdown lets each connection finish the requests it has, write their
+    /// responses and close, and admits no further request on it. Because each request is
+    /// itself bounded by `request_deadline`, `drain_grace >= request_deadline` guarantees a
+    /// clean, zero-abandoned drain; the grace is the hard ceiling, so a wedged connection
+    /// cannot delay process exit past it.
     pub(super) async fn drain(&self, grace: std::time::Duration) {
+        self.drain_signal.send_replace(true);
         // Class R: the grace is a HARD CEILING on how long teardown may wait, so one that
-        // cannot be turned into an instant is no bound at all — the drain declines to
-        // start rather than parking process exit behind a deadline it cannot enforce.
+        // cannot be turned into an instant is no bound at all — the drain, already signalled,
+        // declines to wait rather than parking process exit behind a deadline it cannot enforce.
         let Some(deadline) = tokio::time::Instant::now().checked_add(grace) else {
             return;
         };
-        while self.in_flight_requests.load(Ordering::Acquire) > 0 {
+        while self.connections.load(Ordering::Acquire) > 0 {
             if tokio::time::Instant::now() >= deadline {
                 break;
             }
@@ -108,6 +125,14 @@ impl CoreAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn window() -> crate::config_state::ClientCredentialWindow {
+        crate::config_state::ClientCredentialWindow::new(
+            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_secs(300),
+        )
+        .expect("a legal credential window")
+    }
 
     /// The enforcement point of the bound: the number the pool decided is the number of
     /// permits this core's handshake semaphore actually carries.
@@ -122,16 +147,13 @@ mod tests {
         // Depth 2 under delegated TLS is the case a constant gets wrong: two workers may
         // admit ONE blocking signature, never two, or the core has nothing left to poll
         // its accept loop, its established connections and its in-flight requests.
-        let delegated = ServerOptions {
-            tls_signing_may_block: true,
-            ..Default::default()
-        };
+        let options = ServerOptions::new(window());
         let pool = crate::async_fleet::CorePool::for_core(
             crate::async_fleet::ShardDepth::stated(2),
-            &delegated,
+            crate::config_state::PrivateKeyExposure::NonExporting,
         )
         .expect("a stated depth of two is a shape delegated custody has");
-        let admission = CoreAdmission::for_core(&delegated, pool.handshake_bound());
+        let admission = CoreAdmission::for_core(&options, pool.handshake_bound());
         let handshakes = admission
             .handshakes
             .expect("a delegated-TLS core is bounded");
@@ -145,13 +167,12 @@ mod tests {
         // carries NO handshake bound. A control satisfied by bounding everything would be
         // no control, and the bound is not free — it costs a handshake round of
         // concurrency wherever it applies.
-        let exported = ServerOptions::default();
         let pool = crate::async_fleet::CorePool::for_core(
             crate::async_fleet::ShardDepth::stated(2),
-            &exported,
+            crate::config_state::PrivateKeyExposure::ProcessReadable,
         )
         .expect("an exported key admits every depth");
-        let admission = CoreAdmission::for_core(&exported, pool.handshake_bound());
+        let admission = CoreAdmission::for_core(&options, pool.handshake_bound());
         assert!(
             admission.handshakes.is_none(),
             "an in-memory signature is not bounded"
@@ -164,9 +185,10 @@ mod tests {
     fn a_clone_shares_the_cores_bounds_rather_than_making_new_ones() {
         let admission = CoreAdmission {
             in_flight: Some(Arc::new(tokio::sync::Semaphore::new(1))),
-            in_flight_requests: Arc::new(AtomicUsize::new(0)),
+            connections: Arc::new(AtomicUsize::new(0)),
+            drain_signal: Arc::new(watch::channel(false).0),
             body_budget: Arc::new(BodyByteBudget::new(16)),
-            handshakes: None,
+            handshakes: Some(Arc::new(tokio::sync::Semaphore::new(1))),
         };
         let per_connection = admission.clone();
         let held = per_connection
@@ -179,5 +201,36 @@ mod tests {
         );
         drop(held);
         assert!(admission.body_budget.charge(16).is_some());
+
+        let in_flight = per_connection
+            .in_flight
+            .as_ref()
+            .and_then(|semaphore| semaphore.try_acquire().ok())
+            .expect("the one in-flight permit");
+        assert_eq!(
+            admission.in_flight.as_ref().map(|s| s.available_permits()),
+            Some(0),
+            "the clone's in-flight permit is held against the core's one semaphore"
+        );
+        drop(in_flight);
+
+        let handshake = per_connection
+            .handshakes
+            .as_ref()
+            .and_then(|semaphore| semaphore.try_acquire().ok())
+            .expect("the one handshake permit");
+        assert_eq!(
+            admission.handshakes.as_ref().map(|s| s.available_permits()),
+            Some(0),
+            "the clone's handshake permit is held against the core's one semaphore"
+        );
+        drop(handshake);
+
+        per_connection.connections.fetch_add(1, Ordering::AcqRel);
+        assert_eq!(admission.connections.load(Ordering::Acquire), 1);
+
+        let observer = admission.drain_signal.subscribe();
+        per_connection.drain_signal.send_replace(true);
+        assert!(*observer.borrow(), "the clone signals the core's one drain");
     }
 }

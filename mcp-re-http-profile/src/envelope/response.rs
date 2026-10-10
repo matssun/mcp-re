@@ -37,6 +37,7 @@
 use crate::error::HttpProfileError;
 use serde_json::Value;
 
+use super::Outstanding;
 use super::OutstandingId;
 use super::JSON_RPC_VERSION;
 
@@ -153,13 +154,13 @@ pub fn validate_response_envelope<'a>(
     }
 
     // Correlation, last, because it is the check most likely to be read as the only one.
-    let expected = match outstanding {
+    let expected = match &outstanding.0 {
         // A response to a notification is not a correlation failure — it is a response that
         // should not exist. The serving path never asks this question (the notification arm
         // branches before validation), so reaching here means a caller applied the wrong
         // outstanding id, and answering "correlated" would be worse than refusing.
-        OutstandingId::Notification => return Err(invalid("a notification has no response")),
-        OutstandingId::Id(id) => id,
+        Outstanding::Notification => return Err(invalid("a notification has no response")),
+        Outstanding::Id(id) => id,
     };
     match object.get("id") {
         None => return Err(invalid("id member absent")),
@@ -184,7 +185,7 @@ mod tests {
     use serde_json::json;
 
     fn id(n: i64) -> OutstandingId {
-        OutstandingId::Id(json!(n))
+        OutstandingId(Outstanding::Id(json!(n)))
     }
 
     fn validate(body: &str, outstanding: &OutstandingId) -> Result<(), HttpProfileError> {
@@ -310,7 +311,7 @@ mod tests {
             (r#"{"jsonrpc":"2.0","result":{}}"#, id(1)),
             (
                 r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
-                OutstandingId::Id(json!("req-1")),
+                OutstandingId(Outstanding::Id(json!("req-1"))),
             ),
         ] {
             assert!(
@@ -341,12 +342,12 @@ mod tests {
     fn ids_correlate_by_value_and_by_type() {
         assert!(validate(
             r#"{"jsonrpc":"2.0","id":"req-abc","result":{}}"#,
-            &OutstandingId::Id(json!("req-abc")),
+            &OutstandingId(Outstanding::Id(json!("req-abc"))),
         )
         .is_ok());
         assert!(validate(
             r#"{"jsonrpc":"2.0","id":0,"result":{}}"#,
-            &OutstandingId::Id(json!(0)),
+            &OutstandingId(Outstanding::Id(json!(0))),
         )
         .is_ok());
         // The half the docstring names and the positive cases cannot witness: a lenient
@@ -356,12 +357,12 @@ mod tests {
         // somebody else's call, delivered as an answer to this one.
         assert!(validate(
             r#"{"jsonrpc":"2.0","id":"1","result":{}}"#,
-            &OutstandingId::Id(json!(1)),
+            &OutstandingId(Outstanding::Id(json!(1))),
         )
         .is_err());
         assert!(validate(
             r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
-            &OutstandingId::Id(json!("1")),
+            &OutstandingId(Outstanding::Id(json!("1"))),
         )
         .is_err());
     }
@@ -370,7 +371,7 @@ mod tests {
     fn a_notification_has_no_correlatable_response() {
         assert!(validate(
             r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
-            &OutstandingId::Notification,
+            &OutstandingId(Outstanding::Notification),
         )
         .is_err());
     }

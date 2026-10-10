@@ -84,12 +84,6 @@ impl SignedStatement {
         &self.sig_structure
     }
 
-    /// Parse a tagged `COSE_Sign1` into a statement WITHOUT verifying its signature.
-    ///
-    /// Parsing is not acceptance: nothing here is trustworthy until
-    /// [`verify_receipt_offline`] has checked the issuer signature over these exact
-    /// bytes. It is separate so a malformed statement fails as malformed rather than
-    /// as a bad signature.
     /// This statement with a DIFFERENT decoded commitment beside the same COSE bytes.
     ///
     /// `#[cfg(test)]`, and it is the point of the test it serves: a decoded view is a
@@ -179,5 +173,57 @@ mod tests {
         verify_receipt_offline(&edited, &receipt, ir(), tr()).expect("the signed bytes are intact");
         let recovered = SignedStatement::from_cose(edited.to_cose()).expect("parses");
         assert_eq!(recovered.commitment().chain_label(), "complete");
+    }
+
+    /// The decoded commitment and the signed payload octets are one-to-one: octets after
+    /// the one CBOR item are signed but unread, so a second reader could assign them a
+    /// meaning this one never sees.
+    #[test]
+    fn a_statement_payload_with_trailing_octets_is_refused() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        SignedStatement::from_cose(st.to_cose()).expect("the issued statement parses");
+
+        let mut sign1 = CoseSign1::from_tagged_slice(st.to_cose()).expect("parses");
+        sign1.payload.as_mut().expect("attached payload").push(0x00);
+        let bytes = sign1.to_tagged_vec().expect("encode");
+        assert_eq!(
+            SignedStatement::from_cose(&bytes).expect_err("trailing octets refused"),
+            HttpProfileError::MalformedEvidence("scitt statement commitment trailing octets"),
+        );
+    }
+
+    /// A claim present twice has no single value to attribute the statement by.
+    #[test]
+    fn a_duplicate_cwt_claim_in_a_signed_statement_is_refused() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        SignedStatement::from_cose(st.to_cose()).expect("the issued statement parses");
+
+        let mut sign1 = CoseSign1::from_tagged_slice(st.to_cose()).expect("parses");
+        let claims = sign1
+            .protected
+            .header
+            .rest
+            .iter_mut()
+            .find(|(label, _)| *label == coset::Label::Int(HEADER_CWT_CLAIMS))
+            .and_then(|(_, v)| v.as_map_mut())
+            .expect("cwt claims map");
+        claims.push((
+            ciborium::Value::Integer(CWT_ISS.into()),
+            ciborium::Value::Text("a-third-party".to_owned()),
+        ));
+        sign1.protected.original_data = None;
+        let bytes = sign1.to_tagged_vec().expect("encode");
+        assert_eq!(
+            SignedStatement::from_cose(&bytes).expect_err("duplicate iss refused"),
+            HttpProfileError::MalformedEvidence("scitt statement duplicate cwt claim"),
+        );
     }
 }

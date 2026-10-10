@@ -11,13 +11,60 @@
 //! occupancy and atomicity, and are measured against a running tier; these are algebraic
 //! properties of an encoding — injectivity over the triple, and domain separation from every
 //! other SHA-256 the profile computes — and are measured against nothing but the function.
+//!
+//! The key is a [`ContinuationKey`], minted only from a verification product: no store
+//! operation takes a string, so no caller can address an entry under an actor it names
+//! itself. The product is what THM-0051 says the serving path carries; this type makes
+//! "derived from the carried product's actor" the only way a key comes to exist, rather than
+//! a convention every call site keeps.
+//!
+//! The key is derivable by anyone from three public identifiers: it contributes
+//! injectivity, not unpredictability. Isolation from a party that can WRITE the
+//! `mcp-re:cont:` keyspace is the store's premise ASM-0047, not the key's. That two distinct
+//! triples digest to distinct keys is SHA-256's second-preimage resistance, ASM-0060.
 
 /// The key prefix for a continuation correlation entry in the shared store.
 pub const CONTINUATION_KEY_PREFIX: &str = "mcp-re:cont:";
 
-/// Domain separator, so this digest cannot collide with any other SHA-256 the
-/// profile computes over the same bytes.
+/// Domain separator: it keeps this encoding apart from the profile's other domain-tagged
+/// digests, each of which carries its own `mcp-re/...` tag and none a prefix of another.
+/// No other digest is ever accepted in place of a continuation key, because both legs
+/// recompute the key from its inputs.
 const CONTINUATION_KEY_DOMAIN: &[u8] = b"mcp-re/continuation-key/v1";
+
+/// The shared-store key of one continuation entry.
+///
+/// Its only constructor takes the [`VerifiedMcpRequest`] the exchange carries, so the actor
+/// in the key is that product's resolved actor and no other. `pub` because the store
+/// contract [`super::AsyncContinuationStore`] is public and its callers outside this crate
+/// address entries too; what they cannot do is address one under an actor they name.
+///
+/// [`VerifiedMcpRequest`]: mcp_re_http_profile::VerifiedMcpRequest
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ContinuationKey(String);
+
+impl ContinuationKey {
+    /// The key for `request_state` under `audience_id` and the actor `verified` resolved.
+    pub fn for_request(
+        audience_id: &str,
+        verified: &mcp_re_http_profile::VerifiedMcpRequest,
+        request_state: &[u8],
+    ) -> Self {
+        let actor_id = verified.resolved_actor().actor_id();
+        ContinuationKey(continuation_key(audience_id, &actor_id, request_state))
+    }
+
+    /// The key as the store addresses it.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// A key over named parts, for in-crate tests of store mechanics and of the encoding.
+    #[cfg(test)]
+    pub(crate) fn of_parts(audience_id: &str, actor_id: &str, request_state: &[u8]) -> Self {
+        ContinuationKey(continuation_key(audience_id, actor_id, request_state))
+    }
+}
 
 /// Derive the shared-store key for a continuation from the dispatch AUDIENCE, the
 /// RESOLVED ACTOR and the opaque `requestState` bytes:
@@ -47,7 +94,7 @@ const CONTINUATION_KEY_DOMAIN: &[u8] = b"mcp-re/continuation-key/v1";
 /// "the same actor", and the difference is load-bearing in both directions. Here it is
 /// what keeps a second key from collecting a human approval it did not ask for; there it
 /// is what keeps one subject's rotation from reading as several budgets.
-pub fn continuation_key(audience_id: &str, actor_id: &str, request_state: &[u8]) -> String {
+fn continuation_key(audience_id: &str, actor_id: &str, request_state: &[u8]) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     hasher.update(CONTINUATION_KEY_DOMAIN);
@@ -98,6 +145,29 @@ mod tests {
             continuation_key(AUD, ACTOR_B, b"abc")
         );
         assert!(continuation_key(AUD, ACTOR_A, b"abc").starts_with(CONTINUATION_KEY_PREFIX));
+    }
+
+    /// The domain tag is part of the digested bytes: the expected key is rebuilt
+    /// independently from the literal tag, so editing or dropping the constant is red.
+    #[test]
+    fn the_domain_separator_is_part_of_the_digested_bytes() {
+        use sha2::Digest;
+        let encode = |domain: &[u8]| {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(domain);
+            hasher.update(3u64.to_be_bytes());
+            hasher.update(b"aud");
+            hasher.update(5u64.to_be_bytes());
+            hasher.update(b"actor");
+            hasher.update(b"state");
+            format!(
+                "mcp-re:cont:{}",
+                mcp_re_core::b64url_encode(&hasher.finalize())
+            )
+        };
+        let key = continuation_key("aud", "actor", b"state");
+        assert_eq!(key, encode(b"mcp-re/continuation-key/v1"));
+        assert_ne!(key, encode(b""));
     }
 
     /// No boundary in the key can be moved — over BOTH of the key's interior boundaries,

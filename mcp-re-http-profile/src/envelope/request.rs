@@ -26,30 +26,9 @@
 use crate::error::HttpProfileError;
 use serde_json::Value;
 
+use super::Outstanding;
 use super::OutstandingId;
 use super::JSON_RPC_VERSION;
-
-/// Read the outstanding id from a REQUEST body.
-///
-/// The serving path calls this on the body it verified, so the parse cannot fail in
-/// production; it still fails closed rather than defaulting, because "I could not read the
-/// request's id" must never become "any id correlates".
-///
-/// This reads the id and nothing else. Whether the body is a JSON-RPC message at all is
-/// [`validate_request_envelope`]'s question, and the absence of an `id` is only a
-/// notification once that has been answered — an object with no `jsonrpc` and no `method`
-/// is not a notification, it is not a message.
-pub fn outstanding_id(request_body: &[u8]) -> Result<OutstandingId, HttpProfileError> {
-    let parsed: Value = serde_json::from_slice(request_body)
-        .map_err(|_| HttpProfileError::MalformedEvidence("request body"))?;
-    let object = parsed
-        .as_object()
-        .ok_or(HttpProfileError::MalformedEvidence("request body"))?;
-    match object.get("id") {
-        None => Ok(OutstandingId::Notification),
-        Some(id) => Ok(OutstandingId::Id(id.clone())),
-    }
-}
 
 /// Validate the JSON-RPC control envelope of a CLIENT REQUEST, returning the outstanding
 /// id it establishes.
@@ -74,8 +53,9 @@ pub fn outstanding_id(request_body: &[u8]) -> Result<OutstandingId, HttpProfileE
 /// 5. neither `result` nor `error` is present, so one document cannot be read as a
 ///    request by this boundary and as a response by the peer;
 /// 6. `params`, when present, is an object or an array (JSON-RPC 2.0 §4.2);
-/// 7. `id`, when present, is a string or a number. JSON-RPC also permits `null`, and MCP
-///    forbids it; a null-id request is refused rather than folded into a notification,
+/// 7. `id`, when present, is a string or an integer. MCP requires a string or integer id,
+///    so a fractional or exponent-form number is refused. JSON-RPC also permits `null`, and
+///    MCP forbids it; a null-id request is refused rather than folded into a notification,
 ///    because the two are answered differently — one with a bound signed reply, the other
 ///    with a bodyless 202.
 ///
@@ -121,35 +101,36 @@ pub fn validate_request_envelope(request_body: &[u8]) -> Result<OutstandingId, H
         }
     }
 
-    match object.get("id") {
-        None => Ok(OutstandingId::Notification),
-        Some(id @ (Value::String(_) | Value::Number(_))) => Ok(OutstandingId::Id(id.clone())),
-        Some(_) => Err(malformed("request id is neither a string nor a number")),
-    }
+    let outstanding = match object.get("id") {
+        None => Outstanding::Notification,
+        Some(id @ Value::String(_)) => Outstanding::Id(id.clone()),
+        Some(id @ Value::Number(n)) if n.is_i64() || n.is_u64() => Outstanding::Id(id.clone()),
+        Some(_) => return Err(malformed("request id is neither a string nor an integer")),
+    };
+    Ok(OutstandingId(outstanding))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The id a request establishes is read by the validator, the only producer: an id is
+    /// echoed, an absent id is a notification, and a `null` id is refused rather than read —
+    /// folding it into either would make a null-id request answerable by the wrong terminal.
     #[test]
     fn the_outstanding_id_is_read_from_the_request() {
         assert_eq!(
-            outstanding_id(br#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#).unwrap(),
-            OutstandingId::Id(json!(7))
+            validate_request_envelope(br#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#)
+                .unwrap(),
+            OutstandingId(Outstanding::Id(json!(7)))
         );
         assert_eq!(
-            outstanding_id(br#"{"jsonrpc":"2.0","method":"notifications/cancelled"}"#).unwrap(),
-            OutstandingId::Notification
+            validate_request_envelope(br#"{"jsonrpc":"2.0","method":"notifications/cancelled"}"#)
+                .unwrap(),
+            OutstandingId(Outstanding::Notification)
         );
-        // A null id is an id: JSON-RPC distinguishes "absent" (a notification) from
-        // "present and null", and folding them together would make a null-id request
-        // answerable by a bodyless 202.
-        assert_eq!(
-            outstanding_id(br#"{"jsonrpc":"2.0","id":null,"method":"x"}"#).unwrap(),
-            OutstandingId::Id(Value::Null)
-        );
-        assert!(outstanding_id(b"not json").is_err());
+        assert!(validate_request_envelope(br#"{"jsonrpc":"2.0","id":null,"method":"x"}"#).is_err());
+        assert!(validate_request_envelope(b"not json").is_err());
     }
 
     /// The request side of the same rule. Reading only `id` made "no id" mean
@@ -170,6 +151,7 @@ mod tests {
             r#"{"jsonrpc":"2.0","method":"x","params":"nope"}"#,
             r#"{"jsonrpc":"2.0","method":"x","id":null}"#,
             r#"{"jsonrpc":"2.0","method":"x","id":{"a":1}}"#,
+            r#"{"jsonrpc":"2.0","method":"x","id":1.5}"#,
             "[]",
             "not json",
         ] {
@@ -177,9 +159,6 @@ mod tests {
                 validate_request_envelope(body.as_bytes()).is_err(),
                 "{body} was accepted as an MCP request"
             );
-            // The reader the serving path uses today sees no `id` in most of these and
-            // calls them notifications, which is what the validator exists to stop.
-            let _ = outstanding_id(body.as_bytes());
         }
     }
 
@@ -211,21 +190,21 @@ mod tests {
         assert_eq!(
             validate_request_envelope(br#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#)
                 .expect("a legal request"),
-            OutstandingId::Id(json!(7))
+            OutstandingId(Outstanding::Id(json!(7)))
         );
         assert_eq!(
             validate_request_envelope(
                 br#"{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"t"}}"#
             )
             .expect("a legal request"),
-            OutstandingId::Id(json!("req-1"))
+            OutstandingId(Outstanding::Id(json!("req-1")))
         );
         assert_eq!(
             validate_request_envelope(
                 br#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}"#
             )
             .expect("a legal notification"),
-            OutstandingId::Notification
+            OutstandingId(Outstanding::Notification)
         );
     }
 }

@@ -36,6 +36,7 @@ Run:  python3 scripts/helm_render_gate.py
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -162,6 +163,55 @@ def check_documented_in_flight_default() -> list[str]:
         if "UNBOUNDED" in text or "unbounded ceiling" in text:
             problems.append(f"{name} still calls the absent-flag default unbounded; "
                             f"the proxy applies {actual}")
+    return problems
+
+
+def check_documented_handshake_signing_bounds() -> list[str]:
+    """The defaults and bounds `values.yaml` states for the handshake-signing capacity
+    are `HandshakeSignCapacity`'s.
+
+    The chart renders no default and validates no range — the proxy owns both — so the
+    numbers in its comment are prose an operator sizes against, and nothing else couples
+    them to the type that enforces them.
+    """
+    owner = REPO / "mcp-re-proxy" / "src" / "delegated_tls" / "sign_capacity.rs"
+    consts = {}
+    for line in owner.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("pub const ") and ": u32 = " in stripped:
+            name, value = stripped[len("pub const "):].split(": u32 = ", 1)
+            consts[name] = value.rstrip(";").replace("_", "")
+    wanted = ("DEFAULT_RATE_PER_SEC", "DEFAULT_BURST", "MAX_RATE_PER_SEC", "MAX_BURST")
+    missing = [n for n in wanted if n not in consts]
+    if missing:
+        return [f"{owner.relative_to(REPO)} declares no {', '.join(missing)}; the chart's "
+                "documented capacity can no longer be checked against the code"]
+    text = " ".join((CHART / "values.yaml").read_text(encoding="utf-8").replace("#", " ").split())
+    problems = []
+    for phrase in (f"({consts['DEFAULT_RATE_PER_SEC']}/s, burst {consts['DEFAULT_BURST']})",
+                   f"rate 1..={consts['MAX_RATE_PER_SEC']}",
+                   f"burst 1..={consts['MAX_BURST']}"):
+        if phrase not in text:
+            problems.append(f"values.yaml does not state the code's {phrase!r}")
+    return problems
+
+
+def check_documented_continuation_bound() -> list[str]:
+    """The default and range `values.yaml` states for `continuationControl.maxLiveEntries`
+    are `ContinuationCapacity`'s, for the same reason as the handshake-signing capacity."""
+    owner = REPO / "mcp-re-proxy" / "src" / "continuation_store" / "capacity.rs"
+    code = owner.read_text(encoding="utf-8")
+    default = re.search(r"max_live_entries: ([0-9_]+),", code)
+    ceiling = re.search(r"pub const MAX_LIVE_ENTRIES: u32 = ([0-9_]+);", code)
+    if not default or not ceiling:
+        return [f"{owner.relative_to(REPO)} declares no default or ceiling; the chart's "
+                "documented continuation bound can no longer be checked against the code"]
+    text = " ".join((CHART / "values.yaml").read_text(encoding="utf-8").replace("#", " ").split())
+    problems = []
+    for phrase in (f"default ({default.group(1).replace('_', '')})",
+                   f"range (1..={ceiling.group(1).replace('_', '')})"):
+        if phrase not in text:
+            problems.append(f"values.yaml does not state the code's {phrase!r}")
     return problems
 
 
@@ -341,10 +391,47 @@ CASES: list[tuple[str, dict, bool, str]] = [
     ),
     (
         "plaintext replay redis renders with the named opt-out",
-        merged({"replay": {"redisUrl": "redis://r:6379", "durabilityTier": "linearizable",
+        merged({"fleet": False, "replicaCount": 1},
+               {"replay": {"redisUrl": "redis://r:6379", "durabilityTier": "linearizable",
                            "allowPlaintextRedis": True}},
                {"revocation": {"tier": "push:60", "trustEpochRedisUrl": "",
                                "trustEpochKey": "mcp-re:trust:epoch"}}),
+        True,
+        "",
+    ),
+    # --- delegated signing across replicas needs a trust-epoch source (no override) ---
+    (
+        "more than one replica without a trust-epoch source is refused",
+        merged({"fleet": False, "replicaCount": 2},
+               {"revocation": {"tier": "push:60", "trustEpochRedisUrl": "", "trustEpochKey": ""}}),
+        False,
+        "requires revocation.tier push:<T> and revocation.trustEpochRedisUrl",
+    ),
+    (
+        "fleet=true on one replica without a trust-epoch source is refused",
+        merged({"fleet": True, "replicaCount": 1},
+               {"revocation": {"tier": "push:60", "trustEpochRedisUrl": "", "trustEpochKey": ""}}),
+        False,
+        "requires revocation.tier push:<T> and revocation.trustEpochRedisUrl",
+    ),
+    (
+        "more than one replica on a non-push tier is refused",
+        merged({"fleet": False, "replicaCount": 3},
+               {"revocation": {"tier": "live", "trustEpochRedisUrl": "rediss://r:6379"}}),
+        False,
+        "requires revocation.tier push:<T> and revocation.trustEpochRedisUrl",
+    ),
+    (
+        "one non-fleet replica without a trust-epoch source renders",
+        merged({"fleet": False, "replicaCount": 1},
+               {"revocation": {"tier": "push:60", "trustEpochRedisUrl": "", "trustEpochKey": ""}}),
+        True,
+        "",
+    ),
+    (
+        "a fleet with a push-tier trust-epoch source renders",
+        merged({"fleet": True, "replicaCount": 3},
+               {"revocation": {"tier": "push:60", "trustEpochRedisUrl": "rediss://r:6379"}}),
         True,
         "",
     ),
@@ -513,7 +600,8 @@ CASES: list[tuple[str, dict, bool, str]] = [
     ),
     (
         "a live revocation tier without a trust reload cadence is refused",
-        merged({"revocation": {"tier": "live", "trustEpochRedisUrl": "", "trustEpochKey": "",
+        merged({"fleet": False, "replicaCount": 1},
+               {"revocation": {"tier": "live", "trustEpochRedisUrl": "", "trustEpochKey": "",
                                "trustReloadSeconds": ""}}),
         False,
         "trustReloadSeconds",
@@ -588,6 +676,16 @@ CASES: list[tuple[str, dict, bool, str]] = [
                                       "allowDegraded": True, "degradedBoundSecs": 0}}),
         False,
         "degradedBoundSecs",
+    ),
+    (
+        "a degraded window past the CLI ceiling is refused at render",
+        merged({"admissionCurrency": {"mode": "optional", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5",
+                                      "redisUrl": "rediss://r:6379",
+                                      "recordMaxAgeSecs": 60,
+                                      "allowDegraded": True, "degradedBoundSecs": 3601}}),
+        False,
+        "at most 3600",
     ),
     # The half-configured state that reads as "admission control is on" to anyone
     # auditing the rendered args while nothing is enforced.
@@ -690,6 +788,62 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
         [("--max-in-flight-total", "256")],
         ["--max-in-flight"],
     ),
+    # The handshake-signing capacity has no chart default: unset must leave the
+    # proxy's, and a set value must reach the proxy verbatim — 0 included, which the
+    # proxy refuses. A truthiness test would turn that 0 into the default silently.
+    (
+        "unset handshake-signing capacity omits both flags",
+        merged(),
+        [],
+        ["--tls-handshake-sign-rate", "--tls-handshake-sign-burst"],
+    ),
+    (
+        "handshake-signing capacity renders both flags verbatim",
+        merged({"tlsHandshakeSigning": {"ratePerSec": 250, "burst": 400}}),
+        [("--tls-handshake-sign-rate", "250"), ("--tls-handshake-sign-burst", "400")],
+        [],
+    ),
+    (
+        "a zero handshake-signing term reaches the proxy rather than the default",
+        merged({"tlsHandshakeSigning": {"ratePerSec": 0, "burst": None}}),
+        [("--tls-handshake-sign-rate", "0")],
+        ["--tls-handshake-sign-burst"],
+    ),
+    # The continuation live-entry bound follows the same rule: no chart default, and a
+    # set value — 0 included, which the proxy refuses — reaches the proxy verbatim.
+    (
+        "unset continuation bound omits the flag",
+        merged(),
+        [],
+        ["--continuation-max-live-entries"],
+    ),
+    (
+        "a continuation bound renders verbatim",
+        merged({"continuationControl": {"redisUrl": "rediss://r:6379",
+                                        "maxLiveEntries": 5000}}),
+        [("--continuation-max-live-entries", "5000")],
+        [],
+    ),
+    (
+        "a zero continuation bound reaches the proxy rather than the default",
+        merged({"continuationControl": {"redisUrl": "rediss://r:6379", "maxLiveEntries": 0}}),
+        [("--continuation-max-live-entries", "0")],
+        [],
+    ),
+    # The proxy refuses the example.com trust domain itself, so the chart's fenced-fixture
+    # acknowledgement must reach it as a flag — and only when given.
+    (
+        "the fixture acknowledgement is omitted by default",
+        merged(),
+        [],
+        ["--allow-example-fixtures"],
+    ),
+    (
+        "allowExampleFixtures renders the proxy's fixture acknowledgement",
+        merged({"identity": {"trustDomain": "example.com", "allowExampleFixtures": True}}),
+        [("--trust-domain", "example.com"), "--allow-example-fixtures"],
+        [],
+    ),
     # ADR-MCPS-035: a chart-rendered pod must carry the per-request security record,
     # and the revocation flags the posture claims must actually be emitted.
     (
@@ -786,6 +940,27 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
                            "credentialsSecretName": "aws-creds"}}),
         [("--key-source", "aws-kms")],
         ["--aws-kms-use-web-identity", "--signing-key-seed"],
+    ),
+    # Ruling 12 item 21. Unset must leave the proxy's own default in force rather than render
+    # a zero that would read as a declared "the replicas share one clock"; zero is a real
+    # declaration and must still render.
+    (
+        "an unset replay clock divergence renders no flag",
+        merged(),
+        [("--replay-durability-tier", "redis-wait-quorum:2:2000")],
+        ["--replay-clock-divergence-secs"],
+    ),
+    (
+        "a declared replay clock divergence renders, including zero",
+        merged({"replay": {"clockDivergenceSecs": 12}}),
+        [("--replay-clock-divergence-secs", "12")],
+        [],
+    ),
+    (
+        "a declared zero replay clock divergence is rendered, not dropped as empty",
+        merged({"replay": {"clockDivergenceSecs": 0}}),
+        [("--replay-clock-divergence-secs", "0")],
+        [],
     ),
     # ADR-MCPRE-053 §7. "The guards refuse a bad config" is only half the property:
     # the chart previously rendered NO admission flag under any values at all, so
@@ -908,6 +1083,9 @@ def main() -> int:
         ("the default image serves every offered keySource", check_image_serves_every_key_source),
         ("the proxy image declares the chart's non-root uid", check_image_declares_non_root),
         ("the documented in-flight default is the code's", check_documented_in_flight_default),
+        ("the documented handshake-signing capacity is the code's",
+         check_documented_handshake_signing_bounds),
+        ("the documented continuation bound is the code's", check_documented_continuation_bound),
         ("the drain arithmetic budgets the code's audit flush", check_audit_flush_budget),
     ):
         problems = check()

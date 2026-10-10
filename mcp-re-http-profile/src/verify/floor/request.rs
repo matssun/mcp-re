@@ -20,13 +20,11 @@
 //! attacker-chosen. The ordering argument is load-bearing only from the content-digest
 //! step on.
 
-use mcp_re_core::McpReError;
-
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::RequestRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_LABEL;
 use crate::ids::REQUIRED_REQUEST_COMPONENTS;
@@ -45,6 +43,7 @@ use super::params::check_params;
 use super::sf_dictionary::member_value;
 use super::signature::signature_value_b64url;
 use super::signature::verify_under;
+use super::signature::SignedMessage;
 use super::signature_input::parse_signature_input;
 use super::transport_headers::reject_mcp_method_divergence;
 use super::trust_slot::resolve_actor_for_slot;
@@ -119,7 +118,7 @@ pub(crate) fn floor_request<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &resolved_actor.verification_key,
-        McpReError::InvalidSignature,
+        SignedMessage::Request,
     )?;
 
     // 5. MCP transport contract (§4.1). Deliberately AFTER the signature: before
@@ -128,15 +127,12 @@ pub(crate) fn floor_request<R: Into<ResolverOutcome>>(
     //    present `mcp-*` header is covered (the closed-allowlist gate enforced
     //    present ⇒ covered) and the body is covered via `content-digest`.
     //
-    //    The `mcp-method`/body agreement is ALWAYS checked — a covered header must
-    //    never lie about the signed body, regardless of policy. Required-header
-    //    presence, the supported-version set, and `mcp-name` agreement are the
-    //    configurable part, enforced only when the deployment attached a transport
-    //    policy.
+    //    The whole contract is enforced on every request: a covered header never lies
+    //    about the signed body, required headers are present, and the version is one
+    //    the deployment accepts. The deployment chooses the accepted set, never whether
+    //    there is a contract.
     reject_mcp_method_divergence(request)?;
-    if let Some(transport) = policy.mcp_transport() {
-        transport.enforce(request)?;
-    }
+    policy.mcp_transport().enforce(request)?;
 
     // 6. Derive the handle from the exact verified base and return the full
     //    verified evidence context.
@@ -144,7 +140,7 @@ pub(crate) fn floor_request<R: Into<ResolverOutcome>>(
         profile_id: PROFILE_TAG.to_owned(),
         signature_label: REQUEST_LABEL.to_owned(),
         resolved_actor,
-        evidence: RequestEvidence::from_signature_base(&base),
+        evidence: RequestRoleEvidence::from_signature_base(&base),
         request_signature_base: base,
         content_digest,
         created,
@@ -185,7 +181,8 @@ mod tests {
             method: "POST".into(),
             target_uri: "https://mcp.example.com/mcp".into(),
             headers,
-            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+                .to_vec(),
         };
         sign_request(&mut r, &key(), KEY_ID, CREATED, EXPIRES, "n-floor")
             .expect("signing succeeds");
@@ -245,11 +242,10 @@ mod tests {
     }
 
     #[test]
-    fn a_covered_mcp_method_contradicting_the_body_is_refused_without_a_transport_policy() {
+    fn a_covered_mcp_method_contradicting_the_body_is_refused() {
         let (calls, seen) = (Cell::new(0), Cell::new(None));
         let req = signed(&[("Mcp-Method", "tools/list")]);
         let policy = VerifierPolicy::default();
-        assert!(policy.mcp_transport().is_none());
         let err = floor_request(&req, &resolver(&calls, &seen), &policy, NOW)
             .map(|_| ())
             .unwrap_err();

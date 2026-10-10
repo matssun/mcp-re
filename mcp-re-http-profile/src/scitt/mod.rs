@@ -8,11 +8,15 @@
 //!
 //! **What a SCITT receipt gives Layer 5 that a signed rejection does not.** A
 //! signed response proves the server said something. A SCITT receipt proves that a
-//! statement about a call was *registered on a transparency service* — so a later
-//! auditor can verify the record existed at a point in time, independently of the
-//! parties to the call, without trusting the log to replay honestly (the inclusion
-//! proof is checked offline against a signed tree head). That is the tamper-evident,
-//! portable audit record §2.4 asks for.
+//! statement about a call was *registered on a transparency service*, and an auditor
+//! checks the inclusion proof offline against the service's signed tree head without
+//! trusting the log to replay honestly. That is the tamper-evident, portable audit
+//! record §2.4 asks for. It establishes no time: the receipt carries no timestamp and
+//! the statement's CWT `iat` is the issuer's own assertion, compared to nothing, so a
+//! verified receipt neither dates nor orders a record. Nor does verification establish
+//! independence from the parties: the issuer and service keys come from two
+//! caller-supplied resolvers that nothing compares, so separation is a property of the
+//! deployment that wires them.
 //!
 //! **Retained vs committed (§4.6).** The Signed Statement does NOT carry the call's
 //! evidence — it carries HASH COMMITMENTS to it. The full request/response messages,
@@ -88,6 +92,7 @@
 //!   ├─ merkle        D   this path folds this leaf to this root at this position
 //!   ├─ cose_key      E   valid under a key whose algorithm the header agrees with
 //!   ├─ service           the key + profiles that go together for ONE service
+//!   ├─ key_lifecycle     whether a service key may vouch for a receipt at a trusted instant
 //!   ├─ offline           the composition: verified offline, contacting nobody
 //!   ├─ retained      F   these bytes are the ones that statement was made about
 //!   ├─ trust_pin     G   the key an interop run verified against, and its provenance
@@ -110,6 +115,7 @@
 
 mod commitment;
 mod cose_key;
+mod key_lifecycle;
 mod merkle;
 mod offline;
 mod prototype;
@@ -124,6 +130,9 @@ pub use commitment::EvidenceCommitment;
 pub use commitment::RetainedCorrespondence;
 pub use cose_key::CoseVerificationKey;
 pub use cose_key::P256Point;
+pub use key_lifecycle::KeyLifecycleError;
+pub use key_lifecycle::KeyLifecycleRefusal;
+pub use key_lifecycle::TransparencyKeyLifecycle;
 pub use merkle::StatementLeafProfile;
 pub use offline::verify_receipt_offline;
 /// The in-process prototype log. Its contract is on the type: using it successfully is
@@ -173,7 +182,8 @@ mod fixtures {
     use crate::chain::ChainReconstruction;
     use crate::chain::HopEvidence;
     use crate::error::HttpProfileError;
-    use crate::evidence::RequestEvidence;
+    use crate::evidence::RequestRoleEvidence;
+    use crate::evidence::ResponseRoleEvidence;
 
     use crate::scitt::commitment::EvidenceCommitment;
     use crate::scitt::cose_key::CoseVerificationKey;
@@ -205,10 +215,10 @@ mod fixtures {
     pub(super) fn recon(label: ChainLabel, hops: usize) -> ChainReconstruction {
         let hop_evidence = (0..hops)
             .map(|i| HopEvidence {
-                request_evidence: RequestEvidence::from_signature_base(
+                request_evidence: RequestRoleEvidence::from_signature_base(
                     format!("req-{i}").as_bytes(),
                 ),
-                response_evidence: RequestEvidence::from_response_signature_base(
+                response_evidence: ResponseRoleEvidence::from_signature_base(
                     format!("rsp-{i}").as_bytes(),
                 ),
             })
@@ -270,7 +280,7 @@ mod fixtures {
                 receipt
                     .inclusion_path()
                     .iter()
-                    .map(|h| Value::Bytes(h.clone()))
+                    .map(|h| Value::Bytes(h.to_vec()))
                     .collect(),
             ),
         ]);
@@ -320,7 +330,7 @@ mod fixtures {
                 receipt
                     .inclusion_path()
                     .iter()
-                    .map(|h| Value::Bytes(h.clone()))
+                    .map(|h| Value::Bytes(h.to_vec()))
                     .collect(),
             ),
         ]);
@@ -350,7 +360,7 @@ mod fixtures {
         }
     }
 
-    /// A resolver for a FOREIGN service using `key`, with the default leaf profile.
+    /// A resolver for a FOREIGN service using `key`, logging the statement's own octets.
     ///
     /// `Unbound`: the receipts these tests build by hand are the shape a real external
     /// SCITT service emits, and no such service carries MCP-RE's position parameter.

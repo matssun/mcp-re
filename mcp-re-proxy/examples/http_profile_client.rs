@@ -22,6 +22,7 @@ use std::io::Read;
 use serde_json::json;
 use serde_json::Value;
 
+use mcp_re_core::McpReError;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -143,7 +144,7 @@ fn main() {
         Ok(verified) => {
             println!(
                 "leg 1  ACCEPTED  server_signer={}  status={}  fastmcp_result={}",
-                verified.signature_facts.accepted_signer.identity.subject,
+                verified.signature_facts().accepted_signer.identity.subject,
                 resp.status,
                 mcp_result(&resp.body)
             );
@@ -164,9 +165,7 @@ fn main() {
     let resp2 = post(&agent, &post_b, &request);
     // A DELEGATED rejection receipt is verified through the SAME delegated path as an
     // answer — it is signed by the delegated key and carries the same credential, so the
-    // refusal is as verifiable as an acceptance. `verify_signed_rejection` is the
-    // direct-root verifier: it has no credential chain, so it cannot resolve the
-    // delegated kid and would fail `actor_binding_failed` on a genuine receipt.
+    // refusal is as verifiable as an acceptance.
     //
     // Verifying only proves the receipt is authentic and bound to THIS request; whether
     // it is an acceptance is then read from the trusted body.
@@ -183,7 +182,7 @@ fn main() {
                 "leg 2  REJECTED  delegated rejection verified  status={}  wire_code={}",
                 resp2.status, wire_code
             );
-            if wire_code != "mcp-re.replay_detected" {
+            if wire_code != McpReError::ReplayDetected.wire_code() {
                 println!("leg 2  WARNING: expected mcp-re.replay_detected");
                 std::process::exit(1);
             }

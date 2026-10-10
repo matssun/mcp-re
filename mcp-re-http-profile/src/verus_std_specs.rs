@@ -3,10 +3,10 @@
 //! ADR-MCPRE-059 Phase 2. Compiled only under `--features verify`; no production build
 //! contains this module.
 //!
-//! Everything here is trusted, and every entry is registered in
-//! `verification/policy/assumptions.toml`. Two kinds live here: `std` arithmetic vstd does
-//! not yet specify for signed integers, and the policy accessors, which are field reads
-//! the verifier is told to treat as an unknown-but-fixed value per policy object.
+//! Every trusted item here is registered in `verification/policy/assumptions.toml`: `std`
+//! behaviour vstd does not yet specify, the opaque and transparent type mirrors, and the
+//! uninterpreted digest functions. The policy and binding specification values are not
+//! trusted: each is its owner's closed specification, against which its getters are proved.
 
 use crate::admission::{
     AdmissionBinding, AdmissionClaims, AdmissionStatus, AdmissionVerdict, VerifiedAdmission,
@@ -39,12 +39,11 @@ pub assume_specification[ i64::saturating_add ](x: i64, y: i64) -> (result: i64)
         result == if x + y > i64::MAX { i64::MAX as int } else if x + y < i64::MIN { i64::MIN as int } else { x + y },
 ;
 
-/// Makes `VerifierPolicy` nameable in a specification without verifying its
-/// construction, its algorithm registry, or its transport policy. Opaque: no theorem here
-/// reads a field, and none may — the accessors below are the only way in.
+/// The transport contract `VerifierPolicy` carries, opaque: no theorem here reasons about
+/// the MCP transport policy, and the verified policy needs only to name the field's type.
 #[verifier::external_type_specification]
 #[verifier::external_body]
-pub struct ExVerifierPolicy(VerifierPolicy);
+pub struct ExMcpTransportPolicy(crate::mcp_transport::McpTransportPolicy);
 
 /// The signature parameters, TRANSPARENT: the freshness theorem is about the `created`
 /// and `expires` the message declares, so the verifier must see those fields.
@@ -115,12 +114,10 @@ pub assume_specification[ <AdmissionStatus as core::cmp::PartialEq>::eq ](
 #[verifier::external_type_specification]
 pub struct ExAdmissionPolicy(AdmissionPolicy);
 
-/// The artifact-binding datatypes, TRANSPARENT: the typed-verifier theorem is a statement
-/// about which `artifact_type`/`binding_type` pair can leave the verifier as `Ok`.
+/// The tags are TRANSPARENT. The binding itself is a verified datatype with a private
+/// representation, read only through `artifact_type_of`/`binding_type_of`.
 #[verifier::external_type_specification]
 pub struct ExArtifactType(crate::block::ArtifactType);
-#[verifier::external_type_specification]
-pub struct ExArtifactBinding(crate::block::ArtifactBinding);
 
 /// As ASM-0014, for the artifact-type tag.
 pub assume_specification[ <crate::block::ArtifactType as core::cmp::PartialEq>::eq ](
@@ -154,13 +151,11 @@ pub struct ExResolvedActor(crate::block::ResolvedActor);
 #[verifier::external_type_specification]
 pub struct ExAudienceTuple(crate::block::AudienceTuple);
 #[verifier::external_type_specification]
-pub struct ExRequestEvidenceDigest(crate::block::RequestEvidenceDigest);
+pub struct ExRequestEvidenceDigest(crate::evidence::RequestEvidenceDigest);
 #[verifier::external_type_specification]
 pub struct ExHttpContinuation(crate::block::HttpContinuation);
 #[verifier::external_type_specification]
 pub struct ExHttpRequestEvidenceBlock(crate::block::HttpRequestEvidenceBlock);
-#[verifier::external_type_specification]
-pub struct ExRequestEvidence(crate::evidence::RequestEvidence);
 #[verifier::external_type_specification]
 pub struct ExFloorVerifiedRequest(crate::verified_request::CryptographicFloorVerifiedRequest);
 #[verifier::external_type_specification]
@@ -173,28 +168,29 @@ pub struct ExDispatchError(crate::dispatch::DispatchError);
 pub struct ExRetainedContinuation<'a>(crate::dispatch::RetainedContinuation<'a>);
 
 /// The labeled evidence digest, as an UNINTERPRETED function of its role label and its
-/// input bytes.
-///
-/// ADR-MCPRE-059 ASM-0023, and the shape is the point. Nothing is assumed about SHA-256 —
-/// not collision resistance, not preimage resistance, not even that distinct inputs give
-/// distinct outputs. What is assumed is only that the digest IS A FUNCTION of the pair
-/// `(label, bytes)`: the same label over the same bytes yields the same value.
-///
-/// That alone is what makes role separation provable. An accepted continuation's
-/// previous-request handle equals `labeled_digest(REQUEST, prev)`; for a response handle
-/// to be accepted in the request role, `labeled_digest(REQUEST, x)` would have to equal
-/// `labeled_digest(RESPONSE, y)` — a cross-role collision, which is precisely the
+/// input bytes (ASM-0023). Nothing is assumed about SHA-256 — only that the digest IS A
+/// FUNCTION of `(label, bytes)`, which is what makes role separation provable: a response
+/// handle accepted in the request role would need a cross-role collision, which is the
 /// `boundary.crypto_primitives` obligation and is not silently assumed away here.
 pub uninterp spec fn labeled_digest(label: Seq<char>, bytes: Seq<u8>) -> Seq<char>;
 
-/// The verifier's configured symmetric clock-skew tolerance, as a specification value.
-///
-/// Uninterpreted on purpose: the freshness theorem must hold for WHATEVER skew a
-/// deployment configures, so nothing is assumed about this value except that it is a
-/// function of the policy object.
-pub uninterp spec fn skew_of(policy: &VerifierPolicy) -> i64;
+/// The verifier's configured clock-skew tolerance: the policy's own closed specification, so
+/// the freshness theorem holds for WHATEVER skew a deployment configures.
+pub open spec fn skew_of(policy: &VerifierPolicy) -> i64 {
+    policy.spec_max_clock_skew()
+}
+
+/// The tags a binding carries, through its closed specification: the typing theorem holds for any.
+pub open spec fn artifact_type_of(binding: &crate::block::ArtifactBinding) -> crate::block::ArtifactType {
+    binding.spec_artifact_type()
+}
+pub open spec fn binding_type_of(binding: &crate::block::ArtifactBinding) -> BindingType {
+    binding.spec_binding_type()
+}
 
 /// The widest `expires - created` this verifier accepts, as a specification value.
-pub uninterp spec fn validity_of(policy: &VerifierPolicy) -> i64;
+pub open spec fn validity_of(policy: &VerifierPolicy) -> i64 {
+    policy.spec_max_signature_validity()
+}
 
 }

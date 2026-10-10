@@ -1,0 +1,25 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "Assumes only that the labeled digest IS A FUNCTION of (label, bytes) \u2014 ASM-0023. It does\nNOT establish collision-resistant separation between roles; that obligation stays at\nboundary.crypto_primitives and is not discharged here. That each retained handle was minted\nunder its own role label is `RetainedHandles::over`'s, measured in the proxy's\n`proxy.continuation_correlation_store`, and not a clause of the proof. That the two handles\n`verify` is handed ARE the ones the correlation store retained is the serving path's: the\nanswer leg hands the peeked handles over through `RetainedContinuation::from_correlation`, the\nonly constructor of what `verify` consumes. That hand-off lies outside this unit and this\nproof; the proof establishes the clauses above for the handles it is given.\n",
+      "old": "Assumes only that the labeled digest IS A FUNCTION of (label, bytes) \u2014 ASM-0023. It does\nNOT establish collision-resistant separation between roles; that obligation stays at\nboundary.crypto_primitives and is not discharged here. That each retained handle was minted\nunder its own role label is `RetainedHandles::over`'s, measured in the proxy's\n`proxy.continuation_correlation_store`, and not a clause of the proof.\n",
+      "reason": "THM-0010 scope, replaced by the owner's Ruling 34 \u00a73 text."
+    }
+  ],
+  "from_fingerprint": "sha256:0dafbe2132a2bc02cbc3b0a55649b2ea697c4b53fdb17add793f89bbd09fb986",
+  "packet": "docs/security/owner-approvals-2026-10-07.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "OWN-CLAIM CORRECTION, owner-ratified (Ruling 34 \u00a73). The proved claim is unchanged; the scope now states that the identity of the two retained evidence handles across the answer-leg hand-off rests on RetainedContinuation::from_correlation, which lies outside this unit and this proof.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5. The authority covering this record is the owner's Ruling 34 \u00a73 (2026-10-07), recorded in docs/security/owner-approvals-2026-10-07.jsonl. A correction record is not an approval: it does not make the specification-review axis fresh.",
+  "severity_after": "high",
+  "severity_before": "high",
+  "subject": "THM-0010",
+  "to_fingerprint": "sha256:69b6f32424f55fbaefb64d9eb94a7d2e39044e8cf082a51e77b696cf97033baa"
+}

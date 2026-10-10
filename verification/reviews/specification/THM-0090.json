@@ -9,7 +9,41 @@
     "theorem_id": "THM-0090",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-09-02, given as BATCH 2B after the owner declined the previous version of this theorem on two bounded grounds and the corrections landed at bce6d2cc. This is the theorem's FIRST owner specification review; the declined version carries no record and no approval was transferred to it. EVIDENCE CLOSURE. The ruling accepts the `test_features` repair: the security-bearing feature-gated controls are part of the supporting unit's actual battery, and the selected feature set participates in `test_selection`, so removing a feature cannot silently shrink the battery while preserving freshness. It accepts the ownership result as the correct semantic ownership — the no-second-addressing-surface and redirect-confinement facts belong to `unit://proxy.outbound_destination`; the fact that KMS/STS destination construction requires `KmsEndpoint` belongs to `unit://proxy.kms_endpoint_authority` and THM-0089; and THM-0090 consumes that fact through `depends_on` rather than re-deriving it. CLAIM ALTITUDE. The ruling accepts the narrowed consequence: credential-bearing traffic is confined to the authority embodied by the vetted destination capability through which the request was constructed, and neither caller-controlled addressing nor responder redirects can move that authority. THM-0090 does NOT establish that this capability is the posture selected by validated deployment configuration; that composition remains THM-0077's. RESOLVED-ADDRESS NON-CLAIM, ruled explicitly so it is not read wider than it is. This theorem is about the HTTP AUTHORITY NAMED, not a general guarantee about every IP address an operator-configured hostname may resolve to. The approval must NOT be reinterpreted as IP pinning or private-address refusal for operator-configured KMS/STS endpoints. The provenance distinction stands: a certificate-derived or otherwise attacker-influenced destination gets address and private-network vetting where required; an operator-configured destination is trusted configuration and may legitimately target internal infrastructure. Treating hostile DNS resolution of operator-configured KMS/STS names as an additional threat would require its own proposition and its own ruling. The approval was made conditional on immediate remeasurement; the fingerprint was recomputed at bce6d2cc before this record was written and equals the value the owner named. `theorem_dependencies` carries THM-0089's claim digest, and THM-0089 is itself owner-reviewed at that digest.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G7.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0082": "sha256:5ee7d9a67c783381ca0d134050cbf0b2a2bf225412bbaa21b2c40927f01fe219"
+    },
+    "supporting_semantics": {
+      "proxy.outbound_destination": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:34fb4dfb2b0c2af6f4ca702b13dcb529bdec0648624304e2f16e9a77279b70ea",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:210c91c4378cbc8bb2e7aafef7e96fcd24d62ac03aea4e2fd9f1dc8b99fcad73",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:3207859b9484206c1d1c81a02a92278bf87dd167c708701bd8583b875ea70e61",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:2e1b641d3f36c12970da53033ec9abcde530a46b7a7cc552d21e5f28586db851",
+        "test_selection": "sha256:af855704383a15a4365d8a8b3d3f56219d5674f5577cec2a7857f68a873a01f6",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:2ba838c415493a955677ea89856614466b73a3eff24f8fa9d8802c49a34c0acf",
+        "unit_id": "sha256:3e994a3dbeeed61fa80e86194cc6a73609fa0959e860fee5a3aff3985a4f455e"
+      }
+    },
+    "theorem_claim": "sha256:69e411fd6b97444acab2d2001bf35cd1e70cfe46b78ed76db391b6d0c5b906f0",
+    "theorem_dependencies": {
+      "THM-0089": "sha256:5f08ed31d860d3ef9a71836edf1b0bff9ea496a89e74dae727eb4baff757fad8"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:176ac13689db9361c326cb04f097cacb5deef2ec222eb5341ddb41556a4b2588",
   "reviewed_fingerprint": "sha256:ce22a7ec651a2fbdc6bf3f8083a57b398a12164a06108086209e4099aad34d9d",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0090"

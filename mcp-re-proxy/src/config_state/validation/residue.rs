@@ -20,6 +20,8 @@
 //! Nothing here decides precedence. `legality_violations` calls each of these at the
 //! position its clauses already occupied.
 
+use std::time::Duration;
+
 use crate::deployment_request::{AuthzKind, DeploymentRequest, OnlineRevocationEvidenceRequest};
 
 /// The `--target-uri` shape the request-target reconstruction check depends on, as a pure
@@ -272,7 +274,7 @@ pub(super) fn target_uri_violations(config: &DeploymentRequest) -> Vec<String> {
 /// **Why no narrower owner.** There is no inner-plane machine; the request carries a list and nothing classifies it into states.
 pub(super) fn inner_plane_presence_violations(config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
-    if config.inner_http_urls.is_empty() {
+    if config.inner_http_urls.expose().is_empty() {
         out.push(
             "the proxy serves over an async HTTP inner plane: pass --inner-http-url <url>. To \
              protect a local stdio MCP server, run it behind the mcp-re-stdio-bridge adapter \
@@ -292,6 +294,7 @@ pub(super) fn inner_plane_structure_violations(config: &DeploymentRequest) -> Ve
     let mut out = Vec::new();
     if config
         .inner_http_urls
+        .expose()
         .iter()
         .any(|url| url.trim().is_empty())
     {
@@ -322,14 +325,15 @@ pub(super) fn connection_ceiling_violations(config: &DeploymentRequest) -> Vec<S
     out
 }
 
-/// The drain window is not zero.
+/// The drain window is positive, representable, and covers the request deadline.
 ///
 /// **Why layer A enforces it.** Same class as the ceiling above: a bound of zero is the absence of the bound.
 ///
 /// **Why no narrower owner.** Same absent owner as the ceiling.
 pub(super) fn drain_window_violations(config: &DeploymentRequest) -> Vec<String> {
+    let grace = config.limits.drain_grace;
     let mut out = Vec::new();
-    if config.limits.drain_grace.is_zero() {
+    if grace.is_zero() {
         out.push(
             "--drain-grace-secs 0 abandons every in-flight request on SIGTERM: the drain \
              window is what lets an admitted request finish before the listener goes away, \
@@ -338,9 +342,34 @@ pub(super) fn drain_window_violations(config: &DeploymentRequest) -> Vec<String>
              window (default 30s)"
                 .to_string(),
         );
+        return out;
+    }
+    if grace > DRAIN_GRACE_CEILING {
+        out.push(
+            "--drain-grace-secs exceeds the 86400s ceiling: the drain deadline is not \
+             representable, so the drain declines to wait and abandons every in-flight \
+             request on SIGTERM. Set a window of at most 86400s"
+                .to_string(),
+        );
+    }
+    if let Some(deadline) = config.limits.request_deadline {
+        if grace < deadline {
+            out.push(
+                "--drain-grace-secs is shorter than --request-deadline-secs: the k8s \
+                 invariant request_deadline <= drain_grace requires the window to cover the \
+                 deadline, otherwise a request the deadline still allows is abandoned on \
+                 SIGTERM"
+                    .to_string(),
+            );
+        }
     }
     out
 }
+
+/// The same one-day ceiling the parser puts on every timeout. `CoreAdmission::drain` declines to
+/// wait at all when `Instant::now().checked_add(grace)` fails, so an unrepresentable window
+/// abandons every in-flight request just as a zero one does.
+const DRAIN_GRACE_CEILING: Duration = Duration::from_secs(86_400);
 
 /// The read, write and request-deadline timeouts are all set.
 ///
@@ -391,6 +420,32 @@ pub(super) const INVENTORY: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_drain_window_shorter_than_the_request_deadline_is_refused() {
+        let mut config = crate::config_state::test_support::legal_config();
+        config.limits.request_deadline = Some(Duration::from_secs(60));
+        config.limits.drain_grace = Duration::from_secs(30);
+        let refusals = drain_window_violations(&config);
+        assert_eq!(refusals.len(), 1, "got: {refusals:?}");
+        assert!(refusals[0].contains("--request-deadline-secs"));
+        config.limits.drain_grace = Duration::from_secs(60);
+        assert!(drain_window_violations(&config).is_empty());
+    }
+
+    #[test]
+    fn an_unrepresentable_drain_window_is_refused() {
+        let mut config = crate::config_state::test_support::legal_config();
+        config.limits.drain_grace = Duration::from_secs(u64::MAX);
+        let refusals = drain_window_violations(&config);
+        assert!(
+            refusals.iter().any(|r| r.contains("ceiling")),
+            "got: {refusals:?}"
+        );
+        config.limits.request_deadline = Some(Duration::from_secs(86_400));
+        config.limits.drain_grace = Duration::from_secs(86_400);
+        assert!(drain_window_violations(&config).is_empty());
+    }
 
     /// THM-0013 evidence, half one: no build honours `--client-ocsp require`.
     ///

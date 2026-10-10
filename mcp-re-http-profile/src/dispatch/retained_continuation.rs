@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The bytes a caller retained for a pending MRTR correlation.
+//! The evidence handles a caller retained for a pending MRTR correlation.
 //!
 //! ## What this owns, and what it does not
 //!
-//! It owns one fact: **these three byte strings were read together, out of one correlation
-//! record.** They are not derived here and cannot be — they are the exact RFC 9421
-//! signature bases and the opaque `requestState` the client committed to on the prior legs,
-//! and only the deployment's correlation store holds them.
+//! It owns one fact: **these three values were read together, out of one correlation
+//! record.** They are not derived here and cannot be — they are the role-labeled evidence
+//! handles over the RFC 9421 signature bases of the prior legs (never the bases themselves,
+//! which carry the covered credential headers) and the opaque `requestState` the client
+//! committed to, and only the deployment's correlation store holds them.
 //!
 //! It does NOT own the binding to the request being dispatched. The store is keyed by the
 //! actor the verifier resolved and by the request's own `requestState`
@@ -21,14 +22,15 @@
 //!
 //! The fields are `pub(crate)` and [`RetainedContinuation::from_correlation`] is the only
 //! way in from outside. That is not the same as binding, and it is not nothing: no consumer
-//! can assemble a binding out of three byte slices it happened to be holding, and each
+//! can assemble a binding out of three values it happened to be holding, and each
 //! crate that does hold a correlation store now has one auditable construction site instead
 //! of an anonymous struct literal.
 //!
-//! Confusing the two bases with each other is caught by the mechanism rather than by the
-//! type: [`crate::HttpContinuation::verify`] digests each under a DISTINCT role label
-//! (ADR-MCPRE-059 `http_profile.continuation_binding`), so a swapped pair fails
-//! `continuation_binding_failed` and is never admitted.
+//! Confusing the two handles with each other is caught by the mechanism rather than by the
+//! type: each was minted under a DISTINCT role label (ADR-MCPRE-059
+//! `http_profile.continuation_binding`) and [`crate::HttpContinuation::verify`] compares each
+//! in its own slot, so a swapped pair fails `continuation_binding_failed` and is never
+//! admitted.
 //!
 //! ## Why the fields are `pub(crate)` and not module-private
 //!
@@ -54,47 +56,54 @@
 //! would have cost the proof to buy the seal. A Verus-proved postcondition outranks a seal
 //! (`CLAUDE.md`), so the seal gives way at exactly the point they conflict, and no further.
 
-/// The bytes the caller retained for a pending correlation, needed to verify an MRTR
+use crate::evidence::RequestEvidenceDigest;
+
+/// The handles the caller retained for a pending correlation, needed to verify an MRTR
 /// continuation.
 ///
 /// Built only through [`Self::from_correlation`]; a struct literal is refused outside this
 /// crate:
 ///
 /// ```compile_fail
+/// let h = mcp_re_http_profile::RequestEvidenceDigest {
+///     digest_alg: "sha256".into(),
+///     digest_value: String::new(),
+/// };
 /// let _ = mcp_re_http_profile::RetainedContinuation {
-///     previous_request_base: b"prev",
-///     input_required_response_base: b"irr",
+///     previous_request_evidence: &h,
+///     input_required_response_evidence: &h,
 ///     request_state: b"state",
 /// };
 /// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct RetainedContinuation<'a> {
-    /// The RFC 9421 signature base of the client request that produced the
-    /// `InputRequiredResult`.
-    pub previous_request_base: &'a [u8],
-    /// The RFC 9421 signature base of the verified `InputRequiredResult` response.
-    pub input_required_response_base: &'a [u8],
+    /// The request-role evidence handle over the signature base of the client request that
+    /// produced the `InputRequiredResult`.
+    pub previous_request_evidence: &'a RequestEvidenceDigest,
+    /// The response-role evidence handle over the signature base of the verified
+    /// `InputRequiredResult` response.
+    pub input_required_response_evidence: &'a RequestEvidenceDigest,
     /// The opaque `requestState` bytes (never interpreted, only digest-bound).
     pub request_state: &'a [u8],
 }
 
 impl<'a> RetainedContinuation<'a> {
-    /// The bases and state read out of ONE correlation record.
+    /// The handles and state read out of ONE correlation record.
     ///
     /// Named for its provenance because that is the whole claim: the caller is asserting
     /// that these three came from a single retained record, not that they belong to the
     /// request about to be dispatched. The dispatcher checks the second half
-    /// cryptographically — an answer leg whose continuation does not digest to these bases
+    /// cryptographically — an answer leg whose continuation does not carry these handles
     /// fails closed before the nonce is burned.
     pub fn from_correlation(
-        previous_request_base: &'a [u8],
-        input_required_response_base: &'a [u8],
+        previous_request_evidence: &'a RequestEvidenceDigest,
+        input_required_response_evidence: &'a RequestEvidenceDigest,
         request_state: &'a [u8],
     ) -> RetainedContinuation<'a> {
         RetainedContinuation {
-            previous_request_base,
-            input_required_response_base,
+            previous_request_evidence,
+            input_required_response_evidence,
             request_state,
         }
     }
@@ -103,15 +112,18 @@ impl<'a> RetainedContinuation<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evidence::EvidenceRole;
 
     #[test]
     fn the_constructor_keeps_the_three_slots_apart() {
-        // The ordering is load-bearing — the two bases are checked under distinct role
-        // labels downstream — so a constructor that transposed them would turn every
-        // legitimate answer leg into a binding failure.
-        let c = RetainedContinuation::from_correlation(b"prev", b"irr", b"state");
-        assert_eq!(c.previous_request_base, b"prev".as_slice());
-        assert_eq!(c.input_required_response_base, b"irr".as_slice());
+        // The ordering is load-bearing — the two handles are compared in their own slots —
+        // so a constructor that transposed them would turn every legitimate answer leg into
+        // a binding failure.
+        let prev = RequestEvidenceDigest::over_labeled(EvidenceRole::Request, b"prev");
+        let irr = RequestEvidenceDigest::over_labeled(EvidenceRole::Response, b"irr");
+        let c = RetainedContinuation::from_correlation(&prev, &irr, b"state");
+        assert_eq!(c.previous_request_evidence, &prev);
+        assert_eq!(c.input_required_response_evidence, &irr);
         assert_eq!(c.request_state, b"state".as_slice());
     }
 }

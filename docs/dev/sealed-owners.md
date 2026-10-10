@@ -55,13 +55,13 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `ContinuationControlPlan` | `config_state/continuation_control.rs` | `shared_store() -> Option<&str>`, `needs_control_runtime()` |
 | `AdmissionState` | `config_state/admission.rs` | `enforced() -> Option<EnforcedAdmission<'_>>`, `is_enforced()` |
 | `RetentionState` | `config_state/evidence.rs` | `directory() -> Option<&str>`, `is_on()` |
-| `McpTransportContractState` | `config_state/mcp_transport_contract.rs` | `enforced_versions() -> Option<&[String]>`, `is_enforced()` |
+| `McpTransportContractState` | `config_state/mcp_transport_contract.rs` | `versions() -> &[String]` (non-empty: `classify_and_validate` produces no state for a refused set) |
 | `TrustRevocationState` | `config_state/trust_revocation.rs` | `epoch_source() -> Option<EpochSource<'_>>`, `reload_cadence()`, `tier()`, `declared_window_secs()`, `push_channel_is_inert()`, `has_networked_epoch()` |
 | `CrlRevocationState` | `config_state/transport.rs` | `client_revocation_plan()`, `paths()`, `reload_cadence_secs()`, `is_enforced()` |
 | `ClientRevocationPlan` | `config_state/transport.rs` | `paths()`, `reload_cadence_secs()`, `is_enforced()` |
 | `ChannelCredentialCustodyState` | `config_state/channel_credential_custody.rs` | `exposure()`, `material()` |
-| `CustodyState` | `config_state/custody.rs` | `material() -> CustodyMaterial<'_>`, `disk_secret_paths()`, `locators_are_filesystem_paths()`, `is_non_exporting_device()` |
-| `FreshnessWindow` | `config_state/freshness.rs` | `verifier_skew_secs()`, `replay_retain_until()`, `verifier_accepts_until()` |
+| `CustodyState` | `config_state/custody.rs` | `material() -> CustodyMaterial<'_>`, `disk_secret_paths()`, `exposure() -> PrivateKeyExposure` |
+| `FreshnessWindow` | `config_state/freshness.rs` | `verifier_skew_secs()`, `replay_retain_until()` |
 | `TrustDocumentSource` | `config_state/trust_document.rs` | `path()` |
 | `ClientCredentialWindow` | `config_state/client_credential_window.rs` | `cert_lifetime()`, `connection_age()`, `exposure_window()` |
 | `ShardTopologyRequest` | `config_state/topology.rs` | `shards()`, `workers_per_shard()`, `shards_or_auto()`, `workers_per_shard_or_auto()` |
@@ -77,6 +77,11 @@ Consumers then reach the state only through named projections on `impl ReplaySta
 | `P256Point` | http-profile `scitt.rs` | `verifying_key()` — the representation IS the decoded key |
 | `ScittServiceTrustPin` | http-profile `scitt.rs` | `verification_key()`, `kid()`, `service_identifier()`, `leaf_profile()`, `position_profile()`, `resolve()` |
 | `EvidenceCommitment` | http-profile `scitt.rs` | `corresponds_to()`, `is_complete_record()`, `commits_to_verified_evidence()`, `identifies_a_submission()`, `chain_label()` |
+| `CryptographicFloorVerifiedBoundResponse` | http-profile `verified_response/bound.rs` | `resolved_server_actor()`, `response_signature_base_digest()`, `signature_facts()` |
+| `VerifiedMcpResponse` | http-profile `verified_response/bound.rs` | `floor()`, `request_evidence_agreement()` |
+| `VerifiedDelegatedMcpResponse` | http-profile `verified_response/delegated_bound.rs` | `signature_facts()`, `request_evidence_agreement()`, `delegation_issuer_kid()` |
+| `CryptographicFloorVerifiedUnboundResponse` | http-profile `verified_response/unbound.rs` | `resolved_server_actor()`, `response_signature_base_digest()`, `signature_facts()` |
+| `VerifiedDelegatedUnboundResponse` | http-profile `verified_response/unbound.rs` | `signature_facts()`, `delegation_issuer_kid()` |
 
 A plan produced by an owner lives **with that owner**, not in `startup_plan.rs`.
 `startup_plan` re-exports it. The plan is the owner's projection of its own validated
@@ -313,12 +318,13 @@ nobody pinned. The seal was attempted and the answer came out the same way as
 with no pin behind it — the in-process `PrototypeTransparencyService`, which the conformance
 corpora are built from.
 
-What was done instead, and what it is worth: the fields are private and there are two NAMED
-producers, `pinned` (private, reached only through `ScittServiceTrustPin::resolve`) and
-`stated`, whose name is its contract — *the caller is asserting these; no operator pinned
-them*. That buys legibility at every call site, not unconstructibility, and the record says
-so rather than claiming a seal. It is the third measurement of this rule and the first where
-the seam's second producer is a shipped type rather than a test.
+What was done instead: the fields are private and there are two NAMED producers, `pinned`
+(private, reached only through `ScittServiceTrustPin::resolve`) and `stated`, whose name is
+its contract — *the caller is asserting these; no operator pinned them*. `stated` is
+compiled only under `test` or the test-only `pre_052_fixtures` feature, the flavor the
+conformance corpora link. A product build therefore has `pinned` as its only producer, so
+THM-0041's scope holds there: `ReceiptPositionProfile::Bound` is selected only by a pin's
+`position_profile`.
 
 #### Where the seal DID hold, in the same file
 
@@ -415,6 +421,51 @@ request. The parameter type now excludes those, so the obligation is stated
 unconditionally. `verify-verus` reports PASS over 6 units with the same 15 verified
 obligations in `mcp-re-http-profile` as before, so the strengthening is not paid for by a
 weaker proof somewhere else.
+
+### The response products: no proof trade, a crate-boundary seal
+
+No Verus `ensures` reads a response product (their units are V0), so the request-side
+trade above never applied to them. Each response product's representation is private to its
+module and its sole constructor is `pub(crate)`, called from `crate::verify`. The seal is
+a crate-boundary seal: outside the crate holding a product means a verifier returned it;
+inside the crate it excludes destructuring and mutation, not construction. No structural
+witness pins it yet, a named coverage gap of the kind "The campaign, finished" lists.
+
+The facts types (`AcceptedResponseSigner`, `BoundResponseSignatureFacts`,
+`UnboundResponseSignatureFacts`, `BoundRequestEvidenceAgreement`) stay deliberately
+unsealed value records that establish nothing alone; they are reached as projections of a
+product.
+
+### The evidence handles: one sealed type per role, opaque to the prover
+
+`RequestRoleEvidence` and `ResponseRoleEvidence` (`mcp-re-http-profile/src/evidence/`) hold
+a private digest value and have one producer each, `from_signature_base`, which derives
+under that role's label. Holding one means its value IS that role's labeled digest of some
+signature base; a slot typed for one role cannot hold the other, whether or not the slot
+compares anything. Labels come from the closed `EvidenceRole`, never a string argument.
+What travels on the wire is the claim type `RequestEvidenceDigest`, which keeps public
+fields because it is deserialized from unauthenticated bodies and proves nothing by being
+held; it is checked against a role type (`matches`) or a role (`matches_labeled`). An
+unbound rejection's request reference is `UnboundRequestDiagnostic`, a third type, so it
+cannot pass as a handle.
+
+The verified request products carry a `RequestRoleEvidence`, so the prover must name it.
+A transparent mirror refuses private fields (the error measured above), so the mirror is
+OPAQUE and sits in ASM-0046. That costs no proof: no theorem reads the handle, and the
+continuation contract is stated over `RequestEvidenceDigest` claims, whose mirror stays
+transparent.
+
+### The request evidence block: a proof read, enforced at the signer
+
+`HttpRequestEvidenceBlock` keeps public fields on purpose. The continuation-unbypassability
+postcondition reads `verified.request_block.continuation` as a field; sealing the block
+would need an opaque mirror plus a getter premise for that read, which replaces a proved
+read with an assumed one. Its boundary is the signer instead
+(`mcp-re-http-profile/src/sign/request_block.rs`): every request signer ends in one tail
+that refuses a body carrying a block that fails `validate` or whose continuation fails
+`HttpContinuation::validate_shape`, the `;req` response signer refuses a request carrying
+one, and the full-profile response signer additionally refuses a request carrying none.
+Values can still be assembled by hand; the profile never signs one that fails.
 
 ## Sealing the next owner
 

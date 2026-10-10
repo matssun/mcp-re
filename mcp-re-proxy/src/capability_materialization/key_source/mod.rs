@@ -11,7 +11,6 @@
 //! the executable rather than about the request (CF-05).
 
 mod aws;
-mod env;
 mod file;
 mod gcp;
 mod pin;
@@ -19,7 +18,6 @@ mod pkcs11;
 mod role_identity;
 mod role_separation;
 
-pub use pin::read_pkcs11_pin;
 pub use role_separation::MaterializedSigningRoles;
 
 use super::key_file_custody::{AdmittedKeyFiles, CheckedKeyFile};
@@ -28,21 +26,18 @@ use crate::key_source::{KeyError, KeySource};
 
 /// The channel material every custody consumes, whatever holds the response-signing key.
 ///
-/// `tls_cert` and `client_ca` belong to no custody machine — all five states consume them,
-/// and shared use is not semantic ownership. They are STRINGS WHOSE INTERPRETATION THE
-/// CUSTODY STATE DECIDES: filesystem paths under every state but
-/// [`CustodyMaterial::EnvSeed`], where they name environment variables. The same is true of
-/// the exported channel-key locator carried by the exported channel-custody state.
+/// `cert` and `client_ca` belong to no custody machine — every state consumes them, and
+/// shared use is not semantic ownership. Under every state they are filesystem paths.
 ///
-/// `key` is a LOCATOR. The environment arm reads it as a variable name; every file-backed
-/// arm takes the key's material from the admission with [`exported_tls_key`] instead, and
-/// no arm reopens it as a path.
+/// `key` is a LOCATOR, present only where custody exports the channel key. Every arm takes
+/// the key's material from the admission with [`exported_tls_key`], and no arm reopens it
+/// as a path.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ChannelMaterial<'a> {
     /// The credential chain this node presents.
     pub(super) cert: &'a str,
-    /// The exported channel-key locator, empty where custody keeps it on a device.
-    pub(super) key: &'a str,
+    /// The exported channel-key locator, `None` where custody keeps it on a device.
+    pub(super) key: Option<&'a str>,
     /// The anchors peer credentials are verified against.
     pub(super) client_ca: &'a str,
 }
@@ -56,10 +51,10 @@ pub(super) fn exported_tls_key(
     admitted: &mut AdmittedKeyFiles<'_>,
     material: ChannelMaterial<'_>,
 ) -> Result<Option<CheckedKeyFile>, KeyError> {
-    if material.key.is_empty() {
-        return Ok(None);
+    match material.key {
+        None => Ok(None),
+        Some(path) => admitted.take(path).map(Some),
     }
-    admitted.take(material.key).map(Some)
 }
 
 /// Build the key source the admitted custody names.
@@ -77,7 +72,7 @@ pub fn build_key_source(
     let channel = admitted.channel_credential_custody().material();
     let material = ChannelMaterial {
         cert: tls_cert,
-        key: channel.exported_key_path().unwrap_or(""),
+        key: channel.exported_key_path(),
         client_ca,
     };
     let source = open_source(custody, channel, material, &mut admitted)?;
@@ -100,7 +95,6 @@ fn open_source(
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     match custody.material() {
         CustodyMaterial::FileSeed { seed_path } => file::open(admitted, seed_path, material),
-        CustodyMaterial::EnvSeed { env_var } => env::open(env_var, material),
         CustodyMaterial::Pkcs11 {
             module,
             pin_file,
@@ -141,5 +135,52 @@ fn open_source(
             channel,
             material,
         ),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{exported_tls_key, ChannelMaterial};
+    use crate::capability_materialization::key_file_custody::admit_key_files;
+    use crate::config_state::test_support::{config_with, custody_states};
+    use crate::config_state::KeyFileAccessPolicy;
+    use crate::key_source::KeyError;
+
+    /// The exported channel key is surrendered by the admission only when custody names
+    /// one: `None` takes nothing, and a named key is yielded once.
+    #[test]
+    fn the_exported_channel_key_is_taken_from_the_admission_only_when_custody_exports_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let tls =
+            std::env::temp_dir().join(format!("mcp_re_exported_tls_{}.key", std::process::id()));
+        std::fs::write(&tls, b"tls-key-material").expect("write");
+        std::fs::set_permissions(&tls, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let tls_path = tls.to_string_lossy().into_owned();
+
+        let config = config_with("file", "/nonexistent/mcp_re_seed", &tls_path);
+        let (custody, channel) = custody_states(&config);
+        let mut admitted = admit_key_files(&custody, &channel, KeyFileAccessPolicy::OwnerOnly)
+            .expect("the exported key is legal and the seed is absent");
+        let _ = std::fs::remove_file(&tls);
+
+        let device = ChannelMaterial {
+            cert: "/c",
+            key: None,
+            client_ca: "/ca",
+        };
+        assert!(matches!(exported_tls_key(&mut admitted, device), Ok(None)));
+
+        let exported = ChannelMaterial {
+            key: Some(&tls_path),
+            ..device
+        };
+        let file = exported_tls_key(&mut admitted, exported)
+            .expect("the walked key")
+            .expect("custody exports a key");
+        assert_eq!(&file.into_bytes()[..], b"tls-key-material");
+        assert!(matches!(
+            exported_tls_key(&mut admitted, exported),
+            Err(KeyError::NotFound(_))
+        ));
     }
 }

@@ -10,9 +10,10 @@
 //! statuses it applies to are this service's, and reading them off the other leaf is what
 //! a shared implementation would have made easy to get wrong.
 //!
-//! The `200`-with-an-unreadable-body case is the one worth stating: the service accepted
-//! and logged the statement, and this process cannot show it. That is INDETERMINATE, and
-//! calling it a failure would send an operator to re-register a record already in the log.
+//! The `200`-with-an-unusable-body case is the one worth stating: the answer may come from
+//! the service having logged the statement OR from an intermediary or wrong endpoint that
+//! never forwarded it, and this process cannot tell which. That is INDETERMINATE, and
+//! calling it either a failure or a registration would mislead the operator.
 
 use super::super::capability::RegistrationError;
 use super::wire::CAPSULE_ANCHOR_CONTRACT;
@@ -36,8 +37,8 @@ pub(super) enum CapsuleAnchorFault {
     UnexpectedStatus { status: u16 },
     /// A `200` whose body this reader cannot use.
     ///
-    /// The statement is registered — the service said so — and the receipt is lost. Both
-    /// halves matter to an operator, and the message says both.
+    /// Something answered `200`, the receipt is not readable, and whether the statement is
+    /// registered is unknown.
     UnreadableAnswer { detail: &'static str },
 }
 
@@ -68,9 +69,10 @@ pub(super) fn fault_to_error(fault: CapsuleAnchorFault) -> RegistrationError {
         }
         CapsuleAnchorFault::UnreadableAnswer { detail } => {
             RegistrationError::Indeterminate(format!(
-                "{CAPSULE_ANCHOR_CONTRACT}: the service ACCEPTED the statement and its \
-                 answer cannot be read ({detail}), so the statement is registered and this \
-                 run does not hold the receipt",
+                "{CAPSULE_ANCHOR_CONTRACT}: the submission was answered 200 but the \
+                 answer cannot be read ({detail}); a 200 that carries no readable receipt \
+                 does not show the statement reached the log, so it may or may not be \
+                 registered and this run holds no receipt",
             ))
         }
     }
@@ -80,6 +82,7 @@ pub(super) fn fault_to_error(fault: CapsuleAnchorFault) -> RegistrationError {
 pub(super) fn fault_for_status(status: u16) -> CapsuleAnchorFault {
     match status {
         429 => CapsuleAnchorFault::RateLimited { status },
+        408 | 409 | 425 => CapsuleAnchorFault::UnexpectedStatus { status },
         400..=499 => CapsuleAnchorFault::Refused { status },
         500..=599 => CapsuleAnchorFault::Unavailable { status },
         _ => CapsuleAnchorFault::UnexpectedStatus { status },
@@ -106,6 +109,15 @@ mod tests {
             fault_to_error(fault_for_status(429)),
             RegistrationError::Throttled(_)
         ));
+        for status in [408, 409, 425] {
+            assert!(
+                matches!(
+                    fault_to_error(fault_for_status(status)),
+                    RegistrationError::Indeterminate(_)
+                ),
+                "{status}: the service may hold the statement",
+            );
+        }
         for status in [500, 502, 503, 504] {
             assert!(
                 matches!(
@@ -117,7 +129,8 @@ mod tests {
         }
     }
 
-    /// A `200` this reader cannot parse means REGISTERED and no receipt — never "failed".
+    /// A `200` this reader cannot parse means UNKNOWN and no receipt — neither "failed" nor
+    /// "registered".
     #[test]
     fn an_accepted_submission_with_an_unreadable_answer_is_indeterminate_and_says_so() {
         let error = fault_to_error(CapsuleAnchorFault::UnreadableAnswer {
@@ -125,7 +138,9 @@ mod tests {
         });
         assert!(matches!(error, RegistrationError::Indeterminate(_)));
         let text = error.to_string();
-        assert!(text.contains("ACCEPTED"), "{text}");
+        assert!(text.contains("answered 200"), "{text}");
+        assert!(!text.contains("is registered"), "{text}");
+        assert!(!text.contains("ACCEPTED"), "{text}");
         assert!(text.contains("may be registered"), "{text}");
     }
 

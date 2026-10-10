@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "Found by the missing-edge pass rather than by inspecting the registry: R1 quantifies over the\npre-dispatch obligations a validated deployment selects, and this is one \u2014 it gates the\ncontinuation stage, the forwarded body and the choice of terminal \u2014 yet no node in the tree\nstated it. The authority, its contract and its battery all already existed; what did not\nexist was the claim. The same shape as the replay omission THM-0079 closed.\n\nTwo halves. The VOCABULARY half is the owner's own: which bodies are messages, which answers\ncorrelate, and the two ways a correlation could be faked \u2014 a null id, and a reply that is also\na request. The SINGLE-DECISION half lives in a second unit,\nbecause the two halves are in different Bazel packages and a unit's test lane runs in one \u2014\na split the authorities agree with, since the vocabulary is the profile's and the single\ndecision is the serving path's. It is evidence rather than unconstructibility: `OutstandingId` has\none producer, `validate_request_envelope`, so a second answer can only come from asking it\nagain; what is held is that the serving path does not ask the same document twice, and that it\ncarries the decided value to its terminal.\n\nIt does not establish that the METHOD named is one this deployment serves, which is\nauthorization's, nor anything about the body's application payload, which the profile\ndeliberately does not inspect.\n",
+      "old": "Found by the missing-edge pass rather than by inspecting the registry: R1 quantifies over the\npre-dispatch obligations a validated deployment selects, and this is one \u2014 it gates the\ncontinuation stage, the forwarded body and the choice of terminal \u2014 yet no node in the tree\nstated it. The authority, its contract and its battery all already existed; what did not\nexist was the claim. The same shape as the replay omission THM-0079 closed.\n\nTwo halves. The VOCABULARY half is the owner's own: which bodies are messages, which answers\ncorrelate, and the two ways a correlation could be faked \u2014 a null id, and a reply that is also\na request. The SINGLE-DECISION half lives in a second unit,\nbecause the two halves are in different Bazel packages and a unit's test lane runs in one \u2014\na split the authorities agree with, since the vocabulary is the profile's and the single\ndecision is the serving path's. It is evidence rather than unconstructibility: `outstanding_id` is a published API with legitimate\ncallers on the client side and in the response validator, so it cannot be deleted to make a\nsecond read unavailable; what is held is that the serving path does not ask the same document\ntwice, and that it carries the decided value to its terminal.\n\nIt does not establish that the METHOD named is one this deployment serves, which is\nauthorization's, nor anything about the body's application payload, which the profile\ndeliberately does not inspect.\n",
+      "reason": "THM-0083, in this theorem's dependency closure, field scope. Owner-ratified correction (Ruling 13, owner-signature:outstanding-id-single-reader, sha256 c6c4b547\u2026, commit a026bb78): the sentence calling `outstanding_id` a published API with legitimate callers was false \u2014 it had none \u2014 and `outstanding_id` is now deleted and `OutstandingId` sealed with `validate_request_envelope` as its only producer. The sentence now states the sole-producer fact. THM-0083's statement and every other scope clause are byte-identical; the single-decision promise is unchanged and its evidence is stronger."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is unchanged. The dependency digest moved solely because the claim digest of a theorem in the closure moved.",
+  "from_fingerprint": "sha256:06584e94261de88b2e0393bdc68b83b414857a7d5f1941a277274f4db988869b",
+  "packet": "docs/security/owner-approvals-2026-10-04.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION from an owner-ratified scope correction to THM-0083. THM-0074's own statement, security_consequence and scope are byte-identical to the text at the previous link of its correction chain; only the dependency digest moved. The corrected THM-0083 sentence removes a false statement about the API surface and does not weaken, remove or expand what THM-0083 or THM-0074 promise.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5 (corrections that preserve the ratified promise are not owner escalations), applied to a dependency edit the owner ratified in OWNER-RULINGS.md Ruling 13 (bounded ratification of the sign-offs, docs/security/owner-approvals-2026-10-04.jsonl). A correction record is not an approval: it does not make the specification-review axis fresh, and release-mode establishment still asks for the owner.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0074",
+  "to_fingerprint": "sha256:346a67b98aae8be8593caedd0bcb6ee1c239fd0cc018ccff2cb2f609c93b327d"
+}

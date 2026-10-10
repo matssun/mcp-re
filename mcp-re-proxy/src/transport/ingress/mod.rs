@@ -35,6 +35,7 @@
 //! that.
 
 mod v2;
+mod v2_binding_refusal;
 mod v2_wire;
 
 pub use v2::AttestedCertVerification;
@@ -43,14 +44,19 @@ pub use v2::AttestedRevocation;
 pub use v2::LbAssertionV2;
 pub use v2::LbAssertionV2Binding;
 pub use v2::LbAssertionV2Rejection;
+pub use v2_binding_refusal::LbAssertionV2BindingRefusal;
 
+use mcp_re_core::MaxClockSkew;
 use mcp_re_core::VerificationKey;
 
-/// The default freshness window (seconds) for an LB ingress assertion: how far the
-/// assertion's `validation_time` may lag behind the node's `now_unix` and still be
+/// The default freshness window for an LB ingress assertion: how far the assertion's
+/// `validation_time` may sit from the node's `now_unix`, either way, and still be
 /// accepted. Small by design — the attestor signs the assertion at the moment it admits
 /// the request, so a legitimate assertion reaches the node within seconds.
-pub const DEFAULT_LB_ASSERTION_MAX_AGE_SECS: i64 = 30;
+pub const DEFAULT_LB_ASSERTION_MAX_AGE: MaxClockSkew = match MaxClockSkew::new(30) {
+    Some(window) => window,
+    None => panic!("30 s is inside the clock-skew bound"),
+};
 
 /// A trusted attestor verification key, addressed by its key id, used to verify
 /// attestor-signed ingress assertions. The key id is the opaque label the LB stamps into the

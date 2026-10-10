@@ -163,7 +163,7 @@ const WORK_SCHEMA = {
     // `undefined !== 0` is true. Every one of those changes was fine.
     gate_verdict: {
       type: 'string',
-      description: 'ok | new-failures | infra | no-baseline | not-run',
+      description: 'ok | size-debt | new-failures | infra | no-baseline | not-run',
     },
     files_touched: { type: 'array', items: { type: 'string' } },
     problem: { type: 'string', description: 'ONLY when something went wrong that the other fields cannot say: one line' },
@@ -224,8 +224,8 @@ function evalPrompt(item, i, tier, model) {
   return [
     'MODE: EVALUATE.',
     'TIER: ' + tier + '.' + (tier === 'cheap'
-      ? '  You may order fixes, mark duplicates, mark superseded and escalate — but you may NOT close a finding as false-positive or accepted-risk. Follow the can\'t-close rule in your definition: set `needs-senior-eval` with a one-line proposal instead, which promotes this file to the senior tier.'
-      : '  You may close a finding as false-positive or accepted-risk, with a one-line reason. If a finding on this file is already `needs-senior-eval`, a cheap evaluator proposed a closure in its note — decide it.'),
+      ? '  You may order fixes, mark duplicates, mark superseded and escalate — but you may NOT close a finding as false-positive or premise. Follow the can\'t-close rule in your definition: set `needs-senior-eval` with a one-line proposal instead, which promotes this file to the senior tier.'
+      : '  You may close a finding as false-positive, or as premise naming its registered ASM, with a one-line reason. A real defect is never closed: order it as work or escalate it. If a finding on this file is already `needs-senior-eval`, a cheap evaluator proposed a closure in its note — decide it.'),
     'This file was tiered ' + item.eval_tier + ' because: ' + (item.eval_tier_reason || 'n/a') + '.',
     RULINGS.length ? 'BINDING owner rulings — read the parts that touch this file before disposing anything; never re-open one: ' + RULINGS.join(', ') : '',
     '',
@@ -242,7 +242,7 @@ function evalPrompt(item, i, tier, model) {
     'These came from an UNVERIFIED Stage-2 review. Confirm or refute each from source; anchor on the evidence excerpt, never the line number.',
     '',
     'STEP 2 — write the package (the schema in your definition) to: ' + pkgPath(i),
-    '  Exactly the schema in your definition, written once. `disposed[]` carries a one-line `reason` ONLY for false-positive, accepted-risk, escalated and needs-senior-eval; a duplicate carries `duplicate_of` and nothing else. `work[]` items: id (or `finding_ids`), anchor, change, accept, standard. Nothing more.',
+    '  Exactly the schema in your definition, written once. `disposed[]` carries a one-line `reason` ONLY for false-positive, premise, escalated and needs-senior-eval; a duplicate carries `duplicate_of` and nothing else. `work[]` items: id (or `finding_ids`), anchor, change, accept, standard. Nothing more.',
     '  WHEN YOU ESCALATE, GROUP IT: give escalations that one architectural decision would discharge together the same `ruling` id. 30 escalations collapsing onto 4 questions is 4 decisions, not 30. Invent a stable, descriptive id if none exists yet.',
     '',
     'STEP 3 — apply it with ONE call. It validates the whole package against the ledger (every actionable finding covered, reasons present, tier rules) and writes NOTHING if anything is wrong; otherwise it writes every ledger disposition, every `close` event, the `evaluate` event with counts DERIVED from your identities, and ' + (evalOnly ? 'the `dry-run` terminal event (' + (DRY ? 'dry run' : 'platform tier: no worker runs until a human rules') + ')' : 'the `no-code-change` terminal event when work=0') + ':',
@@ -284,7 +284,7 @@ function workPrompt(item, i, model) {
       (item.file.endsWith('.py') ? ' --pyright-baseline-errors ' + PYRIGHT_BASELINE : '') +
       ' --touched <comma-separated files you edited> --applied <n> --not-applied <n> --tests-added <n>' +
       (item.file.endsWith('.rs') ? ' --it <comma-separated integration-test targets (tests/<name>.rs) your accept criteria name; omit when none>' : ''),
-    '  It prints `gate_verdict` (new-failures > infra > no-baseline > ok), each gate\'s result, and any prescan hit on a touched or related file. Judge a prescan hit yourself: it may predate your change.',
+    '  It prints `gate_verdict` (new-failures > infra > no-baseline > size-debt > ok), each gate\'s result, and any prescan hit on a touched or related file. Judge a prescan hit yourself: it may predate your change.',
     '  Do NOT call `progress.py`, `bazel_gate.py`, `rust_gate.py`, Bazel, pyright or prescan separately.',
     '  On `new-failures` check.py has ALREADY saved your change as a patch and reverted it; the tree is clean. Report and stop — do not re-apply.',
     '',

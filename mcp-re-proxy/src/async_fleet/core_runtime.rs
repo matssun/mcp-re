@@ -21,7 +21,7 @@
 
 use super::shard_depth::DelegatedTlsDepthRefusal;
 use super::shard_depth::ShardDepth;
-use crate::tls::ServerOptions;
+use crate::config_state::PrivateKeyExposure;
 
 /// Worker threads a core is given when the TLS handshake signature can block and the
 /// operator stated no depth of their own.
@@ -117,18 +117,23 @@ impl CorePool {
     /// The share-nothing default is unchanged for the exported-key path, where signing is
     /// in-memory and never blocks. A configured pool depth gives the shard a work-stealing
     /// runtime; see `FleetConfig::workers_per_shard` for why depth beats shard count.
+    ///
+    /// The custody is the served snapshot's
+    /// ([`ServerConfigSnapshot::key_exposure`](crate::config_snapshot::ServerConfigSnapshot::key_exposure)),
+    /// so the shape is decided by the key the handshakes will actually sign with.
     pub fn for_core(
         workers_per_shard: ShardDepth,
-        options: &ServerOptions,
+        key_exposure: PrivateKeyExposure,
     ) -> Result<Self, DelegatedTlsDepthRefusal> {
+        let tls_signing_may_block = key_exposure == PrivateKeyExposure::NonExporting;
         let stated_single_thread =
             workers_per_shard.is_operator_stated() && workers_per_shard.get() <= 1;
-        if options.tls_signing_may_block && stated_single_thread {
+        if tls_signing_may_block && stated_single_thread {
             return Err(DelegatedTlsDepthRefusal);
         }
         let workers = if workers_per_shard.get() > 1 {
             Some(workers_per_shard.get())
-        } else if options.tls_signing_may_block {
+        } else if tls_signing_may_block {
             Some(DELEGATED_TLS_WORKERS_PER_CORE)
         } else {
             None
@@ -137,7 +142,7 @@ impl CorePool {
         // what is being computed, and on this arm `depth >= 2` (a stated depth reaches it
         // only when it exceeds 1, and the override is 4), so nothing saturates.
         let handshakes = match workers {
-            Some(depth) if options.tls_signing_may_block => Some(
+            Some(depth) if tls_signing_may_block => Some(
                 depth
                     .saturating_sub(1)
                     .min(DELEGATED_TLS_HANDSHAKES_PER_CORE),
@@ -192,15 +197,16 @@ impl CorePool {
 mod tests {
     use super::*;
 
-    fn options(tls_signing_may_block: bool) -> ServerOptions {
-        ServerOptions {
-            tls_signing_may_block,
-            ..Default::default()
+    fn custody(may_block: bool) -> PrivateKeyExposure {
+        if may_block {
+            PrivateKeyExposure::NonExporting
+        } else {
+            PrivateKeyExposure::ProcessReadable
         }
     }
 
     fn pool(depth: ShardDepth, may_block: bool) -> CorePool {
-        CorePool::for_core(depth, &options(may_block)).expect("a shape this deployment has")
+        CorePool::for_core(depth, custody(may_block)).expect("a shape this deployment has")
     }
 
     // ------------------------------------------------------------------
@@ -226,14 +232,14 @@ mod tests {
     #[test]
     fn delegated_custody_with_a_stated_single_thread_is_refused() {
         assert!(matches!(
-            CorePool::for_core(ShardDepth::stated(1), &options(true)),
+            CorePool::for_core(ShardDepth::stated(1), custody(true)),
             Err(DelegatedTlsDepthRefusal)
         ));
         // A stated 0 is the same request written the other way and is refused identically:
         // the resolver never produces it, and a caller that hand-built one must not find a
         // gap where the refusal is not.
         assert!(matches!(
-            CorePool::for_core(ShardDepth::stated(0), &options(true)),
+            CorePool::for_core(ShardDepth::stated(0), custody(true)),
             Err(DelegatedTlsDepthRefusal)
         ));
     }
@@ -332,9 +338,9 @@ mod tests {
     /// happens to mention custody.
     #[test]
     fn neither_half_of_the_refused_pair_refuses_on_its_own() {
-        assert!(CorePool::for_core(ShardDepth::stated(1), &options(false)).is_ok());
-        assert!(CorePool::for_core(ShardDepth::derived(1), &options(true)).is_ok());
-        assert!(CorePool::for_core(ShardDepth::stated(1), &options(true)).is_err());
+        assert!(CorePool::for_core(ShardDepth::stated(1), custody(false)).is_ok());
+        assert!(CorePool::for_core(ShardDepth::derived(1), custody(true)).is_ok());
+        assert!(CorePool::for_core(ShardDepth::stated(1), custody(true)).is_err());
     }
 
     /// A delegated-TLS core that IS admitted always gets a pool and always gets a bound —

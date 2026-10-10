@@ -31,6 +31,26 @@ use mcp_re_core::ReplayDecision;
 const SEP: char = '\u{1f}';
 
 /// The five components of an HTTP-profile replay key.
+///
+/// The fields are `pub` because the PROVER requires it: Verus refuses
+/// `external_type_specification` on a datatype with non-public fields, and
+/// `prepare_http_dispatch`, a proved function, builds this value by struct literal. So
+/// another crate can write one. What it cannot do is use one: the projection onto the
+/// tier's [`ReplayKey`] and the synchronous admission are crate-private, and the only
+/// public way to a [`ReplayKey`] is [`PreparedDispatch::to_replay_key`](crate::PreparedDispatch::to_replay_key),
+/// whose key the preparation built from the verified product.
+///
+/// ```compile_fail
+/// fn forge(key: &mcp_re_http_profile::HttpReplayKey) -> mcp_re_http_profile::replay::ReplayKey {
+///     key.to_replay_key(0)
+/// }
+/// ```
+///
+/// ```compile_fail
+/// fn admit(key: &mcp_re_http_profile::HttpReplayKey, cache: &mcp_re_core::InMemoryReplayCache) {
+///     let _ = key.check_and_insert(cache, 0);
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpReplayKey {
     /// The signed profile id (`mcp-re-http-v1`).
@@ -79,12 +99,16 @@ impl HttpReplayKey {
         &self.audience_hash
     }
 
-    /// Check-and-insert this key against a shared cache tier. `expires_at_unix`
+    /// Check-and-insert this key against a synchronous cache tier. `expires_at_unix`
     /// is the RFC 9421 `expires` value; the tier adds its own clock skew to
     /// compute retention. Fail-closed: an operational cache failure surfaces as
     /// [`ReplayCacheError`] (mapped to `replay_cache_unavailable` upstream),
     /// never as an admit.
-    pub fn check_and_insert(
+    ///
+    /// Crate-private: its one caller is [`crate::dispatch_request`], which reaches it only
+    /// after [`DispatchConfig::admit_replay_tier`](crate::DispatchConfig::admit_replay_tier)
+    /// has decided the cache's durability class may be admitted against.
+    pub(crate) fn check_and_insert(
         &self,
         cache: &dyn ReplayCache,
         expires_at_unix: i64,
@@ -97,21 +121,22 @@ impl HttpReplayKey {
         )
     }
 
-    /// Project this five-tuple onto the core [`mcp_re_core::ReplayKey`] the
-    /// AUTHORITATIVE async replay tier (ADR-MCPRE-051 §4) consumes.
+    /// Project this five-tuple onto the [`ReplayKey`] the AUTHORITATIVE async replay tier
+    /// (ADR-MCPRE-051 §4) consumes. The one constructor of a [`ReplayKey`]: the burn
+    /// identity and the budget identity are both derived here from the one five-tuple, so
+    /// no caller can supply either. Crate-private, because this five-tuple's fields are
+    /// writable by any crate; [`PreparedDispatch::to_replay_key`](crate::PreparedDispatch::to_replay_key)
+    /// is the public way in, over the key the preparation built.
     ///
-    /// The async tier (`AsyncReplayTier::check_and_insert`) derives its store key
-    /// from `(signer, audience, nonce)` via the same `composite_replay_key`
-    /// serialization the sync [`ReplayCache`] uses, so feeding it the injective
-    /// composite slots ([`signer_slot`](Self::signer_slot) /
-    /// [`audience_slot`](Self::audience_slot)) yields a store key BYTE-IDENTICAL to
-    /// the sync path — the HTTP-profile serving path awaits the same authoritative
-    /// tier the object path did, with the profile id + signature label folded into
-    /// the signer slot so evidence from a different profile/role can never satisfy
-    /// another's replay check. `expires_at_unix` is the RFC 9421 `expires`
-    /// parameter (the tier folds its own clock skew onto it).
-    pub fn to_core_replay_key(&self, expires_at_unix: i64) -> mcp_re_core::ReplayKey {
-        mcp_re_core::ReplayKey {
+    /// The async tier derives its store key from `(signer, audience, nonce)` via the same
+    /// `composite_replay_key` serialization the sync [`ReplayCache`] uses, so feeding it
+    /// the injective composite slots yields a store key BYTE-IDENTICAL to the sync path,
+    /// with the profile id and signature label folded into the signer slot so evidence from
+    /// a different profile/role can never satisfy another's replay check.
+    /// `expires_at_unix` is the RFC 9421 `expires` parameter (the tier folds its own clock
+    /// skew onto it).
+    pub(crate) fn to_replay_key(&self, expires_at_unix: i64) -> ReplayKey {
+        ReplayKey {
             signer: self.signer_slot(),
             principal: self.principal_slot(),
             audience: self.audience_slot().to_owned(),
@@ -121,10 +146,60 @@ impl HttpReplayKey {
     }
 }
 
+/// What the authoritative async replay tier needs to burn a nonce and charge its retention:
+/// the `(signer, audience, nonce)` logical identity of the active profile plus the parsed
+/// `expires_at`. Its representation is private and [`HttpReplayKey::to_replay_key`] is its
+/// only constructor, reached from outside this crate only through a prepared dispatch, so the burn identity and the budget identity cannot be supplied
+/// independently by a caller; the tier reads them through the projections.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayKey {
+    signer: String,
+    principal: String,
+    audience: String,
+    nonce: String,
+    expires_at_unix: i64,
+}
+
+impl ReplayKey {
+    /// The composite signer slot `profile ⟴ label ⟴ actor_id`. It carries the keyid, so two
+    /// keys of one subject never collapse onto one replay key.
+    pub fn signer(&self) -> &str {
+        &self.signer
+    }
+
+    /// The verified PRINCIPAL the entry is accounted to: the signer slot with the keyid
+    /// dropped. An occupancy budget charged per key would hand a subject one budget per key
+    /// it holds, which is routine during rotation.
+    pub fn principal(&self) -> &str {
+        &self.principal
+    }
+
+    /// The audience slot (the opaque audience hash).
+    pub fn audience(&self) -> &str {
+        &self.audience
+    }
+
+    /// The RFC 9421 `nonce`.
+    pub fn nonce(&self) -> &str {
+        &self.nonce
+    }
+
+    /// The RAW parsed `expires_at` (Unix seconds), pre-skew-fold: the tier folds in the
+    /// clock skew when it derives the store retention.
+    pub fn expires_at_unix(&self) -> i64 {
+        self.expires_at_unix
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use mcp_re_core::InMemoryReplayCache;
+    use mcp_re_core::MaxClockSkew;
+
+    fn no_skew() -> MaxClockSkew {
+        MaxClockSkew::new(0).expect("0 s is inside the bound")
+    }
 
     /// Mutates one component of a replay key, to check that component discriminates.
     type KeyMutator = fn(&mut HttpReplayKey);
@@ -148,7 +223,7 @@ mod tests {
 
     #[test]
     fn first_insert_is_fresh_replay_is_detected() {
-        let cache = InMemoryReplayCache::new(0);
+        let cache = InMemoryReplayCache::new(no_skew());
         assert_eq!(admit(&cache, &key()), ReplayDecision::Fresh);
         assert_eq!(admit(&cache, &key()), ReplayDecision::Replay);
     }
@@ -169,7 +244,7 @@ mod tests {
             ("nonce", |k| k.nonce = "nonce-2".into()),
         ];
         for (name, mutate) in variants {
-            let cache = InMemoryReplayCache::new(0);
+            let cache = InMemoryReplayCache::new(no_skew());
             assert_eq!(admit(&cache, &key()), ReplayDecision::Fresh, "{name}: seed");
             let mut other = key();
             mutate(&mut other);
@@ -186,9 +261,9 @@ mod tests {
     /// byte-identical composite key — the HTTP profile natively reuses the standard
     /// §4 replay tier, no separate keyspace.
     #[test]
-    fn core_replay_key_carries_the_same_injective_slots() {
+    fn the_replay_key_carries_the_same_injective_slots() {
         let k = key();
-        let core = k.to_core_replay_key(EXPIRES);
+        let core = k.to_replay_key(EXPIRES);
         assert_eq!(
             core.signer,
             "mcp-re-http-v1\u{1f}mcp-re\u{1f}host:example.com:did%3Aexample%3Ahost:client-key-1"
@@ -246,7 +321,7 @@ mod tests {
         ];
 
         // ONE cache, so a later row colliding with an earlier one is detected as a replay.
-        let cache = InMemoryReplayCache::new(0);
+        let cache = InMemoryReplayCache::new(no_skew());
         for (profile_id, signature_label, actor_id, boundary) in boundary_shifted {
             let k = HttpReplayKey {
                 profile_id: profile_id.into(),

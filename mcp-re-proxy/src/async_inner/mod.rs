@@ -65,15 +65,16 @@
 //! decided where refusing is still free.
 
 mod completion_bound;
+mod in_process;
 mod outcome;
 
 pub use completion_bound::DispatchCompletionBound;
+pub use in_process::InProcessInner;
 pub use outcome::DispatchedOutcome;
 pub use outcome::NotAdmitted;
 
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Duration;
 
 /// The boxed, `Send` future a committed dispatch resolves through.
 pub type InnerResponseFuture<'a> = Pin<Box<dyn Future<Output = DispatchedOutcome> + Send + 'a>>;
@@ -163,8 +164,9 @@ pub trait AsyncInnerServer: Send + Sync {
 
 /// Any `Fn(&[u8]) -> Vec<u8>` is an async inner server that always replies: the
 /// (synchronous) closure is evaluated when the dispatch is committed and its result
-/// returned as a ready future. Ergonomic for tests and embedding — an in-process echo/stub
-/// inner plugs into the async path without a bespoke type. Real transports (the `hyper`
+/// returned as a ready future. The closure states no completion bound, and the serving
+/// path refuses an `Unstated` plane before dispatch; a caller that can bound its closure
+/// wraps it in [`InProcessInner`] to state that bound. Real transports (the `hyper`
 /// pool) implement the trait directly, genuinely await I/O, and can report the other two
 /// outcomes.
 ///
@@ -181,12 +183,12 @@ where
             let response = self(&request);
             Box::pin(async move { DispatchedOutcome::Replied(response) }) as InnerResponseFuture<'a>
         };
-        // ZERO, and measured rather than assumed: the closure is evaluated synchronously
-        // inside `dispatch` and the future it returns is already ready, so the dispatch
-        // cannot still be running at any later instant. An in-process inner IS the backend;
-        // there is no transport to be slow.
-        let completion = DispatchCompletionBound::Within(Duration::ZERO);
-        Ok(PreparedInnerDispatch::over(transmit, completion))
+        // An arbitrary closure's running time is bounded by nothing this type sees, so it
+        // states no bound.
+        Ok(PreparedInnerDispatch::over(
+            transmit,
+            DispatchCompletionBound::Unstated,
+        ))
     }
 }
 
@@ -223,6 +225,19 @@ mod tests {
             .expect("a closure inner always prepares");
         let out = prepared.dispatch().await;
         assert!(matches!(out, DispatchedOutcome::Replied(_)));
+    }
+
+    /// A closure cannot bound its own running time, so it says `Unstated`.
+    #[test]
+    fn a_closure_inner_states_no_completion_bound() {
+        let inner = |_: &[u8]| b"{}".to_vec();
+        let prepared = inner
+            .prepare(b"{}")
+            .expect("a closure inner always prepares");
+        assert_eq!(
+            prepared.completion_bound(),
+            DispatchCompletionBound::Unstated
+        );
     }
 
     /// Preparing must not run the backend.

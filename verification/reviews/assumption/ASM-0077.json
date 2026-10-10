@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:2c4008f70a4c379b7dcd0bbef2f0912980f5707e4d71b308f9b48399e30c8667"
+  },
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0077-ruling-40-step-6-step-7 (docs/security/owner-approvals-2026-10-08.jsonl, entry-text sha256 d77a382bb9e7913faf3b4c58dcc19764a75a263e07e9d93b6fae793cce11ec08), which signs this entry's current text. Authority: Ruling 40 step 6 ratified by the owner at 56aa0799, 2026-10-08, step 7 authorization",
+  "reviewed_fingerprint": "sha256:2c4008f70a4c379b7dcd0bbef2f0912980f5707e4d71b308f9b48399e30c8667",
+  "reviewer": "mats@sundvall.name",
+  "subject": "ASM-0077"
+}

@@ -93,7 +93,7 @@ The `RequestHeaders` **duplicate-count contract**. `assertion_header` and `valid
 
 **`TransportBindingProvider` and `StaticIdentityProvider`.** Both `pub` and re-exported at the crate root. `StaticIdentityProvider` is the only implementor of the trait anywhere in the workspace, its doc says "Useful in tests and as a degenerate provider", and no production path calls `verified_identity`. A seam with one test-only implementor is a seam nothing crosses. **CLOSED by RA3-002:** both are deleted, with the crate-root exports and the single fixture control; NP-186 is retired with them.
 
-`LbAssertionV2Binding` is also `pub` and crate-root re-exported with no production constructor — but it is a **deferred capability**, not a test artefact, and is classified as such below.
+`LbAssertionV2Binding` is also `pub`, reachable at `transport::ingress` (no longer re-exported at the crate root), and built only by the Mode-C materializer — a **deferred capability**, not a test artefact, and classified as such below. Its trust set is fixed at construction: `new` takes the keys, identities and `MaxClockSkew` freshness window together and has no mutator (`proxy.mode_c_trust_set`).
 
 ### 9. What branches are unreachable under the current legality model?
 

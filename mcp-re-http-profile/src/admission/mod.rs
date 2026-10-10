@@ -38,6 +38,7 @@ use sha2::Digest;
 use sha2::Sha256;
 
 use crate::admission_policy::AdmissionPolicy;
+use crate::admission_policy::{assertion_age_exceeded, degraded_age_exceeded};
 use crate::authoritative_admission::AuthoritativeAdmission;
 use crate::block::BindingType;
 use crate::delegation::Audience;
@@ -54,10 +55,12 @@ pub const ADMISSION_TYP: &str = "mcp-re-admission+jws";
 
 /// The JWS `alg` — EdDSA, as everywhere in this profile.
 pub const ADMISSION_ALG: &str = "EdDSA";
+/// Raw Ed25519 signature octets; the external `sign_root` seam must return exactly this.
+const ED25519_SIGNATURE_LEN: usize = 64;
 
-/// Admission status (§4.3). Only `Admitted` permits a call to proceed; the others
-/// are distinct so a rejection can say WHY, and so a suspended workload (a
-/// recoverable state) is not conflated with a revoked one (terminal).
+/// Admission status (§4.3). Only `Admitted` permits a call to proceed. `Suspended`
+/// (recoverable) and `Revoked` (terminal) are distinct in the signed artifacts; every
+/// refusal reports either as not current.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AdmissionStatus {
     /// The workload is admitted and may act.
@@ -205,8 +208,11 @@ pub struct VerifiedAdmission {
     pub status: AdmissionStatus,
 }
 
+mod authenticated;
 mod verdict;
 
+pub use authenticated::authenticate_admission;
+pub use authenticated::AuthenticatedAdmission;
 pub use verdict::AdmissionVerdict;
 
 /// Issue a signed admission assertion (compact JWS), signing with the authority
@@ -221,16 +227,14 @@ pub fn issue_admission_assertion(
         alg: ADMISSION_ALG.to_owned(),
         kid: claims.issuer_kid.clone(),
     };
-    let h = b64url_encode(
-        &serde_json::to_vec(&header)
-            .map_err(|_| HttpProfileError::MalformedEvidence("admission header"))?,
-    );
-    let p = b64url_encode(
-        &serde_json::to_vec(claims)
-            .map_err(|_| HttpProfileError::MalformedEvidence("admission claims"))?,
-    );
-    let signing_input = format!("{h}.{p}");
-    let sig = sign_root(signing_input.as_bytes())?;
+    let refuse = |what: &'static str| HttpProfileError::MalformedEvidence(what);
+    let unformable = |_| refuse("admission assertion");
+    let h = b64url_encode(&serde_json::to_vec(&header).map_err(unformable)?);
+    let p = b64url_encode(&serde_json::to_vec(claims).map_err(unformable)?);
+    let sig = sign_root(format!("{h}.{p}").as_bytes())?;
+    if sig.len() != ED25519_SIGNATURE_LEN {
+        return Err(refuse("admission signature length"));
+    }
     Ok(format!("{h}.{p}.{}", b64url_encode(&sig)))
 }
 
@@ -260,10 +264,10 @@ fn decode_json<T: for<'de> Deserialize<'de>>(seg: &str) -> Result<T, HttpProfile
 /// wrong `typ`/`alg`, an untrusted issuer, a bad signature, an assertion outside
 /// `[nbf, exp]` (± skew), or one older than the policy's `max_assertion_age`.
 // ADR-MCPRE-059 ASM-0012: opaque to the currency theorem, and deliberately WITHOUT an
-// `ensures`. The §7 property below is established entirely by `check_admission`'s own
-// comparisons, so this function contributes no postcondition to it — assuming one here
-// would be assuming the freshness result rather than proving it. Its own freshness
-// obligations are a separate unit, not this one's.
+// `ensures`. The §7 properties are established entirely by `authenticate_admission`'s and
+// `check_admission`'s own comparisons, so this function contributes no postcondition to
+// them — assuming one here would be assuming the freshness result rather than proving it.
+// Its own freshness obligations are a separate unit, not this one's.
 #[cfg_attr(feature = "verify", verus_verify(external_body))]
 fn verify_admission_assertion(
     compact_jws: &str,
@@ -305,12 +309,11 @@ fn verify_admission_assertion(
     // Freshness: within [nbf, exp] ± skew, AND not older than the declared budget
     // N (§5.2). The TTL alone is the issuer's choice; N is the verifier's own cap
     // on how stale a snapshot it will act on.
-    // SATURATING throughout, matching the primary freshness gate (verify.rs). These
-    // operands come straight out of a JWS payload, so `now - claims.iat` with an
-    // extreme `iat` wraps in a release build — silently passing the staleness cap the
-    // expression exists to enforce — and panics on the serving path in any build with
-    // overflow checks. Two divergent implementations of one window is the bug; this is
-    // the audited form.
+    // These operands come straight out of a JWS payload, so a bare `now - claims.iat`
+    // with an extreme `iat` wraps in a release build and panics in any build with
+    // overflow checks. The window is SATURATING, matching the primary freshness gate
+    // (verify.rs); the age against N is compared exactly by `assertion_age_exceeded`,
+    // because a saturating age clamps to the same `i64::MAX` a saturating budget does.
     let skew = policy.max_clock_skew;
     if claims.nbf.saturating_sub(skew) > now
         || claims.exp.saturating_add(skew) <= now
@@ -321,12 +324,10 @@ fn verify_admission_assertion(
     // An `iat` ahead of the verifier is refused outright. `iat` is an independent claim
     // from `[nbf, exp]`, and BOTH age computations that bound how stale a snapshot may be
     // — the N cap here and the §5.2 degraded P window in `check_admission` — are
-    // `now - iat` under saturation, so a future issuance floors both at zero and passes
-    // them for the assertion's whole TTL. The skew term is the same tolerance the window
-    // above gets, no wider.
-    if now.saturating_sub(claims.iat) > policy.max_assertion_age.saturating_add(skew)
-        || claims.iat > now.saturating_add(skew)
-    {
+    // `now - iat` against an upper bound only, so a future issuance makes both ages
+    // negative and passes them for the assertion's whole TTL. The skew term is the same
+    // tolerance the window above gets, no wider.
+    if assertion_age_exceeded(policy, now, claims.iat) || claims.iat > now.saturating_add(skew) {
         return Err(HttpProfileError::AdmissionAssertionExpired);
     }
     Ok(claims)
@@ -339,25 +340,26 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
     Ok(b64url_encode(&bytes))
 }
 
-/// The full §7 admission check: verify the assertion, verify the call's binding
-/// commits to it, then the CURRENCY check against the authoritative state.
+/// The §7 CURRENCY check: compare an [`AuthenticatedAdmission`] against the authoritative
+/// state the PEP looked up under [`AuthenticatedAdmission::admission_id`].
 ///
-/// `authoritative` is what the PEP holds for `binding.admission_id` right now (fed
-/// by Layer 1). `None` means the authoritative state is unreachable — the
-/// degraded-mode fork.
+/// Authentication is [`authenticate_admission`]'s and happens first: this takes its product
+/// and nothing the caller can assert, so the lookup that feeds `authoritative` cannot have
+/// been keyed on an identity nobody verified.
+///
+/// `authoritative` is what the PEP holds for that workload right now (fed by Layer 1).
+/// `None` means the authoritative state is unreachable — the degraded-mode fork.
 ///
 /// Fail-closed rules:
-///   - the binding's `admission_id` must match the assertion, and the binding must
-///     commit to the assertion's admitted-state digest;
 ///   - **subject**: the authoritative state must be about that same `admission_id`;
 ///   - **currency**: the bound generation must equal the authoritative generation.
 ///     An OLDER bound generation is a call from a workload whose admission has been
 ///     superseded — stale, rejected, even though its assertion has not expired;
-///   - status must be `Admitted` in BOTH the assertion and the authoritative state;
+///   - status must be `Admitted` in the authoritative state (the assertion's own status
+///     was checked by authentication);
 ///   - authoritative state unreachable → reject, UNLESS degraded mode is enabled
 ///     AND the assertion is within the P bound, in which case serve on the
 ///     assertion's own status and mark the verdict degraded.
-#[allow(clippy::too_many_arguments)]
 // ADR-MCPRE-059 §7 currency theorem. Each clause is a rule the prose above states and
 // that no test can establish for all inputs:
 //
@@ -369,111 +371,62 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
 //     same number;
 //   * a DEGRADED verdict implies the authoritative state was unreachable AND the
 //     deployment opted in — so no default deployment can reach a degraded admission;
-//   * every verdict carries the binding's own workload id and generation and `Admitted`,
-//     so the value the caller acts on cannot describe a different call than the one that
-//     was checked. The id is a conjunct and not merely a fact about the body because
-//     `VerifiedAdmission::admission_id` is the only workload identity a consumer can
-//     authorize on: a contract silent about it would stay green through a refactor that
-//     returned some other id, or that dropped the id comparison and kept the generation
-//     one;
-//   * the admitted actor IS the presenter, so an assertion describing some admitted
-//     workload cannot authorize a different caller merely because that workload is
-//     admissible. Stated over the verdict rather than left to the body, because the
-//     comparison below is the whole difference between "this caller is admitted" and "an
-//     admitted workload exists somewhere", and a contract silent about it would stay green
-//     through a refactor that dropped it.
+//   * every verdict carries the authenticated workload id, generation and actor, and
+//     `Admitted`, so the value the caller acts on cannot describe a different call than
+//     the one that was authenticated. The id is a conjunct and not merely a fact about the
+//     body because `VerifiedAdmission::admission_id` is the only workload identity a
+//     consumer can authorize on.
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(AdmissionVerdict::Live(v)) ==> {
             &&& v.status == AdmissionStatus::Admitted
-            &&& v.generation == binding.generation
-            &&& v.admission_id@ == binding.admission_id@
-            &&& v.admitted_actor@ == presenter_actor_id@
+            &&& v.generation == authenticated.generation
+            &&& v.admission_id@ == authenticated.admission_id@
+            &&& v.admitted_actor@ == authenticated.admitted_actor@
             &&& authoritative matches Some(state)
             &&& authoritative matches Some(state) ==> (
-                    state.admission_id@ == binding.admission_id@
-                    && binding.generation == state.generation
+                    state.admission_id@ == authenticated.admission_id@
+                    && authenticated.generation == state.generation
                     && state.status == AdmissionStatus::Admitted)
         },
         out matches Ok(AdmissionVerdict::DegradedCandidate(v)) ==> {
             &&& v.status == AdmissionStatus::Admitted
-            &&& v.generation == binding.generation
-            &&& v.admission_id@ == binding.admission_id@
-            &&& v.admitted_actor@ == presenter_actor_id@
+            &&& v.generation == authenticated.generation
+            &&& v.admission_id@ == authenticated.admission_id@
+            &&& v.admitted_actor@ == authenticated.admitted_actor@
             &&& authoritative is None
             &&& policy.allow_degraded_mode
+            &&& now - authenticated.iat
+                    <= policy.degraded_propagation_bound + policy.max_clock_skew
         },
 ))]
 pub fn check_admission(
-    binding: &AdmissionBinding,
-    assertion_jws: &str,
-    presenter_actor_id: &str,
+    authenticated: AuthenticatedAdmission,
     authoritative: Option<&AuthoritativeAdmission>,
-    expected_profile: &str,
-    verifier_audiences: &[&str],
     policy: &AdmissionPolicy,
     now: i64,
-    resolve_issuer: impl Fn(&str) -> Option<VerificationKey>,
 ) -> Result<AdmissionVerdict, HttpProfileError> {
-    let claims = verify_admission_assertion(
-        assertion_jws,
-        expected_profile,
-        verifier_audiences,
-        policy,
-        now,
-        resolve_issuer,
-    )?;
-
-    // The assertion must have been issued TO THIS CALLER. `presenter_actor_id` is the
-    // actor the verifier RESOLVED from the request signature — never anything the
-    // request asserts — so a borrowed assertion names a different actor and is
-    // refused. This is what makes the gate say "this caller is admitted" rather than
-    // "an admitted workload exists somewhere".
-    let presenter = presenter_actor_id.to_owned();
-    if claims.mcp_re_admitted_actor != presenter {
-        return Err(HttpProfileError::AdmissionBindingMismatch);
-    }
-
-    // The call's binding must describe THIS assertion: same workload, same
-    // generation, and committing to the same admitted state. One condition because
-    // there is one refusal — a binding that names another workload and one that
-    // commits to another state are the same fact to a caller, and splitting them
-    // would promise a distinction the error type does not make.
-    if binding.admission_id != claims.mcp_re_admission_id
-        || binding.generation != claims.mcp_re_admission_generation
-        || !binding.matches_state(&claims.mcp_re_admitted_state_digest)
-    {
-        return Err(HttpProfileError::AdmissionBindingMismatch);
-    }
-
-    // The assertion itself must say admitted — a suspended/revoked snapshot never
-    // permits a call, regardless of currency.
-    if claims.mcp_re_admission_status != AdmissionStatus::Admitted {
-        return Err(HttpProfileError::AdmissionNotCurrent);
-    }
-
     match authoritative {
         Some(state) => {
             // FIRST: this state must be ABOUT this workload — see
-            // `crate::authoritative_admission` for why the subject is a member. The
-            // binding's id is already equated with the assertion's above. It is
+            // `crate::authoritative_admission` for why the subject is a member. It is
             // `StateUnavailable` and not a binding mismatch because the mismatch is not
             // the caller's: this PEP has no authoritative state for the call.
-            if state.admission_id != binding.admission_id {
+            if state.admission_id != authenticated.admission_id {
                 return Err(HttpProfileError::AdmissionStateUnavailable);
             }
             // Currency: the bound generation must be the current one. Older = the
             // workload's admission was superseded; the call is stale.
-            if binding.generation != state.generation {
+            if authenticated.generation != state.generation {
                 return Err(HttpProfileError::AdmissionNotCurrent);
             }
             if state.status != AdmissionStatus::Admitted {
                 return Err(HttpProfileError::AdmissionNotCurrent);
             }
             Ok(AdmissionVerdict::Live(VerifiedAdmission {
-                admission_id: claims.mcp_re_admission_id,
-                generation: claims.mcp_re_admission_generation,
-                admitted_actor: claims.mcp_re_admitted_actor,
+                admission_id: authenticated.admission_id,
+                generation: authenticated.generation,
+                admitted_actor: authenticated.admitted_actor,
                 status: AdmissionStatus::Admitted,
             }))
         }
@@ -490,17 +443,13 @@ pub fn check_admission(
             // authority has been unreachable — is elapsed HISTORY this stateless relation
             // cannot see, and it belongs to the stateful enforcer's monotonic window. That
             // is why the arm below is a CANDIDATE.
-            if now.saturating_sub(claims.iat)
-                > policy
-                    .degraded_propagation_bound
-                    .saturating_add(policy.max_clock_skew)
-            {
+            if degraded_age_exceeded(policy, now, authenticated.iat) {
                 return Err(HttpProfileError::AdmissionStateUnavailable);
             }
             Ok(AdmissionVerdict::DegradedCandidate(VerifiedAdmission {
-                admission_id: claims.mcp_re_admission_id,
-                generation: claims.mcp_re_admission_generation,
-                admitted_actor: claims.mcp_re_admitted_actor,
+                admission_id: authenticated.admission_id,
+                generation: authenticated.generation,
+                admitted_actor: authenticated.admitted_actor,
                 status: AdmissionStatus::Admitted,
             }))
         }
@@ -595,19 +544,34 @@ mod tests {
         auth: Option<&AuthoritativeAdmission>,
         pol: &AdmissionPolicy,
     ) -> Result<AdmissionVerdict, HttpProfileError> {
-        let jws = issue(c);
-        let binding = AdmissionBinding::opaque_from(c);
-        check_admission(
-            &binding,
-            &jws,
+        check_as(
+            &AdmissionBinding::opaque_from(c),
+            &issue(c),
             TEST_ACTOR,
             auth,
+            pol,
+        )
+    }
+
+    /// Authentication then currency, the order the serving path runs them in.
+    fn check_as(
+        binding: &AdmissionBinding,
+        jws: &str,
+        presenter: &str,
+        auth: Option<&AuthoritativeAdmission>,
+        pol: &AdmissionPolicy,
+    ) -> Result<AdmissionVerdict, HttpProfileError> {
+        let authenticated = authenticate_admission(
+            binding,
+            jws,
+            presenter,
             crate::ids::PROFILE_TAG,
             &["mcp.example.com"],
             pol,
             NOW,
             resolver(),
-        )
+        )?;
+        check_admission(authenticated, auth, pol, NOW)
     }
 
     #[test]
@@ -621,6 +585,23 @@ mod tests {
             matches!(v, AdmissionVerdict::Live(_)),
             "a confirmed authoritative state is a LIVE verdict, not a candidate"
         );
+    }
+
+    #[test]
+    fn a_signer_returning_a_non_ed25519_signature_is_refused_at_issuance() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        for wrong in [0usize, 63, 65, 71] {
+            assert!(
+                matches!(
+                    issue_admission_assertion(&c, |_| Ok(vec![0u8; wrong])),
+                    Err(HttpProfileError::MalformedEvidence(
+                        "admission signature length"
+                    ))
+                ),
+                "{wrong}"
+            );
+        }
+        assert!(issue_admission_assertion(&c, |_| Ok(vec![0u8; 64])).is_ok());
     }
 
     /// A borrowed assertion. Genuine, current, signed by the real authority, and
@@ -638,16 +619,12 @@ mod tests {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
         let auth =
             AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
-        let err = check_admission(
+        let err = check_as(
             &AdmissionBinding::opaque_from(&c),
             &issue(&c),
             "client:example.com:did:example:host-b:client-key-2",
             Some(&auth),
-            crate::ids::PROFILE_TAG,
-            &["mcp.example.com"],
             &AdmissionPolicy::default(),
-            NOW,
-            resolver(),
         )
         .expect_err("an assertion naming another actor must not admit this one");
         assert!(matches!(err, HttpProfileError::AdmissionBindingMismatch));
@@ -685,20 +662,6 @@ mod tests {
         let own =
             AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         assert!(check(&c, Some(&own), &AdmissionPolicy::default()).is_ok());
-    }
-
-    /// A revoked workload cannot buy the call with a stranger's admitted record. The
-    /// registered security consequence of THM-0004, asked directly.
-    #[test]
-    fn a_revoked_workload_cannot_be_served_on_another_workloads_admitted_record() {
-        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        // The authority has revoked workload-7. workload-9 is admitted at the same
-        // generation, and its record is what the lookup returns.
-        let stranger =
-            AuthoritativeAdmission::new("workload-9".to_owned(), 5, AdmissionStatus::Admitted);
-        let err = check(&c, Some(&stranger), &AdmissionPolicy::default())
-            .expect_err("a revoked workload must not be served on a stranger's record");
-        assert!(matches!(err, HttpProfileError::AdmissionStateUnavailable));
     }
 
     #[test]
@@ -755,16 +718,12 @@ mod tests {
         .unwrap();
         let binding = AdmissionBinding::opaque_from(&c);
         assert_eq!(
-            check_admission(
+            check_as(
                 &binding,
                 &jws,
                 TEST_ACTOR,
                 None,
-                crate::ids::PROFILE_TAG,
-                &["mcp.example.com"],
                 &AdmissionPolicy::default(),
-                NOW,
-                resolver(),
             )
             .unwrap_err(),
             HttpProfileError::AdmissionIssuerUntrusted,
@@ -781,20 +740,46 @@ mod tests {
         let auth =
             AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         assert_eq!(
-            check_admission(
+            check_as(
                 &binding,
                 &jws,
                 TEST_ACTOR,
                 Some(&auth),
-                crate::ids::PROFILE_TAG,
-                &["mcp.example.com"],
                 &AdmissionPolicy::default(),
-                NOW,
-                resolver(),
             )
             .unwrap_err(),
             HttpProfileError::AdmissionBindingMismatch,
         );
+    }
+
+    #[test]
+    fn a_binding_of_another_form_or_digest_algorithm_is_rejected() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        let jws = issue(&c);
+        let auth =
+            AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
+        let run = |binding: &AdmissionBinding| {
+            check_as(
+                binding,
+                &jws,
+                TEST_ACTOR,
+                Some(&auth),
+                &AdmissionPolicy::default(),
+            )
+        };
+        let mut other_form = AdmissionBinding::opaque_from(&c);
+        other_form.binding_type = BindingType::ReferenceDigest;
+        assert_eq!(
+            run(&other_form).unwrap_err(),
+            HttpProfileError::AdmissionBindingMismatch,
+        );
+        let mut other_alg = AdmissionBinding::opaque_from(&c);
+        other_alg.digest_alg = "sha-512".to_owned();
+        assert_eq!(
+            run(&other_alg).unwrap_err(),
+            HttpProfileError::AdmissionBindingMismatch,
+        );
+        run(&AdmissionBinding::opaque_from(&c)).expect("the unmodified binding is admitted");
     }
 
     #[test]
@@ -827,12 +812,46 @@ mod tests {
     /// `P = 0` with degraded mode ENABLED is not a closed door: the effective window is
     /// `max_clock_skew`, so an unreachable authority still admits a recent assertion.
     ///
-    /// This is why the CLI refuses that combination, and it is a sharper reason than the
-    /// one the refusal used to give. "Zero is not a policy" suggests the deployment merely
-    /// gets nothing; in fact it gets a `max_clock_skew`-wide window in which a REVOKED
-    /// workload keeps being served, without having asked for one. The skew term is
-    /// deliberate — it tolerates disagreeing clocks — but it means P is a floor on the
-    /// window, never the whole of it.
+    /// `check_admission` bounds the assertion's age by `P + max_clock_skew`, because `iat`
+    /// is the issuer's clock. The declared P is the replica-wide outage window enforced by
+    /// the proxy's admission_enforcer `degraded_window`, which uses P without skew and is
+    /// closed at P=0. A caller of `check_admission` without that enforcer gets the wider
+    /// assertion-level window, which is why the CLI also refuses P=0.
+    /// The degraded age bound is exact at the ends of the range: an assertion one second
+    /// older than `P + skew` is refused even when the age itself does not fit an `i64`, where
+    /// a saturating difference would clamp to `i64::MAX` and compare equal to the bound.
+    #[test]
+    fn a_degraded_assertion_older_than_the_bound_is_refused_at_the_end_of_the_range() {
+        let pol = AdmissionPolicy {
+            allow_degraded_mode: true,
+            degraded_propagation_bound: i64::MAX - 30,
+            ..AdmissionPolicy::default()
+        };
+        assert_eq!(
+            pol.max_clock_skew, 30,
+            "the bound below is exactly i64::MAX"
+        );
+        let at_age = |iat: i64| AuthenticatedAdmission {
+            admission_id: "wl-1".to_owned(),
+            generation: 5,
+            admitted_actor: TEST_ACTOR.to_owned(),
+            iat,
+        };
+
+        // Age i64::MAX + 1: one past the bound, and not representable as an i64.
+        let past = NOW - i64::MAX - 1;
+        assert_eq!(
+            check_admission(at_age(past), None, &pol, NOW).unwrap_err(),
+            HttpProfileError::AdmissionStateUnavailable,
+        );
+        // Age exactly i64::MAX: on the bound, still a candidate.
+        let on = NOW - i64::MAX;
+        assert!(matches!(
+            check_admission(at_age(on), None, &pol, NOW),
+            Ok(AdmissionVerdict::DegradedCandidate(_))
+        ));
+    }
+
     #[test]
     fn a_zero_p_still_leaves_a_degraded_window_the_width_of_the_clock_skew() {
         let pol = AdmissionPolicy {
@@ -878,6 +897,33 @@ mod tests {
         verify_jws(&genuine).expect("the genuine assertion verifies");
     }
 
+    #[test]
+    fn a_malformed_compact_assertion_is_refused_as_malformed() {
+        let genuine = issue(&claims(5, AdmissionStatus::Admitted, NOW - 10));
+        let (h, p, s) = split_compact(&genuine).expect("compact jws");
+        let not_json = b64url_encode(b"not json");
+        for bad in [
+            String::new(),
+            format!("{h}.{p}"),
+            format!("{h}.{p}.{s}.{s}"),
+            format!(".{p}.{s}"),
+            format!("{h}..{s}"),
+            format!("{h}.{p}."),
+            format!("!!!.{p}.{s}"),
+            format!("{not_json}.{p}.{s}"),
+            format!("{h}.{not_json}.{s}"),
+        ] {
+            assert!(
+                matches!(
+                    verify_jws(&bad).unwrap_err(),
+                    HttpProfileError::MalformedEvidence(_)
+                ),
+                "{bad:?}"
+            );
+        }
+        verify_jws(&genuine).expect("the genuine assertion verifies");
+    }
+
     /// `typ` and `alg` are what stop a delegation credential — or an assertion signed
     /// under some other algorithm the authority root also holds — from being presented
     /// here. Both are checked before anything else is trusted.
@@ -899,6 +945,25 @@ mod tests {
         );
         verify_jws(&issue_with_header(ADMISSION_TYP, ADMISSION_ALG, &c))
             .expect("the profile's own typ/alg verify");
+    }
+
+    #[test]
+    fn an_assertion_whose_header_kid_disagrees_with_its_claims_is_rejected() {
+        let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        let header = AdmissionHeader {
+            typ: ADMISSION_TYP.to_owned(),
+            alg: ADMISSION_ALG.to_owned(),
+            kid: "admission-root-2".to_owned(),
+        };
+        let h = b64url_encode(&serde_json::to_vec(&header).expect("header"));
+        let p = b64url_encode(&serde_json::to_vec(&c).expect("claims"));
+        let sig = b64url_decode(&root().sign(format!("{h}.{p}").as_bytes())).expect("sign");
+        let jws = format!("{h}.{p}.{}", b64url_encode(&sig));
+        assert_eq!(
+            verify_jws(&jws).unwrap_err(),
+            HttpProfileError::AdmissionAssertionInvalid,
+        );
+        verify(&c).expect("the control with agreeing kids verifies");
     }
 
     /// The profile tag scopes an assertion to one evidence profile, and `aud` scopes it to
@@ -975,10 +1040,43 @@ mod tests {
         verify(&fresh).expect("an assertion inside N is accepted");
     }
 
+    #[test]
+    fn an_assertion_older_than_the_budget_is_refused_at_the_end_of_the_range() {
+        let pol = AdmissionPolicy {
+            max_assertion_age: i64::MAX - 30,
+            ..AdmissionPolicy::default()
+        };
+        assert_eq!(
+            pol.max_clock_skew, 30,
+            "the budget below is exactly i64::MAX"
+        );
+        let verify_at = |iat: i64| {
+            let mut c = claims(5, AdmissionStatus::Admitted, iat);
+            c.nbf = iat;
+            c.exp = NOW + 300;
+            verify_admission_assertion(
+                &issue(&c),
+                crate::ids::PROFILE_TAG,
+                &["mcp.example.com"],
+                &pol,
+                NOW,
+                resolver(),
+            )
+        };
+
+        // Age i64::MAX + 1: one past the budget, and not representable as an i64.
+        assert_eq!(
+            verify_at(NOW - i64::MAX - 1).unwrap_err(),
+            HttpProfileError::AdmissionAssertionExpired,
+        );
+        // Age exactly i64::MAX: on the budget, still accepted.
+        verify_at(NOW - i64::MAX).expect("an assertion on the budget is accepted");
+    }
+
     /// A future-dated `iat` is the one input that defeats BOTH age bounds at once. Both are
-    /// `now - iat` under saturation, so an issuance dated ahead of the verifier floors the
-    /// N cap and the degraded P window at zero and passes them for the assertion's whole
-    /// TTL — turning the bounded degraded window §5.2 argues from into the TTL itself.
+    /// `now - iat` against an upper bound only, so an issuance dated ahead of the verifier
+    /// has a negative age under the N cap and the degraded P window and passes them for the
+    /// assertion's whole TTL — turning the bounded degraded window §5.2 argues from into the TTL itself.
     #[test]
     fn an_assertion_dated_ahead_of_the_verifier_is_rejected() {
         let mut ahead = claims(5, AdmissionStatus::Admitted, NOW - 10);

@@ -52,3 +52,59 @@ pub(super) fn decode_json<T: for<'de> Deserialize<'de>>(
         b64url_decode(segment).map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
     serde_json::from_slice(&bytes).map_err(|_| HttpProfileError::DelegationCredentialInvalid)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mcp_re_core::b64url_encode;
+
+    #[test]
+    fn three_non_empty_segments_split_in_order() {
+        assert!(matches!(
+            split_compact_jws("aa.bb.cc"),
+            Ok(("aa", "bb", "cc"))
+        ));
+    }
+
+    #[test]
+    fn a_fourth_well_formed_segment_is_refused() {
+        assert!(matches!(
+            split_compact_jws("aa.bb.cc.dd"),
+            Err(HttpProfileError::DelegationCredentialInvalid)
+        ));
+        let h = b64url_encode(br#"{"a":1}"#);
+        let p = b64url_encode(br#"{"b":2}"#);
+        assert!(decode_json::<serde_json::Value>(&h).is_ok());
+        assert!(decode_json::<serde_json::Value>(&p).is_ok());
+        assert!(matches!(
+            parse_credential(&format!("{h}.{p}.cc.dd")),
+            Err(HttpProfileError::DelegationCredentialInvalid)
+        ));
+    }
+
+    #[test]
+    fn an_empty_segment_at_the_right_count_is_refused() {
+        for jws in ["aa..cc", ".bb.cc", "aa.bb.", "aa.bb"] {
+            assert!(
+                matches!(
+                    split_compact_jws(jws),
+                    Err(HttpProfileError::DelegationCredentialInvalid)
+                ),
+                "{jws}"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_json_refuses_bad_base64url_and_bad_json_separately() {
+        assert!(matches!(
+            decode_json::<serde_json::Value>("!!"),
+            Err(HttpProfileError::DelegationCredentialInvalid)
+        ));
+        assert!(matches!(
+            decode_json::<serde_json::Value>(&b64url_encode(b"not json")),
+            Err(HttpProfileError::DelegationCredentialInvalid)
+        ));
+        assert!(decode_json::<serde_json::Value>(&b64url_encode(br#"{"a":1}"#)).is_ok());
+    }
+}

@@ -102,7 +102,7 @@ schema_version = 2
 
 [[assumption]]
 id = "ASM-0001"
-description = "`parse_fixed_digits` returns at most a 4-digit value: n ASCII digits cannot denote more than n digits."
+description = "`parse_fixed_digits` returns at most a 4-digit value: n ASCII digits cannot denote more than n digits. Freedom from panic and overflow of the body is by construction (`get`, checked arithmetic) and is not proved."
 justification = """
 Verus verifies the caller against this contract but does not check the body, because a
 loop invariant over the iteration count cannot be expressed in the attribute-style
@@ -203,7 +203,7 @@ compare against `now` at the extremes, and a wrapping implementation would let a
 `created` near i64::MIN wrap past the comparison. Stated as the exact clamp rather than as
 an opaque result so a wrong specification would be visible rather than convenient.
 """
-scope = ["unit://http_profile.freshness_window", "boundary://boundary.rust_std"]
+scope = ["unit://http_profile.freshness_window", "unit://http_profile.admission_currency", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
@@ -221,7 +221,7 @@ tool_specific_mechanism = "verus:assume_specification"
 id = "ASM-0006"
 description = "`i64::saturating_add` clamps at i64::MAX rather than wrapping."
 justification = "As ASM-0005, for the upper end of the window."
-scope = ["unit://http_profile.freshness_window", "boundary://boundary.rust_std"]
+scope = ["unit://http_profile.freshness_window", "unit://http_profile.admission_currency", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
@@ -237,39 +237,33 @@ tool_specific_mechanism = "verus:assume_specification"
 
 [[assumption]]
 id = "ASM-0007"
-description = "`VerifierPolicy::max_clock_skew` returns this policy's configured skew."
+description = "WITHDRAWN — discharged by proof: `VerifierPolicy::max_clock_skew` is verified against the policy's closed specification."
 justification = """
-A field read, presented to the verifier as an uninterpreted function of the policy object.
-Uninterpreted is the point: the theorem must hold for WHATEVER skew a deployment
-configures, so it assumes only that repeated reads of the same policy agree. Verifying the
-body instead would require making VerifierPolicy transparent, which drags its algorithm
-registry and transport policy into the proof for no gain.
+Was: `VerifierPolicy::max_clock_skew` returns this policy's configured skew, trusted as an `external_body` field read.
+
+Discharged: `VerifierPolicy` is a verified datatype and `max_clock_skew` is proved to return `spec_max_clock_skew`, the field it reads; that specification is closed outside `policy`, so the freshness theorem still quantifies over every configured skew. Proved symbol of `http_profile.freshness_window`. Kept, marked withdrawn, so earlier attestations stay explicable.
 """
-scope = ["unit://http_profile.freshness_window", "boundary://boundary.unmodelled_own_behaviour"]
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
-review_requirement = "Owner review; any change that makes the getter more than a field read."
-premise_class = "assumed"
-affected_contracts = ["contract://http_profile/verify/check_params"]
-sites = [
-  "mcp-re-http-profile/src/policy.rs#VerifierPolicy::max_clock_skew",
-]
-tool_specific_mechanism = "verus:external_body"
+review_requirement = "None — discharged by proof in e3a56fd1 (r12 Ruling 36)."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0008"
-description = "`VerifierPolicy::max_signature_validity` returns this policy's configured window bound."
-justification = "As ASM-0007, for the width bound."
-scope = ["unit://http_profile.freshness_window", "boundary://boundary.unmodelled_own_behaviour"]
+description = "WITHDRAWN — discharged by proof: `VerifierPolicy::max_signature_validity` is verified against the policy's closed specification."
+justification = """
+Was: `VerifierPolicy::max_signature_validity` returns this policy's configured window bound, trusted as an `external_body` field read.
+
+Discharged: As ASM-0007: `max_signature_validity` is proved to return `spec_max_signature_validity`, the field it reads. Proved symbol of `http_profile.freshness_window`. Kept, marked withdrawn, so earlier attestations stay explicable.
+"""
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
-review_requirement = "Owner review; any change that makes the getter more than a field read."
-premise_class = "assumed"
-affected_contracts = ["contract://http_profile/verify/check_params"]
-sites = [
-  "mcp-re-http-profile/src/policy.rs#VerifierPolicy::max_signature_validity",
-]
-tool_specific_mechanism = "verus:external_body"
+review_requirement = "None — discharged by proof in e3a56fd1 (r12 Ruling 36)."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0009"
@@ -333,7 +327,10 @@ introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; MUST be discharged before any theorem claiming the binding commits to the assertion's admitted state."
 premise_class = "review-obligation"
 discharging_event = { kind = "owner-event", statement = "A theorem claims the binding commits to the assertion's admitted state. This premise MUST be discharged before that claim may be made." }
-affected_contracts = ["contract://http_profile/admission/check_admission"]
+affected_contracts = [
+  "contract://http_profile/admission/authenticate_admission",
+  "contract://http_profile/admission/check_admission",
+]
 sites = [
   "mcp-re-http-profile/src/admission/mod.rs#AdmissionBinding::matches_state",
 ]
@@ -343,17 +340,18 @@ tool_specific_mechanism = "verus:external_body"
 id = "ASM-0012"
 description = "`verify_admission_assertion` is opaque to the currency theorem, and contributes NO postcondition to it."
 justification = """
-The strongest form this assumption can take: no `ensures` at all. The §7 currency property
-is established entirely by `check_admission`'s own comparisons against the authoritative
-state, so the JWS verifier below it may return anything and the theorem still holds. This
+The strongest form this assumption can take: no `ensures` at all. The §7 properties are
+established entirely by `authenticate_admission`'s comparisons of the assertion against the
+presenter and the binding, and `check_admission`'s comparisons against the authoritative
+state, so the JWS verifier below them may return anything and the theorems still hold. This
 is the point the dependency-cone rule (Operational Rule 17) makes concrete — the trusted
 frontier of this theorem does not include signature verification, JSON decoding, base64,
 Ed25519, or the assertion's own freshness window, even though the proved function calls
 all of them.
 
 An assumption WITHOUT an ensures cannot weaken the theorem it sits under; it can only
-limit what that theorem says. What it costs is stated plainly: `check_admission` returning
-`Ok` does NOT, by this proof, mean the assertion was validly signed or fresh. Those remain
+limit what that theorem says. What it costs is stated plainly: `authenticate_admission`
+returning `Ok` does NOT, by this proof, mean the assertion was validly signed or fresh. Those remain
 test-and-review properties until their own unit exists.
 """
 scope = ["unit://http_profile.admission_currency", "boundary://boundary.unmodelled_own_behaviour"]
@@ -362,7 +360,10 @@ introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; a separate unit for assertion validity is the discharge, not an ensures added here."
 premise_class = "review-obligation"
 discharging_event = { kind = "owner-event", statement = "A unit for assertion validity is registered. That unit is the discharge; an `ensures` added to this opaque function is not." }
-affected_contracts = ["contract://http_profile/admission/check_admission"]
+affected_contracts = [
+  "contract://http_profile/admission/authenticate_admission",
+  "contract://http_profile/admission/check_admission",
+]
 sites = [
   "mcp-re-http-profile/src/admission/mod.rs#verify_admission_assertion",
 ]
@@ -384,7 +385,10 @@ introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; revisit if a theorem ever needs to say something about a key."
 premise_class = "review-obligation"
 discharging_event = { kind = "owner-event", statement = "A theorem needs to say something about a `VerificationKey`. The opaque datatype is adequate only while nothing reads it." }
-affected_contracts = ["contract://http_profile/admission/check_admission"]
+affected_contracts = [
+  "contract://http_profile/admission/authenticate_admission",
+  "contract://http_profile/admission/check_admission",
+]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#ExVerificationKey",
 ]
@@ -409,7 +413,10 @@ premise_class = "external-boundary"
 boundary_owner = """
 The Rust compiler, across `#[derive(PartialEq)]` on a fieldless enum: the documented expansion is structural equality over the discriminant.
 """
-affected_contracts = ["contract://http_profile/admission/check_admission"]
+affected_contracts = [
+  "contract://http_profile/admission/authenticate_admission",
+  "contract://http_profile/admission/check_admission",
+]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#<AdmissionStatus as core::cmp::PartialEq>::eq",
 ]
@@ -438,45 +445,65 @@ tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0018"
-description = "`sha256_b64url` and `compare` are opaque digest primitives; nothing is claimed about the digest."
+description = "`Sha256::digest` from the `sha2` crate returns the FIPS 180-4 SHA-256 digest of its input bytes."
 justification = """
-Below `boundary.crypto_primitives`. The typed-verifier theorem is about which
-artifact_type/binding_type pair may leave the verifier as Ok — a control-flow property
-that holds whatever the comparison decides. Stating an ensures here would import a
-preimage-resistance claim into a theorem that does not need one.
+Below `boundary.crypto_primitives`. `sha256_digest` (artifact/thumbprint.rs) is the one place the
+artifact verifiers call the `sha2` crate, and its `external_body` states only that the result
+is `sha256_of(bytes)` — the uninterpreted name for SHA-256 (ASM-0074). The prover cannot check
+that the crate implements FIPS 180-4; that conformance is the whole of this premise. No
+collision or preimage property is claimed here: what makes a matching thumbprint mean the
+credential bytes agree is SHA-256's own hardness, a separate premise.
+
+What is NOT here, by r12 Ruling 38. The composition `base64url(SHA-256(bytes))` is this
+project's and is proved (`sha256_b64url` against the definition `thumbprint_of`). The comparison is
+proved (`compare`: `Ok` exactly when the binding's digest is the thumbprint of the presented
+credential), and each public verifier's contract carries that relation — the compare half
+this entry once held was discharged by proof in e3a56fd1. The base64url encoding is the
+`base64` crate's and is ASM-0073.
 """
-scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_own_behaviour"]
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.crypto_primitives"]
 owner = "mats@sundvall.name"
-introduced_by = "ADR-MCPRE-059 WP2"
-review_requirement = "Owner review; MUST be discharged before any theorem claiming a binding commits to the presented credential."
-premise_class = "review-obligation"
-discharging_event = { kind = "owner-event", statement = "A theorem claims a binding commits to the presented credential. This premise MUST be discharged before that claim may be made." }
+introduced_by = "ADR-MCPRE-059 WP2; narrowed by r12 Ruling 38"
+review_requirement = "Owner review; any change to which crate computes the digest, or to the digest leaf's specification."
+premise_class = "external-boundary"
+boundary_owner = """
+The `sha2` crate, across `Sha256::digest` as called by `sha256_digest`: the 32-byte result is the FIPS 180-4 SHA-256 digest of the input bytes.
+"""
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
-  "mcp-re-http-profile/src/artifact.rs#sha256_b64url",
-  "mcp-re-http-profile/src/artifact.rs#compare",
+  "mcp-re-http-profile/src/artifact/thumbprint.rs#sha256_digest",
 ]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
-id = "ASM-0019"
-description = "`ArtifactBinding::validate` is opaque; the typing theorem holds whatever it returns."
+id = "ASM-0062"
+description = "WITHDRAWN — discharged by proof: `ArtifactBinding::artifact_type` and `binding_type` are verified against the binding's closed specification."
 justification = """
-Structural validation — digest token shape and the reference-field all-or-none rule — is
-a separate property from artifact typing. The theorem's Ok-path facts are established by
-the comparison ahead of the call, so this contributes no postcondition.
+Was: `ArtifactBinding::artifact_type` and `ArtifactBinding::binding_type` return the value's own private fields, trusted as `external_body` field reads.
+
+Discharged: `ArtifactBinding` is a verified datatype with its representation still private, and both getters are proved to return `spec_artifact_type` / `spec_binding_type`, the fields they read. Those specifications are closed outside the owner's module, so no proof elsewhere reads the representation. Proved symbols of `http_profile.artifact_typing`. Kept, marked withdrawn, so earlier attestations stay explicable.
 """
-scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_own_behaviour"]
+scope = []
 owner = "mats@sundvall.name"
-introduced_by = "ADR-MCPRE-059 WP2"
-review_requirement = "Owner review; a validate() contract is its own unit, not an ensures added here."
-premise_class = "review-obligation"
-discharging_event = { kind = "owner-event", statement = "A `validate()` contract is registered as its own unit. That unit is the discharge; an `ensures` added here is not." }
-affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
-sites = [
-  "mcp-re-http-profile/src/block/artifact_binding.rs#ArtifactBinding::validate",
-]
-tool_specific_mechanism = "verus:external_body"
+introduced_by = "r12 ruling 12 item 12"
+review_requirement = "None — discharged by proof in e3a56fd1 (r12 Ruling 36)."
+affected_contracts = []
+tool_specific_mechanism = "none"
+
+[[assumption]]
+id = "ASM-0063"
+description = "WITHDRAWN — discharged by proof: `artifact_type_of` and `binding_type_of` are defined through the binding's closed specification, not declared uninterpreted."
+justification = """
+Was: `artifact_type_of(binding)` and `binding_type_of(binding)` are the tags a binding carries, as uninterpreted functions of the binding.
+
+Discharged: Both are open specifications over the binding's closed `spec_artifact_type` / `spec_binding_type`, which the getters are proved against (ASM-0062's discharge). The typed-verifier theorem still holds for whatever tags a binding carries. Kept, marked withdrawn, so earlier attestations stay explicable.
+"""
+scope = []
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 12"
+review_requirement = "None — discharged by proof in e3a56fd1 (r12 Ruling 36)."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0020"
@@ -584,7 +611,7 @@ tool_specific_mechanism = "none"
 
 [[assumption]]
 id = "ASM-0023"
-description = "`RequestEvidenceDigest::matches_labeled` returning true means this handle's value IS the labeled digest of those bytes under that label."
+description = "`RequestEvidenceDigest::matches_labeled` returning true means this handle names the profile's digest algorithm and its value IS the labeled digest of those bytes under that role's label."
 justification = """
 The replacement for ASM-0022, and deliberately much narrower: it constrains one three-line
 comparator instead of leaving a twenty-line role-checking function meaningless.
@@ -599,18 +626,36 @@ its own required role label — and deliberately not enough to prove role SEPARA
 would need `label_a != label_b ==> digest(label_a, x) != digest(label_b, y)`. That is a
 domain-separation property of the construction, it lives at
 `boundary.crypto_primitives`, and no wording here should let it be read as proved.
+
+The algorithm clause is a plain equality against the profile's single digest algorithm
+identifier; it is trusted with the rest of the comparator.
 """
 scope = ["unit://http_profile.continuation_binding", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
-review_requirement = "Owner review; discharge requires a proof about the digest construction itself, i.e. crossing boundary.crypto_primitives."
+review_requirement = "Owner review on any change to `RequestEvidenceDigest::matches_labeled` or to its trusted Verus specification."
 premise_class = "review-obligation"
-discharging_event = { kind = "owner-event", statement = "A proof about the labeled-digest construction itself is admitted, which crosses boundary.crypto_primitives. Nothing short of that discharges it." }
+discharging_event = { kind = "owner-event", statement = "`RequestEvidenceDigest::matches_labeled` is proved, with the labeled digest left uninterpreted, to satisfy its comparator contract: a true answer implies the handle names the profile's digest algorithm and its digest value equals labeled_digest(label, bytes). No property of the digest construction is claimed." }
 affected_contracts = ["contract://http_profile/block/continuation_verify"]
 sites = [
-  "mcp-re-http-profile/src/block.rs#RequestEvidenceDigest::matches_labeled",
+  "mcp-re-http-profile/src/evidence/digest.rs#RequestEvidenceDigest::matches_labeled",
 ]
 tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0064"
+description = "WITHDRAWN — discharged by proof: `RequestEvidenceDigest::same_handle` is verified to answer exactly field equality."
+justification = """
+Was: `RequestEvidenceDigest::same_handle` returning true means the two handles carry the same digest value, trusted as an `external_body` comparator.
+
+Discharged: `same_handle` has a verified body whose postcondition is that it returns true exactly when both the algorithm and the value strings are equal, which implies the contract the continuation binding reads. String equality is vstd's specification of `String::eq`. The digest itself stays uninterpreted. Proved symbol of `http_profile.continuation_binding`. Kept, marked withdrawn, so earlier attestations stay explicable.
+"""
+scope = []
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 16"
+review_requirement = "None — discharged by proof in e3a56fd1 (r12 Ruling 36)."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 # --- Uninterpreted specification functions -----------------------------------
 #
@@ -637,11 +682,8 @@ domain-separation property of the construction and it stays at
 `boundary.crypto_primitives`.
 """
 scope = [
-    "unit://http_profile.admission_currency",
-    "unit://http_profile.artifact_typing",
-    "unit://http_profile.continuation_binding",
-    "unit://http_profile.continuation_unbypassability",
-    "unit://http_profile.freshness_window",
+  "unit://http_profile.continuation_binding",
+  "unit://http_profile.continuation_unbypassability",
   "boundary://boundary.unmodelled_own_behaviour",
 ]
 owner = "mats@sundvall.name"
@@ -655,56 +697,113 @@ sites = [
 tool_specific_mechanism = "verus:uninterp"
 
 [[assumption]]
-id = "ASM-0025"
-description = "`skew_of(policy)` is the deployment's configured clock skew, as a function of the policy object."
+id = "ASM-0073"
+description = "`b64url_encode` (`mcp-re-core/src/encoding.rs:20`, using the `base64` crate's `URL_SAFE_NO_PAD` engine) returns the RFC 4648 §5 base64url encoding of its input without padding, and that encoding is injective over input byte strings."
 justification = """
-Uninterpreted on purpose, and the purpose is strength rather than convenience: the
-freshness theorem must hold for WHATEVER skew a deployment configures, so the proof may
-assume nothing about the value — not a bound, not a sign, only that repeated reads of the
-same policy agree. Interpreting it would weaken the theorem to one configuration.
+`b64url_digest` (artifact/thumbprint.rs) is the one place the artifact verifiers encode a digest, and its
+`external_body` states only that the result is `b64url_of(digest)` — the uninterpreted name
+for the encoding (ASM-0075). Two facts are trusted together, and they are different kinds of
+fact. That the crate implements RFC 4648 §5 without padding is a property of the `base64`
+crate's implementation. That the encoding is injective is a property of the specified encoding
+itself; it is carried here rather than proved because modelling RFC 4648's six-bit grouping in
+the prover is not cheap, and r12 Ruling 38 accepts the combined external statement for this
+freeze. The keyid unit TESTS injectivity over the 32-byte digest width
+(`keyid::tests::the_keyid_encoding_is_injective_over_the_digest_width`), which is evidence for
+the second fact, not a proof of it.
 
-The paired `external_body` getter is ASM-0007; this is the specification-level declaration
-that getter is presented through.
+Injectivity is load-bearing: `compare` decides on the ENCODED strings, so two distinct digests
+sharing an encoding would make a binding verify against a credential whose digest differs. It
+stops being acceptable if the encoding engine, its padding mode or its alphabet changes.
 """
-scope = [
-    "unit://http_profile.admission_currency",
-    "unit://http_profile.artifact_typing",
-    "unit://http_profile.continuation_binding",
-    "unit://http_profile.continuation_unbypassability",
-    "unit://http_profile.freshness_window",
-  "boundary://boundary.unmodelled_own_behaviour",
-]
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.base64_encoding"]
 owner = "mats@sundvall.name"
-introduced_by = "ADR-MCPRE-059 WP3"
-review_requirement = "Owner review; any change that makes the skew more than a per-policy constant."
-premise_class = "assumed"
-affected_contracts = ["contract://http_profile/verify/check_params"]
+introduced_by = "r12 Ruling 38 (ASM-0018 split)"
+review_requirement = "Owner review; any change to the encoding engine, its padding mode or alphabet, or the encode leaf's specification. Discharge of the injectivity half requires a proof over a modelled RFC 4648 encoding."
+premise_class = "external-boundary"
+boundary_owner = """
+The `base64` crate, across `mcp_re_core::b64url_encode` as called by `b64url_digest`: the `URL_SAFE_NO_PAD` engine's output is the RFC 4648 §5 encoding of the input without padding.
+"""
+affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
-  "mcp-re-http-profile/src/verus_std_specs.rs#skew_of",
+  "mcp-re-http-profile/src/artifact/thumbprint.rs#b64url_digest",
+]
+tool_specific_mechanism = "verus:external_body"
+
+[[assumption]]
+id = "ASM-0074"
+description = "`sha256_of` is declared uninterpreted: the prover's name for the SHA-256 digest, adding no axiom. What it denotes is ASM-0018's."
+justification = """
+Vocabulary, registered because the mechanism census counts every `uninterp` declaration. An
+uninterpreted function is a function of its argument and nothing more, so every theorem that
+mentions it holds for ALL interpretations; the declaration states nothing about SHA-256. Its
+meaning comes only from ASM-0018, the external premise that the digest leaf returns
+`sha256_of(bytes)` for the `sha2` crate's FIPS 180-4 digest. The artifact verifiers'
+non-vacuity probe (verify-verus) shows the relation written over it constrains: a body that
+does not compare, or a claim about another credential, fails to verify.
+"""
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.crypto_primitives"]
+owner = "mats@sundvall.name"
+introduced_by = "r12 Ruling 38 §7"
+review_requirement = "Owner review; any change to the declaration or to which premise interprets it."
+premise_class = "model-registration"
+interpreted_by = "ASM-0018"
+affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+sites = [
+  "mcp-re-http-profile/src/artifact/thumbprint.rs#sha256_of",
 ]
 tool_specific_mechanism = "verus:uninterp"
 
 [[assumption]]
-id = "ASM-0026"
-description = "`validity_of(policy)` is the widest accepted `expires - created`, as a function of the policy object."
-justification = "As ASM-0025, for the window-width bound. Paired with the `external_body` getter ASM-0008."
-scope = [
-    "unit://http_profile.admission_currency",
-    "unit://http_profile.artifact_typing",
-    "unit://http_profile.continuation_binding",
-    "unit://http_profile.continuation_unbypassability",
-    "unit://http_profile.freshness_window",
-  "boundary://boundary.unmodelled_own_behaviour",
-]
+id = "ASM-0075"
+description = "`b64url_of` is declared uninterpreted: the prover's name for the base64url-no-pad encoding, adding no axiom. What it denotes, and that it is injective, is ASM-0073's."
+justification = """
+Vocabulary, registered because the mechanism census counts every `uninterp` declaration. The
+declaration states nothing about base64url; its meaning comes only from ASM-0073, the external
+premise that the encode leaf returns `b64url_of(digest)` for the `base64` crate's RFC 4648 §5
+encoding. The artifact verifiers' non-vacuity probe shows the relation written over it
+constrains.
+"""
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.base64_encoding"]
 owner = "mats@sundvall.name"
-introduced_by = "ADR-MCPRE-059 WP3"
-review_requirement = "Owner review; any change that makes the bound more than a per-policy constant."
-premise_class = "assumed"
-affected_contracts = ["contract://http_profile/verify/check_params"]
+introduced_by = "r12 Ruling 38 §7"
+review_requirement = "Owner review; any change to the declaration or to which premise interprets it."
+premise_class = "model-registration"
+interpreted_by = "ASM-0073"
+affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
-  "mcp-re-http-profile/src/verus_std_specs.rs#validity_of",
+  "mcp-re-http-profile/src/artifact/thumbprint.rs#b64url_of",
 ]
 tool_specific_mechanism = "verus:uninterp"
+
+[[assumption]]
+id = "ASM-0025"
+description = "WITHDRAWN — discharged by proof: `skew_of` is defined through the policy's closed specification, not declared uninterpreted."
+justification = """
+Was: `skew_of(policy)` is the deployment's configured clock skew, as an uninterpreted function of the policy object.
+
+Discharged: `skew_of` is an open specification over `VerifierPolicy::spec_max_clock_skew`, which `max_clock_skew` is proved against (ASM-0007's discharge). Nothing is declared uninterpreted; outside `policy` the value is still unknown, so the theorem's generality is unchanged. Kept, marked withdrawn, so earlier attestations stay explicable.
+"""
+scope = []
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP3"
+review_requirement = "None — discharged by proof in e3a56fd1; withdrawal approved by r12 Ruling 37."
+affected_contracts = []
+tool_specific_mechanism = "none"
+
+[[assumption]]
+id = "ASM-0026"
+description = "WITHDRAWN — discharged by proof: `validity_of` is defined through the policy's closed specification, not declared uninterpreted."
+justification = """
+Was: `validity_of(policy)` is the widest accepted `expires - created`, as an uninterpreted function of the policy object.
+
+Discharged: As ASM-0025, over `spec_max_signature_validity` (ASM-0008's discharge). Kept, marked withdrawn, so earlier attestations stay explicable.
+"""
+scope = []
+owner = "mats@sundvall.name"
+introduced_by = "ADR-MCPRE-059 WP3"
+review_requirement = "None — discharged by proof in e3a56fd1; withdrawal approved by r12 Ruling 37."
+affected_contracts = []
+tool_specific_mechanism = "none"
 
 # ---------------------------------------------------------------------------
 # The verifier's result claims — ADR-MCPRE-061 §12, MCPRE-136
@@ -747,6 +846,19 @@ scope = [
   "unit://http_profile.delegated_bound_result",
   "unit://http_profile.delegated_unbound_result",
   "unit://http_profile.delegated_credential_chain",
+  "unit://http_profile.pdp_decision_authentication",
+  "unit://http_profile.response_emission_binding",
+  "unit://http_profile.admission_assertion",
+  "unit://http_profile.admission_state_provenance",
+  "unit://proxy.admission_state_source",
+  "unit://http_profile.scitt_statement_attribution",
+  "unit://http_profile.scitt_derived_root",
+  "unit://http_profile.scitt_algorithm_agreement",
+  "unit://client.trust_manifest_lifecycle",
+  "unit://proxy.kms_ed25519_seam",
+  "unit://proxy.aws_kms_adapter",
+  "unit://proxy.gcp_kms_adapter",
+  "unit://proxy.pkcs11_adapter",
   "boundary://boundary.crypto_primitives",
 ]
 owner = "mats@sundvall.name"
@@ -760,7 +872,7 @@ tool_specific_mechanism = "none:trusted-primitive"
 
 [[assumption]]
 id = "ASM-0028"
-description = "SHA-256 is second-preimage resistant over the byte strings this profile digests, so digest agreement implies byte agreement."
+description = "SHA-256 is second-preimage resistant over the byte strings this profile digests: given a string an honest party fixed first, no feasible adversary finds a different string with the same digest, so agreement with that string's digest implies byte agreement."
 justification = """
 Content-digest binding and the evidence handles both reduce a message to a digest and then
 compare digests. Every claim of the form "this response is bound to that request" is a
@@ -769,10 +881,19 @@ and ASM-0024 state the LABELLED digest's shape for the prover; this states the p
 labelling is built on, for the claims the prover does not reach. It stops being acceptable
 if SHA-256 is broken for second preimages, or if a profile revision digests attacker-chosen
 structure without a domain separator.
+
+What it does not cover. It bounds an adversary handed a target, never one free to choose both
+strings of a pair. A comparison whose adversary composes both — the RAR authorization-details
+binding, where the requester writes the object it binds — needs collision resistance, which is
+ASM-0037 and not this. This entry is not scoped to `http_profile.artifact_typing`; that unit's
+artifact bindings, RAR among them, are represented by ASM-0037. Where
+`http_profile.request_full_result` compares an artifact binding, this entry carries the DPoP and
+mTLS bindings, whose credential its holder fixed before the comparison; the RAR binding there
+rests on ASM-0037 through THM-0007.
 """
-# SCOPE NARROWED by the ADR-MCPRE-068 Phase-1 split, to the six propositions that compare a
-# digest and conclude byte agreement: the three content-digest ones, the artifact bindings, and
-# the two that compare a `request_evidence` HANDLE against the request under verification.
+# Scoped to the six propositions that compare a digest and conclude byte agreement over a string
+# an honest party fixed first: the three content-digest ones, the DPoP and mTLS artifact bindings,
+# and the two that compare a `request_evidence` HANDLE against the request under verification.
 scope = [
   "unit://http_profile.request_floor_result",
   "unit://http_profile.bound_response_shared_facts",
@@ -851,7 +972,7 @@ tool_specific_mechanism = "none:trusted-seam"
 
 [[assumption]]
 id = "ASM-0030"
-description = "The X.509 parser faithfully reports a leaf's URI SANs, DNS SANs, and subject Common Name, in the order the certificate presents them."
+description = "The X.509 parser faithfully reports a leaf's URI SANs and DNS SANs, in the order the certificate presents them."
 justification = """
 `x509_parser` is a foreign ASN.1/X.509 implementation. It is not verified here and proving
 it is explicitly not attempted: an ASN.1 decoder is a far larger verification target than
@@ -880,7 +1001,7 @@ introduced_by = "ADR-MCPRE-063 Slice 1"
 review_requirement = "Owner review; any change to the certificate identity adapter or its parser dependency."
 premise_class = "external-boundary"
 boundary_owner = """
-The pinned `x509_parser` crate, across its ASN.1/X.509 decoding API: it reports a leaf's URI SANs, DNS SANs and subject Common Name faithfully and in certificate order, under the default parsing configuration this adapter uses.
+The pinned `x509_parser` crate, across its ASN.1/X.509 decoding API: it reports a leaf's URI SANs and DNS SANs faithfully and in certificate order, under the default parsing configuration this adapter uses.
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
@@ -931,8 +1052,8 @@ reported is the one the certificate actually carries.
 This premise is NOT covered by the two assumptions already registered, and the distinction
 matters because their containments differ:
 
-  * ASM-0030 covers the identity-field reporting of Slice 1 — URI/DNS SANs and the Common
-    Name, and their presentation order. It says nothing about the public key.
+  * ASM-0030 covers the identity-field reporting of Slice 1 — URI and DNS SANs, and their
+    presentation order. It says nothing about the public key.
   * ASM-0031 covers the SubjectPublicKeyInfo parser used ONLY after canonical matching has
     already failed, and only to classify a refusal. It is contained to reporting by
     construction, and that containment is exactly what does not apply here: this premise
@@ -1157,8 +1278,12 @@ tool_specific_mechanism = "foreign-dependency"
 id = "ASM-0037"
 description = "SHA-256 is collision resistant: no computationally feasible adversary exhibits two distinct byte strings sharing a digest."
 justification = """
-The remaining premise of keyid selector injectivity (THM-0050), allocated by owner ruling and
-scoped as narrowly as the claim it serves.
+The premise of every unit in its scope, each of which compares digests over strings an
+adversary may choose together: keyid selector injectivity (THM-0050), where the adversary
+chooses the key it enrols; the artifact-binding surface (`http_profile.artifact_typing`),
+including the RAR binding, where the requester composes the authorization-details object it
+binds; the response emission binding; the SCITT inclusion fold, derived root and retained
+correspondence; the submitted-hop identity; and the evidence attestation.
 
 It is a DIFFERENT proposition from ASM-0028, which was deliberately not widened to cover it.
 Second-preimage resistance bounds an adversary handed a target string and asked for another
@@ -1179,10 +1304,28 @@ upgrade it. The MCP-RE-owned half is proved separately and needs none of this: T
 establishes that the canonical form and the base64url encoding introduce no collisions of
 their own, so this premise is the whole of what is trusted between them and the selector.
 
-It stops being acceptable the day SHA-256 admits a practical collision, or if the keyid
-derivation is changed to a digest without an equivalent standing.
+On `http_profile.artifact_typing` it is stronger than the minimal premise for part of the
+unit. The DPoP and mTLS bindings compare against a credential its holder fixed before the
+comparison, which second-preimage resistance (ASM-0028) would carry; the RAR binding does not.
+The unit is not split by binding type, so the one premise it carries is the stronger one: the
+DPoP and mTLS reasoning stays second-preimage-shaped although the premise attached to it is
+collision resistance. ASM-0028 is not scoped to the unit, as a consequence of the same
+granularity.
+
+It stops being acceptable the day SHA-256 admits a practical collision, or if a digest in its
+scope is changed to one without an equivalent standing.
 """
-scope = ["unit://http_profile.keyid_selector", "boundary://boundary.crypto_primitives"]
+scope = [
+  "unit://http_profile.keyid_selector",
+  "unit://http_profile.artifact_typing",
+  "unit://http_profile.response_emission_binding",
+  "unit://http_profile.scitt_inclusion_fold",
+  "unit://http_profile.scitt_derived_root",
+  "unit://http_profile.scitt_retained_correspondence",
+  "unit://http_profile.submitted_hop_identity",
+  "unit://proxy.evidence_attestation",
+  "boundary://boundary.crypto_primitives",
+]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 closure ruling"
 review_requirement = "Owner review; any change to the keyid digest algorithm, and on any published weakening of SHA-256 collision resistance."
@@ -1210,8 +1353,8 @@ is the one place the currency authority meets it. The adapter reads and decides 
 reports `notBefore`, `notAfter`, `issuer.as_raw()`, `raw_serial()`, and whether the issuer
 `Name` encoding equals the subject `Name` encoding.
 
-This is NOT ASM-0030. That assumption is about identity fields — URI and DNS SANs, the
-subject Common Name, and their presentation order — and about the authority that decides
+This is NOT ASM-0030. That assumption is about identity fields — URI and DNS SANs and
+their presentation order — and about the authority that decides
 WHO a peer is. Currency decides something else from a different field set: whether a
 credential is still acceptable at a named instant. Neither premise implies the other, and
 the earlier attempt to let ASM-0030 stand for both is what this entry replaces.
@@ -1484,23 +1627,25 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0044"
-description = "A read of the trust-epoch key over a replica's own connection, issued after an operator's `INCR` on that key was acknowledged, returns a value different from every value that replica read before the `INCR`."
+description = "A read of the trust-epoch key and its generation in one `MGET` over a replica's own connection, issued after an operator's `mcp-re-proxy trust-epoch advance` on that key was acknowledged, returns a counter and generation different, as a pair, from every pair that replica read before the advance."
 justification = """
-`TrustEpochSource` compares each read against the last value THIS process saw and flushes
-its cache on any difference, and the startup line derives a fleet-wide bound — one poll
-interval — from that comparison. MCP-RE cannot establish the premise the derivation rests
-on: the counter lives in a remote process, the `INCR` is issued on a connection this
-replica does not hold, and what a later `GET` on this replica's connection returns is
-decided by the store's replication and routing, not by anything here.
+`TrustEpochSource` compares each read — the counter and its generation, taken together in
+one `MGET` — against the last pair THIS process saw and flushes its cache on any difference,
+and the startup line derives a fleet-wide bound — one poll interval — from that comparison.
+MCP-RE cannot establish the premise the derivation rests on: the pair lives in a remote
+process, the advance — the incremented counter and a fresh generation, committed in one
+server-side step — is issued on a connection this replica does not hold, and what a later
+`MGET` on this replica's connection returns is decided by the store's replication and
+routing, not by anything here.
 
 So the premise is narrow on purpose. It is NOT "Redis is correct", not durability of the
 counter, not ordering between replicas, and not that every replica observes the advance at
 the same time. It is only that an acknowledged write becomes visible to a subsequent read
 on another connection — read-your-writes across connections against one primary. A read
-that returns the OLD value satisfies nothing here and is exactly the case this premise
-excludes; a read that FAILS, or returns a LOWER value, is outside the premise and is handled
-locally (an unhealthy source with the baseline held, and a flush, respectively — measured
-by the unit).
+that returns the OLD pair satisfies nothing here and is exactly the case this premise
+excludes; a read that FAILS, or returns any OTHER pair — a lower counter included — is
+outside the premise and is handled locally (an unhealthy source with the baseline held, and
+a flush, respectively — measured by the unit).
 
 It stops being acceptable if the epoch key is served from a read replica that can lag the
 primary, if the deployment routes a replica's connection to a different primary than the
@@ -1562,7 +1707,7 @@ notably that a transparent mirror does not silently omit a variant a proof then 
 unreachable.
 
 Nothing about BEHAVIOUR is assumed: no impl, no derive, no accessor is in scope here. The
-three types that must additionally be OPAQUE carry their own entry (ASM-0046), because
+types that must additionally be OPAQUE carry their own entry (ASM-0046), because
 hiding a representation and mirroring one are different decisions.
 
 It stops being acceptable if a mirror is edited without the type it mirrors, or if a proof
@@ -1577,7 +1722,7 @@ scope = [
   "boundary://boundary.unmodelled_own_behaviour",
 ]
 sites = [
-  "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifierPolicy",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExMcpTransportPolicy",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExSignatureParams",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExProfileAlgorithm",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpProfileError",
@@ -1595,7 +1740,6 @@ sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionVerdict",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionPolicy",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExArtifactType",
-  "mcp-re-http-profile/src/verus_std_specs.rs#ExArtifactBinding",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExSignerSlot",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExActorIdentity",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExResolvedActor",
@@ -1603,7 +1747,8 @@ sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#ExRequestEvidenceDigest",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpContinuation",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpRequestEvidenceBlock",
-  "mcp-re-http-profile/src/verus_std_specs.rs#ExRequestEvidence",
+  "mcp-re-http-profile/src/evidence/prover_model.rs#ExRequestRoleEvidence",
+  "mcp-re-http-profile/src/evidence/prover_model.rs#ExEvidenceRole",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExFloorVerifiedRequest",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifiedMcpRequest",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpReplayKey",
@@ -1619,21 +1764,33 @@ tool_specific_mechanism = "verus:external_type_specification"
 
 [[assumption]]
 id = "ASM-0046"
-description = "`ExVerifierPolicy`, `ExProfileAlgorithm` and `ExVerificationKey` are OPAQUE: the prover models each as a datatype with no readable fields."
+description = "`ExMcpTransportPolicy`, `ExProfileAlgorithm`, `ExVerificationKey` and `ExRequestRoleEvidence` are OPAQUE: the prover models each as a datatype with no readable fields."
 justification = """
 The weakest premise in this registry, and it is here because the mechanism list is right to
 count it. `external_body` on a type specification REMOVES the ability to reason about the
 representation; it does not add a claim about one. No theorem reads a field of any of these
-three, and none may — the policy accessors (ASM-0007, ASM-0008, ASM-0009) are the only way
-in, and each is registered on its own.
+four, and none may.
 
-Opacity is the correct choice for exactly these three and not for the mirrors beside them.
-`VerifierPolicy` carries a deployment's construction, algorithm registry and transport
-policy, none of which any claim here reasons about; `ProfileAlgorithm` is a resolved
-algorithm the freshness theorem deliberately says nothing about; `VerificationKey` is a
-foreign type whose contents no theorem mentions (ASM-0013 registers its mirror for the same
-reason). Making any of them transparent would put representation the proofs do not model
-inside their reach.
+Opacity is the correct choice for exactly these four and not for the mirrors beside them.
+`McpTransportPolicy` is the MCP transport contract a `VerifierPolicy` carries, which no claim
+here reasons about; the verified policy needs only to name the field's type.
+`ProfileAlgorithm` is a resolved algorithm the freshness theorem deliberately says nothing
+about, reached only through `accepted_algorithm` (ASM-0009); `VerificationKey` is a foreign
+type whose contents no theorem mentions (ASM-0013 registers its mirror for the same reason).
+Making any of them transparent would put representation the proofs do not model inside their
+reach.
+
+`RequestRoleEvidence` is the fourth, for the reverse reason: its representation is private so
+that holding one means it was derived from a signature base under the request role. No
+theorem reads it at all; the prover names it only because the verified request products carry
+one. What is trusted is exactly that the type is opaque to the prover. No behavioural property
+moves into this entry: the continuation proof compares `RequestEvidenceDigest` claims, whose
+mirror stays transparent, and its contract is unchanged. `ResponseRoleEvidence` is not here
+because no type the prover reads contains one.
+
+`VerifierPolicy` and `ArtifactBinding` are not here: each is a verified datatype whose
+representation stays private to its owner's module, read only through closed specifications
+its getters are proved against.
 
 It stops being acceptable the moment a theorem needs to say something about one of these
 representations, at which point the entry is replaced by a proof about it rather than
@@ -1648,9 +1805,10 @@ scope = [
   "boundary://boundary.unmodelled_own_behaviour",
 ]
 sites = [
-  "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifierPolicy",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExMcpTransportPolicy",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExProfileAlgorithm",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExVerificationKey",
+  "mcp-re-http-profile/src/evidence/prover_model.rs#ExRequestRoleEvidence",
 ]
 owner = "mats@sundvall.name"
 introduced_by = "v0.17 per-site escape-hatch registration (verification/reviews/packets/escape-hatch-site-registration-2026-09-07.md)"
@@ -1677,13 +1835,13 @@ tool_specific_mechanism = "verus:external_body"
 id = "ASM-0047"
 description = "Write access to the `mcp-re:cont:` keyspace of the shared correlation tier is confined to the fleet's own replicas, so an entry found there was written by an open leg of this deployment."
 justification = """
-The answer leg is admitted on digest equality: `HttpContinuation::verify` hashes the bytes
-the store returned and compares them with the digests the client signed. Nothing in that
+The answer leg is admitted on handle equality: `HttpContinuation::verify` compares the
+evidence handles the store returned with the handles the client signed. Nothing in that
 check — and nothing that could be added to it without a second signature over the retained
-bases — establishes that those bytes were ever produced by an `InputRequiredResult` this
+handles — establishes that those handles were ever produced by an `InputRequiredResult` this
 fleet delegated-signed. The key is derived from the ANSWERING actor, so a party holding a
-verified client identity AND write access to the keyspace plants its own bases under its
-own key, signs an answer leg committing to their digests, and the binding passes. The
+verified client identity AND write access to the keyspace plants its own handles under its
+own key, signs an answer leg committing to them, and the binding passes. The
 deployment then records a completed human-approval round trip that no human approved.
 
 So the premise is about ACCESS, not about Redis behaving correctly (ASM-0048 carries that).
@@ -1714,28 +1872,35 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0048"
-description = "A Redis `DEL key` reply of 1 means THIS call removed a key that existed, and a `SET key v PX t` keeps the key readable for `t` milliseconds and then not — so the delete count is a one-shot verdict across replicas and the entry's lifetime is bounded."
+description = "Each of the correlation tier's create and consume `EVAL` scripts executes atomically at the primary and its reply truthfully reports what it did: a consume reply of 1 means THIS call's `DEL` removed a key that existed, and the create script's `SET key v NX PX t` keeps the key readable for `t` milliseconds and then not — so the delete count is a one-shot verdict across replicas and the entry's lifetime is bounded."
 justification = """
 Both of the correlation tier's cross-replica properties are read directly off these replies.
-One-shot is the `DEL` count and nothing else: of two concurrent answer legs that both peeked
-the same entry and both bound, exactly one is told it removed it, and the other is failed
-closed. The bounded lifetime is the `PX` expiry and nothing else: an approval that is never
-answered stops being answerable, which is what keeps a continuation from being a permanent
-credential.
+The open leg runs the create script (prune expired live-set members, refuse a taken key,
+refuse a full live set, then `SET ... NX PX` and `ZADD` the key scored by the same expiry);
+the answer leg runs the consume script (`DEL` the key, `ZREM` it from the live set, reply
+with the `DEL` count). One-shot is that count and nothing else: of two concurrent answer
+legs that both peeked the same entry and both bound, exactly one is told it removed it, and
+the other is failed closed. The bounded lifetime is the `PX` expiry and nothing else: an
+approval that is never answered stops being answerable, which is what keeps a continuation
+from being a permanent credential. Both rest on Redis running each script as one atomic
+step at the primary — no other client's command interleaves between its calls — and on the
+script's reply being what its calls returned.
 
 Narrow on purpose, and not ASM-0040. That premise is about what a `WAIT` acknowledgement
-establishes under replication; this one is about the atomicity of a single command at the
+establishes under replication; this one is about the atomicity of one script at the
 primary and the honesty of its reply. A correlation entry is never `WAIT`ed on, so the
 quorum question does not arise, and an umbrella over both would state something true of
 neither.
 
 It stops being acceptable under a topology where the two legs can reach different primaries
 for the same key — a client-side-sharded or multi-primary cluster without hash-tag affinity
-for `mcp-re:cont:` — because then two `DEL`s can both return 1 and the one-shot rule is
-gone, or a proxy layer that answers `DEL` optimistically.
+for `mcp-re:cont:` — because then two consume scripts can both return 1 and the one-shot
+rule is gone, or a proxy layer that answers a script optimistically, or a server that does
+not run scripts atomically.
 """
 scope = [
   "unit://proxy.continuation_correlation_store",
+  "unit://proxy.continuation_leg_binding",
   "boundary://boundary.shared_state_store",
 ]
 owner = "mats@sundvall.name"
@@ -1743,7 +1908,7 @@ introduced_by = "r11 R11-518 (security funnel round 11, tracker #879)"
 review_requirement = "Owner review; any change to the commands the tier issues, and any Redis topology in which the two legs of one continuation can reach different primaries."
 premise_class = "external-boundary"
 boundary_owner = """
-The Redis server, across the `DEL` and `SET ... PX` commands: a `DEL` reply of 1 means this call removed an existing key, and a `PX` expiry keeps the key readable for exactly that window and then not at all.
+The Redis server, across the correlation tier's create and consume `EVAL` scripts: each runs atomically at the primary and replies truthfully, a consume reply of 1 means this call's `DEL` removed an existing key, and the create script's `PX` expiry keeps the key readable for exactly that window and then not at all.
 """
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
@@ -1909,21 +2074,23 @@ tool_specific_mechanism = "none:trusted-seam"
 
 [[assumption]]
 id = "ASM-0052"
-description = "The PKCS#11 token keeps the response-signing and TLS key objects `CKA_SENSITIVE` and non-extractable."
+description = "The PKCS#11 token reports `CKA_SENSITIVE` and `CKA_EXTRACTABLE` truthfully for the response-signing and TLS private key objects, and enforces them."
 justification = """
 `proxy.pkcs11_adapter`'s description asserts that the Ed25519 private key never leaves the
-token. Nothing in this repository establishes that. `AttributeTemplate::ed25519_labelled`
-asks the token for `CKA_CLASS`, `CKA_KEY_TYPE` and `CKA_LABEL` and nothing else; no code
-reads `CKA_SENSITIVE` or `CKA_EXTRACTABLE`, and a token that answered a `C_GetAttributeValue`
-for `CKA_VALUE` on the private key would be obeyed by a caller that asked. The adapter
-simply never asks — which is a property of the code as written, not of the object, and the
-next edit can change it without contradicting anything stated here.
+token. Most of that is now checked rather than trusted: at startup the adapter reads
+`CKA_SENSITIVE` and `CKA_EXTRACTABLE` of each private key object it will sign with and
+refuses one the token reports as not sensitive or as extractable, and refuses a token that
+cannot report either (`find_token_bound_private_key`). PKCS#11 makes both attributes one-way —
+sensitive cannot be cleared, extractable cannot be set again — so a key reported bound at
+startup stays bound. The adapter reads no other attribute of a private key object and never
+asks for `CKA_VALUE`.
 
-This is the most load-bearing premise behind the whole PKCS#11 custody claim, and it is the
-operator's, not MCP-RE's: it is established when the key object is provisioned on the token,
-by whoever provisioned it. It stops being acceptable if a key object is ever created by
-MCP-RE rather than found by label, or if an attribute read is added that could return key
-material.
+What remains is the token's own honesty, and it is the operator's choice of token, not
+MCP-RE's: that the attributes the token reports are the ones it enforces, and that it does
+not reveal key material through any operation while reporting otherwise. A token that lies
+about its own attributes is outside anything MCP-RE can observe through the PKCS#11
+interface. It stops being acceptable if a key object is ever created or imported by MCP-RE
+rather than found by label, or if an attribute read is added that could return key material.
 """
 scope = [
   "unit://proxy.pkcs11_adapter",
@@ -1934,13 +2101,11 @@ introduced_by = "r12 FILE-02 remediation (R12-1200)"
 review_requirement = "Owner review of any change to the attribute template, to what is read from a key object, or to how key objects come to exist on the token."
 premise_class = "external-boundary"
 boundary_owner = """
-The OPERATOR'S TOKEN PROVISIONING, across the PKCS#11 object boundary: the key objects named
-by `--pkcs11-*-label` were created with `CKA_SENSITIVE = true` and `CKA_EXTRACTABLE = false`
-and are not subsequently altered.
+The OPERATOR'S PKCS#11 TOKEN, across the PKCS#11 object boundary: the `CKA_SENSITIVE` and `CKA_EXTRACTABLE` values it reports for the key objects named by `--pkcs11-*-label` are the ones it enforces.
 """
 affected_contracts = []
 sites = [
-  "mcp-re-proxy/src/pkcs11_native.rs#AttributeTemplate::ed25519_labelled",
+  "mcp-re-proxy/src/pkcs11_keysource/token.rs#find_token_bound_private_key",
   "mcp-re-proxy/src/pkcs11_keysource/mod.rs#Pkcs11Token",
 ]
 tool_specific_mechanism = "none:trusted-seam"
@@ -2018,34 +2183,1070 @@ tool_specific_mechanism = "none:trusted-seam"
 
 [[assumption]]
 id = "ASM-0055"
-description = "A token label is unique across the slots present when the proxy starts."
+description = "WITHDRAWN — discharged by find_token_slot's refusal of an ambiguous token label."
 justification = """
-`find_token_slot` compares the trimmed `CK_TOKEN_INFO` label against the operator's
-`--pkcs11-token-label` and takes the FIRST byte-equal match. With two tokens present under
-one label the slot chosen is whichever the module enumerates first, which is the module's
-ordering and not a property the operator controls or the proxy records.
+Was: the operator's token topology presents at most one slot under the configured label, because the selector took the first byte-equal match.
 
-The consequence is a silent one: the proxy would log in and sign against the wrong token,
-producing valid signatures under the wrong key rather than an error. Refusing on ambiguity
-instead of taking the first match would be the stronger design, and is the change this
-premise is a placeholder for; it is registered rather than implemented because the refusal
-belongs with the slot-selection owner and needs its own blast-radius answer for a deployment
-that legitimately has duplicate labels across a token replacement.
+Discharged: `select_token_slot` refuses more than one present token under the configured label, so uniqueness is checked at startup rather than trusted. Kept, marked withdrawn, so earlier attestations of THM-0116 stay explicable.
 """
-scope = [
-  "unit://proxy.pkcs11_adapter",
-  "boundary://boundary.pkcs11",
-]
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "r12 FILE-02 remediation (R12-1200)"
-review_requirement = "Owner review if slot selection changes, or if a deployment can present two tokens under one label."
+review_requirement = "None — discharged by code, r12 finding 510bf29483fd1ec5."
+affected_contracts = []
+tool_specific_mechanism = "none"
+
+[[assumption]]
+id = "ASM-0056"
+description = "`std::time::Instant` readings taken in one process never decrease."
+justification = """
+`DegradedWindow` stores the instant of the last successful authority read and measures the
+outage as `now.saturating_duration_since(last)`. A backwards-stepping reading would make the
+elapsed time read smaller than the true outage and hold a replica inside its window past P;
+saturation would hide the step rather than refuse it.
+
+The premise also excludes host suspend: `CLOCK_MONOTONIC` on Linux and `CLOCK_UPTIME_RAW` on
+macOS do not advance while the host is suspended, so the window counts less time than the
+wall-clock outage. The bound P is therefore a bound on running time, not on elapsed wall
+time.
+"""
+scope = [
+  "unit://proxy.admission_currency_gate",
+  "boundary://boundary.rust_std",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 degraded_window remediation (cc270e98327e4309)"
+review_requirement = "Owner review if the window is measured from any clock other than `std::time::Instant`, or if suspend-resume must count toward P."
 premise_class = "external-boundary"
 boundary_owner = """
-The OPERATOR'S TOKEN TOPOLOGY, across slot enumeration: at most one present slot carries the
-token label named by `--pkcs11-token-label`.
+The STANDARD LIBRARY and the host OS clock beneath it: `Instant::now()` readings within one
+process are non-decreasing, and do not advance across host suspend.
 """
 affected_contracts = []
 sites = [
-  "mcp-re-proxy/src/pkcs11_keysource/token.rs#find_token_slot",
+  "mcp-re-proxy/src/admission_enforcer/degraded_window.rs#DegradedWindow::exhausted_at",
 ]
 tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0057"
+description = "The per-request wall-clock `now` the serving path hands each verifier operation, and against which it opens the response signing window, is the current UTC time, to within the deployment's configured skew of every peer's clock."
+justification = """
+Every `Verifier` operation takes `now: i64` as an argument. The verifier holds no clock, and
+that is deliberate rather than an omission: `chain/hop.rs` verifies a retained exchange at the
+instant it was retained, so a clock owned by the verifier would be wrong for the historical
+operations, and a clock pinned at construction would drift from the request it is applied to.
+The serving path builds a verifier per request and reads `now_unix()` once at the point it
+calls `handle`.
+
+So the freshness, window-width and currentness conclusions the verifier reaches are
+conclusions about the instant it was GIVEN. They are conclusions about the present only if
+the value supplied is the present, and nothing in this repository can establish that: the
+reading is `SystemTime::now()` through `mcp-re-proxy/src/clock.rs`, a host clock disciplined
+by whatever the operator runs. ASM-0025 and ASM-0026 state the skew and window bounds the
+policy configures; this states what the reading they are compared against must be.
+
+The premise is about the reading and not about monotonicity. A host clock that steps backwards
+re-admits what a forward-running clock had already expired, and one that steps forwards
+refuses what is fresh; both are the same failure of this premise and neither is detectable
+from a single request. `now_unix()` maps a pre-epoch error to 0, which the startup plan
+diagnoses as a clock fault; that catches a dead clock, not a wrong one.
+
+It stops being acceptable if a verifier operation is ever handed a value that is not an
+acquisition of the host wall clock at the request's own arrival, or if a verifier gains a clock
+of its own that the historical operations cannot override.
+"""
+scope = [
+  "unit://http_profile.freshness_window",
+  "unit://http_profile.admission_currency",
+  "unit://http_profile.admission_assertion",
+  "unit://http_profile.admission_state_provenance",
+  "unit://proxy.admission_state_source",
+  "unit://http_profile.pdp_decision_authentication",
+  "unit://proxy.response_signing",
+  "boundary://boundary.clock",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 11 (verifier clock provenance, 20f1fdce, 71053a1e)"
+review_requirement = "Owner review if any verifier operation is given a clock source other than the per-request wall-clock reading, or if the reading moves off `crate::clock::now_unix`."
+premise_class = "external-boundary"
+boundary_owner = """
+The DEPLOYMENT OPERATOR's host clock discipline (NTP or equivalent), across the `SystemTime::now()`
+acquisition in `mcp-re-proxy/src/clock.rs`: the reading taken at a request's arrival is the current
+UTC time to within the configured skew of every peer's clock.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-proxy/src/clock.rs#now_unix",
+  "mcp-re-http-profile/src/verifier.rs#Verifier",
+]
+tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0058"
+description = "Write access to the replay keyspace of the shared replay tier is confined to the fleet's own replicas: the instance is dedicated to the deployment, or an access-control list denies every other principal `DEL`, `UNLINK` and `FLUSH*` on it."
+justification = """
+"Key present" is the whole replay signal. A replay store records an admitted nonce by creating
+a key and refuses a repeat because the key exists, so anything able to delete that key makes the
+nonce `Fresh` again for the rest of its freshness window, on every replica at once, with the
+store reporting nothing. The keys are written verbatim as `signer|audience|nonce` into the
+instance's global keyspace: they carry no owned prefix, so nothing in the store separates them
+from a neighbour's, and `FLUSHALL` by an unrelated tenant is a replay bypass.
+
+The premise is about ACCESS, in the sense ASM-0047 uses the word for the correlation keyspace,
+and it is not about the store behaving correctly (ASM-0040 for the Redis count, ASM-0041 for
+etcd consensus). It is also the reason no key prefix is added: a prefix would namespace the keys
+against a collision and would not confine them against a principal that holds write access,
+while changing the persisted key names would let a nonce admitted by an old replica replay on a
+new one during a rolling upgrade.
+
+Redis AUTH and TLS are transport and identity controls on the same boundary. They are what an
+operator uses to establish this premise; they are not themselves required by the code, because
+an instance on a private network that nothing else can reach satisfies it with neither.
+
+It stops being acceptable if the replay instance is shared with a tenant that is not this
+dispatch boundary, or reachable by any principal that is not a replica of this fleet. An
+operator console with delete access counts.
+"""
+scope = [
+  "unit://proxy.replay_admission_gate",
+  "unit://proxy.redis_replay_adapter",
+  "unit://proxy.etcd_replay_adapter",
+  "boundary://boundary.shared_state_store",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 19 (3821b832, 12bb2a61, 78a5dbfe, e6adb4a3)"
+review_requirement = "Owner review; any deployment topology that widens who may delete or flush the replay keyspace, and any change that makes replay keys a store-owned namespace."
+premise_class = "external-boundary"
+boundary_owner = """
+The deployment operator, across the replay tier's network and access-control configuration: write
+access to the replay keyspace, including `DEL`, `UNLINK` and `FLUSH*`, is confined to the fleet's
+own replicas.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0059"
+description = "Every server reachable at `--replay-redis-url`, failover targets and replacements included, runs `maxmemory-policy noeviction` for as long as it serves the replay tier."
+justification = """
+THM-0106's refusal is taken at connect: the store asks the server for `maxmemory-policy` and
+refuses to open unless it answers `noeviction`, and it asks on every pooled connection it
+opens. That establishes what the server a connection reached said when the connection was
+made. A `ConnectionManager` reconnects without a hook the store can use, a Sentinel or cluster
+failover can answer the next command from a different server, and an operator can run
+`CONFIG SET maxmemory-policy` on a live one, so what is asserted at connect is a statement
+about one server at one time.
+
+The premise states the rest: every server the URL can resolve to runs `noeviction`, and keeps
+running it. It is a property of the deployment's topology and its operators, not of anything
+this repository can check on the hot path without a `CONFIG` round trip per insert and the
+ACL surface that implies. A server that evicts discards admitted nonces before their TTL, so
+each becomes `Fresh` again for the remainder of its window on every replica, which is the
+outcome THM-0106 exists to exclude.
+
+It stops being acceptable if a replica or failover target is provisioned from a template whose
+policy differs from the primary's, or if the policy is changeable by a principal other than the
+operator of the replay tier.
+"""
+scope = [
+  "unit://proxy.redis_replay_adapter",
+  "boundary://boundary.shared_state_store",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 20 (2f30e027, 64ee075d)"
+review_requirement = "Owner review; any change to when the eviction policy is asserted, and any failover topology whose members are not provisioned alike."
+premise_class = "external-boundary"
+boundary_owner = """
+The deployment operator, across the replay tier's server configuration: every server reachable at
+the configured replay URL, including failover targets and replacements, runs `noeviction`.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0060"
+description = "For any two distinct (audience, resolved actor, `requestState`) triples this deployment handles, the continuation key derivation produces distinct SHA-256 digest values."
+justification = """
+`continuation_key` digests a domain tag, the length-prefixed audience and actor, and the opaque
+state bytes, and both legs recompute it and use the result as the address of the retained evidence handles.
+So THM-0087's *an entry is reachable only by the actor the verifier resolved* is conditional on
+two distinct triples not addressing the same entry, and `proxy.continuation_correlation_store`
+registered no premise saying so. The length prefixes make the ENCODING injective; what they
+cannot do is make the DIGEST injective, and a claim may not exceed its evidence closure.
+
+It is the second-preimage property and no stronger, and the difference is the whole argument.
+The adversary does not choose the open leg's triple: the audience is the deployment's, the
+actor is the one the verifier resolved, and the state is minted by this fleet. What an adversary
+holds is a victim's triple and its own free choice of a second actor and second state, and
+needs one that lands on the victim's key. That is a second preimage of a value it was handed.
+This premise is therefore deliberately weaker than collision resistance (ASM-0037) and is a
+per-unit entry rather than a widening of ASM-0028, whose scope the ADR-068 Phase-1 split
+narrowed to the six propositions that conclude byte agreement from digest agreement: widening
+an owner-reviewed premise would reopen assumption review for all six consumers, and none of
+them is this one.
+
+Nothing here may be read as MCP-RE having proved SHA-256's second-preimage resistance, and
+colliding triples exist because the digest is not injective. The claim is computational and
+deployment-scoped.
+
+It stops being acceptable if the key moves to a digest without SHA-256's standing, or if the
+state bytes become attacker-chosen before the open leg is minted, which would need collision
+resistance and not this.
+"""
+scope = [
+  "unit://proxy.continuation_correlation_store",
+  "boundary://boundary.crypto_primitives",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 27 (c5af44c1)"
+review_requirement = "Owner review; any change to the continuation key's digest algorithm or domain separation, and any change that lets the request state be chosen by the answering party before the open leg is minted."
+premise_class = "assumed"
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-primitive"
+
+[[assumption]]
+id = "ASM-0061"
+description = "The actual divergence between any two replicas' host clocks is at most the bound the deployment declares with `--replay-clock-divergence-secs`."
+justification = """
+A shared replay store expires a record on the clock of the replica that wrote it: the Redis
+`PX` and the etcd lease TTL are both `retain_until - now`, with `now` read from that replica's
+host. A replica whose clock runs `d` seconds ahead of a correct one writes a record that lapses
+`d` seconds before the correct replica stops accepting the request it stands for, and in those
+`d` seconds the nonce is `Fresh` again on every replica.
+
+The mechanism no longer leaves that gap to the environment. The deployment declares a bound, and
+every store keeps every record that much longer than the verifier's horizon (`ReplicaClockDivergence`,
+applied in all four replay stores), so the arithmetic is safe for EVERY clock that satisfies the
+bound, not for the clocks that happen to agree. What this premise registers is the remainder: that
+the declared bound is true, which nothing in this repository can establish. It is the operator's
+clock discipline (NTP or equivalent) across the fleet, and a host whose clock is stepped, suspended
+or unsynchronised past the bound reopens exactly the window the padding sized.
+
+It is a premise about the BOUND, not about the verifier's skew: ASM-0025 and ASM-0026 state what the
+policy tolerates in a peer's `created` and `expires`, ASM-0057 states what the per-request reading
+is, and this states how far the replicas that share a store may differ from one another. The default
+the deployment is held to when it declares nothing is 5 seconds and the ceiling is the verifier's own
+skew ceiling.
+
+It stops being acceptable if a replica joins the fleet whose clock is not disciplined to the same
+reference, or if the declared bound is lowered below what the fleet's clock discipline actually
+delivers.
+"""
+scope = [
+  "unit://proxy.redis_replay_adapter",
+  "unit://proxy.etcd_replay_adapter",
+  "boundary://boundary.clock",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 ruling 12 item 21 (e2cd431a)"
+review_requirement = "Owner review; any change to how the declared bound is applied to retention, to its default or ceiling, and any fleet whose replicas do not share one clock reference."
+premise_class = "external-boundary"
+boundary_owner = """
+The DEPLOYMENT OPERATOR's clock discipline across the replicas that share one replay store: no two
+replicas' host clocks differ by more than the bound declared with `--replay-clock-divergence-secs`.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-proxy/src/config_state/replica_clock.rs#ReplicaClockDivergence",
+]
+tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0065"
+description = "ECDSA P-256 / SHA-256 verification as implemented by the pinned `p256` 0.14 / `ecdsa` 0.17 accepts a signature only if it was produced under the private key of the supplied verifying key, and `p256::ecdsa::VerifyingKey::from_sec1_bytes` refuses every encoding that is not a point on the curve."
+justification = """
+The security of the signature scheme itself, as implemented by the pinned `p256` and `ecdsa`
+crates. No test can establish it: a battery shows that valid signatures verify and that
+specific invalid ones do not, which is conformance, not unforgeability. The `P256Point` seal
+in `cose_key/mod.rs` rests on the SEC1 decode refusing off-curve encodings. Mirrors ASM-0027
+for the ES256 verifier. This is unforgeability, NOT signature uniqueness: a high-S pair
+(r, n - s) also verifies, so receipt octets are not unique. It stops being acceptable if the
+curve or scheme is broken, or if the crate is replaced by one whose acceptance criterion
+differs.
+"""
+scope = [
+  "unit://http_profile.scitt_algorithm_agreement",
+  "unit://http_profile.scitt_derived_root",
+  "boundary://boundary.crypto_primitives",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 remediation (63885ad628dac6c9)"
+review_requirement = "Owner review; any change of ECDSA backend or pinned version."
+premise_class = "assumed"
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-primitive"
+
+[[assumption]]
+id = "ASM-0066"
+description = "The trust-anchor manifest signature covers the signer's serde_json serialization of the manifest, carried verbatim as the envelope's `manifest` member, and verifiers check it over those bytes as received. That serialization is a frozen compatibility surface for the present version until ADR-MCPRE-053 replaces it: released clients that re-serialize what they parsed verify only while a signer emits it unchanged."
+justification = """
+A compatibility constraint MCP-RE relies on, not a proved cryptographic property. A verifier
+in this tree checks the signature over the `manifest` bytes it received and parses them only
+afterwards, so nothing here depends on the representation being canonical. What remains is the
+released clients: they rebuild the signing input from what they parsed, so changing the
+signer's serialization inside the present version would break every manifest distributed to
+them. The replacement (compact JWS), its version boundary and cutover, its signing semantics
+and golden vectors belong to a separate ADR-MCPRE-053 slice, with no dual-format reader. Owner
+Ruling 13.1 (2026-10-04, finding 9f28d71b502a2418).
+
+A change inside this version is detected rather than remembered: the golden vector
+`the_manifest_signing_input_and_signature_are_byte_stable` pins the exact signing-input bytes
+of a fixed manifest and the exact signature a fixed org key makes over them, and fails on any
+change to the serialization, the preimage or the field order. That makes a breach of the
+constraint visible; it does not discharge it, because the constraint is what released clients
+consume, which no test here controls.
+"""
+scope = ["unit://client.trust_manifest_lifecycle", "boundary://boundary.unmodelled_own_behaviour"]
+owner = "mats@sundvall.name"
+introduced_by = "Owner Ruling 13.1 (r12 remediation, 9f28d71b502a2418)"
+review_requirement = "Owner review; any change to the manifest representation or its signing input."
+premise_class = "review-obligation"
+discharging_event = { kind = "owner-event", statement = "The ADR-MCPRE-053 serialization slice lands: the new manifest representation, its version boundary and cutover, signing semantics and golden vectors. This entry is then withdrawn, never renewed beside the new format." }
+affected_contracts = []
+tool_specific_mechanism = "none:compatibility-constraint"
+
+[[assumption]]
+id = "ASM-0067"
+description = "The operator keeps the audit profile's `transparency_service_keys` lifecycle (`valid_from`, `valid_until`, `revoked_at`) current with the transparency service's actual key status, so a key the service has revoked or retired is stated as such before the auditor next registers."
+justification = """
+The auditor judges a receipt's service key only against the lifecycle the audit profile
+states, at the host's current time; it does not discover revocation from the service, so a
+revocation the operator has not written down is honoured. That is an operator obligation
+across the profile document, not a property MCP-RE can establish. No time a receipt or its
+statement carries is consulted, and past `revoked_at` or `valid_until` every receipt under
+the key is refused: archived receipts are distrusted unless independently anchored, and no
+anchor mechanism exists. It stops being acceptable if the auditor is expected to track a
+service's key status itself. Owner Ruling 14.1 (2026-10-04, finding 89aa1a1a453cf723).
+"""
+scope = [
+  "unit://http_profile.scitt_key_lifecycle",
+  "unit://proxy.registration_receipt_acceptance",
+  "boundary://boundary.unmodelled_own_behaviour",
+]
+owner = "mats@sundvall.name"
+introduced_by = "Owner Ruling 14.1 (r12 remediation, 89aa1a1a453cf723)"
+review_requirement = "Owner review; any change to how the auditor learns a transparency-service key's status."
+premise_class = "external-boundary"
+boundary_owner = "The operator writing the audit profile, across the profile document's `transparency_service_keys` member, under every registering auditor run (`--register-to`)."
+affected_contracts = []
+tool_specific_mechanism = "none:operator-assertion"
+
+[[assumption]]
+id = "ASM-0068"
+description = "`getrandom` over the host CSPRNG returns `Err` or unpredictable bytes."
+justification = """
+Two units rest their secrecy on bytes drawn from the operating system. The request nonce
+`host.request_freshness_inputs` produces is drawn by `SystemNonceSource::fill`, and replay
+freshness is worth what that nonce's unpredictability is worth: a nonce an attacker can predict
+is a request it can pre-sign a replay slot for. The delegated response-signing key
+`proxy.delegated_signing_credential` mints on every rotation is seeded by `getrandom::fill` in
+`delegated_wiring.rs`, and a predictable seed is a published private key. Both sites abort on
+`Err` rather than continue with the zeroed buffer, and `host.request_freshness_inputs` measures
+that every byte of a nonce is written; no measurement can say anything about whether the bytes
+that came back were unpredictable. Nothing in this repository can: the property belongs to the
+host's entropy source.
+
+So the premise is exactly the split `getrandom` itself draws. An unavailable source is
+reported, and every site handles that report; a source that answers with predictable bytes
+is not distinguishable from a good one by any test, and that is the case this entry
+registers. It is an environment premise and not a cryptographic one: the algorithms consuming
+the bytes are `boundary.crypto_primitives`' premises, and this states only what they are fed.
+
+`boundary.os_entropy` names six direct OS-entropy acquisition sites. Of those, three are not
+relied upon by any verification unit in this scope: the rotation-backoff jitter in
+`signing_plane/mod.rs`, which falls back to no jitter on `Err`; the OCSP request nonce in
+`ocsp.rs`, which belongs to no unit; and the audit stream run identity in
+`audit_sink/stream.rs`, which refuses startup on `Err` and is used to distinguish process
+incarnations rather than as a secret or authorization token. No unit in this scope rests on any
+of those three sites. The trust-epoch advance generation in `trust_epoch/advance.rs` refuses the
+advance on `Err` and is relied upon by `proxy.delegated_epoch_label` to distinguish a fresh
+authoritative advance from a previously observed epoch state; its purpose is freshness/collision
+resistance, not secrecy.
+
+It stops being acceptable if `getrandom` is configured with a backend other than the host OS
+CSPRNG, if a site starts continuing with a buffer it did not fill after an `Err`, or if a host
+class is admitted whose CSPRNG can answer before it is seeded.
+"""
+scope = [
+  "unit://host.request_freshness_inputs",
+  "unit://proxy.delegated_signing_credential",
+  "unit://proxy.delegated_epoch_label",
+  "boundary://boundary.os_entropy",
+]
+owner = "mats@sundvall.name"
+introduced_by = "owner-signature:tcb-os-entropy-premise (r12, fb18b3b14dc7bf01, b243d21bc1720a78)"
+review_requirement = "Owner review; any change of `getrandom` backend or version, and any new production acquisition site of OS entropy."
+premise_class = "external-boundary"
+boundary_owner = """
+The HOST OPERATING SYSTEM's CSPRNG, reached through the pinned `getrandom` crate's `fill`: every
+call either returns `Err` or fills the whole buffer with bytes unpredictable to every party other
+than this process.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0069"
+description = "The wall-clock `now` handed to the delegated-credential chain check is the verifying party's current UTC time, to within the deployment's configured skew of the issuer's clock."
+justification = """
+`http_profile.delegated_credential_chain` admits a credential only inside its own `nbf`/`exp`
+window, widened by the clamped skew (`check_freshness`). The chain holds no clock: `now` is an
+argument to every verifier operation, supplied by whoever verifies the response — the client
+proxy's verification clock, an SDK caller, or, for a retained exchange, the instant at which
+the exchange was retained. So the conclusion *this credential is inside its window* is a
+conclusion about the instant the chain was GIVEN, and it is a conclusion about the present only
+if that value is the present. Nothing in this repository can establish that: the reading comes
+from a host clock disciplined by whatever the verifying party runs.
+
+This is the per-unit counterpart of ASM-0057 and does not widen it. ASM-0057 states what the
+serving path hands the request-side verifier operations, scoped to `http_profile.freshness_window`
+and `http_profile.admission_currency`; the delegated chain is a response-side check fed by a
+different party's clock, and widening an owner-reviewed premise to a consumer it was not written
+for would reopen its review for the units it already serves.
+
+A clock that steps backwards re-admits a credential whose `exp` has passed, and one that steps
+forwards refuses a credential that is current; both are the same failure of this premise and
+neither is detectable from one response. The skew clamp bounds how far a misconfigured
+TOLERANCE can widen the window; it says nothing about a wrong READING.
+
+It stops being acceptable if the chain is ever handed a value that is not an acquisition of the
+verifying host's wall clock (or, for a retained exchange, the instant recorded when it was
+retained), or if the chain gains a clock of its own.
+"""
+scope = [
+  "unit://http_profile.delegated_credential_chain",
+  "boundary://boundary.clock",
+]
+owner = "mats@sundvall.name"
+introduced_by = "owner-signature:tcb-os-entropy-premise (r12, b243d21bc1720a78, clock half)"
+review_requirement = "Owner review if the delegated-credential window is judged against any value other than the verifying party's wall-clock reading, or if the chain gains a clock of its own."
+premise_class = "external-boundary"
+boundary_owner = """
+The operator of the VERIFYING host's clock discipline (NTP or equivalent), across the wall-clock
+acquisition that supplies `now` to a delegated-response verification: the reading is the current
+UTC time to within the configured skew of the issuer's clock.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-http-profile/src/delegation/verify.rs#check_freshness",
+]
+tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0070"
+description = "rustls' `WebPkiServerVerifier`, built over only the configured server-CA roots, completes a client handshake only for a server certificate that chains to one of those roots, names the server identity the connection was opened for, and is inside its validity window at the handshake, presented by a server that proved possession of that certificate's private key."
+justification = """
+THM-0109 says the client transport never sends a request body to a server it did not
+authenticate, and three of its four conjuncts — chain of trust, server identity, validity
+window — are decided inside rustls, not in this repository. `tls_config.rs` selects the
+mechanism (the standard `WebPkiServerVerifier`, over a `RootCertStore` holding ONLY the
+configured server CA, with the connection's `server_name` as the identity to match) and
+refuses an empty bundle; that refusal is the one conjunct this repository decides. Everything
+else the claim says about a handshake that completed is a faithful report of what rustls and
+webpki checked, and the unit's controls drive real handshakes against real certificates
+precisely because a stand-in verifier would establish nothing about the real one.
+
+It is the client-side counterpart of the server-side premises ASM-0033..ASM-0036 and is
+registered per unit rather than by widening any of them: those are about what the proxy's
+listener reports about a CLIENT credential, and none of their consumers is this one.
+
+The possession half is what makes "authenticated" mean more than "presented": on a full
+handshake the server signs the transcript with the certificate's key and rustls rejects a
+signature that does not verify. Without it a copied certificate would complete the handshake
+under a true-sounding sentence.
+
+Not proved here: a TLS implementation and its path validation are a far larger verification
+target than the configuration selecting them. The fault-injection lane demonstrates that the
+controls fail when the verifier is replaced by an accept-any one; it establishes nothing about
+whether the verifier that IS installed checks what it says it checks.
+
+It stops being acceptable if the client config installs any verifier other than
+`WebPkiServerVerifier` in a production build, if the root store is ever populated from
+anything but the configured server-CA bundle, or if the pinned rustls or webpki version
+changes what path validation, name matching or validity checking accepts.
+"""
+scope = [
+  "unit://client.transport_server_identity",
+  "boundary://boundary.tls_mechanism",
+]
+owner = "mats@sundvall.name"
+introduced_by = "owner-signature:asm-client-transport-webpki-verifier-premise (r12, a01feb270113496e)"
+review_requirement = "Owner review; any change to the client transport's server verifier, its root store, or the pinned rustls/webpki version."
+premise_class = "external-boundary"
+boundary_owner = """
+The `rustls` TLS client and its webpki path validation, across `WebPkiServerVerifier` as built in
+`mcp-re-transport/src/tls_config.rs`: a handshake completes only for a server certificate that
+chains to a configured root, matches the connection's `server_name`, is within its validity
+window, and is presented by a server holding its private key.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0071"
+description = "A read of the trust-epoch key and its generation over the delegated-signing plane's own connection, issued after an operator's `mcp-re-proxy trust-epoch advance` on that key was acknowledged, returns a counter and generation different, as a pair, from every pair that plane read before the advance."
+justification = """
+The sibling of ASM-0044, for the consumer ASM-0044 excludes by name. `DelegatedEpochWatch` reads
+the same shared counter over its own connection and mints under `<base>#<counter>` for whatever
+the read returned (THM-0133), and the plane tells the operator at startup that
+`mcp-re-proxy trust-epoch advance` moves every replica to the next label. That sentence is
+THM-0133 composed with this premise: the advance — the incremented counter and a fresh generation,
+committed in one server-side step — is issued on a connection this replica does not hold, and what a later `GET` on the plane's
+connection returns is decided by the store's replication and routing, not by anything here.
+
+Narrow on purpose, exactly as ASM-0044 is: not "Redis is correct", not durability of the counter,
+not ordering between replicas, and not that every replica observes the advance at the same time
+— only that an acknowledged write becomes visible to a subsequent read on another connection. A
+read that returns the OLD value is the case excluded here, and the one that would keep this
+replica minting under a label the operator meant to retire. A read that FAILS, or returns a LOWER
+value, is outside the premise and handled locally: no label, so nothing is minted.
+
+It is a separate entry rather than a widening of ASM-0044 because the two consumers make
+different local decisions with the value — a flush there, a refusal here — and a premise about
+what one plane's read means must not be read as an ordering between the two planes'
+observations, which nothing in the tree establishes.
+
+It stops being acceptable if the epoch key is served from a read replica that can lag the
+primary, if the deployment routes the plane's connection to a different primary than the
+operator's, or if the key can be evicted or restored to an older value without that reading as
+absence or regression at the reader.
+"""
+scope = ["unit://proxy.delegated_epoch_label", "boundary://boundary.shared_state_store"]
+owner = "mats@sundvall.name"
+introduced_by = "owner-signature:asm-delegated-epoch-label-store-premise (r12, 5fc98328eee54d1a)"
+review_requirement = "Owner review; any change to the delegated plane's epoch reader, to the label it derives, or to the store topology the deployment documentation admits for the epoch key."
+premise_class = "external-boundary"
+boundary_owner = """
+The shared-state store, across its read-your-acknowledged-writes ordering for the trust-epoch key
+as the delegated-signing plane reads it, under the store topology the deployment documentation
+admits for that key.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0072"
+description = "For any two distinct request bodies a preflight receipt can be about, `content_digest_sha256` produces distinct SHA-256 digest values."
+justification = """
+`check_unbound_receipt_is_about_this_request` accepts a preflight receipt as being about this
+call only when the `sha-256-received` digest the server signed into the receipt equals the
+SHA-256 digest of the body this client sent. So `client.response_binding_disposition`'s *a
+receipt about another request answers nothing* is conditional on two distinct bodies not
+sharing that digest, and the unit registered no premise saying so. The comparison is exact
+over the encoded digest; what it cannot do is make the DIGEST injective, and a claim may not
+exceed its evidence closure.
+
+It is the second-preimage property and no stronger, and the difference is the whole argument.
+The adversary does not choose this client's request body: the client composes and sends it.
+What an adversary can obtain is a receipt the server signed for bytes the adversary chose and
+submitted, and to have it accepted here it needs those bytes to land on the digest of a body it
+was handed. That is a second preimage of a value it did not choose. This premise is therefore
+deliberately weaker than collision resistance (ASM-0037) and is a per-unit entry rather than a
+widening of ASM-0028, whose scope the ADR-068 Phase-1 split narrowed to the six propositions that
+conclude byte agreement from digest agreement on the profile side: widening an owner-reviewed
+premise would reopen assumption review for all six consumers, and none of them is this one.
+
+Nothing here may be read as MCP-RE having proved SHA-256's second-preimage resistance, and
+colliding bodies exist because the digest is not injective. The claim is computational and
+deployment-scoped. It is also a BYTE binding, which this premise does not strengthen: two
+transmissions of identical bytes share the digest, and that residue is why the outcome stays
+`bound: false`.
+
+It stops being acceptable if the received digest moves to a digest without SHA-256's standing,
+or if the request body becomes attacker-chosen before it is sent, which would need collision
+resistance and not this.
+"""
+scope = [
+  "unit://client.response_binding_disposition",
+  "boundary://boundary.crypto_primitives",
+]
+owner = "mats@sundvall.name"
+introduced_by = "owner-signature:asm-client-preflight-received-digest-premise (r12, 87ece9fc35fd3cf1)"
+review_requirement = "Owner review; any change to the received-digest algorithm or to what it is computed over, and any change that lets the answering party choose the request body before it is sent."
+premise_class = "assumed"
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-primitive"
+
+# ---------------------------------------------------------------------------
+# Premises a claim relies on through a boundary its units CALL into
+# ---------------------------------------------------------------------------
+#
+# A unit-scoped premise attaches only to the units it names (`_fingerprint.theorem_premises`),
+# so a unit that relies on a boundary from outside its files rests on a premise only when the
+# premise names it. These entries state what such units trust and were found missing from
+# every closure; each names its consumers.
+
+[[assumption]]
+id = "ASM-0076"
+description = "The serving host's wall clock (`SystemTime`), as the STS and GCE/GKE metadata credential sources read it, never reads more than sixty seconds behind true UTC time, and never steps backwards by more than sixty seconds in total while a credential whose expiry it stamped is in use, so the sixty-second refresh margin those sources keep ahead of an expiry absorbs it; a clock further behind makes an expired credential read as current."
+justification = """
+The STS and GCE/GKE metadata credential sources judge an issued credential's remaining lifetime
+against the host's wall clock: the expiry the issuer stated is compared with `SystemTime::now()`
+to decide whether the credential is still usable or must be re-exchanged. THM-0117 states that
+the expiry is never EXTENDED — not by the reuse floor, and not by a stated value past the session
+ceiling — and that statement is about the comparison. Whether the comparison is made against the
+present is this premise.
+
+It is not ASM-0057. That premise states what the serving path hands each verifier operation, and
+a credential source is not a verifier operation: it reads the clock for itself, at its own
+moments, to manage a credential this proxy presents rather than one it judges.
+
+Each source re-exchanges a credential sixty seconds before its expiry
+(`CREDENTIAL_REFRESH_MARGIN`, `TOKEN_REFRESH_MARGIN`), so a clock behind true time by less than
+that still stops using the credential no later than its true expiry. Two kinds of expiry are
+compared: an absolute one the issuer stated (STS `Expiration`), which needs the reading to be
+near true time, and one this host stamped as a reading plus a stated lifetime (the metadata
+server's `expires_in`, and the bounded reuse floor), which needs the clock not to step back
+across the credential's use. The premise states both. A clock further behind
+makes an expired credential read as current, and one ahead discards a current one early; the
+first is the security failure. Nothing in this repository can detect either from one reading.
+
+It stops being acceptable if a credential source judges a lifetime against anything other than
+the host wall clock, gains a clock of its own, or keeps a refresh margin below sixty seconds.
+"""
+scope = [
+  "unit://proxy.aws_sts_credentials",
+  "unit://proxy.gcp_kms_adapter",
+  "unit://proxy.gcp_metadata_token_lifetime",
+  "unit://proxy.aws_web_identity_credential_exchange",
+  "boundary://boundary.clock",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 RERE-RATIFICATION §4b P-1 (Ruling 40 step 4)"
+review_requirement = "Owner review if a credential source's lifetime is judged against anything other than the host wall clock, or its refresh margin falls below sixty seconds."
+premise_class = "external-boundary"
+boundary_owner = """
+The DEPLOYMENT OPERATOR's host clock discipline (NTP or equivalent), across the `SystemTime::now()`
+readings the STS and metadata credential sources take: no reading is behind the current UTC time
+by more than sixty seconds, and the clock does not step backwards by more than sixty seconds in
+total while a credential whose expiry it stamped is in use.
+"""
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0077"
+description = "The client host clock `now_unix` reads true time within the client's declared skew."
+justification = """
+The deployable client reads its host wall clock once per decision (`now_unix`,
+`mcp-re-client/src/startup.rs`) and hands the reading to the trust-manifest lifecycle and the
+anchor refresher: a manifest past its `expires_at` with no newer one accepted withdraws the
+anchors (THM-0127), and the anchors in force are the ones valid at that reading. Each
+conclusion is about the instant read; it is about the present only if the client host's clock
+is right.
+
+It is a different party's clock from ASM-0057 and ASM-0076, which are the serving host's. A
+client host stepped backwards keeps an expired manifest's anchors in force.
+
+It stops being acceptable if the client judges manifest validity against anything other than
+its host's wall clock.
+"""
+scope = [
+  "unit://client.anchor_refresh",
+  "unit://client.trust_manifest_lifecycle",
+  "unit://client.serving_lifetime",
+  "boundary://boundary.clock",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 RERE-RATIFICATION §4b P-2 (Ruling 40 step 4)"
+review_requirement = "Owner review if the client's manifest or anchor lifetimes are judged against a clock other than the client host's wall clock."
+premise_class = "external-boundary"
+boundary_owner = """
+The operator of the CLIENT host's clock discipline (NTP or equivalent), across the client's
+`now_unix` reading: it is the current UTC time to within the client's declared skew.
+"""
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0078"
+description = "The filesystem holding `--evidence-retention-dir` keeps an acknowledged rename and fsync across process and host failure."
+justification = """
+THM-0045's `DispatchCommitted` is a crossing "the store has already made durable", and the
+retention commitment acknowledges a job only after the `fsync` covering its rename has returned.
+That ORDER is this project's and is tested (`proxy.retention_commitment`). What an `fsync` that
+returned success guarantees — that the renamed file and the directory entry naming it survive a
+crash of the process or the host — is the filesystem's and the kernel's, and nothing here can
+establish it: a filesystem mounted with write barriers off, or a device that acknowledges a cache
+flush it did not perform, returns success and loses the record.
+
+It stops being acceptable if retention is pointed at storage whose `fsync` does not survive host
+failure, or if the acknowledgement is ever made before the `fsync` returns.
+"""
+scope = [
+  "unit://proxy.retention_commitment",
+  "boundary://boundary.filesystem",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 RERE-RATIFICATION §4b P-3 (Ruling 39 §9 THM-0045, Ruling 40 step 4)"
+review_requirement = "Owner review if the retention store's durability step changes, or if retention may be configured onto storage without a durable fsync."
+premise_class = "external-boundary"
+boundary_owner = """
+The host kernel and the filesystem mounted at `--evidence-retention-dir`, across `rename` and
+`fsync` on the file and its directory: once `fsync` returns success the renamed entry and its
+contents persist across a process or host crash.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0079"
+description = "`Instant` is monotonic and advances at true rate while the process runs."
+justification = """
+A reload is due a cadence after the last one, measured on `std::time::Instant`; a cached key's
+authority ends at its first-caching reading of the cache's clock plus the window `T` (THM-0097),
+and that clock is `Instant`-elapsed seconds plus the highest wall-minus-monotonic offset seen, so
+it advances at least as fast as `Instant` and a wall-clock step can only shorten `T`. Those are
+DURATIONS, which is why they are not read off the wall clock — and a duration means something only
+if the monotonic clock never goes back and advances at the rate time does. A clock that stalls keeps a cached answer authoritative past
+`T`; that is the failure that matters here.
+
+It is not a wall-clock premise and is not implied by one: a monotonic clock is trusted to
+advance, not to agree with any peer.
+
+It stops being acceptable if the reload cadence is measured on anything but the monotonic clock, or
+if the cache's clock is built on anything that can advance slower than it.
+"""
+scope = [
+  "unit://proxy.trust_resolution_window",
+  "unit://proxy.trust_reload_cadence",
+  "unit://proxy.admission_currency_gate",
+  "boundary://boundary.monotonic_clock",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 RERE-RATIFICATION §4b P-4 (Ruling 40 step 4)"
+review_requirement = "Owner review if a trust-plane window or cadence is measured on anything but `Instant`."
+premise_class = "external-boundary"
+boundary_owner = """
+The host operating system's monotonic clock, across `std::time::Instant::now()`: successive
+readings never decrease, and their differences track elapsed real time while the process runs.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0080"
+description = "The X.509 CRL parser faithfully reports a CRL's issuer `Name` DER, its revoked serial numbers, its `nextUpdate`, `crlNumber` and `authorityKeyIdentifier`, and `verify_signature` succeeds only for a signature made by the given key."
+justification = """
+The client-revocation index is built from what `x509-parser` reports about each CRL: the issuer
+it is matched to, the serials it revokes, the instant it stops being current, its number for
+succession, and the key it was signed with. The verdict a handshake gets is a function of those
+reports. MCP-RE checks how they are combined; it cannot check that they are what the DER says,
+and a parser that dropped a revoked serial would make a revoked certificate read as good.
+
+It stops being acceptable if the CRL parser or its signature verification is replaced, or if
+the index reads a field this premise does not name.
+"""
+scope = [
+  "unit://proxy.client_revocation_index_verdict",
+  "unit://proxy.client_revocation_currency",
+  "boundary://boundary.x509",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 RERE-RATIFICATION §4b P-5 (Ruling 40 step 4)"
+review_requirement = "Owner review on any change to the CRL parsing dependency or to the CRL fields the index reads."
+premise_class = "external-boundary"
+boundary_owner = """
+The `x509-parser` crate, across `CertificateRevocationList::from_der` and `verify_signature`: the
+reported issuer Name, revoked serials, nextUpdate, crlNumber and authorityKeyIdentifier are the
+ones the DER encodes, and the signature check succeeds only under the key that made it.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0081"
+description = "The trust-epoch raise and advance scripts each execute atomically at the Redis primary and reply truthfully with what their calls did."
+justification = """
+THM-0133's forward repair moves the shared counter "in one atomic store step that writes only
+while the counter is absent or below that mark", so a second replica repairing from the same mark
+writes nothing and an advance above the mark is never overwritten. That step is a script: the
+compare and the write are one `EVAL`. That they cannot be interleaved by another client's
+command, and that the script's reply reports whether it wrote, is Redis's.
+
+Narrow on purpose, and not ASM-0071. That premise is about what a read issued after an
+acknowledged advance returns; this one is about the atomicity of the scripts that write.
+
+It stops being acceptable under a topology in which two replicas' scripts for the same key can
+run at different primaries.
+"""
+scope = [
+  "unit://proxy.delegated_epoch_label",
+  "boundary://boundary.shared_state_store",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 RERE-RATIFICATION §4b P-6 (Ruling 40 step 4)"
+review_requirement = "Owner review on any change to the trust-epoch raise or advance scripts, or to the store topology."
+premise_class = "external-boundary"
+boundary_owner = """
+The Redis server, across the trust-epoch raise and advance `EVAL` scripts: each runs as one atomic
+step at the primary with no other client's command interleaved, and its reply is what its calls
+returned.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0082"
+description = "`url` parses a destination to the host and port the HTTP client connects to, and `ureq` sends a request to exactly the URL it is given and follows no redirect when its agent is built with redirects set to zero."
+justification = """
+THM-0089 accepts a KMS or STS endpoint only when its literal form and "the machine interpretation
+the HTTP client will connect by" name the same `host[:port]`; THM-0090 issues every
+credential-bearing request through a capability whose agent is built with redirects disabled. The
+endpoint rule's machine interpretation is `url::Url::parse` as `ureq` links it, and the
+redirect-free capability is `ureq` honouring `redirects(0)`. Building the agent that way, and the
+path join that keeps a caller's input out of the authority, are this project's and are tested;
+that the libraries then do what they are configured to do is theirs.
+
+It stops being acceptable on any change to the `url` or `ureq` version this was measured against
+(`url` 2.5.8, `ureq` 2.12.1), or if a credential-bearing request is issued through another client.
+"""
+scope = [
+  "unit://proxy.kms_endpoint_authority",
+  "unit://proxy.outbound_destination",
+  "boundary://boundary.http_client",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 RERE-RATIFICATION §4b P-7 (Ruling 40 step 4)"
+review_requirement = "Owner review on any change to the `url` or `ureq` dependency, or to how the outbound agent is built."
+premise_class = "external-boundary"
+boundary_owner = """
+The `url` and `ureq` crates, across `url::Url::parse` and a `ureq::Agent` built with
+`redirects(0)`: the parsed host and port are the ones the agent connects to, the request goes to
+exactly that URL, and a 3xx is returned to the caller rather than followed.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0083"
+description = "When `serde_json::from_slice` succeeds on a byte string into a `Value`, the byte string is an RFC 8259 JSON text, and for a text with no duplicate object member name the returned `Value` holds the object, array and scalar values that text encodes. When `serde_json::from_slice` succeeds on a byte string into the trust document's `Vec<RawEntry>` (`mcp-re-proxy/src/trust_document.rs`), the byte string is an RFC 8259 JSON text, and each named field of each `RawEntry` (`signer`, `key_id`, `public_key`, `slots`) holds the JSON member value from which it was deserialized."
+justification = """
+THM-0083 refuses a body unless it is a legal JSON-RPC 2.0 request, and establishes the
+outstanding id from that one validation. Every clause after the first reads the body through
+`serde_json::from_slice::<Value>`. The FIRST clause is this project's and is not part of this
+premise: `reject_unrepresentable_json` refuses a duplicate member name, on the decoded form
+`serde_json` keys on, before `serde_json` is asked anything — because `serde_json` resolves a
+duplicate to one winner. What remains trusted is one direction only: when the parse succeeds,
+the body was a JSON text, and for a text with no duplicate the `Value` returned represents the
+objects, arrays and scalars the text encodes. It is not trusted that every RFC 8259 text is
+accepted: a refusal of a legal text is a refusal, which the envelope's clauses treat as one.
+
+The operator's trust document is read through the typed form, `serde_json::from_slice` into
+`Vec<RawEntry>` (THM-0098), and only that one type: it relies on the same soundness fact, together
+with fidelity for that representation. A document the parse accepts is a JSON text, and the
+strings and values placed in `signer`, `key_id`, `public_key` and `slots` are the ones the text
+wrote for those members, which is what binds each key id to the signer that wrote it. Nothing is
+claimed for any other type that derives `serde::Deserialize`. The refusals of a member written
+twice, of an unknown member, of an unknown slot and of `slots` that is not an array are this
+project's, pinned by its own tests
+(`a_duplicated_member_is_refused_rather_than_read_last_wins`,
+`an_unknown_member_is_refused_rather_than_ignored`, `an_unknown_slot_is_refused_rather_than_ignored`,
+`slots_must_be_an_array_when_present`); they are not part of this premise.
+
+It stops being acceptable if the request envelope is read through another parser, or if the
+representability check stops running first.
+"""
+scope = [
+  "unit://http_profile.request_envelope",
+  "unit://proxy.trust_document_interpretation",
+  "boundary://boundary.json_parser",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 RERE-RATIFICATION §4b P-8 (Ruling 40 step 4)"
+review_requirement = "Owner review on any change to the JSON parsing dependency, or to the order in which the envelope's clauses are asked."
+premise_class = "external-boundary"
+boundary_owner = """
+The `serde_json` crate, across `from_slice` on a byte string. Into a `Value`: when it succeeds, the byte
+string is an RFC 8259 JSON text, and for a text without duplicate member names the returned `Value`
+holds the object, array and scalar values the text encodes. Into the trust document's
+`Vec<RawEntry>`: when it succeeds, the byte string is an RFC 8259 JSON text, and each named field of
+each `RawEntry` holds the JSON member value from which it was deserialized. It does not promise to
+accept every RFC 8259 text, and nothing is claimed for any other type.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0084"
+description = "After MCP-RE has successfully completed `sync_all` on a newly created manifest-floor marker file and successfully completed `sync_all` on the directory containing it, the host filesystem and storage preserve that marker and its contents across process or host failure."
+justification = """
+THM-0121 says a manifest version the client has accepted and recorded is not lost to a power
+loss. `persist` (`mcp-re-client-proxy/src/manifest_floor.rs`) creates the marker, calls `sync_all`
+on the file, then calls `sync_all` on the directory containing it, and reports success only after
+both have returned. That ORDER, and that the directory sync is also made when the marker already
+exists, are this project's and are tested (`an_equal_version_record_still_establishes_durability`,
+`an_already_existing_marker_still_syncs_the_directory`). What a `sync_all` that returned success
+guarantees — that the marker and its directory entry survive a crash of the process or the host —
+is the filesystem's and the device's, and nothing here can establish it: a filesystem mounted
+with write barriers off, or a device that acknowledges a cache flush it did not perform, returns
+success and loses the marker.
+
+It stops being acceptable if the manifest-floor directory is placed on storage whose `sync_all`
+does not survive host failure, or if `persist` is ever changed to report success before both
+syncs have returned.
+"""
+scope = [
+  "unit://client.manifest_floor",
+  "boundary://boundary.manifest_floor_filesystem",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 step 6 (owner ruling on THM-0121, Option A)"
+review_requirement = "Owner review if the floor's durable-record step changes, or if the floor directory may be placed on storage without a durable `sync_all`."
+premise_class = "external-boundary"
+boundary_owner = """
+The host kernel and the filesystem and device holding the manifest-floor directory, across
+`sync_all` on a marker file and on its directory: once both have returned success the marker and
+its contents persist across a process or host failure.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0085"
+description = "When MCP-RE decodes input through `ciborium` as a CBOR value, or through `coset` as a COSE_Sign1, and the decode succeeds, the decoded CBOR values correspond to the values the input bytes encode, and the decoded protected headers, unprotected headers, payload and signature are those the input bytes represent, with the protected and unprotected headers kept distinct. The `Sig_structure` that `coset` builds from such a decoded COSE_Sign1 for a signature check is the RFC 9052 section 4.4 encoding over the protected-header bytes exactly as received, and the external AAD and payload passed to it."
+justification = """
+THM-0041 reads a Signed Statement and a Receipt off the wire through `coset::CoseSign1` and
+`ciborium`, and then reasons about what is in them: the algorithm and the claims it reads come
+from the PROTECTED header, a receipt's position commitment comes from the protected header, and
+its inclusion proof from the unprotected one. That the decoded structure is the one the bytes
+encode, with the two headers not mixed, is the libraries' and nothing here establishes it.
+
+The second sentence is for one conjunct: the Signed Statement's own COSE `Sig_structure` verified
+under a key resolved for its issuer kid, and the same for the receipt's signature. MCP-RE does not
+construct those signed bytes. `verify_cose_sign1_with_payload` hands `coset` a verifier callback and
+`CoseSign1::verify_signature` / `verify_detached_signature` build the `Sig_structure` that is passed
+to it. MCP-RE chooses the key, the algorithm check (`require_alg`) and, for a detached receipt, the
+payload it re-derived.
+
+Every refusal MCP-RE owns is NOT in this premise and is tested here: a non-empty or unknown `crit`,
+an `iss` that is not the signing `kid`, a second occurrence of a CWT claim, trailing octets after
+the statement's payload and after an inclusion proof, a repeated key in the `vdp` map, an unsupported
+verifiable data structure, a leaf index outside the tree, and a root that is not a tree hash.
+
+It stops being acceptable if SCITT evidence is decoded through another library, or if the signed
+structure is ever built by this project instead of by `coset`.
+"""
+scope = [
+  "unit://http_profile.scitt_statement_attribution",
+  "unit://http_profile.scitt_receipt_shape",
+  "unit://http_profile.scitt_derived_root",
+  "unit://http_profile.scitt_algorithm_agreement",
+  "unit://http_profile.scitt_position_commitment",
+  "boundary://boundary.cose_cbor",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 step 6 (owner ruling on the coset/ciborium premise)"
+review_requirement = "Owner review on any change to the `coset` or `ciborium` dependency, or to how SCITT evidence is decoded or its signed structure is built."
+premise_class = "external-boundary"
+boundary_owner = """
+The `ciborium` and `coset` crates, across a successful decode of CBOR input and of a COSE_Sign1,
+and across the construction of the `Sig_structure` for a signature check from a decoded COSE_Sign1.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0086"
+description = "`X509Certificate::verify_signature(None)` returns Ok only when the certificate signature verifies under the certificate's own subject public key."
+justification = """
+`credential_currency/x509_adapter` reports, for a certificate, whether it is self-signed: its
+issuer `Name` encoding equals its subject `Name` encoding AND `verify_signature(None)` is Ok.
+`evaluation` exempts a certificate reported self-signed from the validity-window check, so a
+key-rollover intermediate (one that shares its name with its own issuer but is signed by another
+key) is held to its window as path building holds it (THM-0032). Whether the exemption applies to
+a given certificate therefore depends on `verify_signature(None)` answering Ok only for a signature
+made under the certificate's own subject public key; the library's signature check is the
+library's, and nothing here establishes it.
+
+What stays this project's and is tested here: the comparison of the two `Name` encodings, the
+conjunction of that comparison with the signature check, the exemption itself, and that the
+validity window still applies to every certificate not reported self-signed
+(`a_self_issued_certificate_is_self_signed_only_under_its_own_key`). This premise says nothing
+about certificate trust, path validity, issuer selection or X.509 in general.
+
+It stops being acceptable if the adapter checks a certificate's signature through another call,
+or passes a key to `verify_signature` instead of `None`.
+"""
+scope = ["unit://proxy.credential_currency", "boundary://boundary.x509"]
+owner = "mats@sundvall.name"
+introduced_by = "r12 step 7 (owner ruling on THM-0032)"
+review_requirement = "Owner review on any change to the credential-currency X.509 adapter, to its parser dependency, or to how a certificate is reported self-signed."
+premise_class = "external-boundary"
+boundary_owner = """
+The pinned `x509_parser` crate, across `X509Certificate::verify_signature(None)`: it returns Ok
+only when the certificate's signature verifies under the certificate's own subject public key.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0087"
+description = "When `napi` invokes an exported `#[napi]` function of the TypeScript native binding, each `Buffer`, string, number and array argument arrives as the JavaScript caller passed it, and the object the function returns, or the error it raises, reaches the caller with each member and message as the function produced it, a member left `None` arriving absent."
+justification = """
+THM-0095 says what an application is handed, and the application receives it through `napi`:
+the request bytes the exchange transmitted go in as a `Buffer`, the caller's trust inputs go in as
+strings, numbers and arrays, and the verdict comes back as an object. The binding does everything
+it owns before and after that layer: it passes the received bytes to the audited core unchanged,
+builds the anchor and policy from the received values, and fills `VerifyResultJs` field for field
+with an execution member the receipt did not state left `None`. That the bytes it received are the
+bytes the caller passed, and that the object it built is the object the caller reads, is `napi`'s.
+
+What stays this project's and is tested here: the refusal of an empty issuer identity, the
+refusal of a time that is not whole seconds, the judgement of a retired root at the caller's
+`now`, and the projection (`an_absent_execution_member_stays_absent_in_the_projection`,
+`a_rejection_is_not_reported_as_a_success`). This premise says nothing about the Node runtime,
+about `napi` correctness in general, or about what the TypeScript layer does with the object.
+
+It stops being acceptable if the binding converts a value itself before handing it to the core, or
+returns a type whose conversion this premise does not cover.
+"""
+scope = ["unit://sdk_typescript.native_binding", "boundary://boundary.napi_marshalling"]
+owner = "mats@sundvall.name"
+introduced_by = "r12 step 7 (owner ruling on native marshalling)"
+review_requirement = "Owner review on any change to the napi dependency, or to a type the binding takes or returns across the N-API boundary."
+premise_class = "external-boundary"
+boundary_owner = """
+The pinned `napi` and `napi-derive` crates, across an exported `#[napi]` function: the `Buffer`,
+string, number and array arguments arrive as passed, and the returned object or raised error
+reaches the caller as produced, a member left `None` arriving absent.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0088"
+description = "When `pyo3` invokes a `#[pyfunction]` of the Python native binding, each `bytes`, `str`, `int` and `list` argument arrives as the Python caller passed it, or the call is refused before the function runs, and the `#[pyclass]` value the function returns, or the exception it raises, reaches the caller with each field and message as the function produced it, a field left `None` arriving as `None`."
+justification = """
+THM-0094 says what an application is handed, and the application receives it through `pyo3`: the
+request bytes the exchange transmitted go in as `bytes`, the caller's trust inputs go in as `str`,
+`int` and `list`, and the verdict comes back as a `PyVerifyResult`. The binding does everything it
+owns before and after that layer: it passes the received bytes to the audited core unchanged,
+builds the anchor and policy from the received values, and fills the result field for field with an
+execution member the receipt did not state left `None`. That the bytes it received are the bytes
+the caller passed, and that the object it built is the object the caller reads, is `pyo3`'s. A
+value that does not fit its Rust parameter (an `int` beyond `i64`) is refused by `pyo3` before the
+function runs; the premise relies on that refusal and on nothing converting the value instead.
+
+What stays this project's and is tested here: the refusal of an empty issuer identity, the
+judgement of a retired root at the caller's `now`, and the projection
+(`an_absent_execution_member_stays_absent_in_the_projection`,
+`a_rejection_is_not_reported_as_a_success`). This premise says nothing about the interpreter, about
+`pyo3` correctness in general, or about what the Python layer does with the object.
+
+It stops being acceptable if the binding converts a value itself before handing it to the core, or
+returns a type whose conversion this premise does not cover.
+"""
+scope = ["unit://sdk_python.native_binding", "boundary://boundary.pyo3_marshalling"]
+owner = "mats@sundvall.name"
+introduced_by = "r12 step 7 (owner ruling on native marshalling)"
+review_requirement = "Owner review on any change to the pyo3 dependency, or to a type the binding takes or returns across the PyO3 boundary."
+premise_class = "external-boundary"
+boundary_owner = """
+The pinned `pyo3` crate, across a `#[pyfunction]`: the `bytes`, `str`, `int` and `list` arguments
+arrive as passed or the call is refused, and the returned `#[pyclass]` value or raised exception
+reaches the caller as produced, a field left `None` arriving as `None`.
+"""
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

@@ -35,6 +35,7 @@
 use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal;
 use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
 
+#[cfg(any(test, feature = "async_serve", feature = "redis_replay"))]
 use super::verifier::AdmissionRecordVerifier;
 
 /// What a reachable store's answer means.
@@ -44,7 +45,7 @@ use super::verifier::AdmissionRecordVerifier;
 /// something, and the absence of an outage variant is what makes the degraded fork
 /// unreachable from here.
 #[derive(Debug)]
-pub(crate) enum AnsweredAs {
+pub enum AnsweredAs {
     /// The answer is this deployment's current authoritative state for the workload.
     State(CurrentAdmissionState),
     /// The store holds no record for the workload. A negative, not an absence of
@@ -54,17 +55,17 @@ pub(crate) enum AnsweredAs {
     /// The store answered with something this deployment will not act on, and which class
     /// of thing it was.
     ///
-    /// The class is carried unconditionally because what an ANSWER means does not depend
-    /// on which adapter is compiled — every source that classifies one classifies it the
-    /// same way. Its consumer is not unconditional: the operator line naming the class is
-    /// paced by `redis_admission_source::refusal_report`, which exists only under
-    /// `redis_replay`, so with that feature off nothing reads the payload. That is the
-    /// lane's shape, not a value nobody needs, and conditioning the VARIANT on the feature
-    /// would make one type mean two things.
-    Refused(#[allow(dead_code)] AdmissionRecordRefusal),
+    /// The class travels with the answer to the gate, which records it as the refusal's
+    /// cause: a forged record and an absent one are different facts, and the durable audit
+    /// record is where a deployment finds out which one it had. The shared source also
+    /// names the class on a paced operator line.
+    Refused(AdmissionRecordRefusal),
 }
 
 /// Classify a reachable store's answer. `raw` is `None` when the store holds no record.
+///
+/// Compiled wherever a store is: the shared one (`redis_replay`) and the test fixture.
+#[cfg(any(test, feature = "async_serve", feature = "redis_replay"))]
 pub(crate) fn classify_answer(
     verifier: &AdmissionRecordVerifier,
     admission_id: &str,
@@ -80,9 +81,38 @@ pub(crate) fn classify_answer(
     }
 }
 
+/// Classify a reachable store's answer given as the bytes it holds. `raw` is `None` when
+/// the store holds no record. Bytes that are not UTF-8 cannot be a record, so they are
+/// [`AdmissionRecordRefusal::Malformed`] — the store answered, with something unusable.
+/// Only a store holding bytes rather than text needs it: the `redis_replay` build's.
+#[cfg(any(feature = "redis_replay", test))]
+pub(crate) fn classify_stored_bytes(
+    verifier: &AdmissionRecordVerifier,
+    admission_id: &str,
+    raw: Option<&[u8]>,
+    now: i64,
+) -> AnsweredAs {
+    match raw.map(std::str::from_utf8) {
+        None => AnsweredAs::NoRecord,
+        Some(Ok(text)) => classify_answer(verifier, admission_id, Some(text), now),
+        Some(Err(_)) => AnsweredAs::Refused(AdmissionRecordRefusal::Malformed),
+    }
+}
+
+/// The store answered the read with a reply that cannot hold a record at all: an error
+/// about the key it holds, or a value of another type. That is an answer about this
+/// workload's key, so it is a definitive negative and never an outage — a party that can
+/// write the store chooses what type a key holds.
+#[cfg(any(feature = "redis_replay", test))]
+pub(crate) fn classify_unreadable_reply() -> AnsweredAs {
+    AnsweredAs::Refused(AdmissionRecordRefusal::Malformed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::classify_answer;
+    use super::classify_stored_bytes;
+    use super::classify_unreadable_reply;
     use super::AnsweredAs;
     use crate::admission_source::test_support::{signed_admitted, signed_revoked, verifier_for};
     use mcp_re_core::SigningKey;
@@ -174,6 +204,39 @@ mod tests {
         assert!(matches!(
             classify_answer(&outside, "wl", Some(&record), 1_066),
             AnsweredAs::Refused(AdmissionRecordRefusal::Expired)
+        ));
+    }
+
+    /// The store's bytes are what a reader classifies, and bytes a writer chose need not be
+    /// text. Non-UTF-8 bytes are a malformed record — a negative — while the same record as
+    /// bytes classifies exactly as it does as text.
+    #[test]
+    fn stored_bytes_that_are_not_text_are_a_malformed_record_and_not_an_outage() {
+        let key = authority();
+        let v = verifier_for(&key, 60, 5);
+        assert!(matches!(
+            classify_stored_bytes(&v, "wl", Some(&[0xff, 0xfe, b'x']), 1_030),
+            AnsweredAs::Refused(AdmissionRecordRefusal::Malformed)
+        ));
+        assert!(matches!(
+            classify_stored_bytes(&v, "wl", None, 1_030),
+            AnsweredAs::NoRecord
+        ));
+        let record = signed_revoked(&key, "wl", 7, 2, 1_010);
+        let AnsweredAs::State(state) =
+            classify_stored_bytes(&v, "wl", Some(record.as_bytes()), 1_020)
+        else {
+            panic!("a genuine record is state whether it arrives as text or bytes");
+        };
+        assert_eq!(state.state().status(), AdmissionStatus::Revoked);
+    }
+
+    /// A reply that cannot hold a record is still the store's answer about the key.
+    #[test]
+    fn a_reply_that_cannot_hold_a_record_is_a_malformed_record() {
+        assert!(matches!(
+            classify_unreadable_reply(),
+            AnsweredAs::Refused(AdmissionRecordRefusal::Malformed)
         ));
     }
 }

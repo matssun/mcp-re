@@ -73,8 +73,8 @@ pub fn require_json_media_type(
     headers: &[(String, String)],
     what: &'static str,
 ) -> Result<(), HttpProfileError> {
-    let value = required_header(headers, "content-type")
-        .map_err(|_| HttpProfileError::MissingEvidence(what))?;
+    let value =
+        single_header(headers, "content-type")?.ok_or(HttpProfileError::MissingEvidence(what))?;
     let media_type = value.split(';').next().unwrap_or("").trim();
     if media_type.eq_ignore_ascii_case(JSON_MEDIA_TYPE) {
         Ok(())
@@ -94,4 +94,29 @@ pub fn reject_content_encoding(headers: &[(String, String)]) -> Result<(), HttpP
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_duplicated_content_type_is_reported_as_duplicate_not_missing() {
+        let headers = vec![
+            ("content-type".to_owned(), "application/json".to_owned()),
+            ("content-type".to_owned(), "application/json".to_owned()),
+        ];
+        assert_eq!(
+            require_json_media_type(&headers, "request content-type"),
+            Err(HttpProfileError::DuplicateHeader("content-type"))
+        );
+    }
+
+    #[test]
+    fn an_absent_content_type_is_missing_evidence_under_the_callers_label() {
+        assert_eq!(
+            require_json_media_type(&[], "request content-type"),
+            Err(HttpProfileError::MissingEvidence("request content-type"))
+        );
+    }
 }

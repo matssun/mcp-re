@@ -60,8 +60,10 @@ on:
       #   does not reach the default lane — and the classification clause is quantified
       #   over every source, so a change here dirties the unit either way.
       - "mcp-re-proxy/src/redis_admission_source/**"
-      # r12 file 2: the executed PKCS#11 module path's filesystem-integrity floor.
+      # r12 file 2: the executed PKCS#11 module path's filesystem-integrity floor, and the
+      # private-key custody read (ASM-0052).
       - "mcp-re-proxy/src/pkcs11_native.rs"
+      - "mcp-re-proxy/src/pkcs11_native/**"
       # r12 file 4: the retention decision both redis-backed stores reach. The file is
       # read by probes M124/M409/M410, so a change to it re-measures those units.
       - "mcp-re-proxy/src/async_redis_store/**"
@@ -88,10 +90,9 @@ on:
       # The deployable replay backends (THM-0106 / THM-0107). Feature-gated, so a plain
       # cargo lane compiles them to zero tests — which is exactly why a change to one must
       # still re-trigger the units that carry them.
-      - "mcp-re-proxy/src/redis_store.rs"
       - "mcp-re-proxy/src/async_redis_store.rs"
-      - "mcp-re-proxy/src/etcd_store.rs"
       - "mcp-re-proxy/src/async_etcd_store.rs"
+      - "mcp-re-proxy/src/async_etcd_store/**"
       # The provider-agnostic Ed25519 KMS seam (THM-0108). The provider adapters beneath it
       # are unowned and are their own slice.
       - "mcp-re-proxy/src/kms_keysource/**"
@@ -130,6 +131,8 @@ on:
       - "mcp-re-proxy/src/remote_signer_call/**"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
+      - "mcp-re-proxy/src/redis_continuation_store/**"
+      - "mcp-re-proxy/src/deployment_request/storage/continuation_storage.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
       # runtime installs for the plan it was given, and the composition root's half of it.
       # `startup_posture` is here because the declaration conjunct is part of that claim.
@@ -156,6 +159,7 @@ on:
       # defect this gate exists for.
       - "mcp-re-proxy/src/trust_plane/**"
       - "mcp-re-proxy/src/trust_epoch.rs"
+      - "mcp-re-proxy/src/trust_epoch/**"
       - "mcp-re-proxy/src/reloading_trust.rs"
       # v0.17: the trust-document parser, `proxy.trust_document_interpretation`.
       - "mcp-re-proxy/src/trust_document.rs"
@@ -195,7 +199,9 @@ on:
       # feature, so none of their units runs in the default lane and a change here must
       # still re-trigger every one of them.
       - "mcp-re-proxy/src/aws_kms_keysource.rs"
+      - "mcp-re-proxy/src/aws_kms_keysource/**"
       - "mcp-re-proxy/src/aws_sigv4.rs"
+      - "mcp-re-proxy/src/aws_sigv4/amz_date.rs"
       - "mcp-re-proxy/src/aws_sts.rs"
       - "mcp-re-proxy/src/gcp_kms_keysource.rs"
       - "mcp-re-proxy/src/pkcs11_keysource/**"
@@ -219,6 +225,11 @@ on:
       # because the fingerprint measures all three for a non-Rust unit too (#745).
       - "sdk/python/python/**"
       - "sdk/python/tests/**"
+      # The PyO3 binding the wheel's `_core` is built from, and the Bazel lane over it
+      # (`//sdk/python:core_lane_test`).
+      - "sdk/python/src/**"
+      - "sdk/python/BUILD.bazel"
+      - "sdk/python/bazel_tests/**"
       - "sdk/python/pyproject.toml"
       # TRACKED, and therefore in the fingerprint at last: the lock was `.gitignore`d as a
       # maturin by-product, so the Python dependency resolution contributed nothing to any
@@ -254,6 +265,11 @@ on:
       # `async_serve/`, because the per-request revocation verdict rules live here and the
       # request loop only calls them.
       - "mcp-re-proxy/src/client_revocation.rs"
+      - "mcp-re-proxy/src/client_revocation/index_build.rs"
+      - "mcp-re-proxy/src/client_revocation/issuer_key.rs"
+      - "mcp-re-proxy/src/client_revocation/shared.rs"
+      - "mcp-re-proxy/src/client_revocation/verdict.rs"
+      - "mcp-re-proxy/src/config_state/replica_clock.rs"
       - "mcp-re-proxy/src/blocking_mtls_harness/**"
       - "mcp-re-proxy/src/capability_materialization/key_source/**"
       - "mcp-re-proxy/src/signing_plane/**"
@@ -366,6 +382,9 @@ on:
       - "mcp-re-proxy/src/config_state/channel_credential_custody.rs"
       - "mcp-re-proxy/src/config_state/channel_key_material.rs"
       - "mcp-re-proxy/src/config_state/freshness.rs"
+      - "mcp-re-proxy/src/config_state/coordinate.rs"
+      - "mcp-re-proxy/src/config_snapshot.rs"
+      - "mcp-re-proxy/src/shared_replay.rs"
       - "mcp-re-proxy/src/config_state/server_identity.rs"
       - "mcp-re-proxy/src/config_state/validation/machine_violations.rs"
       - "mcp-re-proxy/src/config_state/validation/recognition.rs"
@@ -447,8 +466,10 @@ on:
       #   does not reach the default lane — and the classification clause is quantified
       #   over every source, so a change here dirties the unit either way.
       - "mcp-re-proxy/src/redis_admission_source/**"
-      # r12 file 2: the executed PKCS#11 module path's filesystem-integrity floor.
+      # r12 file 2: the executed PKCS#11 module path's filesystem-integrity floor, and the
+      # private-key custody read (ASM-0052).
       - "mcp-re-proxy/src/pkcs11_native.rs"
+      - "mcp-re-proxy/src/pkcs11_native/**"
       # r12 file 4: the retention decision both redis-backed stores reach. The file is
       # read by probes M124/M409/M410, so a change to it re-measures those units.
       - "mcp-re-proxy/src/async_redis_store/**"
@@ -475,10 +496,9 @@ on:
       # The deployable replay backends (THM-0106 / THM-0107). Feature-gated, so a plain
       # cargo lane compiles them to zero tests — which is exactly why a change to one must
       # still re-trigger the units that carry them.
-      - "mcp-re-proxy/src/redis_store.rs"
       - "mcp-re-proxy/src/async_redis_store.rs"
-      - "mcp-re-proxy/src/etcd_store.rs"
       - "mcp-re-proxy/src/async_etcd_store.rs"
+      - "mcp-re-proxy/src/async_etcd_store/**"
       # The provider-agnostic Ed25519 KMS seam (THM-0108). The provider adapters beneath it
       # are unowned and are their own slice.
       - "mcp-re-proxy/src/kms_keysource/**"
@@ -517,6 +537,8 @@ on:
       - "mcp-re-proxy/src/remote_signer_call/**"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
+      - "mcp-re-proxy/src/redis_continuation_store/**"
+      - "mcp-re-proxy/src/deployment_request/storage/continuation_storage.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
       # runtime installs for the plan it was given, and the composition root's half of it.
       # `startup_posture` is here because the declaration conjunct is part of that claim.
@@ -543,6 +565,7 @@ on:
       # defect this gate exists for.
       - "mcp-re-proxy/src/trust_plane/**"
       - "mcp-re-proxy/src/trust_epoch.rs"
+      - "mcp-re-proxy/src/trust_epoch/**"
       - "mcp-re-proxy/src/reloading_trust.rs"
       # v0.17: the trust-document parser, `proxy.trust_document_interpretation`.
       - "mcp-re-proxy/src/trust_document.rs"
@@ -582,7 +605,9 @@ on:
       # feature, so none of their units runs in the default lane and a change here must
       # still re-trigger every one of them.
       - "mcp-re-proxy/src/aws_kms_keysource.rs"
+      - "mcp-re-proxy/src/aws_kms_keysource/**"
       - "mcp-re-proxy/src/aws_sigv4.rs"
+      - "mcp-re-proxy/src/aws_sigv4/amz_date.rs"
       - "mcp-re-proxy/src/aws_sts.rs"
       - "mcp-re-proxy/src/gcp_kms_keysource.rs"
       - "mcp-re-proxy/src/pkcs11_keysource/**"
@@ -606,6 +631,11 @@ on:
       # because the fingerprint measures all three for a non-Rust unit too (#745).
       - "sdk/python/python/**"
       - "sdk/python/tests/**"
+      # The PyO3 binding the wheel's `_core` is built from, and the Bazel lane over it
+      # (`//sdk/python:core_lane_test`).
+      - "sdk/python/src/**"
+      - "sdk/python/BUILD.bazel"
+      - "sdk/python/bazel_tests/**"
       - "sdk/python/pyproject.toml"
       # TRACKED, and therefore in the fingerprint at last: the lock was `.gitignore`d as a
       # maturin by-product, so the Python dependency resolution contributed nothing to any
@@ -641,6 +671,11 @@ on:
       # `async_serve/`, because the per-request revocation verdict rules live here and the
       # request loop only calls them.
       - "mcp-re-proxy/src/client_revocation.rs"
+      - "mcp-re-proxy/src/client_revocation/index_build.rs"
+      - "mcp-re-proxy/src/client_revocation/issuer_key.rs"
+      - "mcp-re-proxy/src/client_revocation/shared.rs"
+      - "mcp-re-proxy/src/client_revocation/verdict.rs"
+      - "mcp-re-proxy/src/config_state/replica_clock.rs"
       - "mcp-re-proxy/src/blocking_mtls_harness/**"
       - "mcp-re-proxy/src/capability_materialization/key_source/**"
       - "mcp-re-proxy/src/signing_plane/**"
@@ -753,6 +788,9 @@ on:
       - "mcp-re-proxy/src/config_state/channel_credential_custody.rs"
       - "mcp-re-proxy/src/config_state/channel_key_material.rs"
       - "mcp-re-proxy/src/config_state/freshness.rs"
+      - "mcp-re-proxy/src/config_state/coordinate.rs"
+      - "mcp-re-proxy/src/config_snapshot.rs"
+      - "mcp-re-proxy/src/shared_replay.rs"
       - "mcp-re-proxy/src/config_state/server_identity.rs"
       - "mcp-re-proxy/src/config_state/validation/machine_violations.rs"
       - "mcp-re-proxy/src/config_state/validation/recognition.rs"

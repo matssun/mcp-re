@@ -43,10 +43,28 @@ pub(super) const STATUS_TOO_MANY_REQUESTS: u16 = 429;
 /// The service is over capacity or down for maintenance.
 pub(super) const STATUS_UNAVAILABLE: u16 = 503;
 
-/// Whether `status` is a client-error refusal — the service read the submission and said
-/// no. `429` is excluded: it is a request to come back, not a judgement about the bytes.
+/// The request timed out. An intermediary can answer it over an origin that read and
+/// accepted the body, so it is not a judgement about the bytes: the same ambiguity as `503`.
+pub(super) const STATUS_REQUEST_TIMEOUT: u16 = 408;
+
+/// The service already holds a conflicting resource. A de-duplicating log answers this for
+/// a statement it already holds, so the statement may be registered; it is not a judgement
+/// about the bytes.
+pub(super) const STATUS_CONFLICT: u16 = 409;
+
+/// The service asks the client to retry later. It is a request to retry, not a refusal, and
+/// says nothing about the bytes.
+pub(super) const STATUS_TOO_EARLY: u16 = 425;
+
+/// Whether `status` is a client-error refusal: a 4xx that can only mean the service read
+/// these bytes and declined them. `408`, `409`, `425` and `429` are excluded because each
+/// is a request to come back or an answer that leaves the statement possibly registered.
 pub(super) fn is_refusal(status: u16) -> bool {
-    (400..500).contains(&status) && status != STATUS_TOO_MANY_REQUESTS
+    (400..500).contains(&status)
+        && !matches!(
+            status,
+            STATUS_REQUEST_TIMEOUT | STATUS_CONFLICT | STATUS_TOO_EARLY | STATUS_TOO_MANY_REQUESTS
+        )
 }
 
 /// Whether `media_type` is the COSE type, ignoring parameters and case.
@@ -90,10 +108,10 @@ mod tests {
     /// statement would report a definitive negative for a submission nobody judged.
     #[test]
     fn rate_limiting_is_not_a_refusal() {
-        for status in [400, 401, 403, 404, 409, 422] {
+        for status in [400, 401, 403, 404, 422] {
             assert!(is_refusal(status), "{status}");
         }
-        for status in [200, 201, 202, 204, 429, 500, 502, 503] {
+        for status in [200, 201, 202, 204, 408, 409, 425, 429, 500, 502, 503] {
             assert!(!is_refusal(status), "{status}");
         }
     }

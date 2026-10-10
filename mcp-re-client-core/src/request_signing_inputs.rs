@@ -49,15 +49,26 @@ pub struct RequestSigningInputs {
     /// verifier cannot check against an assertion enforces nothing. Set via
     /// [`RequestSigningInputs::with_admission`].
     pub admission: Option<(AdmissionBinding, String)>,
-    /// The ADR-MCPRE-065 authorization decision this call presents: the `pdp-decision`
-    /// binding, plus the authority-signed decision document it commits to.
-    ///
-    /// Both or neither, for the same reason admission is: a binding the verifier cannot
-    /// check against a document enforces nothing, and a document bound to nothing is an
-    /// authority's statement about no call. Set via
-    /// [`with_authorization_decision`](Self::with_authorization_decision), which mints the
-    /// binding from the document so the two cannot disagree.
-    pub authorization_decision: Option<(ArtifactBinding, String)>,
+    /// The ADR-MCPRE-065 authorization decision this call presents: the authority-signed
+    /// decision document. The `pdp-decision` binding is not stored; it is minted from this
+    /// document when the evidence block is authored, so the two cannot disagree and a
+    /// second presentation replaces the first. Set via
+    /// [`with_authorization_decision`](Self::with_authorization_decision), the sole producer.
+    pub authorization_decision: PresentedDecision,
+}
+
+/// The authorization-decision document a request presents, or none.
+///
+/// The document is private to this type and only
+/// [`RequestSigningInputs::with_authorization_decision`] fills it, so a value here is a
+/// document the evidence block mints its `pdp-decision` binding from.
+#[derive(Debug, Clone, Default)]
+pub struct PresentedDecision(Option<String>);
+
+impl PresentedDecision {
+    fn document(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
 }
 
 impl RequestSigningInputs {
@@ -80,7 +91,7 @@ impl RequestSigningInputs {
             continuation: None,
             extra_headers: Vec::new(),
             admission: None,
-            authorization_decision: None,
+            authorization_decision: PresentedDecision::default(),
         }
     }
 
@@ -128,13 +139,7 @@ impl RequestSigningInputs {
     /// authority DECIDED; whether this deployment trusts that authority, and whether the
     /// decision is about this request, are the PEP's.
     pub fn with_authorization_decision(mut self, decision_jws: impl Into<String>) -> Self {
-        let jws = decision_jws.into();
-        let binding = ArtifactBinding::opaque_digest(
-            mcp_re_http_profile::ArtifactType::PdpDecision,
-            jws.as_bytes(),
-        );
-        self.artifact_bindings.push(binding.clone());
-        self.authorization_decision = Some((binding, jws));
+        self.authorization_decision = PresentedDecision(Some(decision_jws.into()));
         self
     }
 
@@ -144,17 +149,21 @@ impl RequestSigningInputs {
     /// block, which is what keeps the both-or-neither pairings this type owns from being
     /// assembled around it.
     pub(crate) fn evidence_block(&self) -> HttpRequestEvidenceBlock {
+        let mut artifact_bindings = self.artifact_bindings.clone();
+        if let Some(jws) = self.authorization_decision.document() {
+            artifact_bindings.push(ArtifactBinding::opaque_digest(
+                mcp_re_http_profile::ArtifactType::PdpDecision,
+                jws.as_bytes(),
+            ));
+        }
         HttpRequestEvidenceBlock {
             profile: PROFILE_TAG.to_owned(),
             audience: self.audience.clone(),
-            artifact_bindings: self.artifact_bindings.clone(),
+            artifact_bindings,
             continuation: self.continuation.clone(),
             admission: self.admission.as_ref().map(|(b, _)| b.clone()),
             admission_assertion: self.admission.as_ref().map(|(_, jws)| jws.clone()),
-            authorization_decision: self
-                .authorization_decision
-                .as_ref()
-                .map(|(_, jws)| jws.clone()),
+            authorization_decision: self.authorization_decision.document().map(str::to_owned),
         }
     }
 }
@@ -198,14 +207,37 @@ mod tests {
         let minted: Vec<_> = block
             .artifact_bindings
             .iter()
-            .filter(|b| b.artifact_type == ArtifactType::PdpDecision)
+            .filter(|b| b.artifact_type() == ArtifactType::PdpDecision)
             .collect();
         assert_eq!(minted.len(), 1, "exactly one applicable binding");
-        assert_eq!(minted[0].binding_type, BindingType::OpaqueDigest);
+        assert_eq!(minted[0].binding_type(), BindingType::OpaqueDigest);
         assert_eq!(
-            minted[0].digest_value,
+            minted[0].digest_value(),
             ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, DECISION.as_bytes())
-                .digest_value
+                .digest_value()
+        );
+        block
+            .validate(mcp_re_http_profile::PROFILE_TAG)
+            .expect("legal");
+    }
+
+    #[test]
+    fn a_second_decision_replaces_the_first_rather_than_leaving_a_binding_over_it() {
+        let block = inputs()
+            .with_authorization_decision("Zmlyc3Q.Y2xhaW1z.c2ln")
+            .with_authorization_decision(DECISION)
+            .evidence_block();
+        assert_eq!(block.authorization_decision.as_deref(), Some(DECISION));
+        let minted: Vec<_> = block
+            .artifact_bindings
+            .iter()
+            .filter(|b| b.artifact_type() == ArtifactType::PdpDecision)
+            .collect();
+        assert_eq!(minted.len(), 1);
+        assert_eq!(
+            minted[0].digest_value(),
+            ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, DECISION.as_bytes())
+                .digest_value()
         );
         block
             .validate(mcp_re_http_profile::PROFILE_TAG)
@@ -219,7 +251,7 @@ mod tests {
         assert!(block
             .artifact_bindings
             .iter()
-            .all(|b| b.artifact_type != ArtifactType::PdpDecision));
+            .all(|b| b.artifact_type() != ArtifactType::PdpDecision));
         block
             .validate(mcp_re_http_profile::PROFILE_TAG)
             .expect("legal");

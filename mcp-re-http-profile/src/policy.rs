@@ -32,13 +32,16 @@
 // feature-gated and each specification rides a `cfg_attr` that expands to nothing
 // unless `--features verify` is on.
 #[cfg(feature = "verify")]
-use verus_builtin_macros::{verus_spec, verus_verify};
+use verus_builtin_macros::verus_verify;
 #[cfg(feature = "verify")]
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
 use crate::error::HttpProfileError;
 use crate::ids::ALG_ED25519;
+use mcp_re_core::MaxClockSkew;
+
+mod bounds;
 
 /// A signature algorithm this crate can actually VERIFY.
 ///
@@ -84,6 +87,7 @@ pub const DEFAULT_ALGORITHMS: [&str; 1] = [ALG_ED25519];
 ///
 /// Fields are private and validated at construction, so a policy can never be
 /// mutated past its validated bound afterwards.
+#[cfg_attr(feature = "verify", verus_verify)]
 #[derive(Debug, Clone)]
 pub struct VerifierPolicy {
     algorithms: Vec<ProfileAlgorithm>,
@@ -93,12 +97,11 @@ pub struct VerifierPolicy {
     /// until `expires + skew`, so an unbounded window would let ONE client pin store
     /// keys for as long as it likes.
     max_signature_validity: i64,
-    /// The MCP transport/version contract (§4.1). `None` = no transport policy,
-    /// which is today's behavior: `Mcp-Method` divergence is still always checked
-    /// (a covered header must not lie about the body), but required-header
-    /// presence, supported-version policy, and `Mcp-Name` agreement are enforced
-    /// only when a deployment opts in with [`VerifierPolicy::with_mcp_transport`].
-    mcp_transport: Option<crate::mcp_transport::McpTransportPolicy>,
+    /// The MCP transport/version contract (§4.1), enforced on every request: required-header
+    /// presence, the supported-version set, and `Mcp-Method`/`Mcp-Name` agreement with the
+    /// protected body. A deployment chooses the accepted version set with
+    /// [`VerifierPolicy::with_mcp_transport`]; it cannot choose to have no contract.
+    mcp_transport: crate::mcp_transport::McpTransportPolicy,
 }
 
 impl VerifierPolicy {
@@ -107,10 +110,9 @@ impl VerifierPolicy {
     /// two different notions of "close enough" on the same message.
     pub const DEFAULT_MAX_CLOCK_SKEW: i64 = 30;
 
-    /// The hard cap on configurable skew (§5.1 "bounded"). Five minutes is the
-    /// widest disagreement a deployment can declare and still call itself
-    /// conforming; beyond this the freshness gate stops being a freshness gate.
-    pub const MAX_CLOCK_SKEW_BOUND: i64 = 300;
+    /// The hard cap on configurable skew (§5.1 "bounded"), owned by
+    /// [`MaxClockSkew`]: beyond it the freshness gate stops being a freshness gate.
+    pub const MAX_CLOCK_SKEW_BOUND: i64 = MaxClockSkew::BOUND_SECS;
 
     /// The default ceiling on a signature's own validity window (`expires - created`).
     ///
@@ -148,16 +150,16 @@ impl VerifierPolicy {
                 resolved.push(alg);
             }
         }
-        if !(0..=Self::MAX_CLOCK_SKEW_BOUND).contains(&max_clock_skew) {
+        let Some(max_clock_skew) = MaxClockSkew::new(max_clock_skew) else {
             return Err(HttpProfileError::MalformedEvidence(
                 "clock skew out of bounds",
             ));
-        }
+        };
         Ok(VerifierPolicy {
             algorithms: resolved,
-            max_clock_skew,
+            max_clock_skew: max_clock_skew.secs(),
             max_signature_validity: Self::DEFAULT_MAX_SIGNATURE_VALIDITY,
-            mcp_transport: None,
+            mcp_transport: crate::mcp_transport::McpTransportPolicy::profile_default(),
         })
     }
 
@@ -167,13 +169,13 @@ impl VerifierPolicy {
         mut self,
         transport: crate::mcp_transport::McpTransportPolicy,
     ) -> Self {
-        self.mcp_transport = Some(transport);
+        self.mcp_transport = transport;
         self
     }
 
-    /// The active MCP transport policy, if any.
-    pub fn mcp_transport(&self) -> Option<&crate::mcp_transport::McpTransportPolicy> {
-        self.mcp_transport.as_ref()
+    /// The active MCP transport policy.
+    pub fn mcp_transport(&self) -> &crate::mcp_transport::McpTransportPolicy {
+        &self.mcp_transport
     }
 
     /// Resolve a wire `alg` token to an accepted algorithm, or `None`.
@@ -190,39 +192,16 @@ impl VerifierPolicy {
         self.algorithms.contains(&alg).then_some(alg)
     }
 
-    /// The validated skew tolerance, in seconds.
-    // ADR-MCPRE-059 ASM-0007: a field read, told to the verifier as an opaque function of
-    // the policy. The freshness theorem quantifies over whatever value a deployment
-    // configures, so nothing more than "it is this policy's skew" is needed or claimed.
-    #[cfg_attr(feature = "verify", verus_verify(external_body))]
-    #[cfg_attr(feature = "verify", verus_spec(out =>
-        ensures out == crate::verus_std_specs::skew_of(self),
-    ))]
-    pub fn max_clock_skew(&self) -> i64 {
-        self.max_clock_skew
-    }
-
-    /// Narrow (or widen) the accepted signature-validity window. A non-positive value
-    /// is refused: it would reject every message and reads as a misconfiguration
-    /// rather than a policy.
+    /// Narrow the accepted signature-validity window. The default is also the ceiling:
+    /// a value outside `1..=DEFAULT_MAX_SIGNATURE_VALIDITY` fails closed, never widens.
     pub fn with_max_signature_validity(mut self, secs: i64) -> Result<Self, HttpProfileError> {
-        if secs <= 0 {
+        if !(1..=Self::DEFAULT_MAX_SIGNATURE_VALIDITY).contains(&secs) {
             return Err(HttpProfileError::MalformedEvidence(
-                "max signature validity must be positive",
+                "max signature validity out of bounds",
             ));
         }
         self.max_signature_validity = secs;
         Ok(self)
-    }
-
-    /// The widest accepted `expires - created`, in seconds.
-    // ADR-MCPRE-059 ASM-0008 — see `max_clock_skew`.
-    #[cfg_attr(feature = "verify", verus_verify(external_body))]
-    #[cfg_attr(feature = "verify", verus_spec(out =>
-        ensures out == crate::verus_std_specs::validity_of(self),
-    ))]
-    pub fn max_signature_validity(&self) -> i64 {
-        self.max_signature_validity
     }
 }
 
@@ -233,7 +212,7 @@ impl Default for VerifierPolicy {
             algorithms: vec![ProfileAlgorithm::Ed25519],
             max_clock_skew: Self::DEFAULT_MAX_CLOCK_SKEW,
             max_signature_validity: Self::DEFAULT_MAX_SIGNATURE_VALIDITY,
-            mcp_transport: None,
+            mcp_transport: crate::mcp_transport::McpTransportPolicy::profile_default(),
         }
     }
 }
@@ -260,14 +239,26 @@ mod tests {
         let narrowed = p.clone().with_max_signature_validity(60).expect("narrow");
         assert_eq!(narrowed.max_signature_validity(), 60);
 
-        for bad in [0, -1, -3600] {
+        for bad in [
+            0,
+            -1,
+            -3600,
+            VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY + 1,
+            i64::MAX,
+        ] {
             assert!(
                 VerifierPolicy::default()
                     .with_max_signature_validity(bad)
                     .is_err(),
-                "a non-positive ceiling rejects every message and must be refused"
+                "an out-of-band ceiling is refused: non-positive rejects every message, above the default widens"
             );
         }
+        assert!(
+            VerifierPolicy::default()
+                .with_max_signature_validity(VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY)
+                .is_ok(),
+            "the ceiling itself is admissible"
+        );
     }
     use super::*;
 
@@ -283,7 +274,21 @@ mod tests {
             None,
             "the profile token is lowercase"
         );
-        assert_eq!(p.max_clock_skew(), VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW);
+        assert!(
+            (0..=VerifierPolicy::MAX_CLOCK_SKEW_BOUND).contains(&p.max_clock_skew()),
+            "the default skew must sit inside the band new() enforces"
+        );
+    }
+
+    #[test]
+    fn default_policy_is_one_new_would_build() {
+        let built =
+            VerifierPolicy::new(&DEFAULT_ALGORITHMS, VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW)
+                .expect("the defaults are inside new()'s band");
+        let d = VerifierPolicy::default();
+        assert_eq!(d.algorithms, built.algorithms);
+        assert_eq!(d.max_clock_skew(), built.max_clock_skew());
+        assert_eq!(d.max_signature_validity(), built.max_signature_validity());
     }
 
     /// THE algorithm-confusion guard. A registered algorithm with no verifier in

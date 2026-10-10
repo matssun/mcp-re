@@ -106,7 +106,8 @@ fn sts_ok(access_key_id: &str, secs_from_now: i64) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    let expiration = mcp_re_core::unix_to_rfc3339_utc(now + secs_from_now);
+    let expiration = mcp_re_core::unix_to_rfc3339_utc(now + secs_from_now)
+        .expect("a wall-clock instant is inside the admitted era");
     format!(
         r#"<AssumeRoleWithWebIdentityResponse>
   <AssumeRoleWithWebIdentityResult>

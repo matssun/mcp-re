@@ -28,8 +28,32 @@ use mcp_re_http_profile::VerifierPolicy;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
 use crate::refusal::Refusal;
+use crate::refusal::RefusalCause;
 
 use super::ActorResolver;
+
+/// A request body that passed [`RequestAdmission::validate_envelope`], and the outstanding id
+/// that validation decided.
+///
+/// Private representation, and `validate_envelope` is the only producer: holding one means
+/// the body is a legal, representable JSON-RPC 2.0 request, and the readers that interpret a
+/// body accept this value instead of the raw bytes.
+pub(super) struct ValidatedRequestEnvelope<'a> {
+    body: &'a [u8],
+    outstanding: OutstandingId,
+}
+
+impl<'a> ValidatedRequestEnvelope<'a> {
+    /// The exact bytes that were validated.
+    pub(super) fn body(&self) -> &'a [u8] {
+        self.body
+    }
+
+    /// The exchange's single answer to "what is this request".
+    pub(super) fn outstanding(&self) -> &OutstandingId {
+        &self.outstanding
+    }
+}
 
 /// The deployment's request-admission authority: who may speak, to whom, and under what
 /// acceptance policy.
@@ -44,8 +68,8 @@ pub(super) struct RequestAdmission {
     /// `target_uri` must equal the request `@target-uri` (enforced in verify).
     expected_audience: AudienceTuple,
     /// The verifier-local acceptance policy: algorithm registry, bounded skew, and the
-    /// optional MCP transport/version contract (§4.1, §5.1, §13.1). Default is
-    /// `VerifierPolicy::default()` — Ed25519, 30 s skew, no transport contract.
+    /// MCP transport/version contract (§4.1, §5.1, §13.1). Default is
+    /// `VerifierPolicy::default()` — Ed25519, 30 s skew, this profile's own protocol version.
     policy: VerifierPolicy,
 }
 
@@ -77,7 +101,7 @@ impl RequestAdmission {
     ///
     /// ```text
     /// ensures   Ok  => the signature verified and an actor is resolved
-    ///           Err => 403, signed UNBOUND (no trustworthy request hash exists yet)
+    ///           Err => the cause of the verification failure
     /// forbids   any effect on the request's behalf
     /// refusal   free — nothing has happened
     /// ```
@@ -88,7 +112,7 @@ impl RequestAdmission {
         &self,
         http_req: &HttpRequest,
         now: i64,
-    ) -> Result<Established<VerifiedMcpRequest>, Refusal> {
+    ) -> Result<Established<VerifiedMcpRequest>, RefusalCause> {
         let no_material = |_b: &ArtifactBinding| None;
         // Scoped so the timer covers the verification and nothing after it.
         let verify_result = {
@@ -104,7 +128,7 @@ impl RequestAdmission {
         // and no resolved actor to attribute the denial to.
         verify_result
             .map(|v| Established::new(v, ExchangeEvent::SignatureVerified))
-            .map_err(|e| Refusal::preflight(e, 403))
+            .map_err(RefusalCause::from)
     }
 
     /// REQUEST-ENVELOPE-VALIDATED — is this body a legal JSON-RPC request at all?
@@ -129,22 +153,27 @@ impl RequestAdmission {
     /// — goes through `serde_json`, which answers for one winner rather than for the
     /// document the client signed.
     ///
-    /// The returned [`OutstandingId`] is the exchange's single answer to "what is this
+    /// The returned [`ValidatedRequestEnvelope`] is the only body handle the meaning readers
+    /// accept, and its [`OutstandingId`] is the exchange's single answer to "what is this
     /// request": the notification arm and the response envelope validator are both given
     /// this value rather than re-reading the body. Two readers of one document can disagree,
     /// and the disagreement that mattered here is a body dispatched as a request and
     /// acknowledged as a notification.
-    pub(super) fn validate_envelope(
+    pub(super) fn validate_envelope<'r>(
         &self,
-        http_req: &HttpRequest,
-    ) -> Result<OutstandingId, Refusal> {
-        mcp_re_http_profile::validate_request_envelope(&http_req.body)
-            .map_err(|e| Refusal::before_admission(e, 400))
+        http_req: &'r HttpRequest,
+    ) -> Result<ValidatedRequestEnvelope<'r>, Refusal> {
+        let outstanding = mcp_re_http_profile::validate_request_envelope(&http_req.body)
+            .map_err(|e| Refusal::new(e, 400))?;
+        Ok(ValidatedRequestEnvelope {
+            body: &http_req.body,
+            outstanding,
+        })
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::http_profile_serve) mod tests {
     use super::*;
     use mcp_re_http_profile::ResolverOutcome;
 
@@ -157,6 +186,15 @@ mod tests {
                 route: Some("/mcp".to_owned()),
             },
         )
+    }
+
+    /// The envelope of a legal request, obtained through the validator.
+    pub(in crate::http_profile_serve) fn validated(
+        http_req: &HttpRequest,
+    ) -> ValidatedRequestEnvelope<'_> {
+        admission()
+            .validate_envelope(http_req)
+            .expect("the request body is a legal JSON-RPC request")
     }
 
     fn request(body: &str) -> HttpRequest {
@@ -210,13 +248,33 @@ mod tests {
         // the response-envelope validator are handed THIS value rather than re-reading the
         // body, because two readers of one document can disagree.
         let admission = admission();
+        let notification = request(r#"{"jsonrpc":"2.0","method":"ping"}"#);
         assert!(matches!(
-            admission.validate_envelope(&request(r#"{"jsonrpc":"2.0","method":"ping"}"#)),
-            Ok(OutstandingId::Notification)
+            admission
+                .validate_envelope(&notification)
+                .map(|e| e.outstanding().is_notification()),
+            Ok(true)
         ));
+        let call = request(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#);
         assert!(matches!(
-            admission.validate_envelope(&request(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)),
-            Ok(OutstandingId::Id(_))
+            admission
+                .validate_envelope(&call)
+                .map(|e| !e.outstanding().is_notification()),
+            Ok(true)
         ));
+    }
+
+    #[test]
+    fn the_envelope_hands_on_the_bytes_it_validated() {
+        let admission = admission();
+        let http_req = request(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#);
+        let Ok(envelope) = admission.validate_envelope(&http_req) else {
+            panic!("a legal request body was refused");
+        };
+        assert!(std::ptr::eq(envelope.body(), http_req.body.as_slice()));
+        assert!(!envelope.outstanding().is_notification());
+        assert!(admission
+            .validate_envelope(&request(r#"{"not":"jsonrpc"}"#))
+            .is_err());
     }
 }

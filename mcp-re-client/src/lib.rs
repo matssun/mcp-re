@@ -33,9 +33,7 @@ use mcp_re_client_proxy::RouteRegistry;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
-use mcp_re_host::NonceSource;
 use mcp_re_host::SystemNonceSource;
-use mcp_re_host::NONCE_BYTES;
 use mcp_re_transport::remote::MtlsRemoteTransport;
 use mcp_re_transport::ClientTlsConfig;
 use mcp_re_transport::MtlsClient;
@@ -187,10 +185,7 @@ pub fn build(config: &ClientConfig, now: i64) -> Result<BuiltClient, StartupErro
         Box::new(transport),
     );
 
-    let context = Arc::new(
-        serve::ServeContext::for_local_config(&config.local, proxy)
-            .map_err(StartupError::Config)?,
-    );
+    let context = Arc::new(serve::ServeContext::for_local_config(&config.local, proxy));
 
     Ok(BuiltClient {
         context,
@@ -206,9 +201,7 @@ pub fn build(config: &ClientConfig, now: i64) -> Result<BuiltClient, StartupErro
 /// 16 bytes encode to 22 characters, which is exactly the emission floor the core
 /// enforces — the nonce carries 128 bits and nothing here can shorten it.
 pub fn next_nonce() -> String {
-    let mut bytes = [0u8; NONCE_BYTES];
-    SystemNonceSource::new().fill(&mut bytes);
-    b64url_encode(&bytes)
+    b64url_encode(&SystemNonceSource::new().draw())
 }
 
 fn build_transport(config: &ClientConfig) -> Result<MtlsRemoteTransport, StartupError> {
@@ -230,6 +223,193 @@ fn build_transport(config: &ClientConfig) -> Result<MtlsRemoteTransport, Startup
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use mcp_re_client_core::ManifestIssuer;
+    use mcp_re_client_core::TrustAnchorManifest;
+    use rcgen::BasicConstraints;
+    use rcgen::CertificateParams;
+    use rcgen::DnType;
+    use rcgen::ExtendedKeyUsagePurpose;
+    use rcgen::IsCa;
+    use rcgen::KeyPair;
+    use rcgen::KeyUsagePurpose;
+
+    const NOW: i64 = 1_700_000_000;
+
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("mcp-re-client-lib-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).expect("scratch");
+            Scratch(path)
+        }
+        fn join(&self, name: &str) -> std::path::PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Write the seed, signed manifest, and mTLS material `build` reads, and return a
+    /// configuration over them with two routes.
+    fn fixture(scratch: &Scratch) -> ClientConfig {
+        std::fs::write(scratch.join("seed"), b64url_encode(&[11u8; 32])).expect("seed");
+
+        let org_key = SigningKey::from_seed_bytes(&[7u8; 32]);
+        let manifest = TrustAnchorManifest {
+            profile: "mcp-re-http-v1".into(),
+            manifest_version: 1,
+            current_issuers: vec![ManifestIssuer {
+                issuer_kid: "root-kid".into(),
+                public_key: SigningKey::from_seed_bytes(&[33u8; 32])
+                    .public_key()
+                    .to_b64url(),
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+            }],
+            retiring_issuers: vec![],
+            revoked_issuers: vec![],
+            issued_at: NOW - 100,
+            expires_at: NOW + 3600,
+        };
+        let signed = mcp_re_client_core::sign_manifest(&manifest, &org_key, "org-kid");
+        std::fs::write(
+            scratch.join("manifest.json"),
+            serde_json::to_vec(&signed).expect("serialize"),
+        )
+        .expect("manifest");
+
+        let ca_key = KeyPair::generate().expect("ca key");
+        let mut ca_params = CertificateParams::new(Vec::new()).expect("ca params");
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        ca_params
+            .distinguished_name
+            .push(DnType::CommonName, "mcp-re-test-ca");
+        let ca_cert = ca_params.self_signed(&ca_key).expect("ca self-signed");
+        let leaf_key = KeyPair::generate().expect("leaf key");
+        let mut leaf_params = CertificateParams::new(Vec::new()).expect("leaf params");
+        leaf_params.subject_alt_names = vec![rcgen::SanType::URI(
+            "spiffe://example.org/agent-1".try_into().expect("ia5 uri"),
+        )];
+        leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        let leaf_cert = leaf_params
+            .signed_by(&leaf_key, &rcgen::Issuer::from_params(&ca_params, &ca_key))
+            .expect("leaf signed");
+        std::fs::write(scratch.join("ca.pem"), ca_cert.pem()).expect("ca pem");
+        std::fs::write(scratch.join("client.pem"), leaf_cert.pem()).expect("cert pem");
+        std::fs::write(scratch.join("client.key"), leaf_key.serialize_pem()).expect("key pem");
+
+        let route = |id: &str, host: &str| {
+            serde_json::json!({
+                "route_id": id,
+                "target_uri": format!("https://{host}/mcp"),
+                "audience": {
+                    "audience_id": "v1",
+                    "target_uri": format!("https://{host}/mcp"),
+                    "route": id,
+                },
+                "extra_headers": [{ "name": "Authorization", "value": "Bearer tok" }],
+                "artifact_bindings": [{
+                    "artifact_type": "oauth-dpop",
+                    "source": { "kind": "header", "name": "Authorization" },
+                }],
+            })
+        };
+        let document = serde_json::json!({
+            "local": { "bind": "127.0.0.1:8640" },
+            "identity": {
+                "key_id": "c1",
+                "signing_key_seed_path": scratch.join("seed"),
+            },
+            "remote": {
+                "addr": "10.0.0.5:8600",
+                "expected_server_name": "proxy.internal",
+                "client_cert_path": scratch.join("client.pem"),
+                "client_key_path": scratch.join("client.key"),
+                "server_ca_path": scratch.join("ca.pem"),
+            },
+            "trust": {
+                "manifest_path": scratch.join("manifest.json"),
+                "profile": "mcp-re-http-v1",
+                "org_keys": [{
+                    "kid": "org-kid",
+                    "public_key": org_key.public_key().to_b64url(),
+                }],
+                "floor": { "kind": "ephemeral", "bootstrap_version": 0 },
+                "reload_secs": 300,
+            },
+            "delegation": {
+                "verifier_audiences": ["v1"],
+                "expected_audience_hash": "v1",
+                "accepted_epochs": ["e1"],
+            },
+            "routes": [route("r1", "a.example.com"), route("r2", "b.example.com")],
+        });
+        ClientConfig::from_json(document.to_string().as_bytes()).expect("fixture config")
+    }
+
+    /// Every route reads THE snapshot the refresher publishes into, and a configuration
+    /// handed in as a struct is re-validated rather than trusted.
+    #[test]
+    fn build_gives_every_route_the_one_snapshot_and_revalidates_a_handed_in_config() {
+        let scratch = Scratch::new("build");
+        let config = fixture(&scratch);
+
+        let built = build(&config, NOW).expect("a valid configuration builds");
+        assert_eq!(built.manifest_version, 1);
+        assert!(built.snapshot.load().trusts("root-kid", NOW));
+        assert_eq!(
+            Arc::strong_count(&built.snapshot),
+            3,
+            "the returned handle plus one per route: every route holds the one snapshot"
+        );
+
+        let mut illegal = config.clone();
+        illegal.delegation.accepted_epochs = vec![];
+        assert!(
+            matches!(build(&illegal, NOW), Err(StartupError::Config(_))),
+            "a handed-in configuration that validate() refuses must not build"
+        );
+    }
+
+    /// A seed is exactly 32 bytes of Base64URL text, whatever the file holds.
+    #[test]
+    fn a_signing_key_seed_must_decode_to_exactly_32_bytes() {
+        let scratch = Scratch::new("seed");
+        let read = |text: &str| {
+            let path = scratch.join("seed");
+            std::fs::write(&path, text).expect("seed");
+            read_signing_key(&path)
+        };
+        for length in [31usize, 33] {
+            match read(&b64url_encode(&vec![5u8; length])) {
+                Err(StartupError::Material(m)) => {
+                    assert!(m.contains("not 32 bytes"), "length {length}: {m}")
+                }
+                other => panic!("length {length} must be refused, got {:?}", other.is_ok()),
+            }
+        }
+        match read("!!!not-base64!!!") {
+            Err(StartupError::Material(m)) => assert!(m.contains("not Base64URL"), "{m}"),
+            other => panic!("non-base64 must be refused, got {:?}", other.is_ok()),
+        }
+        let key = read(&format!("{}\n", b64url_encode(&[5u8; 32]))).expect("32 bytes decode");
+        assert_eq!(
+            key.public_key().to_b64url(),
+            SigningKey::from_seed_bytes(&[5u8; 32])
+                .public_key()
+                .to_b64url()
+        );
+    }
 
     /// The nonce must clear the core's 128-bit emission floor by construction, not by a
     /// caller remembering to check.

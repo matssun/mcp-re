@@ -34,6 +34,10 @@ use super::wire::VDS_RFC9162_SHA256;
 ///
 /// Any failure is fail-closed. On success the caller holds a verified, portable
 /// record of the call — including whether it was a complete or incomplete chain.
+///
+/// It does not judge the TS key's lifecycle: a resolved key is used whatever its validity
+/// window or revocation status, so a caller judges `receipt.ts_kid()` with
+/// [`super::TransparencyKeyLifecycle::admits_at`] at its own trusted current time.
 pub fn verify_receipt_offline(
     statement: &SignedStatement,
     receipt: &Receipt,
@@ -48,7 +52,7 @@ pub fn verify_receipt_offline(
     // 2. Inclusion proof: run the RFC 9162 §2.1.3.2 verification algorithm, which
     //    consumes the leaf index AND the tree size, and require the result to equal
     //    the root the receipt commits to.
-    let ts = resolve_ts(receipt.ts_kid()).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
+    let ts = resolve_ts(receipt.ts_kid()).ok_or(HttpProfileError::ReceiptServiceUntrusted)?;
     let leaf = leaf_hash(statement, ts.leaf_profile());
     let computed = rfc9162_root_from_inclusion_proof(
         &leaf,
@@ -312,7 +316,7 @@ mod tests {
         // The proof lives in the UNPROTECTED header, so this is exactly the tamper a
         // receipt must survive — forging it cannot forge inclusion, it can only make
         // the derived root fail to match the one the service signed.
-        let receipt = receipt.with_forged_inclusion_path(vec![vec![9u8; 32]]);
+        let receipt = receipt.with_forged_inclusion_path(vec![[9u8; 32]]);
         assert!(matches!(
             verify_receipt_offline(&st, &receipt, ir(), tr()).unwrap_err(),
             HttpProfileError::ReceiptInclusionInvalid | HttpProfileError::ReceiptInvalid,
@@ -357,7 +361,7 @@ mod tests {
         // The honest legacy receipt verifies, so the refusal below is about the path.
         verify_receipt_offline(&st, &legacy, ir(), tr_unbound()).expect("the honest legacy claim");
 
-        let forged = legacy.with_forged_inclusion_path(vec![vec![9u8; 32]]);
+        let forged = legacy.with_forged_inclusion_path(vec![[9u8; 32]]);
         assert_eq!(
             verify_receipt_offline(&st, &forged, ir(), tr_unbound()).unwrap_err(),
             HttpProfileError::ReceiptInclusionInvalid,
@@ -376,6 +380,14 @@ mod tests {
         assert_eq!(
             verify_receipt_offline(&st, &receipt, |_| None, tr()).unwrap_err(),
             HttpProfileError::ReceiptIssuerUntrusted,
+        );
+        assert_eq!(
+            verify_receipt_offline(&st, &receipt, ir(), |_| None).unwrap_err(),
+            HttpProfileError::ReceiptServiceUntrusted,
+        );
+        assert_eq!(
+            HttpProfileError::ReceiptServiceUntrusted.wire_code(),
+            HttpProfileError::ReceiptIssuerUntrusted.wire_code(),
         );
     }
 }

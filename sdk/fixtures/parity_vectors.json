@@ -4,7 +4,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJwZHAtZGVjaXNpb24iLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IjVfS0lxTVV3U1B2djBjVGwtZVkyckE5em05NmkzU0d1ZWxQc1VwNS1iRHcifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJhdXRob3JpemF0aW9uX2RlY2lzaW9uIjoiWm1GclpTMW9aV0ZrWlhJLlptRnJaUzFqYkdGcGJYTS5abUZyWlMxemFXYyIsInByb2ZpbGUiOiJtY3AtcmUtaHR0cC12MSJ9fSwiaWQiOjEsImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJ0b29scy9saXN0IiwicGFyYW1zIjp7fX0=",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "5cWKgKjtl4LrEHU8BBr7JEK--58clWpBs-S2xs_64H0",
+        "evidence_digest_value": "aC5-uH5LoRliCmEarJN5EbpIRx0-ifFs0tOFZIyPds8",
         "headers": [
           [
             "content-type",
@@ -15,16 +15,24 @@
             "Bearer dpop-token"
           ],
           [
+            "Mcp-Method",
+            "tools/list"
+          ],
+          [
+            "MCP-Protocol-Version",
+            "2026-07-28"
+          ],
+          [
             "Content-Digest",
             "sha-256=:lUgTk37dTGTVVSyFh++A1Uxqa0+15WBxrH/ukqxhzTY=:"
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0008-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0008-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:IUPc5XFoUeozK9Gyh9d1L4hZ0Ux/DBStBWibkqpm5QHGMkqdiDVblMtV96jwdu8ef4yi6mSqgIzWjNuGeqcJAg==:"
+            "mcp-re=:muU3NpqhAGfJJydZCbvgU8vT4Oot9SgTkD2/7IRyJ8lrM8kCKyIgk0WsEGeOPfw4pz0iucymrHZxA+RzUHxrAg==:"
           ]
         ],
         "method": "POST",
@@ -50,7 +58,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJwZHAtZGVjaXNpb24iLCJhdXRob3JpemF0aW9uX3N5c3RlbV9pZCI6ImF1dGh6LTEiLCJiaW5kaW5nX3R5cGUiOiJyZWZlcmVuY2UtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IlZZNjhjUnB5bGZva3RhaXVlbTY5QzJTS1UyUUltbXF6NUlrUnJZeEFQOGciLCJyZWZlcmVuY2Vfc2NoZW1lX2lkIjoic2NoZW1lLTEiLCJyZWZlcmVuY2VfdmFsdWUiOiJncmFudC0xMjMifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "NBt8CWVYsRsd217kwKwohp7A6HNW8_FwbPQ9hrgUTZI",
+        "evidence_digest_value": "Owp5B8qTTckAixqhTfhFKhAjGJRcF91Rg5ePQ0aB-fA",
         "headers": [
           [
             "content-type",
@@ -61,16 +69,24 @@
             "Bearer dpop-token"
           ],
           [
+            "Mcp-Method",
+            "tools/list"
+          ],
+          [
+            "MCP-Protocol-Version",
+            "2026-07-28"
+          ],
+          [
             "Content-Digest",
             "sha-256=:B9g5Gn+BUP3bUM89TfwcwZa30nDi6EpHhrGKRnsZK+Y=:"
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0005-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0005-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:w7Lx+dYKropt0Ds6fsRdwVT0QGBoS8LGJivAhmXSmaRVJCTfB7KWKcpAnHqruCfNmocBBalYFoSDicUEq2F/Aw==:"
+            "mcp-re=:qoJOxaQ6SAlhUkYud9A0qO6Z2PAc/2inOsD+5pesa9C1Utr5Oo7kUkM5jLTmYCmyAkqHjTHBQj5ZhOE9uzkSBA==:"
           ]
         ],
         "method": "POST",
@@ -96,7 +112,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJodW1hbi1hcHByb3ZhbCIsImJpbmRpbmdfdHlwZSI6Im9wYXF1ZS1kaWdlc3QiLCJkaWdlc3RfYWxnIjoic2hhMjU2IiwiZGlnZXN0X3ZhbHVlIjoiSTVudVpmUmluMWJBNEJVbWxvV2l6QlpEcDk1b2gxRWlEQ3pYMVhkMnlmdyJ9XSwiYXVkaWVuY2UiOnsiYXVkaWVuY2VfaWQiOiJkaWQ6ZXhhbXBsZTpzZXJ2ZXItMSIsInRhcmdldF91cmkiOiJodHRwczovL3Byb3h5LmludGVybmFsOjg2MDAvbWNwIn0sInByb2ZpbGUiOiJtY3AtcmUtaHR0cC12MSJ9fSwiaWQiOjEsImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJ0b29scy9saXN0IiwicGFyYW1zIjp7fX0=",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "1dEXUPxyxW-pBm7SXFJhZGCFYqlauSiB50VK2PHR62M",
+        "evidence_digest_value": "jIkTY-6nnywLhr38GJsEaLMChFWGVKmEQcK0iYJPDIg",
         "headers": [
           [
             "content-type",
@@ -107,16 +123,24 @@
             "Bearer dpop-token"
           ],
           [
+            "Mcp-Method",
+            "tools/list"
+          ],
+          [
+            "MCP-Protocol-Version",
+            "2026-07-28"
+          ],
+          [
             "Content-Digest",
             "sha-256=:3egkUvj/DcG5hdp1vuWNywHpVWlMyiKJVgw8pHwtNEE=:"
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0004-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0004-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:XzOam3gJXzhCb5RDF4aV+/fKRbsLMMlTHlEaHG3/L8Zdg3ATPloM66wwx7XzRiVYHTeWCUilpvi9vpXBl2s+BQ==:"
+            "mcp-re=:JZcZRagPaSv8ByLGuU5ZRCGqirgKUzRFBxS/+Hha+FZU2LxplauumzyCXHRXEaxSVa2Q0/f6K7RqthporxsiAQ==:"
           ]
         ],
         "method": "POST",
@@ -140,9 +164,9 @@
     },
     "continuation_answer_leg": {
       "expected": {
-        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJjb250aW51YXRpb24iOnsiaW5wdXRfcmVxdWlyZWRfcmVzcG9uc2VfZXZpZGVuY2UiOnsiZGlnZXN0X2FsZyI6InNoYS0yNTYiLCJkaWdlc3RfdmFsdWUiOiJhWEp5TFdoaGJtUnNaUSJ9LCJwcmV2aW91c19yZXF1ZXN0X2V2aWRlbmNlIjp7ImRpZ2VzdF9hbGciOiJzaGEtMjU2IiwiZGlnZXN0X3ZhbHVlIjoiY0hKbGRpMW9ZVzVrYkdVIn0sInJlcXVlc3Rfc3RhdGVfZGlnZXN0Ijp7ImRpZ2VzdF9hbGciOiJzaGEyNTYiLCJkaWdlc3RfdmFsdWUiOiJUVm9oSVZJam9OZVN1VFZFczltUUsxRHo4TU01Q29aOUdQMHVyMlRUd04wIn0sInR5cGUiOiJtY3AtbXJ0In0sInByb2ZpbGUiOiJtY3AtcmUtaHR0cC12MSJ9fSwiaWQiOjEsImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJ0b29scy9saXN0IiwicGFyYW1zIjp7fX0=",
+        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJjb250aW51YXRpb24iOnsiaW5wdXRfcmVxdWlyZWRfcmVzcG9uc2VfZXZpZGVuY2UiOnsiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkNReWJ3SG93NVVlYzB3N1RiNmtjZDd2V09FaFJOQ0NHaGZ2a05VR3ZJSUEifSwicHJldmlvdXNfcmVxdWVzdF9ldmlkZW5jZSI6eyJkaWdlc3RfYWxnIjoic2hhMjU2IiwiZGlnZXN0X3ZhbHVlIjoiSW1wOEVJSUJUWW8xR2FmVjB0b1NQdU1KcFA0MGo1cEg1eDdWRFZVMWlsOCJ9LCJyZXF1ZXN0X3N0YXRlX2RpZ2VzdCI6eyJkaWdlc3RfYWxnIjoic2hhMjU2IiwiZGlnZXN0X3ZhbHVlIjoiVFZvaElWSWpvTmVTdVRWRXM5bVFLMUR6OE1NNUNvWjlHUDB1cjJUVHdOMCJ9LCJ0eXBlIjoibWNwLW1ydCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "q8GTykLxYKWpmqTBFsuviGg0cfjoiIbVACrOwRmtJ5M",
+        "evidence_digest_value": "3EMZ8hxwGVMlTHCPcQvOhH6ROOb0XiTcSRc_Bs6MJ3w",
         "headers": [
           [
             "content-type",
@@ -153,16 +177,24 @@
             "Bearer dpop-token"
           ],
           [
+            "Mcp-Method",
+            "tools/list"
+          ],
+          [
+            "MCP-Protocol-Version",
+            "2026-07-28"
+          ],
+          [
             "Content-Digest",
-            "sha-256=:dja07yp1oYDONtLHDkC2Bwh7SOZ2F1Csf/ZKItsRlsI=:"
+            "sha-256=:auH1lULQxcUFgNc+py++eZR+qFHFtffoqVxGni1mW30=:"
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0003-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0003-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:bCJFFNs6M2bX5mtOhW9y4TlFOXcHhdKpG21p3i9BKEZcEGDUD3c83Jx5RVuiXKOvEYL6I2+/J/akubGquwq8AA==:"
+            "mcp-re=:ObyVoO1lUXmPP0UUGPGvFrodM829aRdsbMKYkKx6Ef766ipBEWRBkTX8UKWUnNarQFwtcp84B0qgnp4ZLw17Ag==:"
           ]
         ],
         "method": "POST",
@@ -170,10 +202,10 @@
       },
       "inputs": {
         "audience_id": "did:example:server-1",
-        "cont_irr_alg": "sha-256",
-        "cont_irr_value": "aXJyLWhhbmRsZQ",
-        "cont_prev_alg": "sha-256",
-        "cont_prev_value": "cHJldi1oYW5kbGU",
+        "cont_irr_alg": "sha256",
+        "cont_irr_value": "CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA",
+        "cont_prev_alg": "sha256",
+        "cont_prev_value": "Imp8EIIBTYo1GafV0toSPuMJpP40j5pH5x7VDVU1il8",
         "cont_request_state": "opaque-state-xyz",
         "created": 1700000000,
         "dpop_token": "dpop-token",
@@ -192,7 +224,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJwZHAtZGVjaXNpb24iLCJhdXRob3JpemF0aW9uX3N5c3RlbV9pZCI6ImF1dGh6Lc6pIiwiYmluZGluZ190eXBlIjoicmVmZXJlbmNlLWRpZ2VzdCIsImRpZ2VzdF9hbGciOiJzaGEyNTYiLCJkaWdlc3RfdmFsdWUiOiJWWTY4Y1JweWxmb2t0YWl1ZW02OUMyU0tVMlFJbW1xejVJa1JyWXhBUDhnIiwicmVmZXJlbmNlX3NjaGVtZV9pZCI6InNjaGVtZS0xIiwicmVmZXJlbmNlX3ZhbHVlIjoiZ3JhbnQt5paH5pu4LTEyMyJ9XSwiYXVkaWVuY2UiOnsiYXVkaWVuY2VfaWQiOiJkaWQ6ZXhhbXBsZTpzZXJ2ZXItMSIsInRhcmdldF91cmkiOiJodHRwczovL3Byb3h5LmludGVybmFsOjg2MDAvbWNwIn0sInByb2ZpbGUiOiJtY3AtcmUtaHR0cC12MSJ9fSwiaWQiOiJyZXEtzqkiLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvY2FsbCIsInBhcmFtcyI6eyJhcmd1bWVudHMiOnsicGF0aCI6Ii90bXAvbmHDr3ZlLc6pLeaWh+abuC50eHQifSwibmFtZSI6InJlYWRfZmlsZSJ9fQ==",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "3O8Zcqr3pVT3rv9kjr6XamZnJqIQ5ftfwqib29Hgyrs",
+        "evidence_digest_value": "8VYmOTZvdyzduDKURyDzsyOk7sWBZRPmbZZFQWObGeE",
         "headers": [
           [
             "content-type",
@@ -203,16 +235,28 @@
             "Bearer dpop-token"
           ],
           [
+            "Mcp-Method",
+            "tools/call"
+          ],
+          [
+            "Mcp-Name",
+            "read_file"
+          ],
+          [
+            "MCP-Protocol-Version",
+            "2026-07-28"
+          ],
+          [
             "Content-Digest",
             "sha-256=:+BE58yR33MT6DXE17BQ8EZmPPfI9QnQC9lPNLRZJZYU=:"
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0007-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-name\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0007-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:aZanXfOAUS8myTTFGolqHMjaaIaaJVtBaelaUCLZHnQJJIHlWHsW07OovVRq5WOSX3PTxjHLKgLTgkTJpSNhCg==:"
+            "mcp-re=:p6sSzLwMsAu+kMSU6iUpbq5d06nHsN+OT8LcweAMkq+xpIVhlzBOX/zpBpVrI3XTVejajVdWnkYGBg85RJsmBg==:"
           ]
         ],
         "method": "POST",
@@ -238,7 +282,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "_MkeDeSun2FEg12gOL4iSZvqPMxII3A1on1Dq3ePIFo",
+        "evidence_digest_value": "CjLA3Fxagc6YaMiuz3ooBCqqLXYiARDBVvpAv3JR2_o",
         "headers": [
           [
             "content-type",
@@ -249,16 +293,24 @@
             "Bearer dpop-token"
           ],
           [
+            "Mcp-Method",
+            "tools/list"
+          ],
+          [
+            "MCP-Protocol-Version",
+            "2026-07-28"
+          ],
+          [
             "Content-Digest",
             "sha-256=:/ZvV55wlB/hwxXsKJqql261f8HZrAFZg5cdBghnlQ1c=:"
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0001-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0001-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:97HQPGgoH5eP3zGSPyUW0EM1hvJ6fBVWKQC6G3Edc6474uNFyyfJaXFqbRS3OKhqii5p477iUy2K1hzW8RhQAA==:"
+            "mcp-re=:/qdmtmArS5coB9PM4xulMG2VwGoz6ocgc1cF+2bpsA7EBpjuw3Mt5JHgVxXKAeYnC07nOpHWePid7NZ5rvPtCg==:"
           ]
         ],
         "method": "POST",
@@ -283,7 +335,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJub3RpZmljYXRpb25zL2luaXRpYWxpemVkIiwicGFyYW1zIjp7fX0=",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "uciueRhNB3dbnQAkODa0lbk8sVAIHuRZwCTNk_yU7BM",
+        "evidence_digest_value": "_B0KOHFf0b-ZEcT0L96XofBRjKrbOOE9SEX9uAygoMU",
         "headers": [
           [
             "content-type",
@@ -294,16 +346,24 @@
             "Bearer dpop-token"
           ],
           [
+            "Mcp-Method",
+            "notifications/initialized"
+          ],
+          [
+            "MCP-Protocol-Version",
+            "2026-07-28"
+          ],
+          [
             "Content-Digest",
             "sha-256=:F99hCJ6SEeM8JUm7Yz7qoiAEOsmTc7MQ6DrO8KhOZEA=:"
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0006-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0006-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:X4BcNMxyRc46+xUcNSdzK4mhGEtsKi9bmGuYOCf9q0PPIxvr7InyzkvRWyIqec3crkF+AcZJVccsaDvthIy6Cg==:"
+            "mcp-re=:gvxyTEyKyFvJjJYCAbTIDaUXMjtf5MjXVMV0V4jcb17eaVZBc2LbJe+wZgOqTah/HohtZV3HKkLvFo3HuewUAw==:"
           ]
         ],
         "method": "POST",
@@ -327,7 +387,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJub3RpZmljYXRpb25zL2luaXRpYWxpemVkIiwicGFyYW1zIjp7fX0=",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "uciueRhNB3dbnQAkODa0lbk8sVAIHuRZwCTNk_yU7BM",
+        "evidence_digest_value": "_B0KOHFf0b-ZEcT0L96XofBRjKrbOOE9SEX9uAygoMU",
         "headers": [
           [
             "content-type",
@@ -338,16 +398,24 @@
             "Bearer dpop-token"
           ],
           [
+            "Mcp-Method",
+            "notifications/initialized"
+          ],
+          [
+            "MCP-Protocol-Version",
+            "2026-07-28"
+          ],
+          [
             "Content-Digest",
             "sha-256=:F99hCJ6SEeM8JUm7Yz7qoiAEOsmTc7MQ6DrO8KhOZEA=:"
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0006-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0006-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:X4BcNMxyRc46+xUcNSdzK4mhGEtsKi9bmGuYOCf9q0PPIxvr7InyzkvRWyIqec3crkF+AcZJVccsaDvthIy6Cg==:"
+            "mcp-re=:gvxyTEyKyFvJjJYCAbTIDaUXMjtf5MjXVMV0V4jcb17eaVZBc2LbJe+wZgOqTah/HohtZV3HKkLvFo3HuewUAw==:"
           ]
         ],
         "method": "POST",
@@ -371,7 +439,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJyb3V0ZSI6InJvdXRlLWEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoicmVxLTciLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvY2FsbCIsInBhcmFtcyI6eyJhcmd1bWVudHMiOnsicGF0aCI6Ii9ldGMvaG9zdHMifSwibmFtZSI6InJlYWRfZmlsZSJ9fQ==",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "J9w-2Ab4h3jU8yun5pQILIsxabD06acNnKKmFeWqfLY",
+        "evidence_digest_value": "H48v-OvZakTgJedTJqDMZhZ7dKojtaKMM-txR35bQKo",
         "headers": [
           [
             "content-type",
@@ -382,16 +450,28 @@
             "Bearer dpop-token"
           ],
           [
+            "Mcp-Method",
+            "tools/call"
+          ],
+          [
+            "Mcp-Name",
+            "read_file"
+          ],
+          [
+            "MCP-Protocol-Version",
+            "2026-07-28"
+          ],
+          [
             "Content-Digest",
             "sha-256=:pVaBrVAvMrAswlIhZAYIHJBZ3EhMgoRNYmqGfo0nYTw=:"
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0002-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-name\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0002-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:Dcm6VySciyL44ZuLhM+3UgPTpklxD4nC6A6+R78Rw4ssD5RB76h04ZzigTxc0Bas0HH0Jsmc7Wsz7/25RlNQCg==:"
+            "mcp-re=:TiUc+udj7RMdW/JhVQH1cIZwONEVY532+ARapB9UHXNYrGT5FX35FQbn0BZoxiB0r3VOE722O4T6DbOV780rAw==:"
           ]
         ],
         "method": "POST",
@@ -416,7 +496,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "_MkeDeSun2FEg12gOL4iSZvqPMxII3A1on1Dq3ePIFo",
+        "evidence_digest_value": "CjLA3Fxagc6YaMiuz3ooBCqqLXYiARDBVvpAv3JR2_o",
         "headers": [
           [
             "content-type",
@@ -427,16 +507,24 @@
             "Bearer dpop-token"
           ],
           [
+            "Mcp-Method",
+            "tools/list"
+          ],
+          [
+            "MCP-Protocol-Version",
+            "2026-07-28"
+          ],
+          [
             "Content-Digest",
             "sha-256=:/ZvV55wlB/hwxXsKJqql261f8HZrAFZg5cdBghnlQ1c=:"
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0001-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\" \"mcp-method\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0001-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:97HQPGgoH5eP3zGSPyUW0EM1hvJ6fBVWKQC6G3Edc6474uNFyyfJaXFqbRS3OKhqii5p477iUy2K1hzW8RhQAA==:"
+            "mcp-re=:/qdmtmArS5coB9PM4xulMG2VwGoz6ocgc1cF+2bpsA7EBpjuw3Mt5JHgVxXKAeYnC07nOpHWePid7NZ5rvPtCg==:"
           ]
         ],
         "method": "POST",

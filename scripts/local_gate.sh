@@ -99,6 +99,10 @@ stage_static() {
     && python3 scripts/deploy_image_tag_gate.py \
     && python3 scripts/slo_invocation_gate.py --selftest \
     && python3 scripts/slo_invocation_gate.py \
+    && python3 scripts/os_entropy_census_gate.py --selftest \
+    && python3 scripts/os_entropy_census_gate.py \
+    && python3 scripts/finding_ledger_gate.py --selftest \
+    && python3 scripts/finding_ledger_gate.py \
     `# Fixture-feature gate: a test-only cargo feature enabled by a NORMAL dependency` \
     `# unifies onto every build in the workspace, including the library a production` \
     `# consumer links. mcp-re-host's own three controls read its own manifest and are` \
@@ -142,6 +146,8 @@ stage_static() {
     && python3 scripts/test_target_gate.py \
     && python3 scripts/test_inventory_gate.py --selftest \
     && python3 scripts/test_inventory_gate.py \
+    && python3 scripts/format_control_table_gate.py --selftest \
+    && python3 scripts/format_control_table_gate.py \
     && python3 scripts/no_cargo_execution_gate.py --selftest \
     && python3 scripts/no_cargo_execution_gate.py \
     && python3 scripts/crate_spec_parity_gate.py --selftest \
@@ -258,6 +264,7 @@ stage_static() {
     && python3 scripts/assurance_obligation_gate.py \
     && python3 tools/verification/test_r9_linkage.py \
     && python3 tools/verification/test_evidence_class.py \
+    && python3 tools/verification/test_feature_lanes.py \
     `# Every file under verification/generated/ is what the catalogues render right now.` \
     `# It rode inside check-generated, which is the extraction-phase generated-model lane,` \
     `# so six cheap Markdown comparisons were reachable only through the pinned Linux` \

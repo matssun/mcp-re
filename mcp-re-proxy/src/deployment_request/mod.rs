@@ -31,7 +31,7 @@ mod storage;
 pub use admission::{AdmissionAvailabilityRequest, AdmissionGateRequest, AdmissionRequest};
 pub use authorization::AuthorizationRequest;
 pub use delegated_signing::DelegatedSigningRequest;
-pub(crate) use inner_backend_display::RedactedBackendUrls;
+pub use inner_backend_display::InnerBackendUrls;
 pub use kinds::{AuditSinkKind, AuthzKind, VerifiedContextKind};
 pub use peer_identity::{
     AttestedIngressRequest, ChannelCredentialIdentityRequest, IngressAssertionRequest,
@@ -56,10 +56,10 @@ pub use storage::{
 
 pub use signing_source::{
     AwsKmsChannelKeyRequest, AwsKmsSigningSourceRequest, ChannelCredentialRequest,
-    ChannelKeyRequest, DelegatedChannelKeyRequest, EnvironmentSigningSourceRequest,
-    ExportedChannelKeyRequest, FileSigningSourceRequest, GcpKmsChannelKeyRequest,
-    GcpKmsSigningSourceRequest, Pkcs11ChannelKeyRequest, Pkcs11SigningSourceRequest,
-    ResponseSigningRequest, SigningSourceRequest,
+    ChannelKeyRequest, DelegatedChannelKeyRequest, ExportedChannelKeyRequest,
+    FileSigningSourceRequest, GcpKmsChannelKeyRequest, GcpKmsSigningSourceRequest,
+    Pkcs11ChannelKeyRequest, Pkcs11SigningSourceRequest, ResponseSigningRequest,
+    SigningSourceRequest,
 };
 
 use std::time::Duration;
@@ -99,6 +99,9 @@ pub struct DeploymentRequest {
     pub target_uri: String,
     /// The trust domain assigned to resolved actors (RFC 9421 ActorIdentity).
     pub trust_domain: String,
+    /// The operator's acknowledgement that this is a fenced fixture run, which alone lets
+    /// the identity coordinates hold the shipped `example.com` / `did:example:` placeholders.
+    pub allow_example_fixtures: bool,
     /// Optional audience route/tenant discriminator.
     pub route: Option<String>,
     /// Which key signs this deployment's responses, and the mechanism holding it.
@@ -124,7 +127,7 @@ pub struct DeploymentRequest {
     /// value (comma-separated and/or repeated) adds a backend. At least one is
     /// REQUIRED — the proxy has no in-tree stdio inner mode (MCPRE-118); a
     /// stdio-only server is fronted by the out-of-TCB `mcp-re-stdio-bridge`.
-    pub inner_http_urls: Vec<String>,
+    pub inner_http_urls: InnerBackendUrls,
     /// ADR-MCPRE-051 §1: number of serving SHARDS (each an `SO_REUSEPORT` listener with
     /// its own runtime). `0` (default) means auto.
     ///
@@ -153,10 +156,9 @@ pub struct DeploymentRequest {
     /// MCPRE-114: the admission limit AS THE OPERATOR STATED IT — per core, fleet-wide, or
     /// not at all.
     ///
-    /// One field, because there is one decision. The two flags are alternatives at
-    /// different altitudes, and holding them in two `Option`s made the illegal both-set
-    /// combination writable and made absence indistinguishable from a value equal to the
-    /// default. Neither is expressible here.
+    /// One field, because there is one decision: the two flags are alternatives at
+    /// different altitudes, so neither both-set nor an absence equal to the default is
+    /// expressible here.
     ///
     /// `Unspecified` does NOT mean unbounded:
     /// [`in_flight_limit`](crate::config_state::in_flight_limit) applies the fail-safe
@@ -164,10 +166,8 @@ pub struct DeploymentRequest {
     pub in_flight_limit: crate::config_state::InFlightLimitRequest,
     /// Where shared replay state lives, and what durability this deployment claims for it.
     ///
-    /// The REPLAY store, and nothing else. One field once also decided where the MRTR
-    /// continuation store lived, which made it carry two different facts depending on the
-    /// tier beside it; `continuation_control` owns that fact, and each role names its own
-    /// store (ADR-MCPRE-067 §10, CF-12).
+    /// The REPLAY store, and nothing else: `continuation_control` names the MRTR
+    /// continuation store (ADR-MCPRE-067 §10, CF-12).
     pub replay: ReplayStorageRequest,
     /// ADR-MCPS-047: where a retained cross-replica MRTR continuation base lives.
     ///
@@ -180,13 +180,13 @@ pub struct DeploymentRequest {
     /// enforcing forms, so there is no `off` to hang them from and the five dangling
     /// clauses have no configuration left to examine (ADR-MCPRE-067 §7).
     pub admission: AdmissionRequest,
-    /// ADR-MCPS-035: where the per-request security record goes. `Stderr` by default,
-    /// because the absent case has to be the safe one: an invocation that does not go
-    /// through the Helm chart — the container run directly, a harness, a hand-rolled
-    /// unit file — would otherwise serve production traffic with no per-request
-    /// attribution, and a compromise cannot be scoped after the fact from records that
-    /// were never written. Turning it off is available but explicit (`--audit-sink
-    /// none`), and the startup line states which posture is in force either way.
+    /// ADR-MCPS-035: where the per-request security record goes. The field has no
+    /// default (a request built in code names it); the CLI surface defaults an absent
+    /// `--audit-sink` to `Stderr`, because the absent case has to be the safe one: a
+    /// run outside the Helm chart would otherwise serve production traffic with no
+    /// per-request attribution, and a compromise cannot be scoped from records never
+    /// written. Turning it off is explicit (`--audit-sink none`), and the startup line
+    /// states which posture is in force either way.
     pub audit_sink: AuditSinkKind,
     /// ADR-MCPRE-054: where retained evidence goes. `None` by default — nothing is
     /// retained and the request path is unchanged.
@@ -198,8 +198,8 @@ pub struct DeploymentRequest {
     /// a store failure refuses the exchange with `mcp-re.evidence_retention_unavailable`.
     pub retained_evidence_dir: Option<String>,
     /// #415 rev 2 §10: whether the PEP writes its own verified context into the body
-    /// forwarded to the inner server. `Disabled` by default because `Trusted` asserts
-    /// an unverifiable property of the inner channel.
+    /// forwarded to the inner server. The CLI surface defaults an absent
+    /// `--verified-context` to `Disabled`: `Trusted` asserts an unverifiable property.
     pub verified_context: VerifiedContextKind,
     /// How current this deployment's belief about a request signer is: which ADR-MCPS-021
     /// posture it asserts, and the material that posture is inhabited by. One tagged value,

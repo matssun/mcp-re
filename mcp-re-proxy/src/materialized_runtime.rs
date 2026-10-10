@@ -109,16 +109,29 @@ pub(crate) struct MaterializedRuntime {
     /// Owns the CRL reload worker. No security transition on drop: an unrefreshed CRL
     /// converges on refusing, because unknown revocation state is never admissible.
     tls: Option<TlsPlane>,
-    /// The serving assembly. Holds the two plane handles above, plus the replay tier,
-    /// continuation store and admission source that are bound to `control`.
+    /// The serving assembly (consumer slot) and the shared control-plane substrate it is
+    /// bound to. The consumer holds the two plane handles above, plus the replay tier,
+    /// continuation store and admission source that are bound to the substrate.
     ///
-    /// `Arc` because the fleet shares one proxy across every core. After
+    /// The consumer is an `Arc` because the fleet shares one proxy across every core. After
     /// `shutdown_and_join` returns, the handler clones are gone and this is the last
-    /// reference, so taking it here is what actually drops the assembly.
-    proxy: Option<Arc<HttpProfileProxy>>,
-    /// The shared control-plane substrate. Reclaimed last, after the proxy has released
-    /// the clients bound to it.
-    control: Option<ControlRuntime>,
+    /// reference, so taking it here is what actually drops the assembly. The substrate is
+    /// reclaimed last, after the proxy has released the clients bound to it.
+    phase3: Reclaim<Arc<HttpProfileProxy>, ControlRuntime>,
+}
+
+/// The phase-3 pair: a consumer holding clients bound to a substrate. `reclaim` releases
+/// the consumer first, then the substrate — that order is the protocol, not field order.
+struct Reclaim<P, C> {
+    consumer: Option<P>,
+    substrate: Option<C>,
+}
+
+impl<P, C> Reclaim<P, C> {
+    fn reclaim(&mut self) {
+        drop(self.consumer.take());
+        drop(self.substrate.take());
+    }
 }
 
 /// The lifecycle events a finished `serve_fleet` has ESTABLISHED — never more.
@@ -160,8 +173,10 @@ impl MaterializedRuntime {
             trust: Some(trust),
             signing: Some(signing),
             tls: Some(tls),
-            proxy: Some(Arc::new(proxy)),
-            control,
+            phase3: Reclaim {
+                consumer: Some(Arc::new(proxy)),
+                substrate: control,
+            },
         }
     }
 
@@ -187,7 +202,8 @@ impl MaterializedRuntime {
         // PHASE 1 — drain. Returns only once every per-core worker has stopped, so no
         // request can be using anything below when phase 2 begins.
         let proxy = Arc::clone(
-            self.proxy
+            self.phase3
+                .consumer
                 .as_ref()
                 .ok_or("the runtime has no proxy to drain")?,
         );
@@ -282,8 +298,7 @@ impl MaterializedRuntime {
     /// `Runtime::locate()` for its whole life. Only once those are released is the runtime
     /// itself reclaimed.
     fn reclaim(&mut self) {
-        drop(self.proxy.take());
-        drop(self.control.take());
+        self.phase3.reclaim();
     }
 }
 
@@ -347,7 +362,7 @@ mod tests {
         );
         assert!(
             !lifecycle.state().admits_requests(),
-            "no window in which the lifecycle authorises admission over an unbound runtime"
+            "the record never classifies an unbound runtime as admitting; admission itself is confined by listener ownership, not by this value"
         );
         assert_ne!(
             lifecycle.state(),
@@ -425,8 +440,10 @@ mod tests {
             trust: Some(TrustPlane::for_teardown_test(trust_body)),
             signing: Some(SigningPlane::for_teardown_test(signing_body)),
             tls: Some(TlsPlane::for_teardown_test(tls_body)),
-            proxy: None,
-            control: Some(substrate()),
+            phase3: Reclaim {
+                consumer: None,
+                substrate: Some(substrate()),
+            },
         }
     }
 
@@ -481,7 +498,7 @@ mod tests {
              key and no trust-epoch advance can revoke it"
         );
         assert!(
-            runtime.control.is_some(),
+            runtime.phase3.substrate.is_some(),
             "phase 2 took the substrate: a security transition must not depend on a \
              networked dependency that can be slow or wedged"
         );
@@ -493,7 +510,7 @@ mod tests {
 
         runtime.reclaim();
         assert!(
-            runtime.control.is_none(),
+            runtime.phase3.substrate.is_none(),
             "phase 3 must reclaim the substrate"
         );
     }
@@ -625,13 +642,13 @@ mod tests {
             "the signing plane's retirement was skipped because an earlier plane stalled"
         );
         assert!(
-            runtime.control.is_some(),
+            runtime.phase3.substrate.is_some(),
             "phase 2 took the substrate while waiting out a straggler"
         );
 
         runtime.reclaim();
         assert!(
-            runtime.control.is_none(),
+            runtime.phase3.substrate.is_none(),
             "a stalled transition must not prevent the substrate being reclaimed"
         );
     }
@@ -664,11 +681,14 @@ mod tests {
             ),
             "a plane whose worker panicked must still fail its resolver closed"
         );
-        assert!(runtime.control.is_some(), "phase 2 took the substrate");
+        assert!(
+            runtime.phase3.substrate.is_some(),
+            "phase 2 took the substrate"
+        );
 
         runtime.reclaim();
         assert!(
-            runtime.control.is_none(),
+            runtime.phase3.substrate.is_none(),
             "a panicked worker must not prevent the substrate being reclaimed"
         );
     }
@@ -683,8 +703,10 @@ mod tests {
             trust: None,
             signing: None,
             tls: None,
-            proxy: None,
-            control: None,
+            phase3: Reclaim {
+                consumer: None,
+                substrate: None,
+            },
         }
     }
 
@@ -749,8 +771,10 @@ mod tests {
             trust: None,
             signing: None,
             tls: None,
-            proxy: None,
-            control: Some(control),
+            phase3: Reclaim {
+                consumer: None,
+                substrate: Some(control),
+            },
         });
 
         still_running.store(false, Ordering::SeqCst);
@@ -787,21 +811,50 @@ mod tests {
             trust: None,
             signing: None,
             tls: None,
-            proxy: None,
-            control: Some(control),
+            phase3: Reclaim {
+                consumer: None,
+                substrate: Some(control),
+            },
         };
 
         runtime.transition();
         assert!(
-            runtime.control.is_some(),
+            runtime.phase3.substrate.is_some(),
             "phase 2 took the control runtime: a security transition must not depend on \
              the networked substrate, and reclaiming it here couples the two"
         );
 
         runtime.reclaim();
         assert!(
-            runtime.control.is_none(),
+            runtime.phase3.substrate.is_none(),
             "phase 3 must reclaim the substrate"
+        );
+    }
+
+    /// Phase 3 releases the consumer before the substrate its clients are bound to.
+    ///
+    /// What this can catch: swapping the two drops in `Reclaim::reclaim`.
+    #[test]
+    fn phase_three_releases_the_consumer_before_the_substrate_it_is_bound_to() {
+        use std::sync::Mutex;
+
+        struct Recorder(&'static str, Arc<Mutex<Vec<&'static str>>>);
+        impl Drop for Recorder {
+            fn drop(&mut self) {
+                self.1.lock().expect("log lock").push(self.0);
+            }
+        }
+
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut phase3 = Reclaim {
+            consumer: Some(Recorder("consumer", Arc::clone(&log))),
+            substrate: Some(Recorder("substrate", Arc::clone(&log))),
+        };
+        phase3.reclaim();
+        assert_eq!(
+            *log.lock().expect("log lock"),
+            ["consumer", "substrate"],
+            "the consumer holds clients bound to the substrate and must go first"
         );
     }
 }

@@ -56,9 +56,6 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::DelegatedRotor;
-use mcp_re_proxy::DelegatedServerSigner;
-
-use std::sync::Arc;
 
 use serde_json::json;
 use serde_json::Map;
@@ -101,7 +98,7 @@ fn root_actor(issuer_kid: &str, seed: &[u8; 32]) -> ResolvedActor {
         identity: ActorIdentity {
             role: "server".into(),
             trust_domain: "example.com".into(),
-            subject: "did:example:issuer".into(),
+            subject: "did:example:server".into(),
             keyid: issuer_kid.into(),
         },
         verification_key: root_pub(seed),
@@ -156,7 +153,7 @@ fn custody_cfg(issuer_kid: &str) -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: AUD.into(),
         audience_hash: AUD_SCOPE.into(),
-        trust_epoch: EPOCH.into(),
+        trust_epoch: EPOCH.parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
@@ -182,14 +179,16 @@ fn mint_under(
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut custody = DelegatedSigningCustody::new(custody_cfg(issuer_kid), issue, factory);
+    let root_public = SigningKey::from_seed_bytes(&root_seed).public_key();
+    let mut custody =
+        DelegatedSigningCustody::new(custody_cfg(issuer_kid), root_public, issue, factory);
     let mut resp = HttpResponse {
         status: 200,
         headers: vec![("content-type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
     custody
-        .sign_response(now, &mut resp, signed.request(), signed.evidence())
+        .sign_response(now, &mut resp, signed.request())
         .expect("mint a delegated response under the root");
     resp
 }
@@ -205,7 +204,8 @@ fn verify_with(
     set: &TrustedIssuerSet,
     now: i64,
 ) -> Result<DelegatedOutcome, HttpProfileError> {
-    verify_delegated_response(resp, set, &expectation(signed), &policy(), now).map(|v| v.outcome)
+    verify_delegated_response(resp, set, &expectation(signed), &policy(), now)
+        .map(|v| v.outcome().clone())
 }
 
 // --- Category 1: ROOT ROTATION (trust-anchor rotation) -----------------------
@@ -388,7 +388,7 @@ fn a_revoked_root_fails_closed_and_the_split_seam_is_gone() {
     let recomposed = CompositeResponseTrust::new(&resolve, &knows_nothing);
     assert_eq!(
         verify_delegated_response(&resp_a, &recomposed, &expectation(&signed), &policy(), NOW)
-            .map(|v| v.outcome)
+            .map(|v| v.outcome().clone())
             .unwrap_err(),
         HttpProfileError::DelegationIssuerUntrusted,
         "the split seam cannot be rebuilt through the remaining public API"
@@ -444,9 +444,11 @@ fn root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed() {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let signer = Arc::new(DelegatedServerSigner::new());
-    let custody = DelegatedSigningCustody::new(custody_cfg(ROOT_A_KID), issue, factory);
-    let mut rotor = DelegatedRotor::new(custody, Arc::clone(&signer));
+    let root_public = SigningKey::from_seed_bytes(&ROOT_A_SEED).public_key();
+    let custody =
+        DelegatedSigningCustody::new(custody_cfg(ROOT_A_KID), root_public, issue, factory);
+    let mut rotor = DelegatedRotor::new(custody);
+    let signer = rotor.signer();
 
     // K1 mints and serves.
     rotor.rotate(NOW).expect("K1 mints via the root");

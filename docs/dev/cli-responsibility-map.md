@@ -134,7 +134,7 @@ Defaults are where provenance disappears, so each is listed with where its value
 | `limits` | `ServerLimits::default()` | owner-sourced |
 | `revocation_tier` | `BoundedCache { trust_cache::DEFAULT_T_SECS }` | owner-sourced |
 | `key_source`, `--client-ocsp`, `admission`, `authz`, `verified_context`, `audit_sink`, `binding`, `identity_source` | enum variant | absence = the off/strict variant |
-| four booleans (`--fleet`, `--gcp-kms-use-metadata`, `--aws-kms-use-web-identity`, `--ingress-pinned-mtls`, `--allow-group-readable-key-files`) | `false` | absence of a valueless flag |
+| six booleans (`--fleet`, `--gcp-kms-use-metadata`, `--aws-kms-use-web-identity`, `--ingress-pinned-mtls`, `--allow-group-readable-key-files`, `--allow-example-fixtures`) | `false` | absence of a valueless flag |
 | `cores`, `workers_per_shard` | `0` = auto | `0` is a real value, not a sentinel for absence |
 | `admission_degraded_bound_secs` | `0` | boundary has clauses for both directions |
 | `in_flight_limit` | `InFlightLimitRequest::Unspecified` | **representable**; fail-safe default applied at the boundary |

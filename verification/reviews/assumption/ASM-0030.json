@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:44b69c3d7972ff7b654b9ed0f0fb88474809b68a01344bb9f0c1c680f360735f"
+  },
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0030-uri-and-dns-sans-only (docs/security/owner-approvals-2026-10-06.jsonl, approved 2026-10-07, entry-text sha256 97fead4b5cea0e13bb7b067ab50bcc5513e9f1cb8fa6ef812204010779add2f0), which signs this entry's current text. Authority: OWNER-RULINGS.md Ruling 31.1 (82000dd8: the Common-Name identity path is deleted; ASM-0030 'URI SANs, DNS SANs, and subject Common Name' -> 'URI SANs and DNS SANs'; re-reviewed against the resulting certificate identity adapter, which reads only the SAN extension and no subject Common Name)",
+  "reviewed_fingerprint": "sha256:44b69c3d7972ff7b654b9ed0f0fb88474809b68a01344bb9f0c1c680f360735f",
+  "reviewer": "mats@sundvall.name",
+  "subject": "ASM-0030"
+}

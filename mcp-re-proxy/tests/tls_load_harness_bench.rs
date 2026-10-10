@@ -661,6 +661,7 @@ fn spawn_proxy(
         .args([
             "--bind",
             "127.0.0.1:0",
+            "--allow-example-fixtures",
             "--audience",
             AUDIENCE,
             "--server-signer",
@@ -687,6 +688,8 @@ fn spawn_proxy(
             // and the trust domain the resolved client/server actor_id is built under.
             "--target-uri",
             TARGET_URI,
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--trust-domain",
             TRUST_DOMAIN,
             "--transport-binding",
@@ -1032,10 +1035,11 @@ fn signed_request_with_decision(nonce: &str, decision: &str) -> SignedRequest {
     )])
     .with_authorization_decision(decision);
     let mut params = Map::new();
-    params.insert("text".to_string(), Value::String("hello".to_string()));
+    params.insert("name".to_string(), Value::String(DECIDED_TOOL.to_string()));
+    params.insert("arguments".to_string(), json!({ "text": "hello" }));
     build_signed_request(
         &Value::String("req-1".to_string()),
-        "echo",
+        "tools/call",
         params,
         TARGET_URI,
         &inputs,
@@ -1410,11 +1414,11 @@ fn load_harness_smoke() {
         let verified =
             verify_delegated_response(&response, &trust, &expectation, &policy, now_unix())
                 .expect("delegated signed response verifies and binds to the request");
-        assert_eq!(verified.outcome, DelegatedOutcome::Success);
+        assert_eq!(verified.outcome(), &DelegatedOutcome::Success);
         // Profile-issued kids are RFC 7638 JWK thumbprints (MCPRE-432); the property
         // under test is that a DELEGATED key signed, not the root directly.
         assert_ne!(
-            verified.verified.server_signer().keyid,
+            verified.verified().server_signer().keyid,
             SERVER_KEY_ID,
             "signed by the delegated key chaining to the root, not the root directly",
         );
@@ -1468,6 +1472,7 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
         let mut v: Vec<String> = [
             "--bind",
             bind.as_str(),
+            "--allow-example-fixtures",
             "--audience",
             AUDIENCE,
             "--server-signer",
@@ -1491,6 +1496,8 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
             &trust,
             "--target-uri",
             TARGET_URI,
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--trust-domain",
             TRUST_DOMAIN,
             "--max-client-cert-lifetime",
@@ -1519,14 +1526,9 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
     // LIVE and PUSH state their window in terms of consulting the trust store, so
     // both require a reload cadence — without one the store is frozen at startup and
     // neither tier can revoke anything.
-    run_ok(&[
-        "--fleet",
-        "--revocation-tier",
-        "live",
-        "--trust-reload-secs",
-        "60",
-    ]);
-    run_ok(&["--fleet", "--revocation-tier", "bounded-cache:90"]);
+    // Single-node: under --fleet only push with an epoch source starts (X9).
+    run_ok(&["--revocation-tier", "live", "--trust-reload-secs", "60"]);
+    run_ok(&["--revocation-tier", "bounded-cache:90"]);
     run_ok(&["--revocation-tier", "push:60", "--trust-reload-secs", "60"]); // push, single-node, no trust-epoch
 }
 
@@ -1592,6 +1594,7 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     let argv: Vec<String> = [
         "--bind",
         bind.as_str(),
+        "--allow-example-fixtures",
         "--audience",
         AUDIENCE,
         "--server-signer",
@@ -1615,6 +1618,8 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
         &trust,
         "--target-uri",
         TARGET_URI,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--trust-domain",
         TRUST_DOMAIN,
         "--transport-binding",
@@ -1858,6 +1863,9 @@ fn acceptance_trust_file(material: &Material, enrol_authority: bool) -> std::pat
     path
 }
 
+/// The tool every decorated request calls, and every decision is about.
+const DECIDED_TOOL: &str = "echo";
+
 /// A decision about this deployment's client, issued by the enrolled authority.
 ///
 /// Every knob a matrix row turns is a parameter: the outcome, the decided operation, the
@@ -1885,11 +1893,11 @@ fn acceptance_decision(
             trust_domain: TRUST_DOMAIN.into(),
             subject: subject.into(),
         },
-        // The harness client signs `{"method":"echo","params":{"text":...}}`, so the
-        // action coordinate the PEP reads from the SIGNED BODY is the operation `echo`
-        // with no target. A decision must be about exactly that.
+        // The decorated request signs `tools/call` naming the tool `DECIDED_TOOL`, so the
+        // action coordinate the PEP reads from the SIGNED BODY is that operation and that
+        // target. A decision must be about exactly that.
         mcp_re_decided_operation: operation.into(),
-        mcp_re_decided_target: None,
+        mcp_re_decided_target: Some(DECIDED_TOOL.into()),
         mcp_re_decision: outcome,
         mcp_re_policy_version: "acceptance-v1".into(),
     };
@@ -1939,6 +1947,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
     let argv: Vec<String> = [
         "--bind",
         bind.as_str(),
+        "--allow-example-fixtures",
         "--audience",
         AUDIENCE,
         "--server-signer",
@@ -1961,6 +1970,8 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
         &trust_arg,
         "--target-uri",
         TARGET_URI,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--trust-domain",
         TRUST_DOMAIN,
         "--max-client-cert-lifetime",
@@ -2015,7 +2026,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
     // Row 1 — a Permit from the enrolled authority, about this actor and this action.
     let permit = acceptance_decision(
         PdpDecisionOutcome::Permit,
-        "echo",
+        "tools/call",
         SUBJECT_A,
         &acceptance_pdp_key(),
         ACCEPTANCE_PDP_KID,
@@ -2038,7 +2049,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-deny",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Deny,
-                "echo",
+                "tools/call",
                 SUBJECT_A,
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
@@ -2052,7 +2063,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-other-action",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "tools/call",
+                "prompts/get",
                 SUBJECT_A,
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
@@ -2063,7 +2074,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-other-actor",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "echo",
+                "tools/call",
                 "did:example:someone-else",
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,
@@ -2075,7 +2086,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-untrusted-issuer",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "echo",
+                "tools/call",
                 SUBJECT_A,
                 &SigningKey::from_seed_bytes(&[92u8; 32]),
                 "pdp-not-enrolled",
@@ -2087,7 +2098,7 @@ fn inprocess_app_run_enforces_the_pdp_authorization_profile() {
             "authz-stale",
             Some(acceptance_decision(
                 PdpDecisionOutcome::Permit,
-                "echo",
+                "tools/call",
                 SUBJECT_A,
                 &acceptance_pdp_key(),
                 ACCEPTANCE_PDP_KID,

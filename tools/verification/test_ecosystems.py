@@ -30,6 +30,7 @@ from _ecosystems import (  # noqa: E402
     build_configuration_patterns,
     ecosystem_for_path,
     formal_source_patterns,
+    parse_libtest_logfile,
     parse_results,
     project_of,
     test_argv,
@@ -324,6 +325,30 @@ def test_the_vitest_lane_says_where_the_report_goes_rather_than_scanning_for_it(
     # project root it would sit untracked in the tree the fingerprint covers.
     repo_root = HERE.parent.parent
     assert repo_root not in vitest_report_path("22.23.2", "vitest").parents
+
+
+def test_the_libtest_record_is_read_only_as_exact_status_name_lines():
+    assert parse_libtest_logfile("ok a::b\nfailed c::d\nignored e\n") == {
+        "a::b": "ok",
+        "c::d": "FAILED",
+        "e": "ignored",
+    }
+    # Nothing but a whole `<status> <name>` line counts.
+    assert parse_libtest_logfile("noise: failed a::b\ntest a::b ... FAILED\nfailed a::b extra") == {}
+
+
+def test_a_result_line_is_still_matched_from_its_start_only():
+    assert parse_results(RUST, "store: test a::b ... FAILED") == {}
+    assert parse_results(RUST, "test a::b ... FAILED") == {"a::b": "FAILED"}
+
+
+def test_the_rust_command_asks_libtest_for_its_own_record_only_when_given_a_path():
+    from _ecosystems import test_argv
+
+    plain = test_argv(RUST, None, "//mcp-re-proxy:proxy_unit_test", ["s"])
+    assert not any("logfile" in a for a in plain)
+    withlog = test_argv(RUST, None, "//mcp-re-proxy:proxy_unit_test", ["s"], None, Path("/x/y/r"))
+    assert "--test_arg=--logfile=/x/y/r" in withlog and "--sandbox_writable_path=/x/y" in withlog
 
 
 def test_every_runners_report_is_read_in_one_vocabulary():

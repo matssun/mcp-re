@@ -45,7 +45,7 @@ zeroize = { workspace = true }
 # list these in its `deps`, so the production (Bazel) closure stays lean
 # (ADR-MCPS-018); only `:mcp_re_proxy_ext` and its tests link them.
 cryptoki-sys = { workspace = true }
-# The sync `redis_store` backend uses the blocking client; the async
+# The trust-epoch reader uses the blocking client; the async
 # `async_redis_store` backend (ADR-MCPRE-051 §4 — the async data plane awaits an
 # async replay client, never blocks a per-core runtime worker) uses the tokio
 # async client + auto-reconnecting `ConnectionManager`. tokio is already in the
@@ -97,16 +97,14 @@ asn1-rs = { workspace = true }
 # ServerConfig the blocking path builds.
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
+tower-service = { workspace = true }
+rustls-native-certs = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
 
 [features]
-# MCPS-076 (audit gap G-3): the environment-variable key source is DEV/CI-ONLY and
-# is gated behind this NON-DEFAULT feature. In a default (production) build the
-# `EnvKeySource` type is NOT compiled at all and `--key-source env` fails closed at
-# construction. Build with `--features dev_env_key_source` ONLY for local dev/CI.
 # ADR-MCPRE-054 / #841 G-1: the SCITT registration transport. Gates ONLY the leaf that
 # opens a socket — the capability, the protocol state machine and every one of its typed
 # refusals compile unconditionally and are proved against a hermetic service.
@@ -119,7 +117,6 @@ bytes = { workspace = true }
 # links the flavor that turns it on.
 default = ["scitt_registration"]
 scitt_registration = []
-dev_env_key_source = []
 # MCPS-079 (audit gap G-6, "test of the tests" / fault injection). The
 # `fault_accept_any_client` feature is a DELIBERATE BREAK of the CLIENT-
 # authentication control on the proxy's server side — the symmetric mirror of
@@ -164,11 +161,12 @@ cpstore_etcd = []
 # is part of THIS feature's module — `online_ocsp` + `--client-ocsp require`
 # performs real verification and can never admit on an unverified signature.
 online_ocsp = []
-# ADR-MCPRE-051 Phase 2 (§1): compile the OPT-IN async serving path (tokio +
-# tokio-rustls + hyper HTTP/1.1 keep-alive + HTTP/2). OFF by default — the default
-# `:mcp_re_proxy` target neither sets this nor links tokio/hyper, so the production
-# closure stays the blocking std::net path (ADR-MCPS-018). A shared runtime is dev
-# scaffolding only (ADR-MCPRE-051 §1; per-core SO_REUSEPORT is MCPRE-113).
+# The test flavors' feature. The async serving path itself is unconditional
+# (ADR-MCPRE-051); this is set only by `:mcp_re_proxy_async` and
+# `:mcp_re_proxy_async_pre052`, whose every consumer is a test, and no deployed flavor sets
+# it. What it exposes is the process-local test fixture `InMemoryAdmissionSource`, which
+# cannot carry a revocation across replicas and so is no part of the library a deployment
+# links.
 async_serve = []
 
 [dev-dependencies]

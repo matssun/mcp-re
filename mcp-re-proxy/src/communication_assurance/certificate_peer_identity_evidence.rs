@@ -78,12 +78,12 @@ mod tests {
     #[test]
     fn two_evidences_differing_only_in_source_are_not_equal() {
         // Provenance is part of the fact, not a label on it: the same string read from a
-        // legacy CN is different evidence from the same string read from a URI SAN.
+        // DNS SAN is different evidence from the same string read from a URI SAN.
         let value = PeerIdentityValue::interpret("agent.example.org").expect("value");
         let from_dns =
             CertificatePeerIdentityEvidence::new(value.clone(), CertificateIdentitySource::DnsSan);
-        let from_cn =
-            CertificatePeerIdentityEvidence::new(value, CertificateIdentitySource::CommonName);
-        assert_ne!(from_dns, from_cn);
+        let from_uri =
+            CertificatePeerIdentityEvidence::new(value, CertificateIdentitySource::UriSan);
+        assert_ne!(from_dns, from_uri);
     }
 }

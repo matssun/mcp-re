@@ -7,7 +7,39 @@
     "theorem_id": "THM-0028",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C4. APPROVED as prepared. ASM-0030 is ruled an acceptable and correctly CONTAINED foreign-parser premise; DER-parser correctness is not to be silently pulled into the Rust theorem.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G5.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0033": "sha256:a65c6a3753fb2682aed93b8706f8edab8a62c9ef4d680b9faa9803cc93d997f1"
+    },
+    "supporting_semantics": {
+      "proxy.channel_associated_credential": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:4d71bd9e5724a7a98cdc1f189f197c6fe0b1257a95b7333acc062836c557dd71",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:eedbc2455860ccf7c8981a83b8bb8d020c0255e352135e898fc816f1231db37a",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:b99a30bc23280769d56b0ec09d3d830e249609316bfd77d7dc8303a305219c15",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:e4550d8cef936c99bfd71932e38b0b0c253545c08466b9de4b957771d1c44833",
+        "test_selection": "sha256:100e6d86a5a336d01b0bd08f5f6a9d8613aef8718409ea9386fc6f57bc1f2540",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:5f22f3b043868cf85ddb5e17f225d4d3b787dcb3d8abe9faf058548854dd2720",
+        "unit_id": "sha256:40c440d1b96ed29cf4cddda3ac2bde44bd539b46ec80bbdafc4866eeab39f704"
+      }
+    },
+    "theorem_claim": "sha256:676113645c3ffed81fa5c51bfcfbbd363b03f938a576ef77a3d6e1c32221371e",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:96c2316bfa7f0f87f12aba684ac6cc7ec276c5836fb98ce5f95ace663ac7625d",
   "reviewed_fingerprint": "sha256:0630767e9d70422adf5702cc291183869b6c5badb0c566d15163bbee5d3a0514",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0028"

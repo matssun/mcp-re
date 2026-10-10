@@ -33,10 +33,13 @@ use super::Receipt;
 struct InclusionProof {
     tree_size: u64,
     leaf_index: u64,
-    path: Vec<Vec<u8>>,
+    path: Vec<[u8; 32]>,
 }
 
-/// Every critical label must be one this verifier understands.
+/// Every critical label must be one this verifier understands AND the protected header
+/// must carry it.
+///
+/// A label named critical but not carried is a receipt claiming a binding it does not hold.
 ///
 /// This is what makes the v1→v2 transition safe in the direction the profile pin cannot
 /// cover: a v2 receipt marks its position parameter critical, so an implementation that only
@@ -51,6 +54,17 @@ fn check_critical_labels(sign1: &CoseSign1) -> Result<(), HttpProfileError> {
         if !known {
             return Err(HttpProfileError::MalformedEvidence(
                 "scitt receipt critical header unsupported",
+            ));
+        }
+        let present = sign1
+            .protected
+            .header
+            .rest
+            .iter()
+            .any(|(l, _)| *l == Label::Text(HEADER_POSITION_COMMITMENT.to_owned()));
+        if !present {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt receipt critical header absent",
             ));
         }
     }
@@ -99,21 +113,38 @@ fn check_verifiable_data_structure(sign1: &CoseSign1) -> Result<(), HttpProfileE
 ///
 /// Only the first is read. A Receipt carrying several inclusion proofs proves inclusion of
 /// several entries, and this verifier is asked about exactly one statement.
+///
+/// A `vdp` map that repeats a key is refused here: `ciborium` decodes a repeated key into two
+/// entries without comment, and `find` would then read whichever came first.
 fn inclusion_proof_bytes(sign1: &CoseSign1) -> Result<&Vec<u8>, HttpProfileError> {
-    sign1
+    let vdp = sign1
         .unprotected
         .rest
         .iter()
         .find(|(label, _)| *label == Label::Int(HEADER_VDP))
         .and_then(|(_, v)| v.as_map())
-        .and_then(|vdp| {
-            vdp.iter()
-                .find(|(k, _)| k.as_integer().is_some_and(|i| i == PROOF_INCLUSION.into()))
-        })
+        .ok_or(HttpProfileError::MalformedEvidence("scitt inclusion proof"))?;
+    refuse_repeated_key(vdp)?;
+    vdp.iter()
+        .find(|(k, _)| k.as_integer().is_some_and(|i| i == PROOF_INCLUSION.into()))
         .and_then(|(_, v)| v.as_array())
         .and_then(|proofs| proofs.first())
         .and_then(|p| p.as_bytes())
         .ok_or(HttpProfileError::MalformedEvidence("scitt inclusion proof"))
+}
+
+/// A map that names one key twice has no single reading.
+fn refuse_repeated_key(map: &[(Value, Value)]) -> Result<(), HttpProfileError> {
+    let mut seen: Vec<&Value> = Vec::with_capacity(map.len());
+    for (key, _) in map {
+        if seen.contains(&key) {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt inclusion proof duplicate key",
+            ));
+        }
+        seen.push(key);
+    }
+    Ok(())
 }
 
 /// Decode one `inclusion-proof-content` into the position it states.
@@ -123,8 +154,14 @@ fn inclusion_proof_bytes(sign1: &CoseSign1) -> Result<&Vec<u8>, HttpProfileError
 /// signed tree head cannot contain.
 fn read_inclusion_proof(sign1: &CoseSign1) -> Result<InclusionProof, HttpProfileError> {
     let shape = || HttpProfileError::MalformedEvidence("scitt inclusion proof shape");
-    let decoded: Value = ciborium::from_reader(inclusion_proof_bytes(sign1)?.as_slice())
+    let mut unread = inclusion_proof_bytes(sign1)?.as_slice();
+    let decoded: Value = ciborium::from_reader(&mut unread)
         .map_err(|_| HttpProfileError::MalformedEvidence("scitt inclusion proof cbor"))?;
+    if !unread.is_empty() {
+        return Err(HttpProfileError::MalformedEvidence(
+            "scitt inclusion proof trailing octets",
+        ));
+    }
     let parts = decoded.as_array().ok_or_else(shape)?;
     let [tree_size, leaf_index, path] = parts.as_slice() else {
         return Err(shape());
@@ -141,9 +178,11 @@ fn read_inclusion_proof(sign1: &CoseSign1) -> Result<InclusionProof, HttpProfile
         .ok_or(HttpProfileError::MalformedEvidence("scitt inclusion path"))?
         .iter()
         .map(|h| {
-            h.as_bytes().filter(|b| b.len() == 32).cloned().ok_or(
-                HttpProfileError::MalformedEvidence("scitt inclusion path node"),
-            )
+            h.as_bytes()
+                .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+                .ok_or(HttpProfileError::MalformedEvidence(
+                    "scitt inclusion path node",
+                ))
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(InclusionProof {
@@ -167,6 +206,10 @@ fn read_root(sign1: &CoseSign1) -> Result<Option<Vec<u8>>, HttpProfileError> {
 }
 
 impl Receipt {
+    /// Parse a tagged `COSE_Sign1` receipt WITHOUT verifying it.
+    ///
+    /// Parsing is not acceptance: the result carries no trust until the signature and
+    /// inclusion proof are verified.
     pub fn from_cose(bytes: &[u8]) -> Result<Self, HttpProfileError> {
         let sign1 = CoseSign1::from_tagged_slice(bytes)
             .map_err(|_| HttpProfileError::MalformedEvidence("scitt receipt cose"))?;
@@ -233,6 +276,75 @@ mod tests {
             .payload(vec![0u8; 32])
             .build();
         read_inclusion_proof(&sign1)
+    }
+
+    /// The same receipt shape as [`decode`], with the whole `vdp` map supplied by the caller.
+    fn decode_vdp(vdp: Vec<(Value, Value)>) -> Result<InclusionProof, HttpProfileError> {
+        let sign1 = coset::CoseSign1Builder::new()
+            .unprotected(
+                coset::HeaderBuilder::new()
+                    .value(HEADER_VDP, Value::Map(vdp))
+                    .build(),
+            )
+            .payload(vec![0u8; 32])
+            .build();
+        read_inclusion_proof(&sign1)
+    }
+
+    /// Octets after the inclusion proof are not part of it. Reading the prefix and dropping the
+    /// rest would let the stored receipt bytes differ from what was decoded.
+    #[test]
+    fn an_inclusion_proof_followed_by_trailing_octets_is_refused() {
+        let mut bytes = proof(4, 3);
+        assert!(decode(&bytes).is_ok());
+        bytes.push(0x00);
+        assert!(matches!(
+            decode(&bytes),
+            Err(HttpProfileError::MalformedEvidence(
+                "scitt inclusion proof trailing octets"
+            ))
+        ));
+    }
+
+    /// A `vdp` map that names the inclusion-proof key twice has no single reading; the first
+    /// entry must not win silently.
+    #[test]
+    fn a_vdp_map_with_a_repeated_key_is_refused() {
+        let entry = |bytes: Vec<u8>| {
+            (
+                Value::Integer(PROOF_INCLUSION.into()),
+                Value::Array(vec![Value::Bytes(bytes)]),
+            )
+        };
+        assert!(decode_vdp(vec![entry(proof(4, 3))]).is_ok());
+        assert!(matches!(
+            decode_vdp(vec![entry(proof(4, 3)), entry(proof(4, 2))]),
+            Err(HttpProfileError::MalformedEvidence(
+                "scitt inclusion proof duplicate key"
+            ))
+        ));
+    }
+
+    /// A critical position parameter the protected header does not carry is refused.
+    #[test]
+    fn a_critical_position_parameter_that_is_absent_is_refused() {
+        let mut sign1 = coset::CoseSign1Builder::new()
+            .protected(coset::HeaderBuilder::new().build())
+            .build();
+        sign1.protected.header.crit = vec![coset::RegisteredLabelWithPrivate::Text(
+            HEADER_POSITION_COMMITMENT.to_owned(),
+        )];
+        assert!(matches!(
+            check_critical_labels(&sign1),
+            Err(HttpProfileError::MalformedEvidence(
+                "scitt receipt critical header absent"
+            ))
+        ));
+        sign1.protected.header.rest.push((
+            Label::Text(HEADER_POSITION_COMMITMENT.to_owned()),
+            Value::Bytes(vec![0u8; 32]),
+        ));
+        assert!(check_critical_labels(&sign1).is_ok());
     }
 
     /// A leaf index the signed tree head cannot contain is refused at PARSE, so no fold is

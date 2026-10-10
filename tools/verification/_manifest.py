@@ -29,7 +29,7 @@ from _ecosystems import unit_projects
 from _evidence_class import MEASUREMENT_KEYS
 from _evidence_class import class_problems
 from _evidence_class import severity_problem
-from _premise import class_problem
+from _premise import class_problem, registration_problems
 from _premise import is_live
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -343,6 +343,8 @@ _ASSUMPTION_KEYS = {
     "premise_class",
     "boundary_owner",
     "discharging_event",
+    # r12 Ruling 39 §4: the premise a `model-registration` takes its meaning from.
+    "interpreted_by",
 }
 #: `sites` is the one OPTIONAL key, and its absence is not a default — it is the
 #: fail-closed direction. An assumption with no `sites` registers no seam, so a premise
@@ -359,6 +361,7 @@ _ASSUMPTION_REQUIRED = set(_ASSUMPTION_KEYS) - {
     "premise_class",
     "boundary_owner",
     "discharging_event",
+    "interpreted_by",
 }
 
 _BOUNDARY_KEYS = {
@@ -753,6 +756,9 @@ def load_assumptions() -> dict:
         problem = class_problem(awhere, entry, is_live(entry))
         if problem is not None:
             raise ManifestError(problem)
+    problems = registration_problems(doc)
+    if problems:
+        raise ManifestError(f"{where}: " + "; ".join(problems))
     return doc
 
 

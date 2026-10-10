@@ -10,7 +10,40 @@
     "theorem_id": "THM-0054",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "OWNER SPECIFICATION REVIEW EVENT, r11 Part A (the ten-row owner packet), 2026-09-16.\nRecorded under the r11 closure mandate's AFK review authority on explicit owner rulings,\ntranscribed verbatim in work/r11-campaign/RULINGS-OWNER-10.md.\n\nDEPENDENCY-ONLY RE-AFFIRMATION. This theorem's own claim text, security consequence, scope,\nowner and review requirement are BYTE-IDENTICAL to the reviewed version: `theorem_claim` is\nunchanged and only `theorem_dependencies` moved. What moved in its closure, and why each is\na CLAIM CORRECTION bringing the registry to what the code already does:\n\n  - THM-0048's statement, consequence and scope stopped claiming a live listener's epoch advances on withdrawn trust \u2014 no build path performs that \u2014 and now state cache non-continuity ACROSS THE REPLACEMENT plus the operator's restart obligation, which is the model ADR-MCPRE-062 chose.\n\nNo conjunct of this theorem was broadened. Each premise edit NARROWS or restates a\nregistered claim to what its evidence reaches; none licenses anything this theorem did not\nalready have. The one addition in the same event, ASM-0049, registers a premise\n(`proxy.tls_listener_state` trust-epoch digest distinctness) that was previously unstated,\nwhich makes the trusted-premise set larger and the claims resting on it no stronger.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G5.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {},
+    "supporting_semantics": {
+      "proxy.client_certificate_posture": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:02046d42e6809036e9de7bebed9fa0896145af81056d5733dbd1d30f88d63d8e",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:e254fcec56a2486deed8e8e0b371ccbe7e5e5384d788fa433acbff0b3985c697",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:413da88737a51ccbaf437c7f0fd0b052a6fbad99eb6a79e046d929e268fb632e",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:4520c0eb6db9d05668e7ed848b1824c5018e790b39b76ee330ca94969d2caa9c",
+        "test_selection": "sha256:e04b2aa546fa83fc93fbe20d7a15028f8305d477e3689c8047f7c813132a3b1a",
+        "test_sources": "sha256:2ac5135af2aacf059a5454e8a181a06af5bae67d0fcb1da90f7ded2f3bef1517",
+        "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "unit_id": "sha256:68b8d6efd597b2a56f8f696cab6e669fe98eea720eb6e7bb3d89a4ad9b1f5ecb"
+      }
+    },
+    "theorem_claim": "sha256:acba4f5ce1579af0e47a2cd7867ee961de18df5f7a8e014bbeceb5b9e5c53470",
+    "theorem_dependencies": {
+      "THM-0048": "sha256:049f2adfca414ae077799a432e3fcf0ac008b32a46dfef78371eda667802b370",
+      "THM-0103": "sha256:f98dfc0ee9efbc48c90ecfd6a0a40c31f3a10817e5b5f80c6d19f387530e399f"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:237c2736a0c9062e29af87aa6ed53af03ae892aa8cca755bb9083f7a5ec55e61",
   "reviewed_fingerprint": "sha256:ca274e81669473a92ae8f64f2a2bf68ce443211586c540fa60f9346f4fb7b065",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0054"

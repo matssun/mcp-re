@@ -67,8 +67,8 @@ unit = "http_profile.verifier_result_separation"
 kind = "crate-boundary-compile-fail"
 crate = "//mcp-re-http-profile:mcp_re_http_profile"
 invariant = "a delegated UNBOUND response cannot be passed where a delegated BOUND response is required"
-doc_path = "mcp-re-http-profile/src/verified_response/bound.rs"
-doc_item = "doc#verified_response::bound::VerifiedDelegatedMcpResponse"
+doc_path = "mcp-re-http-profile/src/verified_response/delegated_bound.rs"
+doc_item = "doc#verified_response::delegated_bound::VerifiedDelegatedMcpResponse"
 insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s02.rs"
 marker = "STRUCTURAL-PROBE-SITE"
 error_code = "E0308"
@@ -94,11 +94,11 @@ unit = "http_profile.verifier_result_separation"
 kind = "crate-boundary-compile-fail"
 crate = "//mcp-re-http-profile:mcp_re_http_profile"
 invariant = "a delegation-authorized response cannot be passed where a trust-seam-authorized one is required"
-doc_path = "mcp-re-http-profile/src/verified_response/bound.rs"
-doc_item = "doc#verified_response::bound::VerifiedDelegatedMcpResponse"
+doc_path = "mcp-re-http-profile/src/verified_response/delegated_bound.rs"
+doc_item = "doc#verified_response::delegated_bound::VerifiedDelegatedMcpResponse"
 insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s03.rs"
 marker = "STRUCTURAL-PROBE-SITE"
-error_code = "E0609"
+error_code = "E0308"
 construction = """
 // ADR-MCPRE-068 structural probe S03. Injected into a scratch copy by verify-structural.
 use mcp_re_http_profile::{VerifiedDelegatedMcpResponse, VerifiedMcpResponse};
@@ -106,12 +106,12 @@ use mcp_re_http_profile::{VerifiedDelegatedMcpResponse, VerifiedMcpResponse};
 fn needs_seam_authorized(_: &VerifiedMcpResponse) {}
 
 pub fn hostile(delegated: &VerifiedDelegatedMcpResponse) {
-    needs_seam_authorized(&delegated.response); // STRUCTURAL-PROBE-SITE
+    needs_seam_authorized(delegated); // STRUCTURAL-PROBE-SITE
 }
 """
 [probe.producer_paths]
 module-tree-visibility = "integration test: a separate crate against the public surface"
-alternate-constructors = "there is no field, projection or conversion on the delegation-authorized product that yields the seam-authorized one — the probe names the projection a consumer would reach for and the compiler refuses it"
+alternate-constructors = "the probe passes the delegated product itself where the seam-authorized one is required and the compiler refuses the coercion (no Deref, no field)"
 generated-or-deserialization = "neither product derives Serialize/Deserialize"
 test-only-construction = "the probe itself is the downstream test-code route"
 
@@ -519,7 +519,7 @@ construction = "// ADR-MCPRE-068 structural probe S17. Injected into a scratch c
 
 [probe.producer_paths]
 module-tree-visibility = "`kind` is bare-private to `config_state::custody`, and its type `CustodyKind` is a private enum in the same module \u2014 two layers, and the probe attacks the field, which is the one this unit claims. The parent re-exports `CustodyState` only"
-alternate-constructors = "the classifier in this module is the only producer. The four projections \u2014 `material`, `locators_are_filesystem_paths`, `disk_secret_paths`, `exposure` \u2014 read the private enum and return named semantic answers or borrows, never the representation; `material` returns a `CustodyMaterial<'_>` view rather than the kind. There is no `new`, `From`, `Default` or builder taking a kind"
+alternate-constructors = "the classifier in this module is the only producer. The three projections \u2014 `material`, `disk_secret_paths`, `exposure` \u2014 read the private enum and return named semantic answers or borrows, never the representation; `material` returns a `CustodyMaterial<'_>` view rather than the kind. There is no `new`, `From`, `Default` or builder taking a kind"
 generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 custody is classified from a deployment request, never decoded, so no decoder fills the field positionally"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through the classifier; no test-gated constructor and no test-gated field or enum visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
 
@@ -710,9 +710,7 @@ construction = """
 use crate::serve::AcceptedHttpAuthority;
 
 pub fn hostile() -> AcceptedHttpAuthority {
-    AcceptedHttpAuthority {
-        exposed: Some("198.51.100.7:8640".parse().expect("an address")), // STRUCTURAL-PROBE-SITE
-    }
+    AcceptedHttpAuthority { exposed: Some("198.51.100.7:8640".parse().expect("an address")), port: 8640 } // STRUCTURAL-PROBE-SITE
 }
 """
 [probe.producer_paths]
@@ -1170,3 +1168,764 @@ pub struct DispatchOutcome {
 path = "mcp-re-http-profile/src/dispatch/replay_posture.rs"
 old = "pub(in crate::dispatch) enum PostureDecision {"
 new = "pub enum PostureDecision {"
+
+[[probe]]
+id = "S35"
+unit = "http_profile.verifier_result_separation"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "request-bound response signature facts cannot be passed where unbound response signature facts are required, though their fields are identical"
+doc_path = "mcp-re-http-profile/src/verified_response/facts.rs"
+doc_item = "doc#verified_response::facts::UnboundResponseSignatureFacts"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s35.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S35. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::{BoundResponseSignatureFacts, UnboundResponseSignatureFacts};
+
+fn needs_unbound(_: &UnboundResponseSignatureFacts) {}
+
+pub fn hostile(bound: &BoundResponseSignatureFacts) {
+    needs_unbound(bound); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "integration test: a separate crate against the public surface"
+alternate-constructors = "no From, Deref or other conversion exists between the bound and unbound facts types; their identical fields are kept apart only by the nominal split"
+generated-or-deserialization = "neither facts type derives Serialize/Deserialize"
+test-only-construction = "the probe itself is the downstream test-code route"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/verified_response/facts.rs"
+old = """
+#[derive(Debug, Clone)]
+pub struct UnboundResponseSignatureFacts {
+    /// The signer the signature was accepted under — WHO, not WHY.
+    pub accepted_signer: AcceptedResponseSigner,
+    /// The response signature-base handle, under the response role label.
+    pub response_signature_base_digest: ResponseRoleEvidence,
+}"""
+new = "pub type UnboundResponseSignatureFacts = BoundResponseSignatureFacts;"
+
+[[probe]]
+id = "S36"
+unit = "proxy.channel_associated_identity_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no module outside `channel_associated_identity` can write a ChannelAssociatedCertificatePeerIdentityEvidence literal, so every inhabitant came from `interpret_associated_identity` reading a channel-associated credential"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S36. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build.
+use super::channel_associated_identity::ChannelAssociatedCertificatePeerIdentityEvidence;
+
+#[allow(unreachable_code)]
+pub fn hostile() -> ChannelAssociatedCertificatePeerIdentityEvidence {
+    ChannelAssociatedCertificatePeerIdentityEvidence {
+        identity: todo!(), // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the `identity` field is bare-private to the owner module, which declares no child module but the `#[cfg(test)] mod tests`"
+alternate-constructors = "`interpret_associated_identity` is the only producer; `value()` and `source()` return projections; no From, Default or builder exists, and Clone copies an existing inhabitant"
+generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Serialize or Deserialize"
+test-only-construction = "the owner's tests build values only through `interpret_associated_identity`; no test-gated constructor or field visibility exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/channel_associated_identity.rs"
+old = """
+    identity: CertificatePeerIdentityEvidence,
+"""
+new = """
+    pub(super) identity: CertificatePeerIdentityEvidence,
+"""
+
+[[probe]]
+id = "S37"
+unit = "proxy.authenticated_relationship_peer_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no module outside `authenticated_relationship_peer` can write an AuthenticatedRelationshipPeerFacts literal, so an acceptance cannot be paired with an identity read from a different credential"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S37. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build.
+use super::authenticated_relationship_peer::AuthenticatedRelationshipPeerFacts;
+
+#[allow(unreachable_code)]
+pub fn hostile() -> AuthenticatedRelationshipPeerFacts {
+    AuthenticatedRelationshipPeerFacts {
+        accepted: todo!(), // STRUCTURAL-PROBE-SITE
+        identity: todo!(),
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to the owner module, which declares no child module but the `#[cfg(test)] mod tests`"
+alternate-constructors = "the owner's authenticate operation is the only producer; accessors return projections; no From, Default or builder exists, and Clone copies an existing inhabitant"
+generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Serialize or Deserialize"
+test-only-construction = "the owner's tests build values through the authenticate operation; no test-gated constructor or field visibility exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/authenticated_relationship_peer.rs"
+old = """
+    /// would make this type a second place where an acceptance is represented.
+    accepted: MechanismVerifiedCredentialEvidence,
+"""
+new = """
+    /// would make this type a second place where an acceptance is represented.
+    pub(super) accepted: MechanismVerifiedCredentialEvidence,
+"""
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/authenticated_relationship_peer.rs"
+old = """
+    identity: ChannelAssociatedCertificatePeerIdentityEvidence,
+}
+
+impl AuthenticatedRelationshipPeerFacts {"""
+new = """
+    pub(super) identity: ChannelAssociatedCertificatePeerIdentityEvidence,
+}
+
+impl AuthenticatedRelationshipPeerFacts {"""
+
+[[probe]]
+id = "S38"
+unit = "proxy.current_authenticated_peer_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no module outside `current_authenticated_peer` can write a CurrentAuthenticatedRelationshipPeerFacts literal, so an authentication cannot be paired with a currency evaluation made for a different peer"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S38. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build.
+use super::current_authenticated_peer::CurrentAuthenticatedRelationshipPeerFacts;
+
+#[allow(unreachable_code)]
+pub fn hostile() -> CurrentAuthenticatedRelationshipPeerFacts {
+    CurrentAuthenticatedRelationshipPeerFacts {
+        peer: todo!(), // STRUCTURAL-PROBE-SITE
+        evaluated_at: 0,
+        applied: todo!(),
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "all three fields are bare-private to the owner module, which declares no child module but the `#[cfg(test)] mod tests`"
+alternate-constructors = "the owner's currency operation is the only producer; accessors return projections; no From, Default or builder exists, and Clone copies an existing inhabitant"
+generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Serialize or Deserialize"
+test-only-construction = "the owner's tests build values through the currency operation; no test-gated constructor or field visibility exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs"
+old = """
+    peer: AuthenticatedRelationshipPeerFacts,
+    /// The instant"""
+new = """
+    pub(super) peer: AuthenticatedRelationshipPeerFacts,
+    /// The instant"""
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs"
+old = """
+    evaluated_at: i64,
+"""
+new = """
+    pub(super) evaluated_at: i64,
+"""
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs"
+old = """
+    applied: CurrencyControls,
+}
+
+impl CurrentAuthenticatedRelationshipPeerFacts {"""
+new = """
+    pub(super) applied: CurrencyControls,
+}
+
+impl CurrentAuthenticatedRelationshipPeerFacts {"""
+
+[[probe]]
+id = "S39"
+unit = "proxy.channel_associated_credential_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no module outside the channel-associated credential's module tree can call the private `associate` constructor"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S39. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build.
+use super::channel_associated_credential::ChannelAssociatedCertificateCredentialEvidence;
+
+pub fn hostile() {
+    let _ = ChannelAssociatedCertificateCredentialEvidence::associate(Vec::new()); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`associate` is private to the credential module; its descendants (`rustls_adapter` and the `#[cfg(test)]` `mechanism_harness`) are inside the boundary, and a newly added child module would be too, which this probe does not see"
+alternate-constructors = "`associate` is the only constructor; accessors return projections; no From, Default or builder exists"
+generated-or-deserialization = "no Serialize or Deserialize; the value is produced from a live handshake, never decoded"
+test-only-construction = "the owner's tests and the mechanism harness are descendants and reach `associate` by module privacy; no test-gated visibility widening exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/communication_assurance/channel_associated_credential/mod.rs"
+old = """
+    fn associate(chain_der: Vec<Vec<u8>>) -> Result<Self, ChannelCredentialAssociationRefusal> {
+"""
+new = """
+    pub(super) fn associate(chain_der: Vec<Vec<u8>>) -> Result<Self, ChannelCredentialAssociationRefusal> {
+"""
+
+# --- http_profile.evidence_role_construction_boundary ----------------------------------
+#
+# Owner Ruling 18.2: the claim is the public construction boundary of the two role handles,
+# no stronger. Each probe writes the handle's literal from a downstream crate; the
+# relaxation makes the private field public and the same construction must then build, so
+# the refusal is attributable to the field's privacy and nothing else.
+
+[[probe]]
+id = "S40"
+unit = "http_profile.evidence_role_construction_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot construct a RequestRoleEvidence except through `RequestRoleEvidence::from_signature_base`"
+doc_path = "mcp-re-http-profile/src/evidence/request_role.rs"
+doc_item = "doc#evidence::request_role::RequestRoleEvidence"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s40.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S40. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::RequestRoleEvidence;
+
+pub fn hostile() -> RequestRoleEvidence {
+    RequestRoleEvidence {
+        digest_value: String::new(), // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "integration test: a separate crate against the public surface. `digest_value` is bare-private to `evidence::request_role`, whose only child module is `#[cfg(test)] mod tests`"
+alternate-constructors = "`from_signature_base` is the only associated function returning Self. There is no From, FromStr, TryFrom, Default or builder, `to_digest` projects to the unauthenticated wire form and nothing converts back, and Clone copies an existing inhabitant"
+generated-or-deserialization = "the type implements Serialize by hand and derives Debug, Clone, PartialEq and Eq; there is no Deserialize, so no decoder can mint one from bytes"
+test-only-construction = "the owner's tests construct only through `from_signature_base`; no test-gated constructor or field visibility exists, and the probe itself is the downstream test-code route"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/evidence/request_role.rs"
+old = """
+pub struct RequestRoleEvidence {
+    digest_value: String,
+}"""
+new = """
+pub struct RequestRoleEvidence {
+    pub digest_value: String,
+}"""
+
+[[probe]]
+id = "S41"
+unit = "http_profile.evidence_role_construction_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot construct a ResponseRoleEvidence except through `ResponseRoleEvidence::from_signature_base`"
+doc_path = "mcp-re-http-profile/src/evidence/response_role.rs"
+doc_item = "doc#evidence::response_role::ResponseRoleEvidence"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s41.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S41. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::ResponseRoleEvidence;
+
+pub fn hostile() -> ResponseRoleEvidence {
+    ResponseRoleEvidence {
+        digest_value: String::new(), // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "integration test: a separate crate against the public surface. `digest_value` is bare-private to `evidence::response_role`, whose only child module is `#[cfg(test)] mod tests`"
+alternate-constructors = "`from_signature_base` is the only associated function returning Self. There is no From, FromStr, TryFrom, Default or builder, `to_digest` projects to the unauthenticated wire form and nothing converts back, and Clone copies an existing inhabitant"
+generated-or-deserialization = "the type implements Serialize by hand and derives Debug, Clone, PartialEq and Eq; there is no Deserialize, so no decoder can mint one from bytes"
+test-only-construction = "the owner's tests construct only through `from_signature_base`; no test-gated constructor or field visibility exists, and the probe itself is the downstream test-code route"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/evidence/response_role.rs"
+old = """
+pub struct ResponseRoleEvidence {
+    digest_value: String,
+}"""
+new = """
+pub struct ResponseRoleEvidence {
+    pub digest_value: String,
+}"""
+
+[[probe]]
+id = "S42"
+unit = "http_profile.mcp_transport_policy_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot apply the MCP transport contract to a request it has not verified: `McpTransportPolicy::enforce` is reachable only from the crate's verifiers"
+doc_path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
+doc_item = "doc#mcp_transport::McpTransportPolicy"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s42.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S42. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::HttpRequest;
+use mcp_re_http_profile::McpTransportPolicy;
+
+pub fn hostile(policy: &McpTransportPolicy, unverified: &HttpRequest) {
+    let _ = policy.enforce(unverified); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+`E0624` and not `E0599`: the method exists and the request floor calls it after the signature
+and digest checks. What this probe attacks is the visibility, so a renamed `enforce` does not
+read as a closed boundary. `enforce_bodyless` has the same visibility and the same one caller
+(`bodyless::verify_bodyless_request`).
+"""
+[probe.producer_paths]
+module-tree-visibility = "`enforce` is `pub(crate)` on a `pub` type re-exported by `lib.rs`; the probe is its own crate linking the library, so it sees the public surface a downstream consumer sees"
+alternate-constructors = "the call is attacked, not a construction. No public function forwards an unverified `HttpRequest` to the contract: `verify_request_with_policy` and `verify_bodyless_request` reach it only after the signature verified"
+generated-or-deserialization = "no derive or macro generates a public forwarding method"
+test-only-construction = "the probe is the downstream test-code route; the owner's `#[cfg(test)]` modules call `enforce` inside the crate and add no wider re-export"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/mcp_transport/agreement.rs"
+old = """
+    pub(crate) fn enforce(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {"""
+new = """
+    pub fn enforce(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {"""
+
+[[probe]]
+id = "S43"
+unit = "http_profile.mcp_transport_policy_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot derive a transport policy with a different accepted version set from one the configuration owner built"
+doc_path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
+doc_item = "doc#mcp_transport::McpTransportPolicy"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s43.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0599"
+construction = """
+// ADR-MCPRE-068 structural probe S43. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::McpTransportPolicy;
+
+pub fn hostile(decided: McpTransportPolicy) -> McpTransportPolicy {
+    decided.with_supported_versions(&["1999-01-01"]) // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+`E0599` and not `E0624`: the builder does not exist under any visibility. A reintroduction as
+`pub(crate)` would be refused with `E0624` and is still a finding, because no in-crate caller
+needs to replace a decided set either.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the probe is its own crate linking the library and sees exactly the public surface"
+alternate-constructors = "`mcp_2026_07_28(&[..])` builds a NEW policy from a set the caller states; it does not read or replace another policy's set. `profile_default` names this profile's own version. No method takes `self` and returns `Self`"
+generated-or-deserialization = "`McpTransportPolicy` derives Debug and Clone only; no Deserialize or Default exists to rebuild one with another set"
+test-only-construction = "the owner's tests build policies through `mcp_2026_07_28`; no test-gated builder exists"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
+old = """
+    pub fn profile_default() -> Self {
+        Self::mcp_2026_07_28(&[MCP_PROTOCOL_VERSION])
+    }"""
+new = """
+    pub fn profile_default() -> Self {
+        Self::mcp_2026_07_28(&[MCP_PROTOCOL_VERSION])
+    }
+
+    pub fn with_supported_versions(mut self, versions: &[&str]) -> Self {
+        self.supported_protocol_versions = versions.iter().map(|s| (*s).to_owned()).collect();
+        self
+    }"""
+
+[[probe]]
+id = "S44"
+unit = "http_profile.replay_key_projection_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot turn an `HttpReplayKey` it wrote into the `ReplayKey` the async replay tier admits"
+doc_path = "mcp-re-http-profile/src/replay.rs"
+doc_item = "doc#replay::HttpReplayKey"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s44.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S44. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::replay::ReplayKey;
+use mcp_re_http_profile::HttpReplayKey;
+
+pub fn hostile() -> ReplayKey {
+    let forged = HttpReplayKey {
+        profile_id: String::new(),
+        signature_label: String::new(),
+        actor_id: String::from("client:example.org:victim:key-1"),
+        audience_hash: String::new(),
+        nonce: String::new(),
+    };
+    forged.to_replay_key(0) // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+The struct literal compiles: the fields are public because Verus mirrors the type
+transparently. What this probe attacks is the projection, so it fails with `E0624` at the call
+and nowhere else.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`to_replay_key` is `pub(crate)` on a `pub` type re-exported by `lib.rs`; the probe is its own crate linking the library and sees the public surface"
+alternate-constructors = "`ReplayKey`'s fields are private and `HttpReplayKey::to_replay_key` is its only constructor; the public route is `PreparedDispatch::to_replay_key`, whose `PreparedDispatch` is sealed (S33) and produced only by `ReplayTierAdmitted::prepare`"
+generated-or-deserialization = "`ReplayKey` derives Debug, Clone, PartialEq and Eq only; no Deserialize or Default exists"
+test-only-construction = "the proxy's async-tier tests reach a `ReplayKey` through `prepare`; no test-gated constructor exists"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/replay.rs"
+old = """
+    pub(crate) fn to_replay_key(&self, expires_at_unix: i64) -> ReplayKey {"""
+new = """
+    pub fn to_replay_key(&self, expires_at_unix: i64) -> ReplayKey {"""
+
+[[probe]]
+id = "S45"
+unit = "http_profile.replay_key_projection_boundary"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "code outside mcp-re-http-profile cannot admit an `HttpReplayKey` into a synchronous replay cache except through `dispatch_request`, which decides the cache's durability class first"
+doc_path = "mcp-re-http-profile/src/replay.rs"
+doc_item = "doc#replay::HttpReplayKey"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s45.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S45. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::HttpReplayKey;
+
+// The cache is `todo!()` because the probe links only this library and cannot name
+// `mcp_re_core`; the call, not the argument, is what is attacked.
+pub fn hostile(key: &HttpReplayKey) {
+    let _ = key.check_and_insert(todo!(), 0); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+`E0624` and not `E0599`: the method exists and `dispatch_request` calls it after
+`admit_replay_tier`. What this probe attacks is the visibility.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`check_and_insert` is `pub(crate)` on a `pub` type re-exported by `lib.rs`; the probe is its own crate linking the library and sees the public surface"
+alternate-constructors = "the call is attacked, not a construction. The public synchronous admission is `dispatch_request`, which runs `DispatchConfig::admit_replay_tier` before it"
+generated-or-deserialization = "no derive or macro generates a public forwarding method"
+test-only-construction = "the owner's `#[cfg(test)]` module calls `check_and_insert` inside the crate and adds no wider re-export"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/replay.rs"
+old = """
+    pub(crate) fn check_and_insert("""
+new = """
+    pub fn check_and_insert("""
+
+[[probe]]
+id = "S46"
+unit = "proxy.delegated_signer_write_authority"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside the rotor's module can publish a delegated key into the shared signer"
+insertion_parent = "mcp-re-proxy/src/signing_plane/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S46. Injected into a scratch copy by verify-structural.
+use std::sync::Arc;
+
+use crate::delegated_server_signer::DelegatedServerSigner;
+
+pub fn hostile(signer: &Arc<DelegatedServerSigner>, key: mcp_re_http_profile::ActiveDelegatedKey) {
+    let _ = signer.publish(key); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Injected into the signing plane, the module that holds the shared signer and every handle
+the rotation worker uses: the neighbour with the most reason to write, and still refused.
+`E0624` and not `E0599`: `publish` exists and the rotor's module calls it.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`publish` is a private method of `DelegatedServerSigner`, visible to `delegated_server_signer` and its descendants only (`reader`, `retirement`, `metrics`, `retry_schedule`); no `pub(crate)` or `pub(super)` widening exists"
+alternate-constructors = "the call is attacked, not a construction. The only routes to it are `DelegatedRotor` (publish and retire, over the signer it created) and `SigningRetirement::retire_permanently`, which the rotor alone issues"
+generated-or-deserialization = "no derive or macro generates a forwarding method; `DelegatedServerSigner` derives only Default, which yields an empty signer no rotor publishes into"
+test-only-construction = "no `#[cfg(test)]` method or visibility widens the write side: tests outside the rotor's module publish through a rotor (`delegated_wiring::test_support::published`)"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
+old = """
+    fn publish(&self, active: ActiveDelegatedKey) -> Result<(), CustodyError> {"""
+new = """
+    pub(crate) fn publish(&self, active: ActiveDelegatedKey) -> Result<(), CustodyError> {"""
+
+[[probe]]
+id = "S47"
+unit = "proxy.delegated_signer_write_authority"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside the rotor's module can withdraw the published delegated key"
+insertion_parent = "mcp-re-proxy/src/signing_plane/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S47. Injected into a scratch copy by verify-structural.
+use std::sync::Arc;
+
+use crate::delegated_server_signer::DelegatedServerSigner;
+
+pub fn hostile(signer: &Arc<DelegatedServerSigner>) {
+    signer.retire(); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Injected into the signing plane, the module that holds the shared signer and every handle
+the rotation worker uses: the neighbour with the most reason to write, and still refused.
+`E0624` and not `E0599`: `retire` exists and the rotor's module calls it.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`retire` is a private method of `DelegatedServerSigner`, visible to `delegated_server_signer` and its descendants only (`reader`, `retirement`, `metrics`, `retry_schedule`); no `pub(crate)` or `pub(super)` widening exists"
+alternate-constructors = "the call is attacked, not a construction. The only routes to it are `DelegatedRotor` (publish and retire, over the signer it created) and `SigningRetirement::retire_permanently`, which the rotor alone issues"
+generated-or-deserialization = "no derive or macro generates a forwarding method; `DelegatedServerSigner` derives only Default, which yields an empty signer no rotor publishes into"
+test-only-construction = "no `#[cfg(test)]` method or visibility widens the write side: tests outside the rotor's module publish through a rotor (`delegated_wiring::test_support::published`)"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
+old = """
+    fn retire(&self) {"""
+new = """
+    pub(crate) fn retire(&self) {"""
+
+[[probe]]
+id = "S48"
+unit = "proxy.delegated_signer_write_authority"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside the rotor's module retires signing for good except through the SigningRetirement the rotor issues"
+insertion_parent = "mcp-re-proxy/src/signing_plane/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S48. Injected into a scratch copy by verify-structural.
+use std::sync::Arc;
+
+use crate::delegated_server_signer::DelegatedServerSigner;
+
+pub fn hostile(signer: &Arc<DelegatedServerSigner>) {
+    signer.retire_permanently(); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Injected into the signing plane, the module that holds the shared signer and every handle
+the rotation worker uses: the neighbour with the most reason to write, and still refused.
+`E0624` and not `E0599`: `retire_permanently` exists and the rotor's module calls it.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`retire_permanently` is a private method of `DelegatedServerSigner`, visible to `delegated_server_signer` and its descendants only (`reader`, `retirement`, `metrics`, `retry_schedule`); no `pub(crate)` or `pub(super)` widening exists"
+alternate-constructors = "the call is attacked, not a construction. The only routes to it are `DelegatedRotor` (publish and retire, over the signer it created) and `SigningRetirement::retire_permanently`, which the rotor alone issues"
+generated-or-deserialization = "no derive or macro generates a forwarding method; `DelegatedServerSigner` derives only Default, which yields an empty signer no rotor publishes into"
+test-only-construction = "no `#[cfg(test)]` method or visibility widens the write side: tests outside the rotor's module publish through a rotor (`delegated_wiring::test_support::published`)"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
+old = """
+    fn retire_permanently(&self) {"""
+new = """
+    pub(crate) fn retire_permanently(&self) {"""
+
+[[probe]]
+id = "S49"
+unit = "proxy.server_identity_sole_producer"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `config_state::server_identity` can assemble a ServerIdentityFacts, so the identity the actor seam is handed is the one that owner derived"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S49. Injected into a scratch copy by verify-structural.
+use crate::config_state::server_identity::ServerIdentityFacts;
+
+pub fn hostile(actor: mcp_re_http_profile::ActorIdentity) -> ServerIdentityFacts {
+    ServerIdentityFacts { actor } // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+This seal is what makes `build_actor_resolver` taking a `ServerIdentityFacts` narrower than
+taking an `ActorIdentity`: an `ActorIdentity` is struct-literal constructible anywhere, so a
+parameter of that type accepted any server identity a caller wrote.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the one field is bare-private to `config_state::server_identity`; the parent re-exports nothing that exposes it, and a sibling module of the owner's own crate is where this probe is injected"
+alternate-constructors = "`classify_and_validate` is the only function returning one, and it builds the actor from the guarded coordinates, the SERVER_ROLE constant and the delegated owner's issuer kid. No `From`, no `Default`, no builder; `actor()` and `trust_domain()` return references"
+generated-or-deserialization = "derives Debug, Clone, PartialEq and Eq only; no Deserialize"
+test-only-construction = "the owner's tests and every integration test obtain one through `classify_and_validate`; no test-gated constructor or field visibility exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/config_state/server_identity.rs"
+old = """
+pub struct ServerIdentityFacts {
+    actor: ActorIdentity,"""
+new = """
+pub struct ServerIdentityFacts {
+    pub(super) actor: ActorIdentity,"""
+
+
+[[probe]]
+id = "S50"
+unit = "core.max_clock_skew_bound"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-core:mcp_re_core"
+invariant = "no code outside `MaxClockSkew`'s own module can build one around an unchecked tolerance"
+insertion_parent = "mcp-re-core/src/time/mod.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0423"
+construction = """
+// ADR-MCPRE-068 structural probe S50. Injected into a scratch copy by verify-structural.
+use crate::time::MaxClockSkew;
+
+pub fn hostile() -> MaxClockSkew {
+    MaxClockSkew(-30) // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Injected into `time`, the module that declares `clock_skew` and re-exports the type: the
+nearest neighbour, and still refused. `E0423` because the tuple field is private to
+`clock_skew`.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the tuple field of `MaxClockSkew` is private to `time::clock_skew`, which has no submodules besides its tests"
+alternate-constructors = "`MaxClockSkew::new` is the only constructor and refuses a value outside `0..=BOUND_SECS`; `InMemoryReplayCache::new`, `FreshnessWindow::new` and `VerifierPolicy::new` reach a tolerance only through it"
+generated-or-deserialization = "`MaxClockSkew` derives Debug, Clone, Copy, PartialEq and Eq only; no Default, From or Deserialize exists"
+test-only-construction = "tests build one through `MaxClockSkew::new`; no `#[cfg(test)]` constructor exists"
+[[probe.relaxation]]
+path = "mcp-re-core/src/time/clock_skew.rs"
+old = """
+pub struct MaxClockSkew(i64);"""
+new = """
+pub struct MaxClockSkew(pub(crate) i64);"""
+
+[[probe]]
+id = "S51"
+unit = "proxy.handshake_sign_capacity"
+kind = "in-crate-source-injection"
+crate = "//mcp-re-proxy:mcp_re_proxy"
+invariant = "no code outside `delegated_tls::sign_capacity` can build a HandshakeSignCapacity around an unchecked rate or burst"
+insertion_parent = "mcp-re-proxy/src/delegated_tls.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S51. Injected into a scratch copy by verify-structural.
+use crate::delegated_tls::HandshakeSignCapacity;
+
+pub fn hostile() -> HandshakeSignCapacity {
+    HandshakeSignCapacity { rate_per_sec: 0, burst: u32::MAX } // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Injected into `delegated_tls`, the module that declares `sign_capacity` and builds the budget
+from it: the nearest neighbour, and still refused. A zero term would refuse every delegated
+handshake; an unbounded one would leave the bucket limiting nothing.
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to `delegated_tls::sign_capacity`, which has no submodules besides its tests; the parent re-exports the type and not its representation"
+alternate-constructors = "`HandshakeSignCapacity::new` checks both terms; `with_rate_per_sec` and `with_burst` go through it; `Default` yields the documented defaults, which a test holds inside the bounds"
+generated-or-deserialization = "derives Debug, Clone, Copy, PartialEq and Eq only; no From or Deserialize"
+test-only-construction = "tests build one through `new` or `Default`; no `#[cfg(test)]` constructor exists"
+[[probe.relaxation]]
+path = "mcp-re-proxy/src/delegated_tls/sign_capacity.rs"
+old = """
+pub struct HandshakeSignCapacity {
+    rate_per_sec: u32,
+    burst: u32,"""
+new = """
+pub struct HandshakeSignCapacity {
+    pub(crate) rate_per_sec: u32,
+    pub(crate) burst: u32,"""
+
+# --- proxy.request_peer_binding: the request operand's provenance ------------------------
+#
+# THM-0034: "a caller cannot assert a subject any more than it can assert a peer". The
+# subject is projected from a `VerifiedMcpRequest`, so the claim needs every product a
+# consumer crate holds to be one the verifier returned. Both request products keep `pub`
+# fields for Verus (`verus_std_specs.rs` `ExVerifiedMcpRequest`/`ExFloorVerifiedRequest`)
+# and are `#[non_exhaustive]`, which binds every crate but the owner's.
+
+[[probe]]
+id = "S52"
+unit = "proxy.request_peer_binding"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "no crate but mcp-re-http-profile can write a VerifiedMcpRequest, so the subject a consumer projects from one is the subject the verifier resolved"
+doc_path = "mcp-re-http-profile/src/verified_request/mod.rs"
+doc_item = "doc#verified_request::VerifiedMcpRequest"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s52.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0639"
+construction = """
+// ADR-MCPRE-068 structural probe S52. Injected into a scratch copy by verify-structural;
+// this file never exists in the working tree.
+use mcp_re_http_profile::{AudienceTuple, CryptographicFloorVerifiedRequest, HttpRequestEvidenceBlock, VerifiedMcpRequest};
+
+pub fn hostile(floor: CryptographicFloorVerifiedRequest, audience: AudienceTuple, request_block: HttpRequestEvidenceBlock) -> VerifiedMcpRequest {
+    VerifiedMcpRequest { floor, audience, audience_hash: String::new(), request_block } // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+Every field is supplied, so the refusal is `#[non_exhaustive]` and nothing else: the
+relaxation removes the attribute and the same construction compiles.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the fields are `pub` (Verus `external_type_specification` refuses non-public fields), so module privacy closes nothing; `#[non_exhaustive]` refuses a struct expression in every crate but `mcp-re-http-profile`, which is the boundary this probe attacks"
+alternate-constructors = "`verify::full_request` is the one producer, reached through `Verifier::verify_request`; there is no `new`, builder, `From` or `Default`"
+generated-or-deserialization = "derives Debug and Clone only; no Deserialize. `Clone` copies a value the verifier returned and so produces no new subject"
+test-only-construction = "struct expressions remain only in `#[cfg(test)]` modules of `mcp-re-http-profile`; `mcp-re-proxy` and the integration tests sign a request and call `verify_request` (`authorization::action_harness`, `redis_continuation_e2e_test`). A holder of a real value can still assign its `pub` fields; THM-0051's provenance gate covers that on the serving path"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/verified_request/mod.rs"
+old = """
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct VerifiedMcpRequest {"""
+new = """
+#[derive(Debug, Clone)]
+pub struct VerifiedMcpRequest {"""
+
+[[probe]]
+id = "S53"
+unit = "proxy.request_peer_binding"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "no crate but mcp-re-http-profile can write a CryptographicFloorVerifiedRequest, the product that carries the resolved actor"
+doc_path = "mcp-re-http-profile/src/verified_request/floor.rs"
+doc_item = "doc#verified_request::floor::CryptographicFloorVerifiedRequest"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s53.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0639"
+construction = """
+// ADR-MCPRE-068 structural probe S53. Injected into a scratch copy by verify-structural;
+// this file never exists in the working tree.
+use mcp_re_http_profile::{CryptographicFloorVerifiedRequest, RequestRoleEvidence, ResolvedActor};
+
+pub fn hostile(resolved_actor: ResolvedActor, evidence: RequestRoleEvidence) -> CryptographicFloorVerifiedRequest {
+    CryptographicFloorVerifiedRequest { profile_id: String::new(), signature_label: String::new(), resolved_actor, evidence, request_signature_base: Vec::new(), content_digest: String::new(), created: 0, expires: 0, nonce: String::new(), key_id: String::new() } // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+The floor product is where the resolved actor lives; S52 alone would leave a forged floor
+inside a full product built by a crate that could write the floor. Every field is supplied,
+so the refusal is the attribute: the relaxation removes it and the construction compiles.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the fields are `pub` for Verus (`ExFloorVerifiedRequest`); `#[non_exhaustive]` refuses a struct expression in every crate but `mcp-re-http-profile`"
+alternate-constructors = "`verify::floor_request` is the one producer, reached through `Verifier::verify_request_floor` and, inside the full product, through `verify_request`; no `new`, builder, `From` or `Default`"
+generated-or-deserialization = "derives Clone only, with a hand-written redacting Debug; no Deserialize"
+test-only-construction = "struct expressions remain only in `#[cfg(test)]` modules of `mcp-re-http-profile`; other crates obtain one from the verifier"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/verified_request/floor.rs"
+old = """
+#[derive(Clone)]
+#[non_exhaustive]
+pub struct CryptographicFloorVerifiedRequest {"""
+new = """
+#[derive(Clone)]
+pub struct CryptographicFloorVerifiedRequest {"""

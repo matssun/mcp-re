@@ -62,34 +62,28 @@ pub(super) struct PinDocument {
     pub(super) algorithm: String,
     /// The public key: `x`/`y` base64url for `ES256`, `x` alone for `EdDSA`.
     pub(super) public_key: PinnedPublicKey,
-    /// SHA-256 over the canonical COSE_Key (RFC 9679 thumbprint), base64url. A short
-    /// value a human can compare across a corpus, a report and a log.
+    /// SHA-256 thumbprint of the key beside it, base64url, as computed by the tool that
+    /// cut the pin: RFC 9679 over the canonical COSE_Key for
+    /// `tools/scitt_fetch_service_key.py`, while two archived interop pins
+    /// (`interop/service-key-pin.json`, `interop/capsule-anchor/service-key-pin.json`)
+    /// carry SHA-256 over the raw key bytes. Descriptive only: `pinned_key` never checks it
+    /// against `public_key`, and the verification key is always the one decoded from
+    /// `public_key`.
     pub(super) public_key_thumbprint: String,
     /// SHA-256 over the discovery document's exact bytes, base64url — so a later reader
     /// can tell whether the document it fetches is the one the pin was cut from.
     pub(super) discovery_document_digest: String,
-    /// Which bytes this service's log hashes as the Merkle entry. Absent means the
-    /// default: the statement's own octets. Recorded in the PIN because it cannot be
-    /// inferred from a receipt, and because an operator should have to write it down
-    /// before MCP-RE will fold a service's log any other way.
-    #[serde(default)]
+    /// Which bytes this service's log hashes as the Merkle entry. Required: a document
+    /// that omits it is refused at deserialization. Recorded in the PIN because it cannot
+    /// be inferred from a receipt, so the operator writes it down for every service.
     pub(super) leaf_profile: StatementLeafProfile,
-    /// Whether this service's receipts must carry a position commitment. Absent means
-    /// the default, `unbound` — the pre-v2 contract, where `tree_size` and `leaf_index`
-    /// are unauthenticated hints.
+    /// Whether this service's receipts must carry a position commitment. Required: a
+    /// document that omits it is refused at deserialization rather than read as `unbound`.
     ///
     /// In the PIN for the same reason as `leaf_profile`: it is a property of the service
-    /// that cannot be inferred from the receipt under attack, and requiring it must be a
-    /// thing an operator wrote down.
-    ///
-    /// The `default` is a LEGACY-DESERIALIZATION allowance, deliberately kept (#841 item
-    /// 2): pins cut before the field existed — the two in
-    /// `mcp-re-conformance/tests/vectors/scitt/interop/` among them — must keep reading as
-    /// the pre-v2 contract they were cut under, because retroactively strengthening them
-    /// would invalidate an archived interoperability run rather than improve it. The WRITE
-    /// side has no such allowance: `tools/scitt_fetch_service_key.py` requires
-    /// `--position-profile`, so a NEW pin always records the operator's choice explicitly.
-    #[serde(default)]
+    /// that cannot be inferred from the receipt under attack, so whichever contract a pin
+    /// verifies under is one an operator wrote down. `tools/scitt_fetch_service_key.py`
+    /// writes both profiles into every pin it cuts.
     pub(super) position_profile: ReceiptPositionProfile,
 }
 /// The verification key a pin document names, or a refusal.
@@ -103,10 +97,10 @@ pub(super) fn pinned_key(document: &PinDocument) -> Result<CoseVerificationKey, 
             "scitt trust pin schema",
         ));
     }
-    let x = b64url_decode(&document.public_key.x)
-        .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin key encoding"))?;
     match document.algorithm.as_str() {
         "ES256" => {
+            let x = b64url_decode(&document.public_key.x)
+                .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin key encoding"))?;
             let y = document
                 .public_key
                 .y
@@ -128,7 +122,6 @@ pub(super) fn pinned_key(document: &PinDocument) -> Result<CoseVerificationKey, 
             }
             let key = VerificationKey::from_b64url(&document.public_key.x)
                 .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin ed25519"))?;
-            let _ = &x;
             Ok(CoseVerificationKey::Ed25519(key))
         }
         _ => Err(HttpProfileError::MalformedEvidence(

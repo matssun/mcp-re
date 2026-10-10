@@ -4,7 +4,7 @@
 //! The pipeline produces a CLASSIFICATION; a plain MCP client reads a status and a body.
 //! The `Mcp-Re-Verified-Kind` header carries the classification for an embedder, but it is
 //! outside the plain-MCP contract, so nothing in the status or body may depend on the
-//! caller reading it. Three renderings carry the argument:
+//! caller reading it. Four renderings carry the argument:
 //!
 //! * a NOTIFICATION has no reply, and answering it with a JSON body would invent a result
 //!   the local client never asked for. The 202 says what the verified acknowledgement says
@@ -12,15 +12,18 @@
 //!   completed.
 //! * a verified `InputRequiredResult` is a PAUSE, not a reply. There is no continuation
 //!   support here, so the answer leg the server is waiting for can never be signed and the
-//!   variant''s `request_state` cannot be carried anywhere that would use it. Serving the
+//!   variant's `request_state` cannot be carried anywhere that would use it. Serving the
 //!   pause as 200 with its result body — distinguished only by a header the plain-MCP
 //!   contract does not cover — hands an embedder a finished tool result for an approval
 //!   nobody gave. Both SDKs fail closed on an unanswerable elicitation; so does this, at
-//!   501, because what is missing is this listener''s ability to continue the exchange.
-//! * a verified REJECTION rides in a 200 on purpose: it IS the server''s answer, and a
+//!   501, because what is missing is this listener's ability to continue the exchange.
+//! * a verified REJECTION rides in a 200 on purpose: it IS the server's answer, and a
 //!   JSON-RPC error is how a plain MCP client is told a call did not succeed. A 5xx would
-//!   read as a channel failure and invite the retry the receipt''s own `retry_safety` may be
+//!   read as a channel failure and invite the retry the receipt's own `retry_safety` may be
 //!   refusing.
+//! * a verified REJECTION of a NOTIFICATION is an input the server did not accept: an HTTP
+//!   400 carrying an id-less JSON-RPC error. 202 is the only 2xx for a notification, and
+//!   502 is reserved for a reply that could not be verified.
 
 use mcp_re_client_proxy::ProxyError;
 use mcp_re_client_proxy::ResponseKind;
@@ -43,6 +46,7 @@ pub(super) fn render_verified(
         ResponseKind::InputRequired { .. } => "input-required",
         ResponseKind::AcceptedNotification => "accepted-notification",
         ResponseKind::VerifiedRejection { .. } => "verified-rejection",
+        ResponseKind::RejectedNotification { .. } => "rejected-notification",
     };
     match &response.kind {
         // A notification has no reply, and answering it with a JSON body would invent a
@@ -76,10 +80,19 @@ pub(super) fn render_verified(
         // 5xx would read as a channel failure and invite the retry the receipt's own
         // `retry_safety` may be refusing. What the caller needs to make that decision is
         // in the body, where `plain_error_from_rejection` put it.
-        _ => {
+        ResponseKind::Success
+        | ResponseKind::CallFailed { .. }
+        | ResponseKind::VerifiedRejection { .. } => {
             let body = serde_json::to_vec(&response.plain_response)
                 .unwrap_or_else(|_| local_error(id, "unserializable reply").into());
             (200, Some(kind), body)
+        }
+        // A refused notification has no call to answer: an HTTP error status with the
+        // id-less JSON-RPC error `plain_error_from_rejection` built.
+        ResponseKind::RejectedNotification { .. } => {
+            let body = serde_json::to_vec(&response.plain_response)
+                .unwrap_or_else(|_| local_error(id, "unserializable reply").into());
+            (400, Some(kind), body)
         }
     }
 }
@@ -99,9 +112,14 @@ pub(super) fn render_gateway_failure(
         ProxyError::Transport(_) => "remote leg unavailable",
         ProxyError::FailedClosed(_) => "response failed verification",
     };
-    // The frozen `mcp-re.*` reason, when there is one. The local client is
-    // inside the trust boundary, so naming why verification failed helps an
-    // operator and tells an attacker on the far side nothing it did not choose.
+    // The frozen `mcp-re.*` reason, when there is one, is returned to whoever
+    // reached this listener; nothing here authenticates that caller (see
+    // `accepted_authority.rs`: reachability, not identity). The reason is not
+    // sensitive relative to what reachability already grants: any caller that
+    // passes the head guards can have requests signed under this client's
+    // identity, which is strictly more than knowing why a reply failed
+    // verification, and it tells an attacker on the far side nothing it did
+    // not choose.
     //
     // Assembled BEFORE the body rather than written back into it through
     // `body["error"]["data"]`: that index panics unless `error` is an object,
@@ -206,5 +224,30 @@ mod tests {
         };
         let (status, kind, _) = render_verified(&done, &json!(1));
         assert_eq!((status, kind), (200, Some("success")));
+    }
+
+    #[test]
+    fn a_rejected_notification_is_rendered_as_an_http_error_with_no_id() {
+        let rejected = mcp_re_client_proxy::ProxyResponse {
+            plain_response: json!({
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE,
+                    "message": "request rejected by the MCP-RE server",
+                    "data": { "mcp_re_error": { "wire_code": "mcp-re.replay_detected" } },
+                },
+            }),
+            kind: ResponseKind::RejectedNotification {
+                wire_code: Some("mcp-re.replay_detected".to_owned()),
+                bound: true,
+                execution: mcp_re_client_core::ExecutionContract::default(),
+            },
+        };
+        let (status, kind, body) = render_verified(&rejected, &json!(1));
+        assert_eq!(status, 400);
+        assert_eq!(kind, Some("rejected-notification"));
+        let parsed: Value = serde_json::from_slice(&body).expect("json body");
+        assert!(parsed.get("id").is_none());
+        assert!(parsed["error"]["data"]["mcp_re_error"].is_object());
     }
 }

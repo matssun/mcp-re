@@ -107,6 +107,7 @@ mod tests {
     use super::AuthorizationEvaluator;
     use super::AuthorizedDecision;
     use crate::authorization::action_harness::verified_over;
+    use crate::authorization::action_harness::Signed;
     use crate::authorization::decision_evidence::DecisionEvidenceIdentity;
     use crate::authorization::grant::GrantAttribution;
     use crate::authorization::request::authorization_request;
@@ -144,9 +145,9 @@ mod tests {
 
     #[test]
     fn the_seam_carries_verified_facts_in_and_an_attributed_grant_out() {
-        let verified = verified_over(READ);
+        let Signed { verified, body } = verified_over(READ);
         let granted = OneToolForOneSubject
-            .evaluate(&authorization_request(&verified, READ, None).expect("composes"))
+            .evaluate(&authorization_request(&verified, &body, None).expect("composes"))
             .expect("granted");
         assert_eq!(granted.grant().authority(), "conformance");
         assert_eq!(granted.grant().version(), "1");
@@ -160,9 +161,9 @@ mod tests {
     /// issuer gave one `jti`.
     #[test]
     fn the_authority_decision_id_and_the_evidence_identity_are_different_coordinates() {
-        let verified = verified_over(READ);
+        let Signed { verified, body } = verified_over(READ);
         let decision = OneToolForOneSubject
-            .evaluate(&authorization_request(&verified, READ, None).expect("composes"))
+            .evaluate(&authorization_request(&verified, &body, None).expect("composes"))
             .expect("granted");
         assert_ne!(
             decision.grant().authority_decision_id(),
@@ -173,10 +174,10 @@ mod tests {
 
     #[test]
     fn a_denial_crosses_the_seam_as_the_frozen_token() {
-        let verified = verified_over(DELETE);
+        let Signed { verified, body } = verified_over(DELETE);
         assert_eq!(
             OneToolForOneSubject
-                .evaluate(&authorization_request(&verified, DELETE, None).expect("composes")),
+                .evaluate(&authorization_request(&verified, &body, None).expect("composes")),
             Err(PolicyError::AuthorizationScopeDenied)
         );
     }

@@ -98,24 +98,25 @@ impl PdpDecisionEvaluator {
             .ok_or(PdpRelationRefusal::NoDecisionPresented)?;
 
         let audiences: Vec<&str> = self.audiences.iter().map(String::as_str).collect();
+        let answered = std::cell::OnceCell::new();
         let claims = verify_authorization_decision(
             evidence.document(),
             &self.profile,
             &audiences,
             &self.policy.freshness,
             (self.now)(),
-            |kid| (self.policy.resolve_authority)(kid).map(|a| a.key().clone()),
+            |kid| {
+                let authority = (self.policy.resolve_authority)(kid)?;
+                let key = authority.key().clone();
+                answered.set(authority).ok()?;
+                Some(key)
+            },
         )
         .map_err(PdpRelationRefusal::NotAuthenticated)?;
 
-        // The enrolment entry that answered for the kid the signature verified under.
-        // `claims.issuer_kid` is a verified coordinate, not a self-description: the verifier
-        // refuses a header/claims disagreement, and it is the string it resolved the key
-        // from — so a decision naming a kid it was not signed under never reaches here.
-        // Read a second time rather than captured, so that a seam whose answer has changed
-        // since — an enrolment withdrawn mid-request by an embedder's own resolver —
-        // refuses instead of attributing to an authority this deployment no longer enrols.
-        let Some(authority) = (self.policy.resolve_authority)(&claims.issuer_kid) else {
+        // The name attributed is the one from the same resolver answer whose key verified
+        // the signature; a resolver consulted a second time could answer differently.
+        let Some(authority) = answered.into_inner() else {
             return Err(PdpRelationRefusal::NotAuthenticated(
                 PdpDecisionRefusal::IssuerUntrusted,
             ));
@@ -154,5 +155,99 @@ impl PdpDecisionEvaluator {
 impl AuthorizationEvaluator for PdpDecisionEvaluator {
     fn evaluate(&self, request: &AuthorizationRequest) -> Result<AuthorizedDecision, PolicyError> {
         self.decide(request).map_err(|r| r.wire_code())
+    }
+}
+
+// Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
+// region `scripts/module_size_gate.py` reads.
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use mcp_re_http_profile::pdp_decision::DecidedActor;
+    use mcp_re_http_profile::pdp_decision::DecisionScope;
+    use mcp_re_http_profile::pdp_decision::PdpDecisionClaims;
+    use mcp_re_http_profile::pdp_decision::PdpDecisionFreshness;
+    use mcp_re_http_profile::pdp_decision::PdpDecisionOutcome;
+    use mcp_re_http_profile::Audience;
+    use mcp_re_http_profile::PROFILE_TAG;
+
+    use super::PdpDecisionEvaluator;
+    use crate::authorization::action_harness::covering_unverifiable;
+    use crate::authorization::pdp::policy::PdpDecisionPolicy;
+    use crate::authorization::request::authorization_request;
+    use crate::authorization::request::AuthorizationRequest;
+
+    fn evaluator() -> PdpDecisionEvaluator {
+        PdpDecisionEvaluator::new(
+            PdpDecisionPolicy {
+                resolve_authority: Arc::new(|_| None),
+                accepted_scope: DecisionScope::Principal,
+                freshness: PdpDecisionFreshness {
+                    max_clock_skew: 30,
+                    max_decision_age: 600,
+                },
+            },
+            PROFILE_TAG,
+            vec!["verifier-1".to_owned()],
+            Arc::new(|| 0),
+        )
+    }
+
+    fn decision(operation: &str, target: Option<&str>) -> PdpDecisionClaims {
+        PdpDecisionClaims {
+            iss: "pdp".into(),
+            iat: 0,
+            nbf: 0,
+            exp: 1,
+            jti: "decision-1".into(),
+            aud: Audience::One("verifier-1".into()),
+            mcp_re_profile: PROFILE_TAG.into(),
+            mcp_re_decided_actor: DecidedActor::Principal {
+                trust_domain: "example.com".into(),
+                subject: "did:example:agent-1".into(),
+            },
+            mcp_re_decided_operation: operation.into(),
+            mcp_re_decided_target: target.map(str::to_owned),
+            mcp_re_decision: PdpDecisionOutcome::Permit,
+            mcp_re_policy_version: "v1".into(),
+            issuer_kid: "pdp-kid".into(),
+        }
+    }
+
+    fn request_over(body: &[u8]) -> AuthorizationRequest {
+        authorization_request(&covering_unverifiable(body), body, None).expect("a readable body")
+    }
+
+    /// A request naming no tool matches no decision, whether the decision names a target or
+    /// names none.
+    ///
+    /// The transport contract refuses a `tools/call` naming no tool before any verified
+    /// request exists, so the serving path never presents the `Absent` state to this
+    /// relation and no served exchange can exercise the arm. The relation is total over the
+    /// states the type admits, and this drives it over the one the serving path cannot
+    /// reach. Collapsing `Absent` into the not-applicable arm would let a decision about an
+    /// operation that takes no target authorize a call that omitted its target.
+    #[test]
+    fn a_call_naming_no_tool_is_matched_by_no_decision_target() {
+        let absent = request_over(br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}"#);
+        assert!(!evaluator().action_matches(&decision("tools/call", None), &absent));
+        assert!(!evaluator().action_matches(&decision("tools/call", Some("read")), &absent));
+    }
+
+    /// The control for the one above: the same relation matches when the call names the tool
+    /// the decision is about, and a targetless operation matches a targetless decision, so
+    /// the refusals above are about `Absent` and not about the relation matching nothing.
+    #[test]
+    fn a_named_target_and_a_targetless_operation_each_match_their_own_decision() {
+        let named = request_over(
+            br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
+        );
+        assert!(evaluator().action_matches(&decision("tools/call", Some("read")), &named));
+        assert!(!evaluator().action_matches(&decision("tools/call", Some("write")), &named));
+        assert!(!evaluator().action_matches(&decision("tools/call", None), &named));
+        let listing = request_over(br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
+        assert!(evaluator().action_matches(&decision("tools/list", None), &listing));
+        assert!(!evaluator().action_matches(&decision("tools/list", Some("read")), &listing));
     }
 }

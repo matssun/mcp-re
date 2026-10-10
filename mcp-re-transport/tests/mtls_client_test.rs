@@ -22,6 +22,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::thread;
 
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerOptions;
@@ -74,6 +75,22 @@ fn make_ca() -> Ca {
     Ca { cert, key, params }
 }
 
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(
+        std::time::Duration::from_secs(3600),
+        std::time::Duration::from_secs(300),
+    )
+    .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - std::time::Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + std::time::Duration::from_secs(1800)).into();
+}
+
 /// A leaf signed by `ca`, with the given SANs / CN and (client or server) EKU.
 fn make_leaf(
     ca: &Ca,
@@ -92,6 +109,9 @@ fn make_leaf(
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    if client_auth {
+        short_lived(&mut params);
+    }
     let cert = params
         .signed_by(&key, &ca.issuer())
         .expect("leaf signed by ca");
@@ -141,9 +161,12 @@ fn server_config(
     server_key: PrivateKeyDer<'static>,
     client_ca: &Ca,
 ) -> Arc<rustls::ServerConfig> {
-    let config = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_exported_key_config(server_chain, server_key, Vec::new())
-        .expect("server config");
+    let config = TlsListenerSecurityState::new(
+        vec![client_ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_exported_key_config(server_chain, server_key, Vec::new())
+    .expect("server config");
     Arc::new(config)
 }
 
@@ -160,7 +183,7 @@ fn spawn_server(
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             move |request, identity| {
                 handler_reached.store(true, std::sync::atomic::Ordering::SeqCst);
                 let _ = request;

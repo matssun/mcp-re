@@ -37,11 +37,12 @@ use crate::refusal::Refusal;
 /// A reply whose JSON-RPC control envelope is legal and correlated to this exchange.
 ///
 /// Private representation, one producer: holding one means syntax, `jsonrpc`, `id`
-/// correlation and `result` XOR `error` all hold. There is no way to name the parsed body
-/// without having asked that question, so signing bytes nobody validated is not a step the
-/// assembly can forget — it is unconstructible.
+/// correlation and `result` XOR `error` all hold. The verdict owns the response it judged
+/// and [`into_response`](Self::into_response) is the only way back to it, so signing bytes
+/// nobody validated is not a step the assembly can forget — the signer takes this value.
 pub(super) struct ValidatedReply {
     parsed: serde_json::Value,
+    response: HttpResponse,
 }
 
 impl ValidatedReply {
@@ -60,19 +61,21 @@ impl ValidatedReply {
     /// no relationship to protocol legality. A deployment without it signed unparseable
     /// bodies as opaque payload and the client's own verifier then rejected a message the
     /// enforcement boundary had vouched for.
-    pub(super) fn of(
-        response: &HttpResponse,
-        outstanding: &OutstandingId,
-    ) -> Result<Self, Refusal> {
+    pub(super) fn of(response: HttpResponse, outstanding: &OutstandingId) -> Result<Self, Refusal> {
         let parsed = parse_response_body(&response.body).map_err(|e| match e {
             HttpProfileError::UpstreamResponseInvalid(clause) => invalid(clause),
             _ => invalid("response body"),
         })?;
         match validate_response_envelope(&parsed, outstanding) {
-            Ok(_) => Ok(ValidatedReply { parsed }),
+            Ok(_) => Ok(ValidatedReply { parsed, response }),
             Err(HttpProfileError::UpstreamResponseInvalid(clause)) => Err(invalid(clause)),
-            Err(e) => Err(Refusal::after_admission(e, 502)),
+            Err(e) => Err(Refusal::new(e, 502)),
         }
+    }
+
+    /// The response this verdict judged, handed over to be signed.
+    pub(super) fn into_response(self) -> HttpResponse {
+        self.response
     }
 
     /// RESPONSE-CLASSIFIED — which MCP lifecycle transition is this reply?
@@ -94,16 +97,15 @@ impl ValidatedReply {
         let result = self.parsed.get("result");
         match classify_result_type(result) {
             ResultTypeClass::Complete => Ok(ReplyClass::Terminal),
-            ResultTypeClass::Unrecognized => Err(Refusal::after_admission(
-                HttpProfileError::UnrecognizedResultType,
-                502,
-            )),
+            ResultTypeClass::Unrecognized => {
+                Err(Refusal::new(HttpProfileError::UnrecognizedResultType, 502))
+            }
             ResultTypeClass::InputRequired => match input_required_state_of(result) {
                 Ok(Some(state)) => Ok(ReplyClass::Open(state)),
                 // Classified as non-terminal and then failed to yield its state: the two
                 // arms cannot both be right, and the only safe reading is that the message
                 // is invalid.
-                _ => Err(Refusal::after_admission(
+                _ => Err(Refusal::new(
                     HttpProfileError::UpstreamResponseInvalid("input_required requestState"),
                     502,
                 )),
@@ -117,7 +119,7 @@ impl ValidatedReply {
 /// A bad gateway is what every arm here means: the enforcement boundary is intact and the
 /// message behind it is not.
 fn invalid(clause: &'static str) -> Refusal {
-    Refusal::after_admission(HttpProfileError::UpstreamResponseInvalid(clause), 502)
+    Refusal::new(HttpProfileError::UpstreamResponseInvalid(clause), 502)
 }
 
 /// Which MCP lifecycle transition a validated reply is.
@@ -139,6 +141,12 @@ pub(super) enum ReplyClass {
 mod tests {
     use super::*;
 
+    /// The outstanding id of a request with `id: 1`, from its only producer.
+    fn request_id_1() -> OutstandingId {
+        mcp_re_http_profile::validate_request_envelope(br#"{"jsonrpc":"2.0","id":1,"method":"x"}"#)
+            .expect("a legal request")
+    }
+
     fn reply(body: &str) -> HttpResponse {
         HttpResponse {
             status: 200,
@@ -153,8 +161,8 @@ mod tests {
         // protocol response: the backend answered, and the exchange ends. Treating it as
         // invalid would refuse a conformant message at 502.
         let validated = ValidatedReply::of(
-            &reply(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"bad params"}}"#),
-            &OutstandingId::Id(serde_json::json!(1)),
+            reply(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"bad params"}}"#),
+            &request_id_1(),
         )
         .expect("an error reply is a legal envelope");
         assert!(matches!(
@@ -168,8 +176,8 @@ mod tests {
         // `id` correlation is part of the envelope question, so a reply to some OTHER
         // request never reaches the classifier — let alone the signer.
         assert!(ValidatedReply::of(
-            &reply(r#"{"jsonrpc":"2.0","id":99,"result":{}}"#),
-            &OutstandingId::Id(serde_json::json!(1)),
+            reply(r#"{"jsonrpc":"2.0","id":99,"result":{}}"#),
+            &request_id_1(),
         )
         .is_err());
     }
@@ -188,8 +196,8 @@ mod tests {
             },
         })
         .to_string();
-        let validated = ValidatedReply::of(&reply(&body), &OutstandingId::Id(serde_json::json!(1)))
-            .expect("a legal envelope");
+        let validated =
+            ValidatedReply::of(reply(&body), &request_id_1()).expect("a legal envelope");
         match validated.classify().expect("a legal classification") {
             ReplyClass::Open(state) => assert_eq!(state, "s-1"),
             ReplyClass::Terminal => panic!("an input_required reply opens a leg"),
@@ -201,8 +209,8 @@ mod tests {
         // MCP 2026-07-28 closes the set. Signing an unreadable transition would hand the
         // client a verifiable message whose continuation semantics nobody can read.
         let validated = ValidatedReply::of(
-            &reply(r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"something_new"}}"#),
-            &OutstandingId::Id(serde_json::json!(1)),
+            reply(r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"something_new"}}"#),
+            &request_id_1(),
         )
         .expect("a legal envelope");
         assert!(validated.classify().is_err());

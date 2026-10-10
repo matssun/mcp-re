@@ -12,22 +12,20 @@
 //! receipt is about a given request is the CLIENT's separate question, and
 //! `mcp-re-client-core` asks it.
 
-use mcp_re_core::McpReError;
-
 use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::body::extract_meta_block;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
+use crate::evidence::ResponseRoleEvidence;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::ids::RESPONSE_LABEL;
 use crate::message::reject_content_encoding;
 use crate::message::require_json_media_type;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
 use crate::sigbase::signature_base;
@@ -38,6 +36,7 @@ use crate::verify::floor::params::check_params;
 use crate::verify::floor::sf_dictionary::member_value;
 use crate::verify::floor::signature::signature_value_b64url;
 use crate::verify::floor::signature::verify_under;
+use crate::verify::floor::signature::SignedMessage;
 use crate::verify::floor::signature_input::parse_signature_input;
 
 use super::credential_chain::chain_to_root;
@@ -69,13 +68,14 @@ pub(crate) fn delegated_unbound_response<R: Into<ResolverOutcome>>(
     // JSON mode (§3.4): the delegated path gets the same gate — a credential
     // chain to the root does not make a stream evidenceable.
     require_json_media_type(&response.headers, "response content-type")?;
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
 
     // Response-only signature parse: required response components, and NO `;req`.
-    let input_header = required_header(&response.headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let input_header = single_header(&response.headers, "signature-input")?.ok_or(
+        HttpProfileError::MissingEvidence("response signature-input"),
+    )?;
     let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
     require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {
@@ -121,20 +121,20 @@ pub(crate) fn delegated_unbound_response<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &verified.delegated_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
     // Credential-authorized, exactly as on the bound path: the shared unbound facts, not
     // a seam-resolved `CryptographicFloorVerifiedUnboundResponse`.
-    Ok(VerifiedDelegatedUnboundResponse {
-        signature_facts: UnboundResponseSignatureFacts {
+    Ok(VerifiedDelegatedUnboundResponse::new(
+        UnboundResponseSignatureFacts {
             accepted_signer: AcceptedResponseSigner {
                 identity: block.server_signer.clone(),
                 verification_key: verified.delegated_key,
             },
-            response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
+            response_signature_base_digest: ResponseRoleEvidence::from_signature_base(&base),
         },
-        delegation_issuer_kid: verified.issuer_kid.clone(),
-    })
+        verified.issuer_kid.clone(),
+    ))
 }

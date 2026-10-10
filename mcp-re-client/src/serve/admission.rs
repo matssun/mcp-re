@@ -80,9 +80,32 @@ fn refusal_budget() -> Instant {
         .unwrap_or_else(Instant::now)
 }
 
+/// A spawn failure is the same capacity condition as a refused claim and is answered the
+/// same way: the failed spawn drops the job and with it the slot, so the claim is released
+/// before the 503 is written, and the clone keeps the socket answerable.
+pub(super) fn dispatch(
+    stream: TcpStream,
+    slot: Slot,
+    work: impl FnOnce(TcpStream) + Send + 'static,
+    spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<()>,
+) {
+    let answer = stream.try_clone();
+    let job: Box<dyn FnOnce() + Send> = Box::new(move || {
+        let _slot = slot;
+        work(stream);
+    });
+    if spawn(job).is_err() {
+        if let Ok(answer) = answer {
+            refuse(&answer);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
+    use std::net::TcpListener;
 
     /// The ceiling refuses the claim that would exceed it, and every refused claim is
     /// released — otherwise the accounting drifts full with nothing running.
@@ -133,5 +156,29 @@ mod tests {
             0,
             "a leaked slot lowers max_in_flight for the process lifetime"
         );
+    }
+
+    /// A thread-spawn failure is a capacity refusal: the caller is told 503 and the slot
+    /// is returned.
+    #[test]
+    fn a_worker_that_cannot_be_spawned_is_answered_503_and_returns_its_slot() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut client = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let (server, _) = listener.accept().expect("accept");
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let slot = claim(&in_flight, 1).expect("the claim is under the ceiling");
+        dispatch(
+            server,
+            slot,
+            |_| panic!("must not run"),
+            |_job| Err(std::io::Error::other("no threads")),
+        );
+        assert_eq!(in_flight.load(Ordering::Acquire), 0);
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        let mut bytes = Vec::new();
+        client.read_to_end(&mut bytes).expect("read");
+        assert!(bytes.starts_with(b"HTTP/1.1 503"));
     }
 }

@@ -45,18 +45,18 @@
       "notes": "Defense-in-depth for the four server-auth cases: an empty server trust anchor set does not silently accept any server \u2014 it fails closed."
     },
     {
-      "property": "env key source loads + signs (MCPS-076): dev-feature build reads the seed and signs correctly WITHOUT mutating the process environment (issue #25)",
-      "bazel_target": "//mcp-re-proxy:dev_env_key_source_test",
-      "source": "mcp-re-proxy/tests/dev_env_key_source_test.rs",
-      "test_fn": "env_source_signs_without_mutating_process_env",
-      "notes": "MCPS-076 (audit gap G-3) + issue #25: the dev/CI-only EnvKeySource (feature dev_env_key_source) loads all material and signs. The read is now a PURE read \u2014 it does NOT remove the seed env var (the prior std::env::remove_var was unsound under threads); child-process secret isolation is the inner-launch env policy's job (no env inheritance by default), not a global mutation here. This is the positive control for the env-keysource posture, in a feature-gated unit test rather than the production binary."
+      "property": "environment carries no key material (MCPS-076): --key-source env is refused as an unknown key source; secret key material is read only through the file-backed or device-backed key sources",
+      "bazel_target": "//mcp-re-proxy:proxy_unit_test",
+      "source": "mcp-re-proxy/src/cli.rs",
+      "test_fn": "env_is_an_unknown_key_source",
+      "notes": "MCPS-076 (audit gap G-3), owner Ruling 13.4: environment configuration may supply seed/bootstrap input only, and the response-signing seed is long-lived secret key material, so it is not environment input. No key source reads the process environment: the --key-source parser has no env spelling, so env is refused exactly like a typo, and the refusal lists only file|pkcs11|aws-kms|gcp-kms. Secret material reaches the process only through FileKeySource (owner-only files, admitted by the key-file custody check) or stays on a PKCS#11/KMS device."
     },
     {
       "property": "key-source errors never leak secret material",
       "bazel_target": "//mcp-re-proxy:key_source_test",
       "source": "mcp-re-proxy/tests/key_source_test.rs",
       "test_fn": "key_errors_never_leak_secret_material",
-      "notes": "Defense-in-depth for the env-keysource path: error messages from the key source never echo the secret seed."
+      "notes": "Defense-in-depth for the file-backed key source: error messages from the key source never echo the secret seed."
     },
     {
       "property": "audit-evidence vocabulary drift (ADR-MCPS-035): every emitted rejection reason is a member of the frozen McpReError::wire_code() taxonomy and the success-event set is exactly the two-item allowlist",
@@ -112,7 +112,7 @@
       "bazel_target": "//mcp-re-proxy:proxy_ext_unit_test",
       "source": "mcp-re-proxy/src/gcp_kms_keysource.rs",
       "test_fn": "gcp_backend_signs_and_verifies_end_to_end",
-      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7C native GCP Cloud KMS Ed25519 response signer. Offline positive control (for_test_with_local_seed, no network) exercised under the both-KMS-features proxy_ext_unit_test: a GCP-backed signature verifies under the production mcp-re-core path. The #[ignore]d gcp_kms_live_test is the online complement (manual live-infra lane)."
+      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7C native GCP Cloud KMS Ed25519 response signer. Offline positive control (in-crate fake transport, no network) exercised under the both-KMS-features proxy_ext_unit_test: a GCP-backed signature verifies under the production mcp-re-core path. The #[ignore]d gcp_kms_live_test is the online complement (manual live-infra lane)."
     },
     {
       "property": "GCP Cloud KMS backend fails closed: a non-Ed25519 key algorithm is rejected",
@@ -147,7 +147,7 @@
       "bazel_target": "//mcp-re-proxy:proxy_ext_unit_test",
       "source": "mcp-re-proxy/src/aws_kms_keysource.rs",
       "test_fn": "aws_backend_signs_and_verifies_end_to_end",
-      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7B native AWS KMS Ed25519 response signer (minimal audited SigV4, no async aws-sdk-kms). Offline positive control (for_test_with_local_seed, no network) under proxy_ext_unit_test: an AWS-backed signature verifies under the production mcp-re-core path. The #[ignore]d aws_kms_live_test is the online complement."
+      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7B native AWS KMS Ed25519 response signer (minimal audited SigV4, no async aws-sdk-kms). Offline positive control (in-crate fake transport, no network) under proxy_ext_unit_test: an AWS-backed signature verifies under the production mcp-re-core path. The #[ignore]d aws_kms_live_test is the online complement."
     },
     {
       "property": "AWS KMS backend fails closed: a non-Ed25519 key spec is rejected",

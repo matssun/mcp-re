@@ -17,6 +17,10 @@ use super::SharedStoreRequest;
 pub struct ContinuationStoreRequest {
     /// The shared store retained continuation bases live in, where one is configured.
     pub shared: Option<SharedStoreRequest>,
+    /// The most live entries the shared store may hold, as the operator stated it. `None`
+    /// is "said nothing"; the continuation owner checks a stated value and supplies the
+    /// default.
+    pub max_live_entries: Option<u64>,
 }
 
 #[cfg(test)]
@@ -30,11 +34,13 @@ mod tests {
     }
 
     /// Two roles pointing at one Redis is an operator's choice the model can express,
-    /// because the roles state their stores separately rather than sharing a field.
+    /// because the roles state their stores separately rather than sharing a field;
+    /// distinct stores per role are equally expressible.
     #[test]
     fn one_redis_can_serve_two_roles_without_the_roles_becoming_one() {
         let continuation = ContinuationStoreRequest {
             shared: Some(SharedStoreRequest::redis("redis://h:6379")),
+            max_live_entries: None,
         };
         let admission = crate::deployment_request::AdmissionGateRequest {
             authority_kid: "a".to_string(),
@@ -49,6 +55,28 @@ mod tests {
                 .as_ref()
                 .map(SharedStoreRequest::locator),
             Some(admission.store.locator())
+        );
+
+        let distinct_continuation = ContinuationStoreRequest {
+            shared: Some(SharedStoreRequest::redis("redis://c:6379")),
+            max_live_entries: None,
+        };
+        let distinct_admission = crate::deployment_request::AdmissionGateRequest {
+            authority_kid: "a".to_string(),
+            authority_pubkey_b64url: "k".to_string(),
+            store: SharedStoreRequest::redis("redis://a:6379"),
+            availability: crate::deployment_request::AdmissionAvailabilityRequest::FailClosed,
+            record_max_age_secs: std::num::NonZeroU64::new(60).expect("nonzero"),
+        };
+        let continuation_locator = distinct_continuation
+            .shared
+            .as_ref()
+            .map(SharedStoreRequest::locator);
+        assert_eq!(continuation_locator, Some("redis://c:6379"));
+        assert_eq!(distinct_admission.store.locator(), "redis://a:6379");
+        assert_ne!(
+            continuation_locator,
+            Some(distinct_admission.store.locator())
         );
     }
 }

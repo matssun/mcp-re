@@ -14,18 +14,22 @@
 //!
 //! [`AuditProfile`] is SEALED behind the private `AuditProfileDocument`: `serde` only ever
 //! sees the document, and the only way to obtain a profile is to show the document is
-//! coherent. So holding one means its audience tuple, delegation window and response
-//! anchor were checked — the projections below re-decide nothing.
+//! coherent. So holding one means its audience tuple, delegation window, response anchor
+//! and transparency-service key lifecycles were checked — the projections below re-decide
+//! nothing.
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// The profile AS WRITTEN, and the one check that turns it into a profile.
 mod document;
 
 use document::coherent;
+use document::transparency_key_lifecycles;
 use document::AuditProfileDocument;
 
 use mcp_re_core::VerificationKey;
+use mcp_re_http_profile::scitt::TransparencyKeyLifecycle;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::DelegationExpectations;
@@ -54,6 +58,8 @@ pub struct AuditProfile {
     /// The revoked set as a set, so membership is a lookup and duplicates in the document
     /// cannot mean anything.
     revoked: BTreeSet<String>,
+    /// The transparency-service key lifecycles, by `kid`, each checked at construction.
+    ts_keys: BTreeMap<String, TransparencyKeyLifecycle>,
 }
 
 impl TryFrom<AuditProfileDocument> for AuditProfile {
@@ -62,10 +68,12 @@ impl TryFrom<AuditProfileDocument> for AuditProfile {
     fn try_from(document: AuditProfileDocument) -> Result<Self, Self::Error> {
         let anchor_key = coherent(&document)?;
         let revoked = document.revoked_key_ids.iter().cloned().collect();
+        let ts_keys = transparency_key_lifecycles(&document)?;
         Ok(AuditProfile {
             document,
             anchor_key,
             revoked,
+            ts_keys,
         })
     }
 }
@@ -119,6 +127,17 @@ impl AuditProfile {
     /// asserted.
     pub(super) fn is_revoked(&self, kid: &str) -> bool {
         self.revoked.contains(kid)
+    }
+
+    /// The lifecycle this profile states for transparency-service key `kid`, if any.
+    ///
+    /// Distinct from [`Self::is_revoked`]: that set names chain keys, and this names the
+    /// keys a transparency service signs receipts with.
+    pub(in crate::transparency::auditor) fn transparency_key_lifecycle(
+        &self,
+        kid: &str,
+    ) -> Option<&TransparencyKeyLifecycle> {
+        self.ts_keys.get(kid)
     }
 
     /// Run `f` with the delegation expectations this profile asserts.
@@ -265,5 +284,61 @@ mod tests {
         assert!(profile.is_revoked("key-1"));
         assert!(profile.is_revoked("key-2"));
         assert!(!profile.is_revoked("key-3"));
+    }
+
+    /// Each stated lifecycle is projected by its `kid`, and an unnamed key has none.
+    #[test]
+    fn a_transparency_key_lifecycle_is_projected_by_its_kid() {
+        let mut d = document();
+        d["transparency_service_keys"] = serde_json::json!([
+            { "kid": "ts-1", "valid_from": 100 },
+            { "kid": "ts-2", "valid_from": 100, "valid_until": 200, "revoked_at": 150 },
+        ]);
+        let profile = parse(&d).expect("a legal profile");
+        let open = profile.transparency_key_lifecycle("ts-1").expect("stated");
+        assert_eq!(open.admits_at(1_000), Ok(()));
+        let revoked = profile.transparency_key_lifecycle("ts-2").expect("stated");
+        assert!(revoked.admits_at(150).is_err());
+        assert!(profile.transparency_key_lifecycle("ts-3").is_none());
+        assert!(parse(&document())
+            .expect("absent means none")
+            .transparency_key_lifecycle("ts-1")
+            .is_none());
+    }
+
+    /// An inverted window, a duplicate kid, an empty kid and an unknown member are refused
+    /// at construction, never left for registration to trip over.
+    #[test]
+    fn an_incoherent_transparency_key_lifecycle_never_becomes_a_profile() {
+        for (what, keys) in [
+            (
+                "valid_until",
+                serde_json::json!([{ "kid": "ts-1", "valid_from": 100, "valid_until": 100 }]),
+            ),
+            (
+                "revoked_at",
+                serde_json::json!([{ "kid": "ts-1", "valid_from": 100, "revoked_at": 99 }]),
+            ),
+            (
+                "duplicate",
+                serde_json::json!([
+                    { "kid": "ts-1", "valid_from": 100 },
+                    { "kid": "ts-1", "valid_from": 100, "revoked_at": 100 },
+                ]),
+            ),
+            (
+                "empty kid",
+                serde_json::json!([{ "kid": "", "valid_from": 100 }]),
+            ),
+            (
+                "unknown member",
+                serde_json::json!([{ "kid": "ts-1", "valid_from": 100, "expires": 200 }]),
+            ),
+            ("missing valid_from", serde_json::json!([{ "kid": "ts-1" }])),
+        ] {
+            let mut d = document();
+            d["transparency_service_keys"] = keys;
+            assert!(parse(&d).is_err(), "{what}: must not become a profile");
+        }
     }
 }

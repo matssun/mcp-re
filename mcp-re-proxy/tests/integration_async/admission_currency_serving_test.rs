@@ -57,7 +57,10 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::admission_enforcer::AdmissionEnforcement;
+use mcp_re_proxy::admission_source::AdmissionFuture;
 use mcp_re_proxy::admission_source::AdmissionRecordVerifier;
+use mcp_re_proxy::admission_source::AdmissionSourceError;
+use mcp_re_proxy::admission_source::AnsweredAs;
 use mcp_re_proxy::admission_source::AsyncAdmissionSource;
 use mcp_re_proxy::admission_source::InMemoryAdmissionSource;
 use mcp_re_proxy::async_inner::AsyncInnerServer;
@@ -100,6 +103,8 @@ const WORKLOAD: &str = "workload-7";
 /// TRANSITION from served to refused under a single changing variable rather than
 /// keying off the code.
 const ADMISSION_REFUSED: &str = "mcp-re.actor_binding_failed";
+/// A `Required` call that carried no admission evidence at all.
+const ABSENT_ADMISSION_EVIDENCE: &str = "mcp-re.missing_envelope";
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)
@@ -233,6 +238,44 @@ fn revoke(source: &InMemoryAdmissionSource, generation: u64) {
     publish_state(source, generation, 2, AdmissionStatus::Revoked);
 }
 
+/// A source whose authority can be taken down: lookups fail as unavailable while `down`,
+/// and otherwise answer from the wrapped store. The in-process store cannot be unreachable
+/// on its own, so the outage lives in this double and not in production code.
+struct OutageSwitch {
+    store: InMemoryAdmissionSource,
+    down: std::sync::atomic::AtomicBool,
+}
+
+impl OutageSwitch {
+    fn new(store: InMemoryAdmissionSource) -> Self {
+        OutageSwitch {
+            store,
+            down: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn store(&self) -> &InMemoryAdmissionSource {
+        &self.store
+    }
+
+    fn set_unavailable(&self, down: bool) {
+        self.down.store(down, Ordering::SeqCst);
+    }
+}
+
+impl AsyncAdmissionSource for OutageSwitch {
+    fn current<'a>(&'a self, admission_id: &'a str, now: i64) -> AdmissionFuture<'a, AnsweredAs> {
+        if self.down.load(Ordering::SeqCst) {
+            return Box::pin(async move {
+                Err(AdmissionSourceError::Unavailable {
+                    details: "injected outage".to_owned(),
+                })
+            });
+        }
+        self.store.current(admission_id, now)
+    }
+}
+
 fn admission_claims(generation: u64, status: AdmissionStatus, iat: i64) -> AdmissionClaims {
     AdmissionClaims {
         iss: "did:example:admission".into(),
@@ -304,10 +347,13 @@ fn signed_call(admission: Option<(&AdmissionClaims, &SigningKey)>, nonce: &str) 
 /// matters for a currency check: a rejection issued after the tool ran is a record of
 /// something that already happened.
 fn counting_inner(calls: Arc<AtomicUsize>) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-        calls.fetch_add(1, Ordering::SeqCst);
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |_forwarded: &[u8]| -> Vec<u8> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 fn custody_cfg() -> CustodyConfig {
@@ -317,7 +363,7 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: VERIFIER_AUD.into(),
         audience_hash: AUD_SCOPE.into(),
-        trust_epoch: EPOCH.into(),
+        trust_epoch: EPOCH.parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
@@ -326,7 +372,6 @@ fn custody_cfg() -> CustodyConfig {
 }
 
 fn ready_signer() -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -336,10 +381,13 @@ fn ready_signer() -> Arc<DelegatedServerSigner> {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     std::mem::forget(rotor);
     signer
@@ -552,6 +600,106 @@ fn a_superseded_generation_is_refused_before_the_backend_runs() {
     );
 }
 
+/// A gate refusal is recorded as the gate's refusal, never as a gate that was not consulted.
+#[test]
+fn an_admission_refusal_is_recorded_as_the_gates_refusal() {
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 6);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = replica(
+        source,
+        strict_policy(),
+        AdmissionEnforcement::Required,
+        Arc::clone(&calls),
+    )
+    .with_audit_sink(sink.clone());
+    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
+    let req = signed_call(Some((&claims, &authority_key())), "n-refused-facet");
+
+    let served = block_on(proxy.handle(served_of(&req), NOW));
+    assert_eq!(served.status, 403);
+    let admissions: Vec<_> = sink
+        .records()
+        .iter()
+        .filter(|r| r.event().event_type() == "mcp-re.request.rejected")
+        .filter_map(|r| r.subject.admission())
+        .collect();
+    assert_eq!(
+        admissions,
+        vec![mcp_re_proxy::admission_enforcer::AdmissionFacet::Refused],
+    );
+}
+
+/// The refusal classes a replica's audit sink recorded for the request records it refused.
+fn recorded_refusal_classes(
+    sink: &mcp_re_proxy::CollectingAuditSink,
+) -> Vec<Option<mcp_re_proxy::admission_enforcer::AdmissionRefusalClass>> {
+    sink.records()
+        .iter()
+        .filter(|r| r.event().event_type() == "mcp-re.request.rejected")
+        .map(|r| r.subject.admission_refusal())
+        .collect()
+}
+
+/// One refusal through a fresh replica over `source`, and the classes its record carried.
+fn refusal_classes_for(
+    source: Arc<InMemoryAdmissionSource>,
+    claims: Option<&AdmissionClaims>,
+    nonce: &str,
+) -> Vec<Option<mcp_re_proxy::admission_enforcer::AdmissionRefusalClass>> {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = replica(
+        source,
+        strict_policy(),
+        AdmissionEnforcement::Required,
+        Arc::new(AtomicUsize::new(0)),
+    )
+    .with_audit_sink(sink.clone());
+    let key = authority_key();
+    let req = signed_call(claims.map(|c| (c, &key)), nonce);
+    let served = block_on(proxy.handle(served_of(&req), NOW));
+    assert_eq!(served.status, 403);
+    recorded_refusal_classes(&sink)
+}
+
+/// A forged record and an absent one are the same wire refusal and DIFFERENT facts, and the
+/// durable record is the only place the difference survives. Each cause the gate can tell
+/// apart names itself in the `admission_refusal` coordinate.
+#[test]
+fn a_refused_admission_names_which_fact_refused_it_in_the_record() {
+    use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal as Bad;
+    use mcp_re_proxy::admission_enforcer::AdmissionRefusalClass as Class;
+
+    let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
+
+    // Nothing published: the authority has nothing to say about this workload.
+    let absent = refusal_classes_for(Arc::new(admission_store()), Some(&claims), "n-absent");
+    assert_eq!(absent, vec![Some(Class::NoRecord)]);
+
+    // Something published that the authority did not sign.
+    let forged = Arc::new(admission_store());
+    forged.publish(WORKLOAD, "not-a-record".to_owned());
+    assert_eq!(
+        refusal_classes_for(forged, Some(&claims), "n-forged"),
+        vec![Some(Class::RecordRefused(Bad::Malformed))]
+    );
+
+    // An authentic record at a newer generation: a superseded call, not a missing record.
+    let moved_on = Arc::new(admission_store());
+    publish_admitted(&moved_on, 6);
+    assert_eq!(
+        refusal_classes_for(moved_on, Some(&claims), "n-superseded"),
+        vec![Some(Class::NotCurrent)]
+    );
+
+    // The deployment requires admission and the call presented none.
+    assert_eq!(
+        refusal_classes_for(Arc::new(admission_store()), None, "n-none"),
+        vec![Some(Class::NoEvidence)]
+    );
+}
+
 #[test]
 fn a_revoked_workload_is_refused_though_its_assertion_is_still_valid() {
     let source = Arc::new(admission_store());
@@ -603,8 +751,8 @@ fn an_unknown_workload_is_refused_not_routed_into_degraded_mode() {
 
 #[test]
 fn an_unreachable_authority_fails_closed_by_default() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
+    let source = Arc::new(OutageSwitch::new(admission_store()));
+    publish_admitted(source.store(), 5);
     source.set_unavailable(true);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
@@ -641,8 +789,8 @@ fn an_unreachable_authority_fails_closed_by_default() {
 /// against an enforcer that reported `Degraded` for everything.
 #[test]
 fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
+    let source = Arc::new(OutageSwitch::new(admission_store()));
+    publish_admitted(source.store(), 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = AdmissionPolicy {
         allow_degraded_mode: true,
@@ -689,7 +837,7 @@ fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
     let admissions: Vec<_> = sink
         .records()
         .iter()
-        .filter(|r| r.event().event_type == "mcp-re.request.accepted")
+        .filter(|r| r.event().event_type() == "mcp-re.request.accepted")
         .filter_map(|r| r.subject.admission())
         .collect();
     assert_eq!(
@@ -708,8 +856,8 @@ fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
 /// however long. Every assertion below is FRESH; only the outage ages.
 #[test]
 fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
+    let source = Arc::new(OutageSwitch::new(admission_store()));
+    publish_admitted(source.store(), 5);
     let calls = Arc::new(AtomicUsize::new(0));
     // P is ONE SECOND, because the window is elapsed time on the monotonic clock and the
     // control ages the OUTAGE by waiting — which is the only thing that ages it. A 120s
@@ -783,8 +931,8 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
 /// a window that has to have been opened by a real read.
 #[test]
 fn a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode() {
-    let source = Arc::new(admission_store());
-    publish_admitted(&source, 5);
+    let source = Arc::new(OutageSwitch::new(admission_store()));
+    publish_admitted(source.store(), 5);
     source.set_unavailable(true);
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = AdmissionPolicy {
@@ -830,6 +978,11 @@ fn a_call_without_admission_evidence_is_refused_when_required_and_served_when_op
     );
     let served = block_on(strict.handle(served_of(&claims_free), NOW));
     assert_eq!(served.status, 403);
+    assert_eq!(
+        wire_code_of(&served.body),
+        ABSENT_ADMISSION_EVIDENCE,
+        "absent evidence is not an unreachable authority"
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 
     let calls = Arc::new(AtomicUsize::new(0));

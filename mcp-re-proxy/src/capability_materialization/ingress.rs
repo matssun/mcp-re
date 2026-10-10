@@ -32,21 +32,8 @@ pub fn build_attested_ingress_binding(
     let source = match attested.asserted_identity_kind {
         IdentityPolicy::UriSan => crate::transport::IdentitySource::UriSan,
         IdentityPolicy::DnsSan => crate::transport::IdentitySource::DnsSan,
-        IdentityPolicy::CnLegacy => crate::transport::IdentitySource::CommonName,
     };
-    // The form always carries an audience — it is a member, not a sibling — but an EMPTY
-    // one is still representable, and a verifier built around it would admit assertions
-    // minted for any other node that also named none. The absent case is gone; this one is
-    // not, so it stays here as well as at the boundary.
-    if attested.audience.trim().is_empty() {
-        return Err(
-            "--ingress-audience names nothing: the audience scopes an assertion to THIS \
-             node's route, so an empty one admits assertions minted for another"
-                .to_string(),
-        );
-    }
-    let mut binding =
-        crate::transport::ingress::LbAssertionV2Binding::new(source, &attested.audience);
+    let mut keys = Vec::with_capacity(attested.attestor_keys.len());
     for (key_id, key_b64) in &attested.attestor_keys {
         let key = VerificationKey::from_b64url(key_b64).map_err(|_| {
             format!(
@@ -54,12 +41,39 @@ pub fn build_attested_ingress_binding(
                  base64url-no-pad 32-byte Ed25519 public key"
             )
         })?;
-        binding.add_key(key_id.clone(), key);
+        keys.push((key_id.clone(), key));
     }
-    for ingress_identity in &attested.identities {
-        binding.permit_ingress_identity(ingress_identity.clone());
+    crate::transport::ingress::LbAssertionV2Binding::new(
+        source,
+        &attested.audience,
+        keys,
+        attested.identities.iter().cloned(),
+        crate::transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE,
+    )
+    .map(Some)
+    .map_err(refusal_message)
+}
+
+/// The operator-facing reason, naming the flag whose value the verifier refused.
+fn refusal_message(refusal: crate::transport::ingress::LbAssertionV2BindingRefusal) -> String {
+    use crate::transport::ingress::LbAssertionV2BindingRefusal as R;
+    match refusal {
+        R::NoAttestorKey => "--transport-binding attested-ingress names no \
+                             --ingress-attestor-key"
+            .to_string(),
+        R::DuplicateKeyId(key_id) => {
+            format!("duplicate --ingress-attestor-key id '{key_id}' (each id must be unique)")
+        }
+        R::NoIngressIdentity => "--transport-binding attested-ingress names no \
+                                 --ingress-identity"
+            .to_string(),
+        R::BlankIngressIdentity => "--ingress-identity is blank: it would match an \
+                                    assertion that names no ingress"
+            .to_string(),
+        R::UnusableAudience => "--ingress-audience is blank or padded: the verifier \
+                                compares it verbatim to the route an attestor mints"
+            .to_string(),
     }
-    Ok(Some(binding))
 }
 
 #[cfg(test)]
@@ -109,10 +123,9 @@ mod tests {
         // Mode C is refused for deployment but RETAINED as a capability, so its verifier
         // has to stay correct rather than merely compile. Minting a real assertion and
         // verifying it through the built binding is what proves the builder actually
-        // transferred all three configured facts: an implementation that skipped
-        // `add_key`, skipped `permit_ingress_identity`, or passed the wrong audience
-        // would fail this with `UnknownKeyId`, `UntrustedIngressIdentity`, or
-        // `AudienceMismatch` respectively.
+        // transferred all three configured facts: an implementation that dropped the
+        // keys, dropped the identities, or passed the wrong audience would fail this with
+        // a build refusal, `UntrustedIngressIdentity`, or `AudienceMismatch`.
         let binding = build_attested_ingress_binding(&mode_c_config())
             .expect("a complete Mode-C config builds its verifier")
             .expect("the verifier is present for the attested-ingress binding");
@@ -174,6 +187,21 @@ mod tests {
         assert!(
             err.contains("--ingress-audience"),
             "the failure must name the missing audience, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_mode_c_verifier_refuses_an_audience_it_would_not_use_verbatim() {
+        let mut config = mode_c_config();
+        config.peer_identity = mode_c_form(
+            vec!["spiffe://example.org/ingress-1".to_string()],
+            "did:example:server-1 ".to_string(),
+        );
+        let err = build_attested_ingress_binding(&config)
+            .expect_err("a padded audience must not be built into a verifier");
+        assert!(
+            err.contains("--ingress-audience"),
+            "the failure must name the audience, got: {err}"
         );
     }
 

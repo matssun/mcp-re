@@ -20,6 +20,7 @@ use crate::pkcs11_native::AttributeTemplate;
 use crate::pkcs11_native::ObjectClass;
 use crate::pkcs11_native::Pkcs11Context;
 use crate::pkcs11_native::SessionRef;
+use crate::pkcs11_native::TokenIdentity;
 
 use super::session::classify_op_error;
 use super::session::SessionOpError;
@@ -57,6 +58,35 @@ pub(crate) fn find_key(
     }
 }
 
+/// Locate the single private key object labelled `key_label` and refuse it unless the token
+/// reports it `CKA_SENSITIVE` and not `CKA_EXTRACTABLE`.
+///
+/// The custody claim — the private key never leaves the token — is checked here rather than
+/// left to whoever provisioned the object: a key the token itself reports as exportable is
+/// refused at startup. What remains trusted is that the token reports these attributes
+/// truthfully and enforces them (ASM-0052).
+pub(crate) fn find_token_bound_private_key(
+    view: &SessionRef<'_>,
+    key_label: &str,
+) -> Result<CK_OBJECT_HANDLE, SessionOpError> {
+    let key = find_key(view, key_label, ObjectClass::Private)?;
+    let custody = view.key_custody(key).map_err(|e| {
+        classify_op_error(e, |e| {
+            KeyError::Malformed(format!(
+                "pkcs11: read the custody attributes of key '{key_label}': {e}"
+            ))
+        })
+    })?;
+    if !custody.is_token_bound() {
+        return Err(SessionOpError::Fatal(KeyError::Malformed(format!(
+            "pkcs11: private key '{key_label}' can leave the token (CKA_SENSITIVE={}, \
+             CKA_EXTRACTABLE={}); refusing a key the token does not bind",
+            custody.sensitive, custody.extractable
+        ))));
+    }
+    Ok(key)
+}
+
 /// Human-readable name for an [`ObjectClass`] in error context (the wrapper enum
 /// is intentionally minimal and not `Debug`-printed onto the token path).
 pub(crate) fn class_name(class: ObjectClass) -> &'static str {
@@ -68,11 +98,13 @@ pub(crate) fn class_name(class: ObjectClass) -> &'static str {
 
 /// Select the slot whose token's label equals `token_label`. Token labels are
 /// stable across reboots (slot ids are not), so this is the primary selector. No
-/// match is [`KeyError::NotFound`].
+/// match is [`KeyError::NotFound`]; more than one present token under the label is
+/// [`KeyError::Malformed`], because this selector decides which device receives the
+/// User PIN and an ambiguity fails closed rather than taking the first match.
 pub(crate) fn find_token_slot(
     context: &Pkcs11Context,
     token_label: &str,
-) -> Result<CK_SLOT_ID, KeyError> {
+) -> Result<(CK_SLOT_ID, TokenIdentity), KeyError> {
     // `token_slots` enumerates present-token slots and reads each token's label
     // with the 32-byte 0x20 padding already trimmed. The comparison is over those
     // BYTES: this is what decides which physical device receives the User PIN, so
@@ -80,14 +112,35 @@ pub(crate) fn find_token_slot(
     let slots = context
         .token_slots()
         .map_err(|e| KeyError::NotFound(format!("pkcs11: enumerate token slots: {e}")))?;
-    for (slot, label) in slots {
-        if label == token_label.as_bytes() {
-            return Ok(slot);
+    select_token_slot(slots, token_label, TokenIdentity::label)
+}
+
+/// The selection decision over enumerated `(slot, token)` pairs: exactly one
+/// byte-equal label selects its slot and token, none is `NotFound`, several are
+/// `Malformed`.
+fn select_token_slot<T>(
+    slots: Vec<(CK_SLOT_ID, T)>,
+    token_label: &str,
+    label_of: impl Fn(&T) -> &[u8],
+) -> Result<(CK_SLOT_ID, T), KeyError> {
+    let mut matching: Vec<(CK_SLOT_ID, T)> = slots
+        .into_iter()
+        .filter(|(_, token)| label_of(token) == token_label.as_bytes())
+        .collect();
+    match matching.len() {
+        0 => Err(KeyError::NotFound(format!(
+            "pkcs11: no token with label '{token_label}'"
+        ))),
+        1 => matching.pop().ok_or_else(|| {
+            KeyError::Malformed("pkcs11: token selection lost its single match".to_string())
+        }),
+        n => {
+            let ids: Vec<CK_SLOT_ID> = matching.iter().map(|(slot, _)| *slot).collect();
+            Err(KeyError::Malformed(format!(
+                "pkcs11: {n} present tokens labelled '{token_label}' (slots {ids:?}); refusing to guess which receives the User PIN"
+            )))
         }
     }
-    Err(KeyError::NotFound(format!(
-        "pkcs11: no token with label '{token_label}'"
-    )))
 }
 
 /// Strip a DER `OCTET STRING` wrapper (`0x04 <len> <bytes>`) if present, returning
@@ -133,6 +186,42 @@ pub(crate) fn ed25519_spki_from_ec_point(ec_point: &[u8]) -> Result<Vec<u8>, Key
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_present_tokens_under_the_configured_label_are_refused_not_first_matched() {
+        let slots = vec![
+            (1, b"prod".to_vec()),
+            (2, b"other".to_vec()),
+            (5, b"prod".to_vec()),
+        ];
+        assert!(matches!(
+            select_token_slot(slots, "prod", |l: &Vec<u8>| l.as_slice()),
+            Err(KeyError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn exactly_one_present_token_under_the_label_is_selected() {
+        let slots = vec![
+            (1, b"other".to_vec()),
+            (4, b"prod".to_vec()),
+            (6, b"x".to_vec()),
+        ];
+        assert!(matches!(
+            select_token_slot(slots, "prod", |l: &Vec<u8>| l.as_slice()),
+            Ok((4, _))
+        ));
+        assert!(matches!(
+            select_token_slot(Vec::<(CK_SLOT_ID, Vec<u8>)>::new(), "prod", |l| l
+                .as_slice()),
+            Err(KeyError::NotFound(_))
+        ));
+        assert!(matches!(
+            select_token_slot(vec![(1, b"other".to_vec())], "prod", |l: &Vec<u8>| l
+                .as_slice()),
+            Err(KeyError::NotFound(_))
+        ));
+    }
 
     /// The point grammar is exact on purpose: a token may return `CKA_EC_POINT` bare or
     /// wrapped in a DER OCTET STRING, and both are conformant.

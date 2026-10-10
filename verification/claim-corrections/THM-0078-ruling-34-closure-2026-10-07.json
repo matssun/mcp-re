@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "`SigningWindow` (in `mcp-re-http-profile`) keeps `expires` private and no constructor accepts\none: every window is derived as the earlier of the configured TTL from `now` and the\ncredential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap\npast it. A credential already past its bound, or a non-positive TTL, obtains no signing\nwindow at all, and with no window nothing is signed. The delegated signing key is\ncrate-private to its `ActiveDelegatedKey`, and the emitters that read it take a window, so a\nsignature under a delegated credential cannot advertise any other validity. The proxy opens\nwindows at two sites \u2014 the exchange's opener and a refusal that carries its exchange's\nsnapshot \u2014 and both go through `SigningWindow::over`; every window this deployment signs\nunder, reply and refusal alike, is opened at one of them, and a refusal signs under the\nsnapshot its own exchange took.\n",
+      "old": "`SigningWindow` (in `mcp-re-http-profile`) keeps `expires` private and no constructor accepts\none: every window is derived as the earlier of the configured TTL from `now` and the\ncredential's own `exp`, with saturating arithmetic so an absurd configured TTL cannot wrap\npast it. A credential already past its bound yields a window claiming no future validity\nrather than one running backwards. The delegated signing key is crate-private to its\n`ActiveDelegatedKey`, and the emitters that read it take a window, so a signature under a\ndelegated credential cannot advertise any other validity. The proxy's one opener opens every\nwindow this deployment signs under, reply and refusal alike, and a refusal signs under the\nsnapshot its own exchange took.\n",
+      "reason": "THM-0063, in this theorem's dependency closure, field statement, replaced by the owner's Ruling 34 text (Ruling 34 \u00a72)."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is unchanged. The dependency digest moved solely because the claim digest of THM-0063 moved.",
+  "from_fingerprint": "sha256:44c755afd633fe9a5c9d3616f7f606b2963886b370a7fc2043d362d831be714e",
+  "packet": "docs/security/owner-approvals-2026-10-07.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION from the owner-ratified Ruling 34 correction of THM-0063. THM-0078's own statement, security_consequence and scope are byte-identical to the previous link of its correction chain; only the dependency digest moved, and no wording of its own became false.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5. The authority covering this record is the owner's Ruling 34 (2026-10-07), recorded in docs/security/owner-approvals-2026-10-07.jsonl. A correction record is not an approval: it does not make the specification-review axis fresh.",
+  "severity_after": "high",
+  "severity_before": "high",
+  "subject": "THM-0078",
+  "to_fingerprint": "sha256:991bd2c841d35e80aef3472e2b60ffd6d2fa406c21a6c669565686fc5cd7b720"
+}

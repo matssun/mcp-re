@@ -14,6 +14,7 @@ use mcp_re_core::SigningKey;
 use sha2::Digest;
 use sha2::Sha256;
 
+use mcp_re_http_profile::authenticate_admission;
 use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
 use mcp_re_http_profile::check_admission;
 use mcp_re_http_profile::issue_admission_assertion;
@@ -174,18 +175,17 @@ fn verify_and_check(
         .admission
         .clone()
         .expect("the request carries an admission binding");
-    check_admission(
+    let authenticated = authenticate_admission(
         &binding,
         assertion,
         &verified.resolved_actor().actor_id(),
-        authoritative,
         PROFILE_TAG,
         &[AUD],
         policy,
         NOW,
         issuer_resolver(),
-    )
-    .map(|_| ())
+    )?;
+    check_admission(authenticated, authoritative, policy, NOW).map(|_| ())
 }
 
 #[test]

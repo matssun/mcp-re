@@ -23,7 +23,15 @@
 //! confusion the C079 fix removed everywhere else — and it dropped the slot assertion, so a
 //! resolver handing back a Request-slot actor would have had its key accepted as a
 //! delegation root. Both are captured here and re-reported as themselves.
+//!
+//! # Whose credentials a root may issue
+//!
+//! The resolved root's role, trust domain and subject must equal those of the
+//! `server_signer` the credential names: a trusted Response-slot root vouches for its own
+//! principal and for no other, so a root cannot mint a key that speaks as a different
+//! server. A mismatch is `mcp-re.delegation_issuer_untrusted`.
 
+use crate::block::ActorIdentity;
 use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
@@ -70,11 +78,15 @@ pub(super) fn chain_to_root<R: Into<ResolverOutcome>>(
     };
     let resolve_failure: std::cell::RefCell<Option<HttpProfileError>> =
         std::cell::RefCell::new(None);
+    let resolved_root: std::cell::RefCell<Option<ActorIdentity>> = std::cell::RefCell::new(None);
     let verified = verify_delegation_credential(
         credential,
         &params,
         |issuer_kid| match resolve_actor_for_slot(resolve_actor, issuer_kid, SignerSlot::Response) {
-            Ok(actor) => Some(actor.verification_key),
+            Ok(actor) => {
+                *resolved_root.borrow_mut() = Some(actor.identity);
+                Some(actor.verification_key)
+            }
             // A definitive "not trusted" stays the credential layer's own verdict
             // (`mcp-re.delegation_issuer_untrusted`) — that IS the right token for an
             // issuer nobody vouches for. Only an OUTAGE and a wrong-slot actor are
@@ -87,5 +99,181 @@ pub(super) fn chain_to_root<R: Into<ResolverOutcome>>(
         },
         |kid| is_revoked(kid),
     );
-    verified.map_err(|e| resolve_failure.into_inner().unwrap_or(e))
+    let verified = verified.map_err(|e| resolve_failure.into_inner().unwrap_or(e))?;
+    let root = resolved_root.into_inner();
+    if !root.is_some_and(|root| speaks_for(&root, &block.server_signer)) {
+        return Err(HttpProfileError::DelegationIssuerUntrusted);
+    }
+    Ok(verified)
+}
+
+/// A root may only scope credentials to its own principal: the role, trust domain and
+/// subject it was resolved as must be those the credential names as the server signer. The
+/// keyid differs by construction (the delegated key is not the root key).
+// pub(crate): the bodied and bodyless delegated verifiers apply this one root-entitlement
+// rule, so the bodyless path must not carry a second copy of it.
+pub(crate) fn speaks_for(root: &ActorIdentity, server_signer: &ActorIdentity) -> bool {
+    root.role == server_signer.role
+        && root.trust_domain == server_signer.trust_domain
+        && root.subject == server_signer.subject
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::ActorIdentity;
+    use crate::block::ResolvedActor;
+    use crate::delegation::issue_delegation_credential;
+    use crate::delegation::Audience;
+    use crate::delegation::Cnf;
+    use crate::delegation::DelegatedJwk;
+    use crate::delegation::DelegationClaims;
+    use crate::delegation::DelegationHeader;
+    use crate::delegation::DELEGATION_ALG;
+    use crate::delegation::DELEGATION_TYP;
+    use crate::delegation::JWK_CRV_ED25519;
+    use crate::delegation::JWK_KTY_OKP;
+    use crate::delegation::KEY_USE_RESPONSE_SIGNING;
+    use crate::evidence::RequestEvidenceDigest;
+    use mcp_re_core::SigningKey;
+
+    const NOW: i64 = 1_700_000_100;
+    const ROOT_KID: &str = "root-kid";
+    const DELEGATED_KID: &str = "root-kid/delegated/1";
+    const VERIFIER_AUD: &str = "verifier-1";
+    const AUD_SCOPE: &str = "aud-scope-1";
+    const EPOCH: &str = "epoch-1";
+
+    fn root_key() -> SigningKey {
+        SigningKey::from_seed_bytes(&[33u8; 32])
+    }
+
+    fn server_signer() -> ActorIdentity {
+        ActorIdentity {
+            role: "server".into(),
+            trust_domain: "example.com".into(),
+            subject: "did:example:server".into(),
+            keyid: DELEGATED_KID.into(),
+        }
+    }
+
+    fn block() -> HttpResponseEvidenceBlock {
+        let delegated = SigningKey::from_seed_bytes(&[44u8; 32]);
+        let header = DelegationHeader {
+            typ: DELEGATION_TYP.into(),
+            alg: DELEGATION_ALG.into(),
+            kid: ROOT_KID.into(),
+        };
+        let claims = DelegationClaims {
+            iss: "did:example:server".into(),
+            iat: 1_700_000_000,
+            nbf: 1_700_000_000,
+            exp: 1_700_000_300,
+            jti: "evt-1".into(),
+            aud: Audience::One(VERIFIER_AUD.into()),
+            mcp_re_profile: PROFILE_TAG.into(),
+            mcp_re_audience_hash: AUD_SCOPE.into(),
+            mcp_re_server_signer: server_signer().actor_id(),
+            mcp_re_key_use: KEY_USE_RESPONSE_SIGNING.into(),
+            delegated_kid: DELEGATED_KID.into(),
+            issuer_kid: ROOT_KID.into(),
+            trust_epoch: EPOCH.into(),
+            cnf: Cnf {
+                jwk: DelegatedJwk {
+                    kty: JWK_KTY_OKP.into(),
+                    crv: JWK_CRV_ED25519.into(),
+                    kid: DELEGATED_KID.into(),
+                    x: delegated.public_key().to_b64url(),
+                },
+            },
+        };
+        HttpResponseEvidenceBlock {
+            profile: PROFILE_TAG.into(),
+            server_signer: server_signer(),
+            server_delegation: Some(issue_delegation_credential(&root_key(), &header, &claims)),
+            request_evidence: RequestEvidenceDigest {
+                digest_alg: "sha-256".into(),
+                digest_value: "unused".into(),
+            },
+        }
+    }
+
+    fn root_actor(slot: SignerSlot) -> ResolvedActor {
+        ResolvedActor {
+            identity: ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: ROOT_KID.into(),
+            },
+            verification_key: root_key().public_key(),
+            slot,
+        }
+    }
+
+    fn chain(
+        resolve: &dyn Fn(&str, SignerSlot) -> ResolverOutcome,
+    ) -> Result<VerifiedDelegation, HttpProfileError> {
+        let block = block();
+        let credential = block.server_delegation.clone().unwrap_or_default();
+        let expect = DelegationExpectations {
+            verifier_audiences: &[VERIFIER_AUD],
+            expected_audience_hash: AUD_SCOPE,
+            accepted_epochs: &[EPOCH],
+            max_clock_skew: 60,
+        };
+        chain_to_root(&credential, &block, resolve, &expect, &|_| false, NOW)
+    }
+
+    #[test]
+    fn a_root_cannot_issue_for_another_principals_server_signer() {
+        let result = chain(&|_, slot| {
+            let mut actor = root_actor(slot);
+            actor.identity.subject = "did:example:someone-else".into();
+            ResolverOutcome::Resolved(Box::new(actor))
+        });
+        assert!(matches!(
+            result,
+            Err(HttpProfileError::DelegationIssuerUntrusted)
+        ));
+    }
+
+    #[test]
+    fn an_outage_resolving_the_root_is_reported_as_unavailable() {
+        let result = chain(&|_, _| ResolverOutcome::Unavailable);
+        assert!(matches!(
+            result,
+            Err(HttpProfileError::TrustResolverUnavailable)
+        ));
+    }
+
+    #[test]
+    fn a_wrong_slot_root_actor_is_refused_not_accepted() {
+        let result =
+            chain(&|_, _| ResolverOutcome::Resolved(Box::new(root_actor(SignerSlot::Request))));
+        assert!(matches!(result, Err(HttpProfileError::ActorSlotMismatch)));
+    }
+
+    #[test]
+    fn a_definitive_not_trusted_root_stays_issuer_untrusted() {
+        let result = chain(&|_, _| ResolverOutcome::NotTrusted);
+        assert!(matches!(
+            result,
+            Err(HttpProfileError::DelegationIssuerUntrusted)
+        ));
+    }
+
+    #[test]
+    fn a_response_slot_root_with_a_matching_credential_verifies() {
+        let result = chain(&|_, slot| match slot {
+            SignerSlot::Response => {
+                ResolverOutcome::Resolved(Box::new(root_actor(SignerSlot::Response)))
+            }
+            _ => ResolverOutcome::NotTrusted,
+        });
+        assert_eq!(
+            result.map(|v| v.delegated_kid).ok().as_deref(),
+            Some(DELEGATED_KID)
+        );
+    }
 }

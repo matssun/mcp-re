@@ -107,8 +107,8 @@ ORCHESTRATOR_SYNTHESIZED = {"lost", "not-started"}
 # A closure is terminal for a FINDING. `escalated` and `needs-senior-eval` are
 # explicitly NOT here: they block, which is the whole reason they must be
 # enumerable rather than merely countable.
-TERMINAL_FINDING_STATUS = {"fixed", "false-positive", "accepted-risk", "duplicate",
-                           "wontfix", "superseded", "deleted-with-owner",
+TERMINAL_FINDING_STATUS = {"fixed", "false-positive", "premise", "constraint", "duplicate",
+                           "superseded", "deleted-with-owner",
                            "positive-control", "informational", "parked-external"}
 BLOCKING_FINDING_STATUS = {"escalated", "needs-senior-eval", "exhausted",
                            "architecture-blocked", "open", "regression"}
@@ -667,7 +667,7 @@ def _attention(state: dict) -> dict:
         (f["finding_id"], f["severity"], f["status"], f["file"])
         for f in findings.values()
         if f["severity"] in ("critical", "high")
-        and f["status"] in ("false-positive", "accepted-risk", "wontfix"))
+        and f["status"] in ("false-positive", "premise", "constraint"))
     blocking_by_severity: dict = defaultdict(int)
     for f in blocking.values():
         blocking_by_severity[f["severity"] or "unknown"] += 1

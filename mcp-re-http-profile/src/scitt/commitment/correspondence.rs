@@ -52,46 +52,46 @@ impl EvidenceCommitment {
     ///
     /// The `submitted_commitment` clause is deliberately asymmetric — see
     /// [`submission_corresponds_to`](Self::submission_corresponds_to).
-    pub(crate) fn corresponds_to(
+    pub(in crate::scitt) fn corresponds_to(
         &self,
         recomputed: &Self,
     ) -> Result<RetainedCorrespondence, HttpProfileError> {
-        // A record with no verified hop commits to no CALL — but it still commits to a
-        // submission, and that field is call-specific where the identity fields are not.
-        // Returning early here is what left the one meaningful binding unexercised on
-        // exactly the records an auditor investigates (R9-C103, R9-C128). The weaker
-        // verdict is reached through the same submission comparison as the stronger one,
-        // so there is no path out of this function that skipped it.
-        if !self.commits_to_verified_evidence() || !recomputed.commits_to_verified_evidence() {
-            self.submission_corresponds_to(recomputed)?;
-            return Ok(RetainedCorrespondence::BoundToSubmissionOnly);
-        }
-        if recomputed.request_evidence != self.request_evidence {
+        // `submitted_commitment` is compared by `submission_corresponds_to` below.
+        let EvidenceCommitment {
+            request_evidence,
+            response_evidence,
+            bindings_commitment,
+            verified_context_commitment,
+            chain_label,
+            chain_commitment,
+            submitted_commitment: _,
+        } = self;
+        if recomputed.request_evidence != *request_evidence {
             return Err(HttpProfileError::MalformedEvidence(
                 "retained request evidence does not match the commitment",
             ));
         }
-        if recomputed.response_evidence != self.response_evidence {
+        if recomputed.response_evidence != *response_evidence {
             return Err(HttpProfileError::MalformedEvidence(
                 "retained response evidence does not match the commitment",
             ));
         }
-        if recomputed.chain_commitment != self.chain_commitment {
+        if recomputed.chain_commitment != *chain_commitment {
             return Err(HttpProfileError::MalformedEvidence(
                 "retained chain does not match the committed chain shape",
             ));
         }
-        if recomputed.chain_label != self.chain_label {
+        if recomputed.chain_label != *chain_label {
             return Err(HttpProfileError::MalformedEvidence(
                 "retained chain label does not match the commitment",
             ));
         }
-        if recomputed.bindings_commitment != self.bindings_commitment {
+        if recomputed.bindings_commitment != *bindings_commitment {
             return Err(HttpProfileError::MalformedEvidence(
                 "retained artifact bindings do not match the commitment",
             ));
         }
-        if recomputed.verified_context_commitment != self.verified_context_commitment {
+        if recomputed.verified_context_commitment != *verified_context_commitment {
             return Err(HttpProfileError::MalformedEvidence(
                 "retained verified context does not match the commitment",
             ));
@@ -103,7 +103,13 @@ impl EvidenceCommitment {
         // present `[h0, h1, h2']`, and as long as `h2'` fails at the same hop index for the
         // same reason the label and both digests still match.
         self.submission_corresponds_to(recomputed)?;
-        Ok(RetainedCorrespondence::BoundToVerifiedCall)
+        // The verdict is chosen only after every field matched; it names what the statement
+        // identifies.
+        if self.commits_to_verified_evidence() {
+            Ok(RetainedCorrespondence::BoundToVerifiedCall)
+        } else {
+            Ok(RetainedCorrespondence::BoundToSubmissionOnly)
+        }
     }
 
     /// Whether `recomputed` carries the SUBMISSION this commitment was issued over.
@@ -131,5 +137,80 @@ impl EvidenceCommitment {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chain::{ChainLabel, ChainReconstruction, IncompleteReason};
+    use crate::scitt::fixtures::*;
+
+    fn broke_at_hop_zero(reason: IncompleteReason) -> ChainReconstruction {
+        ChainReconstruction::with_authored_submission_identity(
+            ChainLabel::Incomplete { hop: 0, reason },
+            Vec::new(),
+            "submission-s".to_owned(),
+        )
+    }
+
+    #[test]
+    fn a_statement_over_a_verified_call_does_not_bind_a_reconstruction_that_verified_nothing() {
+        let issued = EvidenceCommitment::from_reconstruction(
+            &ChainReconstruction::with_authored_submission_identity(
+                ChainLabel::Complete,
+                recon(ChainLabel::Complete, 2).hop_evidence().to_vec(),
+                "submission-s".to_owned(),
+            ),
+            None,
+            None,
+        );
+        let recomputed = EvidenceCommitment::from_reconstruction(
+            &broke_at_hop_zero(IncompleteReason::RequestUnverifiable(
+                HttpProfileError::InvalidSignature,
+            )),
+            None,
+            None,
+        );
+        assert_eq!(
+            issued.corresponds_to(&recomputed).unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "retained request evidence does not match the commitment"
+            )
+        );
+    }
+
+    #[test]
+    fn the_submission_only_verdict_still_compares_label_and_artifacts() {
+        let base = broke_at_hop_zero(IncompleteReason::RequestUnverifiable(
+            HttpProfileError::InvalidSignature,
+        ));
+        let committed = EvidenceCommitment::from_reconstruction(&base, None, None);
+
+        let other_label = EvidenceCommitment::from_reconstruction(
+            &broke_at_hop_zero(IncompleteReason::EmptyChain),
+            None,
+            None,
+        );
+        assert_eq!(
+            committed.corresponds_to(&other_label).unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "retained chain label does not match the commitment"
+            )
+        );
+
+        let with_bindings =
+            EvidenceCommitment::from_reconstruction(&base, Some("bindings-b".to_owned()), None);
+        assert_eq!(
+            with_bindings.corresponds_to(&committed).unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "retained artifact bindings do not match the commitment"
+            )
+        );
+
+        assert_eq!(
+            committed.corresponds_to(&committed),
+            Ok(RetainedCorrespondence::BoundToSubmissionOnly)
+        );
     }
 }

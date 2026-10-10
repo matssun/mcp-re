@@ -37,27 +37,28 @@
 //!
 //! # What reaches the degraded fork, and what does not
 //!
-//! Only a store that did not ANSWER. A connect failure or a failed `GET` is
-//! [`AdmissionSourceError::Unavailable`], which the serving path routes to the §5.2
-//! degraded fork — served only if the deployment opted in, and only within P.
+//! Only a store that did not ANSWER — a connect failure, or a `GET` [`reply`] classes as
+//! unanswered (a dropped, refused or timed-out connection, or a server answering nothing right
+//! now) — is [`AdmissionSourceError::Unavailable`], routed to the §5.2 degraded fork within P.
 //!
 //! A store that answered with something this deployment will not act on — absent, malformed,
-//! wrongly signed, wrongly issued, about another workload, or past the currentness budget —
-//! is `Ok(None)`, a definitive negative. Routing those to the degraded fork would serve the
-//! caller on its own assertion, so corrupting a `revoked` record would be a cheaper
-//! un-revoke than issuing a new admission.
+//! wrongly signed, wrongly issued, about another workload, past the currentness budget, or
+//! rejecting this deployment's credentials — is a definitive negative (`AnsweredAs::NoRecord`
+//! or `AnsweredAs::Refused`). Routing those to the degraded fork would serve the caller on its
+//! own assertion, so corrupting a `revoked` record would be a cheaper un-revoke.
 
 use redis::aio::ConnectionManager;
 
 /// Saying WHICH refusal class fired, at a pace a caller cannot set.
 mod refusal_report;
+/// What one `GET` reply is: an outage, or the store's answer about the key.
+mod reply;
 
 use refusal_report::ReportedClasses;
 
-use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
-
 use crate::admission_source::admission_key;
-use crate::admission_source::classify_answer;
+use crate::admission_source::classify_stored_bytes;
+use crate::admission_source::classify_unreadable_reply;
 use crate::admission_source::AdmissionFuture;
 use crate::admission_source::AdmissionRecordVerifier;
 use crate::admission_source::AdmissionSourceError;
@@ -65,6 +66,7 @@ use crate::admission_source::AnsweredAs;
 use crate::admission_source::AsyncAdmissionSource;
 use crate::async_redis_store::retention_promise;
 use crate::deployment_request::RedactedLocator;
+use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal;
 
 /// A cross-process authoritative admission source backed by Redis.
 pub struct RedisAdmissionSource {
@@ -129,30 +131,31 @@ impl RedisAdmissionSource {
     /// a timer. The record's own `exp` is what bounds it, and the authority republishes.
     /// Setting no expiry is only half of that: an evicting instance drops the key anyway at
     /// `maxmemory`, so [`Self::connect`] refuses one that does not promise otherwise.
+    ///
+    /// The outer error is an outage: the store did not answer. The inner one is the record
+    /// refused, a verdict on the bytes. The decision does not raise this replica's read
+    /// floor, because a record this process has not read back is not one it observed.
     pub async fn publish(
         &self,
         signed_record: &str,
         subject: &str,
         now: i64,
-    ) -> Result<(), AdmissionSourceError> {
-        let verified = self
-            .verifier
-            .verify(subject, signed_record, now)
-            .map_err(|refusal| AdmissionSourceError::Unavailable {
-                details: format!(
-                    "refusing to publish an admission record this deployment would not \
-                     accept: {refusal}"
-                ),
-            })?;
+    ) -> Result<Result<(), AdmissionRecordRefusal>, AdmissionSourceError> {
+        let verified = match self.verifier.verify_unobserved(subject, signed_record, now) {
+            Ok(verified) => verified,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
         let mut conn = self.conn.clone();
         let result: Result<(), redis::RedisError> = redis::cmd("SET")
             .arg(admission_key(verified.state().admission_id()))
             .arg(signed_record)
             .query_async(&mut conn)
             .await;
-        result.map_err(|e| AdmissionSourceError::Unavailable {
-            details: format!("redis SET admission failed: {e}"),
-        })
+        result
+            .map(Ok)
+            .map_err(|e| AdmissionSourceError::Unavailable {
+                details: format!("redis SET admission failed: {e}"),
+            })
     }
 
     /// The inherent read, so `publish` need not go through the trait object.
@@ -160,39 +163,36 @@ impl RedisAdmissionSource {
         &self,
         admission_id: &str,
         now: i64,
-    ) -> Result<Option<CurrentAdmissionState>, AdmissionSourceError> {
+    ) -> Result<AnsweredAs, AdmissionSourceError> {
         let mut conn = self.conn.clone();
-        let raw: Result<Option<String>, redis::RedisError> = redis::cmd("GET")
+        let raw: Result<redis::Value, redis::RedisError> = redis::cmd("GET")
             .arg(admission_key(admission_id))
             .query_async(&mut conn)
             .await;
-        // The ONLY outage. Everything below is the store having answered, and what an
-        // answer means is `crate::admission_source::answer`'s — a classification with no
-        // outage inhabitant, so no arm of it can reach the degraded fork.
-        let raw = raw.map_err(|e| AdmissionSourceError::Unavailable {
-            details: format!("redis GET admission failed: {e}"),
-        })?;
-        Ok(
-            match classify_answer(&self.verifier, admission_id, raw.as_deref(), now) {
-                AnsweredAs::State(state) => Some(state),
-                AnsweredAs::NoRecord => None,
-                // What this adapter adds to the shared classification: saying WHICH class
-                // fired, at a pace a caller cannot set.
-                AnsweredAs::Refused(refusal) => {
-                    self.reported.report_once(refusal);
-                    None
-                }
-            },
-        )
+        // The ONLY outage is `read_reply`'s `Err`. Everything below is the store having
+        // answered, and what an answer means is `crate::admission_source::answer`'s — a
+        // classification with no outage inhabitant, so no arm of it can reach the degraded
+        // fork.
+        let answer = match reply::read_reply(raw)? {
+            reply::StoreReply::Absent => {
+                classify_stored_bytes(&self.verifier, admission_id, None, now)
+            }
+            reply::StoreReply::Bytes(bytes) => {
+                classify_stored_bytes(&self.verifier, admission_id, Some(&bytes), now)
+            }
+            reply::StoreReply::Unreadable => classify_unreadable_reply(),
+        };
+        // What this adapter adds to the shared classification: saying WHICH class fired, at
+        // a pace a caller cannot set. The answer itself still carries the class to the gate.
+        if let AnsweredAs::Refused(refusal) = &answer {
+            self.reported.report_once(*refusal);
+        }
+        Ok(answer)
     }
 }
 
 impl AsyncAdmissionSource for RedisAdmissionSource {
-    fn current<'a>(
-        &'a self,
-        admission_id: &'a str,
-        now: i64,
-    ) -> AdmissionFuture<'a, Option<CurrentAdmissionState>> {
+    fn current<'a>(&'a self, admission_id: &'a str, now: i64) -> AdmissionFuture<'a, AnsweredAs> {
         Box::pin(async move { self.current_state(admission_id, now).await })
     }
 }
@@ -352,6 +352,97 @@ mod tests {
             .await
             .map(|_| ())
             .expect("noeviction is the supported configuration");
+    }
+
+    /// A record this deployment would not accept is a verdict on the bytes, so it must not
+    /// inhabit the outage variant the serving path routes to the degraded fork.
+    #[tokio::test]
+    async fn a_publish_refusal_is_a_verdict_and_not_an_outage() {
+        let url = redis_reporting("noeviction").await;
+        let source = RedisAdmissionSource::connect(&url, verifier_for(&authority(), 60, 5))
+            .await
+            .expect("noeviction is the supported configuration");
+        let attacker = SigningKey::from_seed_bytes(&[4u8; 32]);
+        let outcome = source
+            .publish(&signed_admitted(&attacker, "wl", 9, 1, 1_000), "wl", 1_030)
+            .await;
+        assert!(
+            matches!(outcome, Ok(Err(AdmissionRecordRefusal::SignatureInvalid))),
+            "{outcome:?}"
+        );
+    }
+
+    /// The floor is this process's READ history: a publication whose SET may not have
+    /// landed is not one it observed, so a later read of an older record still passes.
+    #[tokio::test]
+    async fn publishing_a_record_does_not_raise_this_replicas_read_floor() {
+        let key = authority();
+        let url = redis_reporting("noeviction").await;
+        let source = RedisAdmissionSource::connect(&url, verifier_for(&key, 60, 5))
+            .await
+            .expect("noeviction is the supported configuration");
+        assert!(matches!(
+            source
+                .publish(&signed_admitted(&key, "wl", 7, 4, 1_000), "wl", 1_030)
+                .await,
+            Ok(Ok(()))
+        ));
+        assert!(source
+            .verifier
+            .verify("wl", &signed_admitted(&key, "wl", 7, 1, 1_000), 1_030)
+            .is_ok());
+    }
+
+    /// A connected source over a scripted server answering every `GET` with `reply`.
+    async fn source_answering_get(reply: &str) -> RedisAdmissionSource {
+        use crate::async_redis_store::retention_promise::scripted_server::{serve, Script};
+        let (url, _) = serve(Script {
+            policy: Some("noeviction".to_string()),
+            recorded: vec!["GET".to_string()],
+            reply: reply.to_string(),
+        })
+        .await;
+        RedisAdmissionSource::connect(&url, verifier_for(&authority(), 60, 5))
+            .await
+            .expect("noeviction is the supported configuration")
+    }
+
+    /// THM-0129's adversary can write the store and holds no signing key. Giving a revoked
+    /// workload's key another Redis type makes the server answer `WRONGTYPE`; that is the
+    /// store's answer about the key and must be a refused record, because an outage would
+    /// reach the replica-wide degraded window that other workloads' reads keep open.
+    #[tokio::test]
+    async fn a_key_of_another_type_is_a_refused_record_and_not_an_outage() {
+        let source = source_answering_get(
+            "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+        )
+        .await;
+        let answer = source.current_state("wl", 1_030).await;
+        assert!(
+            matches!(
+                answer,
+                Ok(crate::admission_source::AnsweredAs::Refused(
+                    AdmissionRecordRefusal::Malformed
+                ))
+            ),
+            "{answer:?}"
+        );
+    }
+
+    /// A reply of another shape than a string is the same class of answer.
+    #[tokio::test]
+    async fn a_reply_that_is_not_a_string_is_a_refused_record_and_not_an_outage() {
+        let source = source_answering_get(":5\r\n").await;
+        let answer = source.current_state("wl", 1_030).await;
+        assert!(
+            matches!(
+                answer,
+                Ok(crate::admission_source::AnsweredAs::Refused(
+                    AdmissionRecordRefusal::Malformed
+                ))
+            ),
+            "{answer:?}"
+        );
     }
 
     /// The key an operator reads in `redis-cli` is still the workload's own name.

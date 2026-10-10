@@ -55,20 +55,19 @@ use crate::communication_assurance::VerifiedRequestSubject;
 /// selected field is absent from the client certificate, identity extraction
 /// returns `None` and the (required) transport binding fails closed — a missing
 /// URI SAN must never be quietly downgraded to a DNS SAN or a Common Name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityPolicy {
-    /// URI Subject Alternative Name (SPIFFE-style). The recommended default:
-    /// URI SANs are unambiguous, namespaced, and the SPIFFE/workload-identity
-    /// convention.
-    #[default]
+    /// URI Subject Alternative Name (SPIFFE-style). The recommended field: URI SANs are
+    /// unambiguous, namespaced, and the SPIFFE/workload-identity convention.
     UriSan,
     /// DNS Subject Alternative Name. Use only when the deployment's client
     /// identities are genuinely DNS names and this is an explicit choice.
     DnsSan,
-    /// Subject Common Name. LEGACY ONLY — the CN is unstructured and deprecated
-    /// for identity by the CA/Browser Forum. Selecting it emits a startup
-    /// warning; prefer a URI or DNS SAN.
-    CnLegacy,
+}
+
+impl IdentityPolicy {
+    /// The field where none is named: a constant, not a `Default`, so the owner applies it.
+    pub const RECOMMENDED: Self = Self::UriSan;
 }
 
 /// The parsed HTTP request headers of an inbound connection. This is a thin,
@@ -85,17 +84,19 @@ pub struct RequestHeaders {
 }
 
 impl RequestHeaders {
-    /// Parse an HTTP/1.1 header block (the bytes up to and including the
-    /// terminating `\r\n\r\n`, or any prefix of it) into a header view. The
-    /// request line (first line) is skipped; malformed lines without a `:` are
-    /// ignored. Values are trimmed of surrounding whitespace.
+    /// Parse an HTTP/1.1 header block into a header view. The request line (first
+    /// line) is skipped, and the first empty line ends the block: nothing after the
+    /// terminating `\r\n\r\n` is read, so body bytes passed along with the block can
+    /// never become headers. A block with no terminator yields the header lines it
+    /// holds. Malformed lines without a `:` are ignored; values are trimmed of
+    /// surrounding whitespace.
     pub fn parse(header_block: &str) -> Self {
         let mut headers = Vec::new();
-        for (index, line) in header_block.lines().enumerate() {
-            // Skip the request line (`POST / HTTP/1.1`) and blank lines.
-            if index == 0 || line.trim().is_empty() {
-                continue;
-            }
+        for line in header_block
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.is_empty())
+        {
             if let Some((name, value)) = line.split_once(':') {
                 headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
             }
@@ -339,7 +340,7 @@ mod tests {
         use mcp_re_http_profile::ResolvedActor;
         use mcp_re_http_profile::SignerSlot;
 
-        crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject(
+        crate::communication_assurance::request_peer_binding::http_profile_adapter::subject_for_test(
             &ResolvedActor {
                 identity: ActorIdentity {
                     role: "client".into(),
@@ -371,6 +372,41 @@ mod tests {
             "the request line is not a header"
         );
         assert_eq!(headers.count("x-forwarded-client-cert"), 1);
+    }
+
+    #[test]
+    fn request_headers_parse_reads_nothing_after_the_header_terminator() {
+        let block =
+            "POST /mcp HTTP/1.1\r\nHost: proxy\r\nX-Forwarded-Client-Cert: URI=spiffe://a\r\n\r\n\
+                     X-Forwarded-Client-Cert: URI=spiffe://forged\r\nX-Body-Line: smuggled\r\n";
+        let headers = RequestHeaders::parse(block);
+        assert_eq!(
+            headers.count("x-forwarded-client-cert"),
+            1,
+            "a body line shaped like a header must not be counted as one"
+        );
+        assert_eq!(
+            headers.first("x-forwarded-client-cert"),
+            Some("URI=spiffe://a")
+        );
+        assert_eq!(headers.first("x-body-line"), None);
+        assert_eq!(headers.first("host"), Some("proxy"));
+    }
+
+    #[test]
+    fn request_headers_parse_a_block_that_starts_with_its_terminator_holds_no_header() {
+        let headers = RequestHeaders::parse("POST /mcp HTTP/1.1\r\n\r\nHost: body\r\n");
+        assert_eq!(headers.first("host"), None);
+        assert_eq!(headers.count("host"), 0);
+    }
+
+    #[test]
+    fn request_headers_parse_an_unterminated_block_yields_only_its_own_lines() {
+        let headers = RequestHeaders::parse("POST /mcp HTTP/1.1\r\nHost: proxy\r\nX-A: 1");
+        assert_eq!(headers.first("host"), Some("proxy"));
+        assert_eq!(headers.first("x-a"), Some("1"));
+        assert_eq!(RequestHeaders::parse("").count("host"), 0);
+        assert_eq!(RequestHeaders::parse("POST /mcp HTTP/1.1").count("host"), 0);
     }
 
     /// The binding relation, over the two SEMANTIC products — ADR-MCPRE-064 Slice 4.

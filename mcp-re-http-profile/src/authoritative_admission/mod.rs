@@ -16,36 +16,33 @@
 //! fails it outright: there is no check to delete, because there was never anything to
 //! compare.
 //!
-//! So the subject is a member, and it is the one that must be supplied by name. The fields
-//! are not public: [`AuthoritativeAdmission::new`] is the only construction, and it cannot
-//! be called without saying whose state this is. An adapter that reads a record out of a
-//! store must therefore name the id it looked the record up under, which is the honest
-//! answer and the one the store's own key already carried.
+//! So the subject is a member: a state cannot be built without naming the workload it
+//! describes. `#[non_exhaustive]` makes [`AuthoritativeAdmission::new`] the only way to
+//! build one outside this crate, which is what forces the subject to be named; that is all
+//! it does. An adapter that reads a record out of a store must therefore name the id it
+//! looked the record up under, which the store's own key already carried.
 //!
-//! # What seals it, given that the fields are `pub`
+//! # What this type does not seal
 //!
-//! `#[non_exhaustive]`, and here that is not the weak choice the workspace rules warn
-//! about. Those rules say `#[non_exhaustive]` seals nothing BECAUSE it binds only other
-//! crates, and an owner's consumers usually live in the owner's own crate. That premise is
-//! false for this owner: every consumer of authoritative admission state — the Redis
-//! source, the in-memory source, the enforcer, every integration test — is in
-//! `mcp-re-proxy`. Out there the struct literal is refused outright, so [`Self::new`] is
-//! the only construction and it cannot be called without naming the workload. Inside this
-//! crate the consumers are `check_admission`, which is this authority's own decision
-//! procedure, and its Verus contract.
+//! This type is the semantic fact and is deliberately freely constructible: `new` is `pub`
+//! and checks nothing, the fields are `pub`, and the type is `Clone`, so any holder can
+//! build or overwrite one. Possessing an `AuthoritativeAdmission` therefore says nothing
+//! about who asserted it, and the postcondition of `check_admission` is conditional on the
+//! caller supplying authenticated state.
 //!
 //! The fields are `pub` because the PROVER requires it. Verus refuses
 //! `external_type_specification` on a datatype with non-public fields, and the contract on
 //! `check_admission` is this theorem's primary evidence: `state.admission_id@ ==
 //! binding.admission_id@` is a conjunct of the postcondition, not a step in the body. The
 //! alternative is an opaque datatype with the three members re-introduced as uninterpreted
-//! spec functions — three new trusted assumptions, and generation and status demoted from
-//! transparent field reads to axioms, to buy a seal `#[non_exhaustive]` already gives
-//! against every actual consumer. Private fields would cost the machine-checked conjunct
-//! and buy nothing.
+//! spec functions: three new trusted assumptions, and generation and status demoted from
+//! transparent field reads to axioms. Private fields would cost the machine-checked
+//! conjunct, so the fact is not sealed.
 //!
-//! Reading a field cannot produce an illegal value; only construction can, and construction
-//! is what is closed.
+//! Authenticated provenance is owned by [`record::CurrentAdmissionState`], whose
+//! representation is private and whose only constructor is
+//! [`record::verify_admission_state_record`]. The enforcement point obtains state only
+//! through it and passes `state()` to the currency check.
 
 /// The AUTHENTICATED form of this fact: what the admission authority publishes, and the
 /// verification that is the only way to obtain a state the enforcement point will act on.
@@ -77,9 +74,9 @@ pub struct AuthoritativeAdmission {
 impl AuthoritativeAdmission {
     /// The authoritative state for `admission_id`, at `generation`, with `status`.
     ///
-    /// The only construction. A caller that does not know which workload it is describing
-    /// cannot produce a value at all, which is the point: this is a fact about one
-    /// admission and it is not well formed without naming it.
+    /// Builds the semantic fact for a named workload, with no provenance check. A caller
+    /// must say which workload it is describing, because the fact is not well formed
+    /// without naming it.
     pub fn new(admission_id: String, generation: u64, status: AdmissionStatus) -> Self {
         AuthoritativeAdmission {
             admission_id,

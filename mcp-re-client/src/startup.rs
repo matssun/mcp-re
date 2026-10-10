@@ -11,7 +11,7 @@
 //! WITHDRAWN once the manifest in force has passed its own `expires_at`, and nothing on the
 //! request path consults that expiry. A client without it verifies for as long as it runs
 //! under a trust picture whose governing document has lapsed, which is exactly the state the
-//! manifest loader''s expiry check exists to refuse. `validate()` bounds
+//! manifest loader's expiry check exists to refuse. `validate()` bounds
 //! `trust.reload_secs`, so the cadence is also a ceiling on that window.
 
 use std::process::ExitCode;
@@ -47,14 +47,6 @@ fn install_shutdown_handlers() {
     }
 }
 
-/// The floor posture for the startup banner.
-///
-/// `bootstrap_version` is reported rather than elided. It is the only part of a durable
-/// floor an attacker cannot reach by unlinking the directory and the only part an
-/// ephemeral volume cannot lose, and it defaults to 0 — so "durable" on its own names
-/// the storage an operator chose while saying nothing about whether any of it is
-/// actually beyond reach. On the common sidecar deployment, where the floor directory
-/// is an emptyDir, a bootstrap of 0 means a restart resets the floor to whatever the
 /// What the command line asked for.
 ///
 /// Two questions and nothing else: which configuration, and whether to serve. The parser is
@@ -111,27 +103,33 @@ pub(crate) fn parse_invocation(args: &[String]) -> Result<Invocation, ExitCode> 
     })
 }
 
-/// Wall-clock unix seconds.
-pub(crate) fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+/// Wall-clock Unix seconds, or `None` when the host clock does not read as a Unix time.
+///
+/// An unreadable clock is not a time. Every trust-lifetime gate this value reaches — manifest
+/// expiry at startup, the refresher's withdrawal — compares `now > expires_at`, and an early
+/// instant reads as "not expired", so substituting 0 would switch all of them off at once.
+pub(crate) fn now_unix() -> Option<i64> {
+    unix_seconds(std::time::SystemTime::now())
+}
+
+/// `at` as whole seconds since the Unix epoch; `None` before the epoch or past `i64`.
+fn unix_seconds(at: std::time::SystemTime) -> Option<i64> {
+    let elapsed = at.duration_since(std::time::UNIX_EPOCH).ok()?;
+    i64::try_from(elapsed.as_secs()).ok()
 }
 
 /// Serve until a shutdown signal is observed.
 ///
 /// The anchor refresher is started UNCONDITIONALLY and held for the process lifetime. It is
-/// not only how a published revocation reaches a running client — it is the only place
-/// anchors are WITHDRAWN once the manifest in force has passed its own `expires_at`, and
-/// nothing on the request path consults that expiry. A client without it verifies for as
-/// long as it runs under a trust picture whose governing document has lapsed, which is
-/// exactly the state the manifest loader's expiry check exists to refuse. `validate()`
-/// bounds `trust.reload_secs`, so the cadence is also a ceiling on that window.
+/// the only place a newer manifest — a revocation, a rotation, an extension — reaches a
+/// running client. A client without it keeps trusting a root an org has since revoked or
+/// retired, under the superseded picture, until that picture's own `expires_at`.
+/// `validate()` bounds `trust.reload_secs`, so the cadence is also a ceiling on how long a
+/// published revocation waits to take effect.
 pub(crate) fn serve_until_shutdown(
     config: &ClientConfig,
     built: mcp_re_client::BuiltClient,
-    listener: std::net::TcpListener,
+    listener: mcp_re_client::serve::BoundListener,
 ) -> ExitCode {
     let _refresher = AnchorRefresher::start(
         built.loader,
@@ -150,7 +148,10 @@ pub(crate) fn serve_until_shutdown(
         stop_loop.store(true, Ordering::Relaxed);
     });
 
-    eprintln!("mcp-re-client: serving plain MCP on {}", config.local.bind);
+    eprintln!(
+        "mcp-re-client: serving plain MCP on {}",
+        listener.local_addr()
+    );
     if let Err(e) = mcp_re_client::serve::serve(listener, built.context, stop) {
         eprintln!("mcp-re-client: the local listener could not be served: {e}");
         return ExitCode::FAILURE;
@@ -161,6 +162,14 @@ pub(crate) fn serve_until_shutdown(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pre_epoch_clock_is_not_a_time() {
+        let epoch = std::time::UNIX_EPOCH;
+        assert_eq!(unix_seconds(epoch - Duration::from_secs(1)), None);
+        assert_eq!(unix_seconds(epoch), Some(0));
+        assert_eq!(unix_seconds(epoch + Duration::from_secs(5)), Some(5));
+    }
     use mcp_re_client::config::ClientConfig;
     use mcp_re_client::config::DelegationConfig;
     use mcp_re_client::config::FloorConfig;
@@ -313,7 +322,7 @@ mod tests {
     #[test]
     fn the_serving_path_starts_the_anchor_refresher_and_anchors_are_withdrawn_on_expiry() {
         let scratch = Scratch::new("refresher");
-        let load_time = now_unix();
+        let load_time = now_unix().expect("a readable host clock");
         // Two seconds of validity: long enough that the startup load accepts the document
         // and the first refresh cycle keeps it, short enough that the control does not
         // stand in for a deployment's cadence.
@@ -339,9 +348,15 @@ mod tests {
         // exactly the case where holding the last good set is the wrong answer.
         std::fs::remove_file(scratch.join("manifest.json")).expect("unpublish");
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
-        let bind = listener.local_addr().expect("a local address");
-        let config = config(&scratch, bind);
+        let listener = mcp_re_client::serve::bind(&mcp_re_client::config::LocalConfig {
+            bind: "127.0.0.1:0".parse().expect("an address"),
+            allow_non_loopback: false,
+            request_lifetime_secs: 300,
+            default_route: None,
+            max_in_flight: 8,
+        })
+        .expect("an ephemeral port");
+        let config = config(&scratch, listener.local_addr());
         let context = Arc::new(mcp_re_client::serve::ServeContext {
             proxy: ClientProxy::new(
                 RouteRegistry::new(),
@@ -352,10 +367,7 @@ mod tests {
             default_route: None,
             request_lifetime_secs: 300,
             max_in_flight: 8,
-            accepted_authority: mcp_re_client::serve::AcceptedHttpAuthority::for_listener(
-                &mcp_re_client::config::BindScope::decide(bind, false).expect("loopback"),
-            ),
-            clock: Box::new(now_unix),
+            clock: Box::new(|| now_unix().expect("a readable host clock")),
             nonce: Box::new(mcp_re_client::next_nonce),
         });
         let built = mcp_re_client::BuiltClient {

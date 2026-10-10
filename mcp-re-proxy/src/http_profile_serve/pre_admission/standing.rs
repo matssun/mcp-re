@@ -14,6 +14,7 @@
 use mcp_re_core::McpReError;
 
 use crate::admission_enforcer::AdmissionFacet;
+use crate::admission_enforcer::AdmissionRefusalClass;
 use crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject;
 use crate::communication_assurance::RequestPeerBindingFacts;
 use crate::exchange_state::Established;
@@ -55,6 +56,14 @@ impl AdmissionDecidedOver {
     }
 }
 
+/// A refusal by the §7 gate: what the client is served, and which fact the record names.
+pub(super) struct AdmissionDenied {
+    /// The refusal the exchange machine signs.
+    pub(super) refusal: Refusal,
+    /// Which fact made the gate refuse; the record's `admission_refusal` coordinate.
+    pub(super) class: AdmissionRefusalClass,
+}
+
 impl HttpProfileProxy {
     /// TRANSPORT-BOUND — Mode-A: the verified request actor must be the mTLS peer.
     /// ```text
@@ -73,12 +82,9 @@ impl HttpProfileProxy {
         let Some(binding) = &self.transport_binding else {
             return Ok(Established::new(None, checked)); // NOT CLAIMED to be bound
         };
-        let subject = verified_request_subject(ex.verified.resolved_actor());
+        let subject = verified_request_subject(ex.verified);
         let Ok(bound) = binding.bind(peer, subject) else {
-            return Err(Refusal::before_admission(
-                McpReError::TransportBindingFailed,
-                403,
-            ));
+            return Err(Refusal::new(McpReError::TransportBindingFailed, 403));
         };
         Ok(Established::new(Some(bound), checked))
     }
@@ -116,7 +122,7 @@ impl HttpProfileProxy {
         &self,
         ex: &Exchange<'_>,
         bound: Option<&RequestPeerBindingFacts>,
-    ) -> Result<(Established<AdmissionDecidedOver>, AdmissionFacet), Refusal> {
+    ) -> Result<(Established<AdmissionDecidedOver>, AdmissionFacet), AdmissionDenied> {
         let admitted = || {
             Established::new(
                 AdmissionDecidedOver {
@@ -132,19 +138,17 @@ impl HttpProfileProxy {
             return Ok((admitted(), AdmissionFacet::NotConfigured));
         };
         match enforcer
-            .decide(
-                ex.verified,
-                ex.actor_id,
-                self.requests.audience_id(),
-                ex.now,
-            )
+            .decide(ex.verified, self.requests.audience_id(), ex.now)
             .await
         {
             // The gate's own verdict travels with the stage's product, so nothing
             // downstream reconstructs what admission decided from the fact that it did not
             // refuse. A live-confirmed serve and a degraded one are different serves.
             Ok(facet) => Ok((admitted(), facet)),
-            Err(e) => Err(Refusal::before_admission(e, 403)),
+            Err(denied) => Err(AdmissionDenied {
+                class: denied.class(),
+                refusal: Refusal::new(denied.into_error(), 403),
+            }),
         }
     }
 }

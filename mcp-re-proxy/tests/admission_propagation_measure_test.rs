@@ -292,10 +292,13 @@ fn signed_call(claims: &AdmissionClaims, nonce: &str) -> HttpRequest {
 }
 
 fn inner(calls: Arc<AtomicUsize>) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-        calls.fetch_add(1, Ordering::SeqCst);
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |_forwarded: &[u8]| -> Vec<u8> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 fn custody_cfg() -> CustodyConfig {
@@ -305,7 +308,7 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: VERIFIER_AUD.into(),
         audience_hash: AUD_SCOPE.into(),
-        trust_epoch: EPOCH.into(),
+        trust_epoch: EPOCH.parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
@@ -314,7 +317,6 @@ fn custody_cfg() -> CustodyConfig {
 }
 
 fn ready_signer() -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -324,10 +326,13 @@ fn ready_signer() -> Arc<DelegatedServerSigner> {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     std::mem::forget(rotor);
     signer
@@ -420,6 +425,7 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
                 NOW,
             )
             .await
+            .expect("the store answers")
             .expect("publish admitted");
 
         let calls_a = Arc::new(AtomicUsize::new(0));
@@ -464,6 +470,7 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
                 NOW,
             )
             .await
+            .expect("the store answers")
             .expect("revoke");
 
         // Poll replica B — which performed no revocation and shares nothing with the

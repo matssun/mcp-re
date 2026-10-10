@@ -121,7 +121,7 @@ Target semantic authority:
 Mechanism-specific part:
 
 - DER / X.509 parsing;
-- SAN / CN representation extraction.
+- SAN representation extraction (the subject Common Name is never read).
 
 General semantic part:
 
@@ -362,7 +362,6 @@ Positive controls:
 
 - URI SAN selected and valid;
 - DNS SAN selected and valid;
-- CN legacy selected and valid;
 - provenance source preserved;
 - valid boundary-length identity accepted.
 

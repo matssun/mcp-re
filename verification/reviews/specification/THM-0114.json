@@ -7,7 +7,39 @@
     "theorem_id": "THM-0114",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner review, 2026-09-29: APPROVED. The Bazel formulation is the correct formulation of the fixture boundary. The deterministic fixture flavor may be deliberately built as a testonly target, but it cannot enter any non-testonly/production target's dependency closure: the plain production library carries no fixture feature, every target that does carry it is testonly, and the graph-wide gate (scripts/fixture_feature_gate.py) enforces that condition. It replaces the Cargo statement (feature not default, enabled only as a dev-dependency), whose mechanism no longer exists; the protected property is unchanged. Previously reviewed at sha256:be2f1062ca45b298872154e0ba8a0f31feb746185af74e1b02a6d27b034c0b9a.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G1_G10.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0068": "sha256:09ceb771c46907b7c6912c005ca198ca24f8495d400f34c76448a803199b2c57"
+    },
+    "supporting_semantics": {
+      "host.request_freshness_inputs": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:9edb55c31861a825612b20755e0a6a149eda91283fb44b78a3df0c40cb29820d",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:81304b8889e83f60834d09a264b74e8c8995d5043d08dbec38a7490fbe0777f5",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:e5c6d8959551f55ca1e65226a240755bb2a2fdff1eb2d613b84df34636ff9cb6",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:0118bb5f026f5fdb2ed7fcf3633d5497e36ff260aaac49b6b9be4ca9d3e18f35",
+        "test_selection": "sha256:86d956e93119867888b8d742212b755a1a04ff80f663d28905cba2fe71469439",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:85d3927b433937a847ab13926d9b24d483cf7997690e693d5d45ff63c0d95bb5",
+        "unit_id": "sha256:12b174a9d6bce76d03bda457bf33b54529159b08305828f58061faa3b690c41b"
+      }
+    },
+    "theorem_claim": "sha256:1d893b0a45d0b5fb1bb4938ad0cfb5659816f21ee26661a3755c440200bd0969",
+    "theorem_dependencies": {},
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:f9eb36213aac9558e2aac5afc38fcbea21bd4df7823e47afcfe7c217f72e1bc7",
   "reviewed_fingerprint": "sha256:31039bb6b10d3684fe5df0ea2e3bbb4a822b7c7708ef5f96197362c291f444b8",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0114"

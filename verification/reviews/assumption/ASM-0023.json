@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:1e0610891e4f8c882fd46e7b9614a4d0e00f69364d09db9702535a2cee10217d"
+  },
+  "notes": "Recorded on the assumption review axis from the owner's entry approval owner-signature:asm-0023-step-7-round-3-4 (docs/security/owner-approvals-2026-10-09.jsonl, entry-text sha256 543d9565d0fbdfe569af02abb5bc8fd65b1f915cc3c9332ed6645fb307ba322b), which signs this entry's current text. Authority: owner ruling, step 7 round 3/4, 2026-10-09.",
+  "reviewed_fingerprint": "sha256:1e0610891e4f8c882fd46e7b9614a4d0e00f69364d09db9702535a2cee10217d",
+  "reviewer": "mats@sundvall.name",
+  "subject": "ASM-0023"
+}

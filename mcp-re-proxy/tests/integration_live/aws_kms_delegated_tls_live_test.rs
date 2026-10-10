@@ -42,6 +42,7 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::thread;
 
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::AwsKmsConfig;
@@ -103,6 +104,22 @@ impl Ca {
     }
 }
 
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(
+        std::time::Duration::from_secs(3600),
+        std::time::Duration::from_secs(300),
+    )
+    .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - std::time::Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + std::time::Duration::from_secs(1800)).into();
+}
+
 fn make_ca() -> Ca {
     let key = KeyPair::generate().expect("ca key");
     let mut params = CertificateParams::new(Vec::new()).expect("ca params");
@@ -129,6 +146,7 @@ fn make_client_leaf(ca: &Ca, san: &str) -> (Vec<CertificateDer<'static>>, Privat
     let mut params = CertificateParams::new(Vec::new()).expect("client params");
     params.subject_alt_names = vec![uri(san)];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    short_lived(&mut params);
     let cert = params
         .signed_by(&key, &ca.issuer())
         .expect("client leaf signed");
@@ -310,9 +328,12 @@ fn aws_kms_delegated_tls_handshake_round_trip() {
     // fail closed. A successful build PROVES the leaf binds the cloud key.
     let signer: Arc<dyn RawEd25519TlsSigner> = tls_backend.clone();
     let config = Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_delegated_config(vec![server_leaf], signer, Vec::new())
-            .expect("validated delegated server config (leaf must bind the KMS public key)"),
+        TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_delegated_config(vec![server_leaf], signer, Vec::new())
+        .expect("validated delegated server config (leaf must bind the KMS public key)"),
     );
 
     let (client_chain, client_key) = make_client_leaf(&client_ca, "spiffe://example.org/agent-1");
@@ -323,7 +344,7 @@ fn aws_kms_delegated_tls_handshake_round_trip() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, _identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()
@@ -380,11 +401,12 @@ fn aws_kms_delegated_tls_wrong_key_binding_fails_closed() {
         .clone();
 
     let signer: Arc<dyn RawEd25519TlsSigner> = tls_backend;
-    match TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()]).build_delegated_config(
-        vec![foreign_leaf],
-        signer,
-        Vec::new(),
-    ) {
+    match TlsListenerSecurityState::new(
+        vec![client_ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_delegated_config(vec![foreign_leaf], signer, Vec::new())
+    {
         Ok(_) => panic!(
             "a server leaf NOT bound to the KMS TLS key must be rejected at construction \
              (fail closed)"
@@ -419,9 +441,12 @@ fn aws_kms_delegated_tls_untrusted_client_rejected() {
     let server_leaf = make_server_leaf_for_aws_key(&server_ca, tls_backend.clone(), raw_public);
     let signer: Arc<dyn RawEd25519TlsSigner> = tls_backend.clone();
     let config = Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_delegated_config(vec![server_leaf], signer, Vec::new())
-            .expect("validated delegated server config"),
+        TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_delegated_config(vec![server_leaf], signer, Vec::new())
+        .expect("validated delegated server config"),
     );
 
     let (rogue_chain, rogue_key) = make_client_leaf(&rogue_ca, "spiffe://example.org/rogue");
@@ -432,7 +457,7 @@ fn aws_kms_delegated_tls_untrusted_client_rejected() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |_request, _identity| b"{\"ok\":true}".to_vec(),
         )
     });

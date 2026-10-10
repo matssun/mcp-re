@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! What the head says, and the ORDER the refusals run in.
 //!
-//! Four fields are read and the rest are ignored. Two of them refuse a DUPLICATE rather
+//! Four fields are read and the rest are ignored. Three of them refuse a DUPLICATE rather
 //! than picking one: a repeated `Content-Length` is a request-smuggling primitive, not a
 //! formatting quirk — two lengths let a reader and a writer disagree about where the message
-//! ends — and a repeated `Host` is the routing analogue, where the loopback guard and
-//! whatever reads the head next could pick different ones.
+//! ends — a repeated `Host` is the routing analogue, where the loopback guard and
+//! whatever reads the head next could pick different ones, and a repeated `Content-Type`
+//! would make the JSON guard depend on which of two values is read last.
 //!
 //! Then the order. FRAMING is settled first, so a message with no boundary is refused as one
 //! whatever else it carries: a head that cannot be framed says nothing reliable about its
@@ -21,12 +22,32 @@ use super::MAX_BODY_BYTES;
 /// A repeated `Content-Length` is a request-smuggling primitive, not a formatting quirk:
 /// two lengths let a reader and a writer disagree about where the message ends. A repeated
 /// `Host` is the routing analogue — the loopback guard and whatever reads the head next
-/// could pick different ones.
+/// could pick different ones. A repeated `Content-Type` has no single answer either: the
+/// JSON guard would depend on which of two values is read last.
 pub(super) struct HeadFields<'a> {
     content_length: Option<usize>,
     origin: Option<&'a str>,
     host: Option<&'a str>,
     content_type: Option<&'a str>,
+}
+
+/// One head line as a field: `None` for a line that is not one, a refusal for a line a
+/// front parser may read differently.
+///
+/// An obs-fold continuation (leading space or tab) and whitespace between the field name and
+/// the colon are the Content-Length smuggling class, so both are refused rather than read;
+/// a continuation is refused whether or not it has a colon.
+fn field_line(line: &str) -> Result<Option<(&str, &str)>, u16> {
+    if line.starts_with([' ', '\t']) {
+        return Err(400);
+    }
+    let Some((name, value)) = line.split_once(':') else {
+        return Ok(None);
+    };
+    if name.contains([' ', '\t']) {
+        return Err(400);
+    }
+    Ok(Some((name, value.trim())))
 }
 
 impl<'a> HeadFields<'a> {
@@ -36,11 +57,9 @@ impl<'a> HeadFields<'a> {
         let mut host: Option<&str> = None;
         let mut content_type: Option<&str> = None;
         for line in lines {
-            let Some((name, value)) = line.split_once(':') else {
+            let Some((name, value)) = field_line(line)? else {
                 continue;
             };
-            let name = name.trim();
-            let value = value.trim();
             if name.eq_ignore_ascii_case("content-length") {
                 // A repeated Content-Length is a request-smuggling primitive, not a
                 // formatting quirk: two lengths let a reader and a writer disagree about
@@ -62,6 +81,10 @@ impl<'a> HeadFields<'a> {
                 }
                 host = Some(value);
             } else if name.eq_ignore_ascii_case("content-type") {
+                // A caller-shape guard field with two values has no single answer.
+                if content_type.is_some() {
+                    return Err(400);
+                }
                 content_type = Some(value);
             }
         }
@@ -227,6 +250,91 @@ mod tests {
                 check_framing_and_caller_shape(&head(lines), &authority("127.0.0.1:8640", false)),
                 Err(status),
             );
+        }
+    }
+
+    fn read_err(lines: &[&str]) -> Option<u16> {
+        let leaked: &'static [String] = Box::leak(
+            lines
+                .iter()
+                .map(|l| (*l).to_owned())
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        HeadFields::read(leaked.iter().map(String::as_str)).err()
+    }
+
+    #[test]
+    fn a_transfer_encoding_is_refused_rather_than_parsed() {
+        for lines in [
+            &[
+                "Transfer-Encoding: chunked",
+                "Host: 127.0.0.1",
+                "Content-Type: application/json",
+            ][..],
+            &[
+                "Content-Length: 2",
+                "Transfer-Encoding: chunked",
+                "Host: 127.0.0.1",
+                "Content-Type: application/json",
+            ][..],
+            &[
+                "transfer-encoding: chunked",
+                "Content-Length: 2",
+                "Host: 127.0.0.1",
+                "Content-Type: application/json",
+            ][..],
+        ] {
+            assert_eq!(read_err(lines), Some(411));
+        }
+    }
+
+    #[test]
+    fn the_body_ceiling_admits_its_own_size_and_refuses_one_byte_past_it() {
+        let at = format!("Content-Length: {MAX_BODY_BYTES}");
+        let past = format!("Content-Length: {}", MAX_BODY_BYTES + 1);
+        let guard = authority("127.0.0.1:8640", false);
+        assert_eq!(
+            check_framing_and_caller_shape(
+                &head(&[
+                    &at,
+                    "Host: 127.0.0.1:8640",
+                    "Content-Type: application/json"
+                ]),
+                &guard,
+            ),
+            Ok(MAX_BODY_BYTES),
+        );
+        assert_eq!(
+            check_framing_and_caller_shape(
+                &head(&[
+                    &past,
+                    "Host: 127.0.0.1:8640",
+                    "Content-Type: application/json"
+                ]),
+                &guard,
+            ),
+            Err(413),
+        );
+    }
+
+    #[test]
+    fn a_duplicate_content_type_is_refused_rather_than_resolved() {
+        for lines in [
+            &[
+                "Content-Length: 2",
+                "Host: 127.0.0.1",
+                "Content-Type: application/json",
+                "Content-Type: text/plain",
+            ][..],
+            &[
+                "Content-Length: 2",
+                "Host: 127.0.0.1",
+                "Content-Type: text/plain",
+                "Content-Type: application/json",
+            ][..],
+        ] {
+            assert_eq!(read_err(lines), Some(400));
         }
     }
 

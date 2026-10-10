@@ -60,6 +60,18 @@ and cannot see a peer's nonces).
    rather than documented. Two managed defaults will fail startup until you act:
    Memorystore ships `volatile-lru`, and ElastiCache renames `CONFIG` so the policy
    cannot be read at all. Set it on the instance before pointing a fleet at it.
+
+   If the fleet selects the shared MRTR continuation store
+   (`--continuation-control-redis-url`, Helm `continuationControl.redisUrl`), that Redis
+   must be **version 5 or later**: the store's create and consume steps are server-side
+   scripts that read the server clock before writing, which needs effects replication.
+   The store holds at most `--continuation-max-live-entries` live entries (Helm
+   `continuationControl.maxLiveEntries`; default 100000, range 1..=10000000), counted
+   fleet-wide on the server. An open leg past the bound is refused with
+   `replay_cache_unavailable` (503) and recorded nowhere, and the refusal is reported on
+   stderr; slots return as legs are answered or expire. The bound is global: one verified
+   actor opening legs it never answers can occupy it, so size it against the fleet's
+   unanswered-leg rate times the 300-second TTL.
 2. A Kubernetes **Secret** with the proxy's material: `tls.crt`, `tls.key`,
    `client-ca.pem`, `trust.json`, `signing-seed`.
 3. A container image of `mcp-re-proxy` built with the `redis_replay` feature.
@@ -158,14 +170,22 @@ exactly one 200 and 63 replay rejections.
 
 ### 2. Trust/revocation coherence (W1 proof b, MCPS-84/85)
 
-Set `--revocation-tier push` with `--trust-epoch-redis-url`. Each replica polls a
-monotonic **trust-epoch** key; when an operator advances it (`INCR`), every
-replica flushes its trust cache on the next request and re-resolves live. The
+Set `--revocation-tier push` with `--trust-epoch-redis-url`. A fleet must: under
+`--fleet` the proxy refuses to start without a networked trust-epoch source, and the
+chart refuses to render more than one replica without `revocation.trustEpochRedisUrl`,
+because that counter is the only kill switch for the fleet's delegated response keys.
+Each replica polls a monotonic **trust-epoch** key every 5 s off the request path; when
+an operator advances it (`mcp-re-proxy trust-epoch advance`, below), every replica marks its cached trust bindings stale
+within one poll interval and re-resolves them against its trust store. The epoch reaches
+the CACHE, not the store: the store is a snapshot of `--trust` re-read every `R`
+seconds, so a key removed from `trust.json` stops resolving only once that re-read
+lands, and advancing the epoch alone revokes no request-signer key. The
 **cross-replica revocation-lag bound is per tier** (ADR-MCPS-049 clause 3):
 
 | Tier | Bound |
 |---|---|
-| Trust key-status | near-zero when the trust-epoch source is healthy; bounded `T` on a source outage (fail-closed); bounded `T` with no source |
+| Trust key-status (a key removed from `--trust`) | `R + T` while re-reads succeed, 5 × `R` + `T` at worst; the epoch shortens neither, and a source outage falls back to bounded `T` (fail-closed) |
+| Delegated response keys | an advance moves each replica to the next `<base>#<counter>` label at its next epoch read; credentials already issued end at their `exp` |
 | Client-cert CRL | the `--client-crl-reload-secs` cadence (or the CRL `nextUpdate` with no reload configured) — applied per request, so it bounds peers holding established connections too, not only reconnecting ones |
 
 Zero-window revocation is **not** claimed on either tier. The proxy prints the
@@ -175,6 +195,41 @@ Proven by `redis_trust_epoch_e2e_test.rs`:
 drives a sibling `HttpProfileProxy` wired as `app.rs` wires production (a Tier-3
 push cache over the live Redis epoch source) and includes a negative control —
 the sibling serves stale trust until the epoch advances.
+
+**A rolled-back counter is repaired, not adopted.** A replica refuses to mint under a
+counter below the highest value it has read (its mark). The same read moves the shared key
+to one PAST that mark — one atomic `EVAL` that writes only while the key is absent or below
+the mark — and the replica mints again under that new label. A rollback therefore acts as a
+forward rotation: point the verifiers' accepted epochs at the new label, as after an advance.
+An advance above the mark is never overwritten; a second replica repairing from the same mark
+finds the first one's write and writes nothing. While the store cannot be repaired every poll
+prints why (`REGRESSED to …`, a fresh advance that `landed on` a minted label, or
+`repair FAILED`).
+
+**Advance the epoch with the proxy, not with `INCR`.**
+
+    mcp-re-proxy trust-epoch advance --trust-epoch-redis-url rediss://… [--trust-epoch-key …]
+
+commits the incremented counter together with a fresh 128-bit generation drawn from the OS
+entropy source, in one atomic step, and refuses with nothing written if the draw fails. A
+number alone cannot say whether an advance happened: after a rollback, a repair from a lower
+mark or an advance on the regressed store can bring the counter back to a value a replica has
+already minted under. The generation tells the two apart — a replica that reads a generation
+it has not seen on a counter at its mark moves the key one past the mark before minting — so
+every advance ends strictly beyond the label of every replica that reads it. A raw `INCR`
+still moves the counter but carries no generation, and that case is not covered: it is not a
+supported way to advance. What to plan for:
+
+- The proxy's Redis user needs `GET`, `MGET`, `SET` and `EVAL` on the epoch key and on
+  `<key>:generation`. With read-only access a rollback leaves every replica that held a
+  higher mark refusing to mint until you advance the key past the fleet's last label. A Redis
+  ACL can deny operator users `INCR` and `SET` on the key, which keeps the supported advance
+  the easy path; it does not make it the only one, because any user allowed `EVAL` can run
+  an arbitrary script against the key.
+- The mark is held in memory. A replica that restarts while the store is regressed mints
+  under the regressed label until a live peer's repair moves the key, at most one poll
+  later; a whole fleet that restarts while the store is regressed has no mark left to
+  repair toward.
 
 ### 3. Inner-session affinity (clause 2, MCPS-83)
 

@@ -13,7 +13,7 @@
 //! is REFUSED rather than ignored: an operator who wrote down how long a registration may
 //! take has said they expect one, and a run that quietly performed none under that budget
 //! would be answering a question they did not ask. The same holds for a protocol named with
-//! nothing to speak it to.
+//! nothing to speak it to, and for a poll interval named for a contract that does not poll.
 
 use std::time::Duration;
 
@@ -46,16 +46,26 @@ impl RegistrationTarget {
             Some(token) => RegistrationProtocol::parse(&token)?,
             None => RegistrationProtocol::default(),
         };
+        if matches!(protocol, RegistrationProtocol::CapsuleAnchor) && interval.is_some() {
+            return Err(
+                "--registration-poll-interval-secs does not apply to --registration-protocol \
+                 capsule-anchor: that contract has no polling, so the term would select nothing"
+                    .to_owned(),
+            );
+        }
         let timeout = seconds(
             "--registration-timeout-secs",
             timeout,
             DEFAULT_REGISTRATION_TIMEOUT_SECS,
         )?;
-        let interval = seconds(
-            "--registration-poll-interval-secs",
-            interval,
-            DEFAULT_POLL_INTERVAL_SECS,
-        )?;
+        let interval = match protocol {
+            RegistrationProtocol::Scrapi11 => Some(seconds(
+                "--registration-poll-interval-secs",
+                interval,
+                DEFAULT_POLL_INTERVAL_SECS,
+            )?),
+            RegistrationProtocol::CapsuleAnchor => None,
+        };
         RegistrationTarget::new(&url, protocol, timeout, interval).map(Some)
     }
 }
@@ -169,6 +179,48 @@ mod tests {
                 "{protocol:?}",
             );
         }
+    }
+
+    /// A poll interval for a contract that never polls is REFUSED, never ignored.
+    #[test]
+    fn a_poll_interval_for_a_contract_that_does_not_poll_is_refused() {
+        let refused = from(
+            Some("https://ts.example.test"),
+            Some("capsule-anchor"),
+            None,
+            Some("1"),
+        )
+        .expect_err("capsule-anchor has no polling");
+        assert!(
+            refused.contains("--registration-poll-interval-secs"),
+            "{refused}"
+        );
+        assert!(refused.contains("capsule-anchor"), "{refused}");
+        for (protocol, interval) in [("scrapi-11", Some("1")), ("capsule-anchor", None)] {
+            assert!(
+                from(
+                    Some("https://ts.example.test"),
+                    Some(protocol),
+                    None,
+                    interval
+                )
+                .expect("legal")
+                .is_some(),
+                "{protocol}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_polling_contract_is_not_held_to_a_poll_interval() {
+        let url = Some("https://ts.example.test");
+        assert!(from(url, Some("capsule-anchor"), Some("1"), None)
+            .expect("legal")
+            .is_some());
+        assert!(from(url, Some("scrapi-11"), Some("1"), None).is_err());
+        let refused = from(url, Some("capsule-anchor"), Some("0"), None)
+            .expect_err("a zero budget completes no exchange");
+        assert!(!refused.contains("poll interval"), "{refused}");
     }
 
     /// A budget that is not a whole number of seconds names the flag it came from.

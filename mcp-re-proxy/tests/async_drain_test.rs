@@ -26,6 +26,7 @@ use std::time::Instant;
 
 use mcp_re_proxy::async_serve;
 use mcp_re_proxy::communication_assurance::AuthenticatedChannelPeer;
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::ServerLimits;
 use mcp_re_proxy::ServerOptions;
@@ -57,6 +58,19 @@ use rustls_pki_types::UnixTime;
 const CLIENT_URI_SAN: &str = "spiffe://example.org/agent-1";
 
 // --- rcgen CA + leaves --------------------------------------------------------
+
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(Duration::from_secs(3600), Duration::from_secs(300))
+        .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + Duration::from_secs(1800)).into();
+}
 
 struct Ca {
     cert: rcgen::Certificate,
@@ -96,6 +110,9 @@ fn make_leaf(ca: &Ca, sans: Vec<SanType>, client_auth: bool) -> (rcgen::Certific
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    if client_auth {
+        short_lived(&mut params);
+    }
     let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     (cert, key)
 }
@@ -112,9 +129,12 @@ fn server_config_for(client_ca: &Ca) -> Arc<rustls::ServerConfig> {
     let (server_cert, server_key) = make_leaf(&server_ca, vec![dns("localhost")], false);
     let server_der = server_cert.der().clone();
     let server_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(server_key.serialize_der()));
-    let config = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_exported_key_config(vec![server_der], server_key_der, Vec::new())
-        .expect("server config");
+    let config = TlsListenerSecurityState::new(
+        vec![client_ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_exported_key_config(vec![server_der], server_key_der, Vec::new())
+    .expect("server config");
     Arc::new(config)
 }
 
@@ -293,9 +313,9 @@ where
     let shutdown_srv = Arc::clone(&shutdown);
     let (tx, rx) = mpsc::channel::<SocketAddr>();
     // Adapt the test's sync handler to the async seam: each call returns a boxed
-    // future that runs the sync handler and yields its bytes. The `InFlightGuard`
-    // in `handle_request` spans this await, so a handler holding the request (the
-    // HANDLER_HOLD sleep) keeps the drain's in-flight count > 0 exactly as before.
+    // future that runs the sync handler and yields its bytes. The connection carrying the
+    // request is counted until it ends, so a handler holding the request (the
+    // HANDLER_HOLD sleep) keeps the drain waiting.
     let handler = Arc::new(handler);
     let handle =
         std::thread::spawn(move || {
@@ -326,21 +346,24 @@ where
                     async_serve::ServedHttpResponse { status: 200, headers: Vec::new(), body }
                 })
             };
+                // The accept loop reads the serving config per connection from a
+                // snapshot (MCPRE-116 CRL hot-reload); this harness never swaps it.
+                let snapshot = Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(
+                    config,
+                    mcp_re_proxy::config_state::PrivateKeyExposure::ProcessReadable,
+                ));
                 // The handshake bound belongs to the pool that built the runtime this loop
-                // runs on, so the harness derives it from the same depth it just built (6).
+                // runs on, so the harness derives it from the same depth it just built (6)
+                // and the custody of the snapshot it serves.
                 let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
                     mcp_re_proxy::async_fleet::ShardDepth::stated(6),
-                    &options,
+                    snapshot.key_exposure(),
                 )
                 .expect("a stated depth above one is a shape every custody has")
                 .handshake_bound();
                 async_serve::serve(
                     listener,
-                    // The accept loop reads the serving config per connection from a
-                    // snapshot (MCPRE-116 CRL hot-reload); this harness never swaps it.
-                    Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(
-                        config,
-                    )),
+                    snapshot,
                     Arc::new(options),
                     Arc::new(async_handler),
                     shutdown_srv,
@@ -366,7 +389,7 @@ fn options_with_drain(grace: Duration, request_deadline: Duration) -> ServerOpti
             request_deadline: Some(request_deadline),
             ..ServerLimits::default()
         },
-        ..ServerOptions::default()
+        ..ServerOptions::new(window())
     }
 }
 
@@ -762,5 +785,57 @@ fn the_handler_entry_counter_moves_for_a_request_that_is_not_abandoned() {
     );
 
     server.trigger_shutdown();
+    server.join();
+}
+
+/// THE RESPONSE IS DELIVERED, not merely produced, before the drain ends.
+///
+/// A request used to be counted until its handler returned, which is BEFORE hyper writes the
+/// response. A reply too large for the kernel's socket buffers is still being written when the
+/// count reaches zero, so the drain returned, the runtime was dropped, and the connection task
+/// was cancelled mid-write: the peer received a truncated signed response for a call the
+/// backend had already executed. The drain now waits on CONNECTIONS, counted from accept until
+/// the connection task ends, and each connection is shut down gracefully on the drain signal —
+/// so a reply on the wire is finished before the connection, and therefore the drain, is.
+///
+/// The client deliberately reads nothing for the whole of the handler's return, the shutdown
+/// and a pause after it, so the server is blocked inside the write when the drain begins.
+#[test]
+fn a_response_still_being_written_is_delivered_before_the_drain_ends() {
+    const REPLY_BYTES: usize = 24 * 1024 * 1024;
+    let client_ca = make_ca();
+    let config = server_config_for(&client_ca);
+    let server = spawn_server(
+        config,
+        options_with_drain(Duration::from_secs(20), Duration::from_secs(20)),
+        move |_req, _id, _a| vec![b'r'; REPLY_BYTES],
+    );
+
+    let client = client_config(&client_ca);
+    let mut stream = tls_connect(server.addr, &client).expect("connect");
+    let head =
+        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+    stream.write_all(head.as_bytes()).expect("send");
+    stream.flush().expect("flush");
+    // The handler has returned and the server is blocked writing a reply nobody is reading.
+    std::thread::sleep(Duration::from_millis(600));
+    server.trigger_shutdown();
+    std::thread::sleep(Duration::from_millis(600));
+
+    let status = read_status(&mut stream).expect("response headers");
+    assert_eq!(status, 200);
+    let mut delivered = 0usize;
+    let mut chunk = vec![0u8; 64 * 1024];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => delivered += n,
+            Err(e) => panic!("the reply was cut off after {delivered} bytes: {e}"),
+        }
+    }
+    assert_eq!(
+        delivered, REPLY_BYTES,
+        "the whole reply is on the wire before the drain lets the runtime go"
+    );
     server.join();
 }

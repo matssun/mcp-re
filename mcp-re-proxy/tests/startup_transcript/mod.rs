@@ -41,8 +41,6 @@ use std::time::Instant;
 pub enum StartupEvent {
     /// Host clock reads at/near the Unix epoch; freshness will fail closed.
     ClockFaultWarning,
-    /// The dev/CI-only environment key source is in use.
-    DevKeySourceWarning,
     /// The declared revocation tier, and whether the trust store itself can change.
     RevocationTier {
         tier: String,
@@ -258,9 +256,6 @@ fn normalize(line: &str) -> Option<StartupEvent> {
     if l.contains("the system clock reads at/near the Unix epoch") {
         return Some(StartupEvent::ClockFaultWarning);
     }
-    if l.contains("--key-source env is a dev/CI-only build") {
-        return Some(StartupEvent::DevKeySourceWarning);
-    }
     if l.contains("revocation-tier=") {
         return Some(StartupEvent::RevocationTier {
             tier: after(&l, "revocation-tier=")?
@@ -338,7 +333,6 @@ fn normalize(line: &str) -> Option<StartupEvent> {
         return Some(StartupEvent::McpTransportContract {
             enforced: match () {
                 () if l.contains("contract ENFORCED") => true,
-                () if l.contains("contract = OFF") => false,
                 () => unknown_state("MCP transport contract", &l),
             },
         });
@@ -477,10 +471,6 @@ mod normalize_tests {
             (
                 "MCP transport contract ENFORCED for protocol version(s) [\"2026-07-28\"]",
                 StartupEvent::McpTransportContract { enforced: true },
-            ),
-            (
-                "MCP transport contract = OFF (no --mcp-protocol-version)",
-                StartupEvent::McpTransportContract { enforced: false },
             ),
             (
                 "verified-context carrier = TRUSTED (#415 §10)",

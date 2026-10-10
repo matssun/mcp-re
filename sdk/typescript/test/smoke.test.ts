@@ -7,7 +7,12 @@
 // expected header + evidence shape. No live transport or workspace binary is
 // required, so this lane never self-skips.
 import { describe, it, expect } from "vitest";
-import { coreVersion, profileTag, signRequest } from "../src/index.js";
+import {
+  coreVersion,
+  profileTag,
+  signRequest,
+  verifyResponse,
+} from "../src/index.js";
 
 describe("mcp-re-sdk smoke (built package)", () => {
   it("reports the audited core's version, not this wrapper's", () => {
@@ -49,5 +54,49 @@ describe("mcp-re-sdk smoke (built package)", () => {
     expect(signed.targetUri).toBe("https://proxy.internal:8600/mcp");
     expect(signed.evidenceDigestValue.length).toBeGreaterThan(0);
     expect(signed.body.length).toBeGreaterThan(0);
+  });
+
+  it("refuses a non-finite or fractional time input instead of saturating it", () => {
+    const seed = Buffer.from(Array.from({ length: 32 }, (_, i) => i));
+    const sign = (created: number, expires: number) =>
+      signRequest(
+        seed,
+        "key-1",
+        "1",
+        "tools/list",
+        "{}",
+        "https://proxy.internal:8600/mcp",
+        "did:example:server-1",
+        undefined,
+        "dpop-token",
+        "nonce-smoke-0001-128bit",
+        created,
+        expires,
+      );
+    expect(() => sign(1000, Infinity)).toThrow(/expires/);
+    expect(() => sign(1000.5, 2000)).toThrow(/created/);
+    const verify = (skew: number, now: number) =>
+      verifyResponse(
+        200,
+        [],
+        Buffer.alloc(0),
+        "POST",
+        "https://proxy.internal:8600/mcp",
+        [],
+        Buffer.alloc(0),
+        "k",
+        "not-a-key",
+        "r",
+        "td",
+        "s",
+        [],
+        "h",
+        [],
+        skew,
+        [],
+        now,
+      );
+    expect(() => verify(Infinity, 1000)).toThrow(/maxClockSkew/);
+    expect(() => verify(60, NaN)).toThrow(/now/);
   });
 });

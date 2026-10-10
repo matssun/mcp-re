@@ -33,7 +33,6 @@ use serde::Serialize;
 
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
-use mcp_re_core::SigningKey;
 use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ResolvedActor;
@@ -43,6 +42,8 @@ use crate::delegated_trust::TrustedIssuerSet;
 
 mod preimage;
 use preimage::manifest_signing_preimage;
+pub use preimage::sign_manifest;
+pub use preimage::SignedTrustAnchorManifest;
 
 /// A ROOT issuer listed in a manifest (a trust anchor): its `issuer_kid`, its raw
 /// Ed25519 public key (base64url-no-pad), and the actor identity it anchors.
@@ -93,24 +94,14 @@ pub struct TrustAnchorManifest {
     pub expires_at: i64,
 }
 
-/// A manifest plus the org/admin signature over its canonical bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SignedTrustAnchorManifest {
-    pub manifest: TrustAnchorManifest,
-    /// The org/admin manifest-signing key id the verifier must pin. **Covered by
-    /// `signature`** — see [`manifest_signing_preimage`].
-    pub signer_kid: String,
-    /// base64url-no-pad Ed25519 signature over [`manifest_signing_preimage`].
-    pub signature: String,
-}
-
 /// The successful load: the trust-anchor set to verify against, plus the version to
 /// record as the new floor for rollback protection.
 #[derive(Debug, Clone)]
 pub struct LoadedTrustAnchors {
     pub issuer_set: TrustedIssuerSet,
     pub version: u64,
+    /// The accepted manifest's `expires_at`.
+    pub expires_at: i64,
 }
 
 /// A manifest load/distribution fault (NOT a wire response rejection).
@@ -221,28 +212,6 @@ impl ManifestVersionFloor for InMemoryVersionFloor {
     }
 }
 
-/// Sign a manifest with the org/admin key, producing the distributable envelope.
-pub fn sign_manifest(
-    manifest: &TrustAnchorManifest,
-    org_key: &SigningKey,
-    signer_kid: impl Into<String>,
-) -> SignedTrustAnchorManifest {
-    let signer_kid = signer_kid.into();
-    // Class A: the only failure `manifest_signing_preimage` reports is `serde_json::to_vec`
-    // on a `TrustAnchorManifest`, a plain `Serialize` struct of owned strings and integers
-    // — an assertion about this crate's own types, never about an input. Every VERIFIER
-    // calls the fallible sibling.
-    #[allow(clippy::expect_used)]
-    let bytes = manifest_signing_preimage(manifest, &signer_kid)
-        .expect("this crate's own manifest type serializes");
-    SignedTrustAnchorManifest {
-        manifest: manifest.clone(),
-        signer_kid,
-        // SigningKey::sign returns base64url-no-pad.
-        signature: org_key.sign(&bytes),
-    }
-}
-
 /// Verify + load a signed trust-anchor manifest into a [`TrustedIssuerSet`].
 ///
 /// `resolve_manifest_signer(signer_kid) -> Some(org_pubkey)` is the pin: the verifier
@@ -250,7 +219,7 @@ pub fn sign_manifest(
 /// manifest version already accepted (0 to accept any first manifest) — a lower
 /// version is a rollback and rejected. `expected_profile` must equal the manifest's
 /// `profile`. Fails closed on an expired manifest.
-pub fn load_signed_manifest(
+fn load_signed_manifest(
     signed: &SignedTrustAnchorManifest,
     resolve_manifest_signer: impl Fn(&str) -> Option<VerificationKey>,
     expected_profile: &str,
@@ -261,10 +230,11 @@ pub fn load_signed_manifest(
     let org_key =
         resolve_manifest_signer(&signed.signer_kid).ok_or(TrustManifestError::UntrustedSigner)?;
 
-    // 2. Verify the org signature over the canonical preimage — which COVERS the
-    //    `signer_kid` used to select `org_key` in step 1, so the identity the manifest
-    //    claims to be published under is the one that was signed for.
-    let bytes = manifest_signing_preimage(&signed.manifest, &signed.signer_kid)?;
+    // 2. Verify the org signature over the manifest bytes as received — a preimage which
+    //    COVERS the `signer_kid` used to select `org_key` in step 1, so the identity the
+    //    manifest claims to be published under is the one that was signed for. Only then
+    //    are those same bytes parsed.
+    let bytes = manifest_signing_preimage(signed.manifest.get().as_bytes(), &signed.signer_kid);
     verify_ed25519_with(
         &bytes,
         &signed.signature,
@@ -272,32 +242,37 @@ pub fn load_signed_manifest(
         McpReError::InvalidSignature,
     )
     .map_err(|_| TrustManifestError::BadSignature)?;
+    let manifest: TrustAnchorManifest = serde_json::from_str(signed.manifest.get())
+        .map_err(|_| TrustManifestError::Malformed("manifest"))?;
 
     // 3. Profile gate.
-    if signed.manifest.profile != expected_profile {
+    if manifest.profile != expected_profile {
         return Err(TrustManifestError::ProfileMismatch);
     }
 
     // 4. Expiry — a stale trust picture fails closed.
-    if now > signed.manifest.expires_at {
+    if now > manifest.expires_at {
         return Err(TrustManifestError::Expired {
-            expires_at: signed.manifest.expires_at,
+            expires_at: manifest.expires_at,
             now,
         });
     }
 
     // 5. Rollback protection — never accept a version below the highest already seen.
-    if signed.manifest.manifest_version < min_version {
+    if manifest.manifest_version < min_version {
         return Err(TrustManifestError::Stale {
-            version: signed.manifest.manifest_version,
+            version: manifest.manifest_version,
             min_version,
         });
     }
 
+    // A manifest names each root once; a repeat would let JSON order pick the effective anchor.
+    refuse_repeated_issuers(&manifest)?;
+
     // 6. Build the trust-anchor set. (Roots verified-in only AFTER the signature +
     //    freshness + version gates above.)
     let mut set = TrustedIssuerSet::new();
-    for iss in &signed.manifest.current_issuers {
+    for iss in &manifest.current_issuers {
         set = set.with_current(actor_of(
             &iss.issuer_kid,
             &iss.public_key,
@@ -306,7 +281,7 @@ pub fn load_signed_manifest(
             &iss.subject,
         )?);
     }
-    for r in &signed.manifest.retiring_issuers {
+    for r in &manifest.retiring_issuers {
         set = set.with_retired(
             actor_of(
                 &r.issuer_kid,
@@ -318,7 +293,7 @@ pub fn load_signed_manifest(
             r.valid_until,
         );
     }
-    for kid in &signed.manifest.revoked_issuers {
+    for kid in &manifest.revoked_issuers {
         set = set.revoke(kid.clone());
     }
 
@@ -326,8 +301,9 @@ pub fn load_signed_manifest(
     // the expiry into the set makes it a property of every later verification, so a
     // refresher that stops running cannot leave stale anchors trusted indefinitely.
     Ok(LoadedTrustAnchors {
-        issuer_set: set.with_manifest_expiry(signed.manifest.expires_at),
-        version: signed.manifest.manifest_version,
+        issuer_set: set.with_manifest_expiry(manifest.expires_at),
+        version: manifest.manifest_version,
+        expires_at: manifest.expires_at,
     })
 }
 
@@ -364,6 +340,28 @@ pub fn load_signed_manifest_with_floor(
     Ok(loaded)
 }
 
+/// Refuse a manifest that lists one `issuer_kid` more than once across its current and
+/// retiring issuers.
+fn refuse_repeated_issuers(manifest: &TrustAnchorManifest) -> Result<(), TrustManifestError> {
+    let mut seen = std::collections::HashSet::<&str>::new();
+    let kids = manifest
+        .current_issuers
+        .iter()
+        .map(|i| i.issuer_kid.as_str())
+        .chain(
+            manifest
+                .retiring_issuers
+                .iter()
+                .map(|r| r.issuer_kid.as_str()),
+        );
+    for kid in kids {
+        if !seen.insert(kid) {
+            return Err(TrustManifestError::Malformed("repeated issuer_kid"));
+        }
+    }
+    Ok(())
+}
+
 /// Build the ROOT [`ResolvedActor`] (Response slot) a manifest issuer describes.
 fn actor_of(
     issuer_kid: &str,
@@ -388,7 +386,10 @@ fn actor_of(
 
 #[cfg(test)]
 mod tests {
+    use super::preimage::manifest_body;
     use super::*;
+    use mcp_re_core::SigningKey;
+    use serde_json::value::RawValue;
 
     const PROFILE: &str = "mcp-re-http-v1";
     const ORG_KID: &str = "org-admin-root";
@@ -467,6 +468,78 @@ mod tests {
         );
     }
 
+    /// The golden vector for the frozen manifest serialization (ASM-0066): a fixed manifest
+    /// under a fixed org key has exactly these signing-input bytes and exactly this
+    /// signature, and a verifier accepts that signature over the manifest it parses back.
+    /// A change to the serialization, the preimage, or the field order turns this red.
+    #[test]
+    fn the_manifest_signing_input_and_signature_are_byte_stable() {
+        let m = TrustAnchorManifest {
+            profile: PROFILE.into(),
+            manifest_version: 7,
+            current_issuers: vec![ManifestIssuer {
+                issuer_kid: "root-A".into(),
+                public_key: "PUBKEY_A".into(),
+                role: "server".into(),
+                trust_domain: "trust.invalid".into(),
+                subject: "did:example:issuer".into(),
+            }],
+            retiring_issuers: vec![RetiringIssuer {
+                issuer_kid: "root-B".into(),
+                public_key: "PUBKEY_B".into(),
+                role: "server".into(),
+                trust_domain: "trust.invalid".into(),
+                subject: "did:example:old".into(),
+                valid_until: 9_000,
+            }],
+            revoked_issuers: vec!["root-C".into()],
+            issued_at: 1_000,
+            expires_at: 10_000,
+        };
+        let body = concat!(
+            r#"{"profile":"mcp-re-http-v1","manifest_version":7,"#,
+            r#""current_issuers":[{"issuer_kid":"root-A","public_key":"PUBKEY_A","role":"server","#,
+            r#""trust_domain":"trust.invalid","subject":"did:example:issuer"}],"#,
+            r#""retiring_issuers":[{"issuer_kid":"root-B","public_key":"PUBKEY_B","role":"server","#,
+            r#""trust_domain":"trust.invalid","subject":"did:example:old","valid_until":9000}],"#,
+            r#""revoked_issuers":["root-C"],"issued_at":1000,"expires_at":10000}"#,
+        );
+        let mut expected = b"mcp-re/trust-anchor-manifest/v1".to_vec();
+        expected.extend_from_slice(&(ORG_KID.len() as u64).to_be_bytes());
+        expected.extend_from_slice(ORG_KID.as_bytes());
+        expected.extend_from_slice(body.as_bytes());
+        assert_eq!(manifest_body(&m).expect("body"), body);
+        assert_eq!(
+            manifest_signing_preimage(body.as_bytes(), ORG_KID),
+            expected
+        );
+
+        let signed = sign_manifest(&m, &org_key(), ORG_KID);
+        assert_eq!(
+            signed.signature,
+            "YQKSkMCHFUu6qyEq0Pr0lqhtFoOhl6xdV3JbLO_py12y8nStTccF5P1aM7m6uWwPDwOr0O96rS6WApYjiUAPAQ"
+        );
+        let parsed: SignedTrustAnchorManifest =
+            serde_json::from_str(&serde_json::to_string(&signed).expect("serializes"))
+                .expect("parses");
+        let verified = verify_ed25519_with(
+            &expected,
+            &parsed.signature,
+            &org_key().public_key(),
+            McpReError::InvalidSignature,
+        );
+        assert!(
+            verified.is_ok(),
+            "the golden signature verifies over the golden bytes"
+        );
+        // The loader verifies the received bytes too: it reaches the golden manifest's
+        // placeholder key, past the signature.
+        assert_eq!(
+            load_signed_manifest(&parsed, org_resolver, PROFILE, 0, 5_000).err(),
+            Some(TrustManifestError::Malformed("issuer public key"))
+        );
+    }
+
     #[test]
     fn signed_manifest_loads_current_issuers() {
         let m = manifest(1, vec![issuer("root-A", &root_a())], vec![], vec![]);
@@ -497,6 +570,39 @@ mod tests {
                 .resolve_root("root-A", m.expires_at + 1)
                 .is_none(),
             "an anchor from an expired manifest must not resolve"
+        );
+    }
+
+    #[test]
+    fn a_manifest_naming_one_issuer_twice_is_refused() {
+        let expected = Some(TrustManifestError::Malformed("repeated issuer_kid"));
+
+        let twice_current = manifest(
+            1,
+            vec![issuer("root-A", &root_a()), issuer("root-A", &root_b())],
+            vec![],
+            vec![],
+        );
+        let signed = sign_manifest(&twice_current, &org_key(), ORG_KID);
+        assert_eq!(
+            load_signed_manifest(&signed, org_resolver, PROFILE, 0, 5_000).err(),
+            expected
+        );
+
+        let retiring = RetiringIssuer {
+            issuer_kid: "root-A".into(),
+            public_key: root_b().public_key().to_b64url(),
+            role: "server".into(),
+            trust_domain: "example.com".into(),
+            subject: "did:example:issuer".into(),
+            valid_until: 6_000,
+        };
+        let current_and_retiring =
+            manifest(1, vec![issuer("root-A", &root_a())], vec![retiring], vec![]);
+        let signed = sign_manifest(&current_and_retiring, &org_key(), ORG_KID);
+        assert_eq!(
+            load_signed_manifest(&signed, org_resolver, PROFILE, 0, 5_000).err(),
+            expected
         );
     }
 
@@ -691,7 +797,10 @@ mod tests {
         let m = manifest(1, vec![issuer("root-A", &root_a())], vec![], vec![]);
         let mut signed = sign_manifest(&m, &org_key(), ORG_KID);
         // Attacker swaps in their own root under the same kid AFTER signing.
-        signed.manifest.current_issuers[0].public_key = root_b().public_key().to_b64url();
+        let mut swapped = m.clone();
+        swapped.current_issuers[0].public_key = root_b().public_key().to_b64url();
+        signed.manifest =
+            RawValue::from_string(manifest_body(&swapped).expect("body")).expect("json");
         assert_eq!(
             load_signed_manifest(&signed, org_resolver, PROFILE, 0, 5_000).unwrap_err(),
             TrustManifestError::BadSignature
@@ -732,6 +841,78 @@ mod tests {
         assert_eq!(
             load_signed_manifest(&signed, org_resolver, PROFILE, 0, 5_000).unwrap_err(),
             TrustManifestError::ProfileMismatch
+        );
+    }
+
+    /// The signed envelope as a reader receives it, with its `manifest` member's bytes
+    /// replaced by `manifest_text` and everything else — signer, signature — unchanged.
+    fn received_with_manifest_text(
+        signed: &SignedTrustAnchorManifest,
+        manifest_text: &str,
+    ) -> SignedTrustAnchorManifest {
+        let wire = serde_json::to_string(signed).expect("serializes");
+        let respelled = wire.replacen(signed.manifest.get(), manifest_text, 1);
+        serde_json::from_str(&respelled).expect("parses")
+    }
+
+    #[test]
+    fn a_manifest_respelled_after_signing_is_not_the_manifest_that_was_signed() {
+        // The same parsed manifest, spelled with other whitespace and member order. A
+        // verifier that rebuilt the signed bytes from what it parsed would accept it; the
+        // signature covers the bytes received, so it does not.
+        let m = manifest(1, vec![issuer("root-A", &root_a())], vec![], vec![]);
+        let signed = sign_manifest(&m, &org_key(), ORG_KID);
+        let value: serde_json::Value = serde_json::from_str(signed.manifest.get()).expect("json");
+        let respelled = received_with_manifest_text(
+            &signed,
+            &serde_json::to_string_pretty(&value).expect("pretty"),
+        );
+        assert_ne!(respelled.manifest.get(), signed.manifest.get());
+        assert_eq!(
+            load_signed_manifest(&respelled, org_resolver, PROFILE, 0, 5_000).unwrap_err(),
+            TrustManifestError::BadSignature
+        );
+    }
+
+    #[test]
+    fn the_envelope_layout_around_the_signed_bytes_is_free() {
+        // Only the `manifest` member's bytes are signed: a pretty-printed envelope carries
+        // them verbatim and still loads.
+        let m = manifest(1, vec![issuer("root-A", &root_a())], vec![], vec![]);
+        let signed = sign_manifest(&m, &org_key(), ORG_KID);
+        let pretty = serde_json::to_string_pretty(&signed).expect("serializes");
+        let received: SignedTrustAnchorManifest = serde_json::from_str(&pretty).expect("parses");
+        assert_eq!(received.manifest.get(), signed.manifest.get());
+        let loaded =
+            load_signed_manifest(&received, org_resolver, PROFILE, 0, 5_000).expect("loads");
+        assert_eq!((loaded.version, loaded.expires_at), (1, m.expires_at));
+    }
+
+    #[test]
+    fn signed_bytes_that_are_not_a_manifest_are_malformed_only_after_they_verify() {
+        let m = manifest(1, vec![issuer("root-A", &root_a())], vec![], vec![]);
+        let mut signed = sign_manifest(&m, &org_key(), ORG_KID);
+        let not_a_manifest = r#"{"profile":"mcp-re-http-v1"}"#;
+        assert_eq!(
+            load_signed_manifest(
+                &received_with_manifest_text(&signed, not_a_manifest),
+                org_resolver,
+                PROFILE,
+                0,
+                5_000
+            )
+            .unwrap_err(),
+            TrustManifestError::BadSignature,
+            "unsigned bytes are refused on their signature, never parsed"
+        );
+        signed.manifest = RawValue::from_string(not_a_manifest.to_owned()).expect("json");
+        signed.signature = org_key().sign(&manifest_signing_preimage(
+            not_a_manifest.as_bytes(),
+            ORG_KID,
+        ));
+        assert_eq!(
+            load_signed_manifest(&signed, org_resolver, PROFILE, 0, 5_000).unwrap_err(),
+            TrustManifestError::Malformed("manifest")
         );
     }
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `TrustRevocation` configuration machine — `work/CONFIG-STATE-ATLAS.md` §C.2.
+//! The `TrustRevocation` configuration machine — unit `proxy.trust_revocation_classification`.
 //!
 //! Four states, distinguished by the declared tier and by whether a networked epoch
 //! source is configured:
@@ -7,8 +7,8 @@
 //! | State | Required | Forbidden | Guards |
 //! |---|---|---|---|
 //! | `BoundedCache{T}` | — | epoch url, epoch key | `reload <= T` if set |
-//! | `Live` | reload | epoch url, epoch key | `reload <= MAX_NEAR_ZERO` |
-//! | `PushInert{T}` | reload | epoch key | `reload <= min(MAX_NEAR_ZERO, T)` |
+//! | `Live` | reload | epoch url, epoch key | `reload <= MAX_LIVE_OR_PUSH` |
+//! | `PushInert{T}` | reload | epoch key | `reload <= min(MAX_LIVE_OR_PUSH, T)` |
 //! | `PushNetworked{T}` | reload, epoch url | — | same, plus a scheme-bearing url |
 //!
 //! **Each state carries what its Required column names.** The three states that require a
@@ -20,7 +20,7 @@
 //!
 //! **The epoch source is a selector, not a parameter.** It is what distinguishes the last
 //! two states, so a tier that cannot consume it does not merely ignore it — the request is
-//! incoherent, and refusing that is atlas rule X8.
+//! incoherent, and it is refused.
 //!
 //! This machine owns whether the epoch configuration is LEGAL. It does not own what the
 //! configuration MEANS to a runtime plane: normalizing that is startup planning's job,
@@ -49,8 +49,8 @@ use std::num::NonZeroU64;
 /// continuously. The rule and the type are the same fact — the type may encode the
 /// invariant because the legality model states it, not instead of it.
 /// The representation is private to this module. [`classify_and_validate`] is the only
-/// producer, so possessing this state IS the statement that its witnesses were checked
-/// against the tier that requires them.
+/// producer and withholds the state whenever it produced a violation, so possessing one
+/// means every rule of its state form held.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustRevocationState {
     kind: RevocationKind,
@@ -138,8 +138,6 @@ enum RequestedState {
     PushNetworked { t_secs: i64 },
 }
 
-impl RequestedState {}
-
 impl TrustRevocationState {
     /// A cadence witness from a literal, for tests and for callers that already hold a
     /// value layer A has accepted. Panics on zero, which layer A refuses.
@@ -221,8 +219,8 @@ impl TrustRevocationState {
         }
     }
 
-    /// The window the state claims, in seconds — `None` for `Live`, whose claim is
-    /// near-zero rather than a bound.
+    /// The window the state claims, in seconds — `None` for `Live`, which caches nothing
+    /// and is bounded by its re-read cadence alone.
     pub fn declared_window_secs(&self) -> Option<i64> {
         match &self.kind {
             RevocationKind::Live { .. } => None,
@@ -260,8 +258,9 @@ fn classify(config: &DeploymentRequest) -> RequestedState {
 
 /// Build the state, once its witnesses are known to be present.
 ///
-/// `None` is never a silent outcome: every path that reaches it has already pushed the
-/// violation naming the value that was missing.
+/// Its `?`s cannot fire on an admitted request — a zero cadence is refused by
+/// `cadence_violations`, and `classify` chose `PushNetworked` only because the epoch
+/// source is present.
 fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<TrustRevocationState> {
     // A cadence that is present and zero names no legal state at all, so `build` yields
     // nothing rather than an absence — `Some(0)` must never become "no reload requested".
@@ -282,23 +281,20 @@ fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<TrustR
                 t_secs,
                 reload_secs: cadence?,
             },
-            RequestedState::PushNetworked { t_secs } => RevocationKind::PushNetworked {
-                t_secs,
-                reload_secs: cadence?,
-                epoch_url: config
-                    .request_signer_currency
-                    .epoch()?
-                    .locator()?
-                    .to_string(),
-                // The default belongs to this machine, so it is applied here and nothing
-                // downstream can tell an omitted key from a named one.
-                epoch_key: config
-                    .request_signer_currency
-                    .epoch()
-                    .and_then(TrustEpochStoreRequest::key)
-                    .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY)
-                    .to_string(),
-            },
+            RequestedState::PushNetworked { t_secs } => {
+                let source = config.request_signer_currency.epoch()?.source.as_ref()?;
+                RevocationKind::PushNetworked {
+                    t_secs,
+                    reload_secs: cadence?,
+                    epoch_url: source.locator().to_string(),
+                    // The default belongs to this machine, so it is applied here and nothing
+                    // downstream can tell an omitted key from a named one.
+                    epoch_key: source
+                        .key()
+                        .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY)
+                        .to_string(),
+                }
+            }
         },
     })
 }
@@ -310,9 +306,7 @@ fn build(requested: RequestedState, config: &DeploymentRequest) -> Option<TrustR
 /// the file is re-read.
 fn cadence_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
-    // The "live|push requires a cadence" clause is GONE. Those two tiers are inhabited by
-    // one, so absence is not a state to refuse (ADR-MCPRE-067 §7); `cli::currency_flags`
-    // answers the command line that omits it.
+    // Only `BoundedCache` may omit a cadence, and omitting it is legal.
     let Some(secs) = config.request_signer_currency.reload_secs() else {
         return out;
     };
@@ -331,23 +325,23 @@ fn cadence_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
     }
     let (ceiling, claim) = match state {
         RequestedState::Live => (
-            MAX_NEAR_ZERO_TRUST_RELOAD_SECS,
-            "--revocation-tier live states a NEAR-ZERO revocation window (the store is \
-             consulted on every verification)"
+            MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS,
+            "--revocation-tier live states a window bounded by the re-read cadence (the \
+             store is consulted on every verification)"
                 .to_string(),
         ),
         RequestedState::PushInert { t_secs } | RequestedState::PushNetworked { t_secs } => (
-            MAX_NEAR_ZERO_TRUST_RELOAD_SECS.min(t_secs.max(1) as u64),
+            MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS.min(t_secs.max(1) as u64),
             format!(
-                "--revocation-tier push:{t_secs} states a near-zero window with a bounded \
-                 {t_secs}s fallback"
+                "--revocation-tier push:{t_secs} states a re-read-bounded window with a \
+                 bounded {t_secs}s fallback"
             ),
         ),
         RequestedState::BoundedCache { t_secs } => (
             t_secs.max(1) as u64,
             format!(
-                "--revocation-tier bounded-cache:{t_secs} states that revocation is \
-                 enforced fleet-wide within {t_secs}s"
+                "--revocation-tier bounded-cache:{t_secs} states that cached trust \
+                 lives at most {t_secs}s"
             ),
         ),
     };
@@ -365,14 +359,6 @@ fn cadence_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
 /// The epoch-source columns: which states may carry one, and what shape it must have.
 fn epoch_violations(config: &DeploymentRequest) -> Vec<String> {
     let mut out = Vec::new();
-    // TWO clauses are gone from here, and their absence is the result.
-    //
-    // X8 refused an epoch source under a tier that never consumes it. Only the pushing
-    // posture has a field for one now, so no configuration can state the pair
-    // (ADR-MCPRE-067 §7). CF-04 refused a `--trust-epoch-key` naming a location in a store
-    // this configuration did not have; the coordinate travels inside `TrustEpochSource`.
-    // Both argv forms survive — `cli::currency_flags` and `cli::storage_flags` answer them.
-    //
     // Build-independent shape only. Whether the URL RESOLVES is layer C, and whether this
     // binary has a Redis client at all is layer B; both are materialization's to refuse.
     if let Some(url) = config
@@ -383,14 +369,27 @@ fn epoch_violations(config: &DeploymentRequest) -> Vec<String> {
         if !url.contains("://") {
             out.push(format!(
                 "--trust-epoch-redis-url {} is not a URL: the trust-epoch source is \
-                 what the operator's INCR kill switch reaches, so a value that cannot name \
-                 a store leaves delegated credentials unrevocable. Give a scheme-bearing \
-                 URL such as redis://host:6379",
+                 what the trust-epoch kill switch (`mcp-re-proxy trust-epoch advance`) \
+                 reaches, so a value that cannot name a store leaves delegated credentials \
+                 unrevocable. Give a scheme-bearing URL such as redis://host:6379",
                 RedactedLocator::of(url)
             ));
         }
     }
     out
+}
+
+/// `T` must be positive. Checked on the request type, not only by `RevocationTier::parse`,
+/// because `DeploymentRequest` has public fields.
+fn window_violation(state: RequestedState) -> Option<String> {
+    let t_secs = match state {
+        RequestedState::Live => return None,
+        RequestedState::BoundedCache { t_secs }
+        | RequestedState::PushInert { t_secs }
+        | RequestedState::PushNetworked { t_secs } => t_secs,
+    };
+    (t_secs < 1)
+        .then(|| format!("--revocation-tier window {t_secs}s is not a positive revocation window"))
 }
 
 /// Classify the requested trust-revocation state and check its four columns.
@@ -399,28 +398,29 @@ fn epoch_violations(config: &DeploymentRequest) -> Vec<String> {
 /// accumulating across machines needs every violation, and a caller that finds none needs
 /// the classification (CF-10 — classify, do not classify and discard).
 ///
-/// `None` means the request names a state whose witnesses are not all present — a `Live`
-/// or `push` tier with no cadence. The violation naming the missing value is beside it, so
-/// a `None` never travels without its reason.
+/// `None` is returned exactly when a violation was produced — the state is withheld rather
+/// than built carrying a refused value — so a `None` never travels without its reason.
 pub fn classify_and_validate(
     config: &DeploymentRequest,
 ) -> (Option<TrustRevocationState>, Vec<String>) {
     let requested = classify(config);
-    let mut violations = cadence_violations(requested, config);
+    let mut violations: Vec<String> = window_violation(requested).into_iter().collect();
+    violations.extend(cadence_violations(requested, config));
     violations.extend(epoch_violations(config));
-    (build(requested, config), violations)
+    let state = build(requested, config).filter(|_| violations.is_empty());
+    (state, violations)
 }
 
-/// The ceiling on `--trust-reload-secs` for the tiers that advertise a NEAR-ZERO
-/// revocation window (`live`, `push`).
+/// The ceiling on `--trust-reload-secs` for the tiers whose window is bounded by the
+/// re-read cadence rather than by a cache lifetime (`live`, `push`).
 ///
 /// Those tiers describe how fast a revoked request-signer key stops being honoured, and
 /// the only thing that removes a key from the resolver on a running replica is the
 /// `--trust` re-read. The cadence is therefore the real window, whatever the tier
-/// string says. One minute is the coarsest cadence for which "near-zero" survives
-/// contact with an incident: it is inside the 300s default connection-age bound, so a
-/// revocation reaches every peer within one connection lifetime.
-pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
+/// string says. One minute bounds that window at the reload failure budget times 60s at
+/// worst (`delivered_window`). It is this owner's policy ceiling: request signatures are
+/// verified per request, so no connection lifetime bounds a request-signer revocation.
+pub const MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS: u64 = 60;
 
 #[cfg(test)]
 mod tests {
@@ -630,6 +630,68 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_refused_request_yields_no_state() {
+        let ceiling = RequestSignerCurrencyRequest::Live {
+            reload_secs: MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS + 1,
+        };
+        let not_a_url = RequestSignerCurrencyRequest::Push {
+            t_secs: 30,
+            reload_secs: 30,
+            epoch: TrustEpochStoreRequest {
+                source: Some(crate::deployment_request::TrustEpochSource::redis(
+                    "127.0.0.1:6379",
+                    None,
+                )),
+            },
+        };
+        for posture in [ceiling, not_a_url] {
+            let mut config = legal_config();
+            config.request_signer_currency = posture;
+            let (state, violations) = classify_and_validate(&config);
+            assert_eq!(state, None, "a refused request must not yield a state");
+            assert!(!violations.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_non_positive_window_is_refused_on_the_runtime_type() {
+        let postures = [
+            RequestSignerCurrencyRequest::BoundedCache {
+                t_secs: 0,
+                reload_secs: None,
+            },
+            RequestSignerCurrencyRequest::Push {
+                t_secs: -5,
+                reload_secs: 1,
+                epoch: TrustEpochStoreRequest::default(),
+            },
+        ];
+        for posture in postures {
+            let mut config = legal_config();
+            config.request_signer_currency = posture;
+            let (state, violations) = classify_and_validate(&config);
+            assert_eq!(state, None);
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("is not a positive revocation window")),
+                "{violations:?}"
+            );
+        }
+        let mut config = legal_config();
+        config.request_signer_currency = RequestSignerCurrencyRequest::BoundedCache {
+            t_secs: 0,
+            reload_secs: None,
+        };
+        let refusal = crate::config_state::validation::ValidatedDeployment::try_from(config)
+            .expect_err("a non-positive window must not validate");
+        assert!(
+            refusal.contains("is not a positive revocation window"),
+            "{refusal}"
+        );
+    }
+
     // ---- classification is asserted, not only the verdict ----
 
     #[test]
@@ -796,7 +858,7 @@ mod tests {
     #[test]
     fn each_state_holds_the_cadence_to_the_window_it_claims() {
         for (tier, cadence) in [
-            (RevocationTier::Live, MAX_NEAR_ZERO_TRUST_RELOAD_SECS + 1),
+            (RevocationTier::Live, MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS + 1),
             (RevocationTier::Push { t_secs: 10 }, 11),
             (RevocationTier::BoundedCache { t_secs: 30 }, 31),
         ] {
@@ -813,10 +875,10 @@ mod tests {
     }
 
     #[test]
-    fn a_push_window_narrower_than_near_zero_binds_instead_of_it() {
+    fn a_push_window_narrower_than_the_cadence_ceiling_binds_instead_of_it() {
         // `push:10` claims a 10s fallback, so 30s is refused even though it is inside the
-        // general near-zero ceiling. The tighter of the two claims is the one that binds.
-        const { assert!(MAX_NEAR_ZERO_TRUST_RELOAD_SECS > 30) };
+        // general cadence ceiling. The tighter of the two claims is the one that binds.
+        const { assert!(MAX_LIVE_OR_PUSH_TRUST_RELOAD_SECS > 30) };
         let violations = violations_of(|c| {
             c.request_signer_currency = RequestSignerCurrencyRequest::Push {
                 t_secs: 10,

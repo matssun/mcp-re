@@ -62,8 +62,8 @@ pub(in crate::http_profile_serve) struct ContinuationPlane {
     /// was kept for, and an answer leg that needs correlation is refused as a fact about
     /// this deployment rather than as the caller's forged continuation.
     store: Option<Arc<dyn AsyncContinuationStore>>,
-    /// Lifetime of a recorded continuation (seconds).
-    ttl_secs: i64,
+    /// Lifetime of a recorded continuation in seconds; positive by type.
+    ttl: std::num::NonZeroU32,
 }
 
 impl ContinuationPlane {
@@ -71,18 +71,18 @@ impl ContinuationPlane {
     pub(in crate::http_profile_serve) fn disabled() -> Self {
         ContinuationPlane {
             store: None,
-            ttl_secs: super::DEFAULT_CONTINUATION_TTL_SECS,
+            ttl: super::DEFAULT_CONTINUATION_TTL_SECS,
         }
     }
 
     /// The plane of a deployment that wired one, with the bounded entry TTL it chose.
     pub(in crate::http_profile_serve) fn wired(
         store: Arc<dyn AsyncContinuationStore>,
-        ttl_secs: i64,
+        ttl: std::num::NonZeroU32,
     ) -> Self {
         ContinuationPlane {
             store: Some(store),
-            ttl_secs,
+            ttl,
         }
     }
 }
@@ -98,6 +98,6 @@ mod tests {
         // lifetime for entries nothing will ever write.
         let plane = ContinuationPlane::disabled();
         assert!(plane.store.is_none());
-        assert_eq!(plane.ttl_secs, super::super::DEFAULT_CONTINUATION_TTL_SECS);
+        assert_eq!(plane.ttl, super::super::DEFAULT_CONTINUATION_TTL_SECS);
     }
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `ChannelBinding` and `CrlRevocation` machines — `work/CONFIG-STATE-ATLAS.md`
-//! §C.5 and §C.6.
+//! The `ChannelBinding` and `CrlRevocation` machines — unit
+//! `proxy.transport_binding_and_crl_state`.
 //!
 //! Two machines in one file because they are two small closed models over the same
 //! domain, and separating them into two files would say they are further apart than they
@@ -10,13 +10,18 @@
 //!
 //! | State | Required | Forbidden | Guards |
 //! |---|---|---|---|
-//! | `Exact + UriSan` | — | every ingress parameter | — |
-//! | `Exact + DnsSan` | — | every ingress parameter | — |
+//! | `Exact + UriSan` | — | every ingress parameter | the SAN must be a URI |
+//! | `Exact + DnsSan` | — | every ingress parameter | the SAN must be a DNS name |
+//!
+//! The Guards column is discharged per handshake by `CertificateChainEvidence::interpret_identity`,
+//! which reads only the configured field, has no fallback and refuses a malformed value. The
+//! `reverse_proxy_*` forbidden selectors are discharged by unrepresentability: no such field
+//! exists on `DeploymentRequest`.
 //!
 //! `binding` and `identity_source` are **two selectors of one machine**, and the machine is
 //! named for what it owns rather than for either of them. `binding` contributes one
 //! reachable value today, so the live distinction is carried by `identity_source` — the
-//! clearest instance of the atlas's rule that a selector is syntax and a machine is a
+//! clearest instance of layer A's rule that a selector is syntax and a machine is a
 //! semantic ownership unit.
 //!
 //! ## CrlRevocation — offline client-certificate revocation
@@ -49,16 +54,16 @@ pub enum ChannelBindingState {
 
 /// Which client-CRL posture a configuration requests.
 ///
-/// The representation is private to this module and [`classify_and_validate`] is the only
-/// producer. A CRL-bearing state carries the files that put it in that state, and the
+/// The representation is private to this module and [`classify_and_validate_crl`] is the only
+/// producer, and it produces no state for a request it refuses. A CRL-bearing state carries the files that put it in that state, and the
 /// reloading state carries the cadence that distinguishes it from the static one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrlRevocationState {
     /// The CRL files. Empty is exactly what "no CRLs" means, so the posture and the set
     /// cannot disagree.
     paths: Vec<String>,
-    /// Seconds between re-reads, where the operator asked for them. Layer A holds it above
-    /// zero and refuses it beside an empty set (CF-04).
+    /// Seconds between re-reads, where the operator asked for them. Above zero, and absent
+    /// where `paths` is empty: the producer returns no state otherwise.
     cadence_secs: Option<u64>,
 }
 
@@ -130,27 +135,21 @@ impl ClientRevocationPlan {
 /// Recognise the channel-binding state, or say why the request names none.
 ///
 /// Unlike most machines this one can fail to classify: `binding` has three variants no
-/// deployment can be in, and `identity_source` has a deprecated one. They are input forms,
-/// not states, so they produce no member of the model.
+/// deployment can be in. They are input forms, not states, so they produce no member of
+/// the model.
 fn classify_binding(config: &DeploymentRequest) -> Result<ChannelBindingState, Vec<String>> {
     let form = &config.peer_identity;
-    let mut refusals = binding_kind_refusals(form);
-    // The identity FIELD is asked of the form that has one. No other form reads a
-    // certificate, so under those there is no field to be deprecated — where the old shape
-    // had a sibling `identity_source` that every form carried and only one consulted.
-    let identity = match form.credential_identity_field() {
-        Some(IdentityPolicy::UriSan) => Some(ChannelBindingState::ExactUriSan),
-        Some(IdentityPolicy::DnsSan) => Some(ChannelBindingState::ExactDnsSan),
-        Some(IdentityPolicy::CnLegacy) => {
-            refusals.push(
-                "--transport-identity-source cn_legacy is a deprecated, insecure identity \
-                 binding; use uri_san or dns_san"
-                    .to_string(),
-            );
-            None
-        }
-        None => None,
-    };
+    let refusals = binding_kind_refusals(form);
+    // The identity FIELD is asked of the form that has one; no other form reads a
+    // certificate. The default field is applied HERE, after the request has recorded
+    // whether the operator chose one.
+    let field = form
+        .credential_identity()
+        .map(|identity| identity.field.unwrap_or(IdentityPolicy::RECOMMENDED));
+    let identity = field.map(|field| match field {
+        IdentityPolicy::UriSan => ChannelBindingState::ExactUriSan,
+        IdentityPolicy::DnsSan => ChannelBindingState::ExactDnsSan,
+    });
     // The state is the PAIR, so a form that is not the one deployable form cannot reach a
     // state named `Exact*` however the refusal list came out.
     match (identity, refusals.is_empty()) {
@@ -216,16 +215,18 @@ fn classify_crl(config: &DeploymentRequest) -> CrlRevocationState {
 }
 
 /// Classify the CRL-revocation state and check its columns.
-pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationState, Vec<String>) {
+pub fn classify_and_validate_crl(
+    config: &DeploymentRequest,
+) -> (Option<CrlRevocationState>, Vec<String>) {
     let state = classify_crl(config);
     let mut violations = Vec::new();
     // Structure of the list itself, before anything that reads a member. Classification
-    // asks whether the list is empty, which a list holding `""` is not — so a deployment
+    // asks whether the list is empty, which a list holding `""` or only whitespace is not — so a deployment
     // could reach `Static`/`Reloading`, announce that offline revocation is enforced, and
     // hold one path that names no file. Placed ahead of the cadence clauses because those
     // are about a different field: a member that names nothing is a defect in the control
     // the cadence would be re-reading.
-    if state.paths().iter().any(String::is_empty) {
+    if state.paths().iter().any(|path| path.trim().is_empty()) {
         violations.push(
             "--client-crl contains an empty path: every listed CRL must name a file, or the \
              deployment reports offline revocation as enforced while one of its lists \
@@ -250,7 +251,7 @@ pub fn classify_and_validate_crl(config: &DeploymentRequest) -> (CrlRevocationSt
                 .to_string(),
         );
     }
-    (state, violations)
+    (violations.is_empty().then_some(state), violations)
 }
 
 /// The ceiling on `--max-client-cert-lifetime` (ADR-MCPS-023 §A1, MCPS-57). A
@@ -432,7 +433,9 @@ mod tests {
     /// A state this machine must recognise, and how to request it.
     type Form = ((Vec<String>, Option<u64>), fn(&mut DeploymentRequest));
 
-    fn crl(mutate: impl FnOnce(&mut DeploymentRequest)) -> (CrlRevocationState, Vec<String>) {
+    fn crl(
+        mutate: impl FnOnce(&mut DeploymentRequest),
+    ) -> (Option<CrlRevocationState>, Vec<String>) {
         let mut config = legal_config();
         mutate(&mut config);
         classify_and_validate_crl(&config)
@@ -511,7 +514,7 @@ mod tests {
         assert_ne!(uri, dns, "the same form, two states");
         for form in every_form()
             .into_iter()
-            .filter(|form| form.credential_identity_field().is_none())
+            .filter(|form| form.credential_identity().is_none())
         {
             let named = form.flag_value();
             let (state, _) = binding(|c| c.peer_identity = form);
@@ -526,7 +529,7 @@ mod tests {
     fn only_exact_binding_becomes_a_state_and_every_other_kind_is_refused_aloud() {
         for form in every_form() {
             let named = form.flag_value();
-            let is_credential = form.credential_identity_field().is_some();
+            let is_credential = form.credential_identity().is_some();
             let (state, violations) = binding(|c| c.peer_identity = form);
             if is_credential {
                 assert_eq!(state, Some(ChannelBindingState::ExactUriSan));
@@ -557,19 +560,6 @@ mod tests {
     }
 
     #[test]
-    fn the_deprecated_identity_source_names_no_state() {
-        let (state, violations) = binding(|c| {
-            c.peer_identity =
-                PeerIdentityEvidenceRequest::channel_credential(IdentityPolicy::CnLegacy);
-        });
-        assert!(state.is_none());
-        assert!(
-            violations.iter().any(|v| v.contains("cn_legacy")),
-            "{violations:?}"
-        );
-    }
-
-    #[test]
     fn every_legal_crl_state_form_is_classified_and_accepted() {
         let cases: Vec<Form> = vec![
             ((Vec::new(), None), |_| {}),
@@ -589,6 +579,7 @@ mod tests {
         ];
         for ((paths, cadence), mutate) in cases {
             let (state, violations) = crl(mutate);
+            let state = state.expect("a legal CRL form names a state");
             assert_eq!(state.paths(), paths.as_slice());
             assert_eq!(state.reload_cadence_secs(), cadence);
             assert_eq!(state.is_enforced(), !paths.is_empty());
@@ -611,11 +602,13 @@ mod tests {
         for paths in [
             vec![String::new()],
             vec!["/crl.pem".to_string(), String::new()],
+            vec!["   ".to_string()],
+            vec!["/crl.pem".to_string(), " ".to_string()],
         ] {
             let (state, violations) = crl(|c| c.peer_revocation.lists.paths = paths.clone());
             assert!(
-                state.is_enforced(),
-                "{paths:?} classified as no CRL control at all, which would hide the defect"
+                state.is_none(),
+                "{paths:?}: a refused list must name no state"
             );
             assert!(
                 violations.iter().any(|v| v.contains("empty path")),
@@ -626,10 +619,11 @@ mod tests {
 
     #[test]
     fn a_zero_cadence_is_an_unbounded_reloader_not_a_disabled_one() {
-        let (_, violations) = crl(|c| {
+        let (state, violations) = crl(|c| {
             c.peer_revocation.lists.paths = vec!["/crl.pem".to_string()];
             c.peer_revocation.lists.reload_secs = Some(0);
         });
+        assert!(state.is_none(), "a zero cadence must name no state");
         assert!(
             violations.iter().any(|v| v.contains("spin")),
             "{violations:?}"
@@ -639,7 +633,7 @@ mod tests {
     #[test]
     fn a_cadence_with_no_list_to_re_read_is_refused() {
         let (state, violations) = crl(|c| c.peer_revocation.lists.reload_secs = Some(300));
-        assert!(!state.is_enforced());
+        assert!(state.is_none(), "a cadence over no list must name no state");
         assert!(
             violations
                 .iter()

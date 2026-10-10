@@ -253,9 +253,7 @@ mod tests {
         );
         let _ = std::fs::remove_file(&seed);
         let _ = std::fs::remove_file(&tls);
-        let source = built
-            .expect("built from admitted material")
-            .into_key_source();
+        let source = built.expect("built from admitted material");
         assert_eq!(
             source.response_public_key().expect("a key").to_b64url(),
             mcp_re_core::SigningKey::from_seed_bytes(&[1u8; 32])

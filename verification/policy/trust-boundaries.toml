@@ -91,19 +91,16 @@ kind = "environment"
 paths = [
   "mcp-re-client/src/startup.rs",
   "mcp-re-host/src/clock.rs",
+  "mcp-re-proxy/src/async_etcd_store/protocol.rs",
+  "mcp-re-proxy/src/async_redis_store/protocol.rs",
   # MCPRE-175: the store's own eviction clock is the only `SystemTime` read left in the
   # replay tier, and it moved to the module that owns what is retained. Named precisely,
   # per the note above: the authority, not the module tree that contains it.
   "mcp-re-proxy/src/async_replay/retained_set.rs",
   "mcp-re-proxy/src/aws_sts.rs",
   "mcp-re-proxy/src/clock.rs",
-  # MCPRE-176: the clock read belongs to the in-memory tier's own expiry, and moved with
-  # it. Named precisely, per the note above: the authority, not the module tree.
-  "mcp-re-proxy/src/continuation_store/in_memory.rs",
-  "mcp-re-proxy/src/etcd_store.rs",
   "mcp-re-proxy/src/gcp_kms_keysource.rs",
   "mcp-re-proxy/src/ocsp.rs",
-  "mcp-re-proxy/src/redis_store.rs",
   # MCPRE-179: the retained-evidence clock read is `unique_suffix`, which exists so a temp
   # name is never chosen twice — and it moved to the owner of what it takes to create a
   # file in the archive. Named precisely, per the note above: the authority, not the
@@ -245,6 +242,8 @@ paths = [
   "mcp-re-http-profile/src/authoritative_admission/mod.rs",
   "mcp-re-http-profile/src/block.rs",
   "mcp-re-http-profile/src/block/artifact_binding.rs",
+  "mcp-re-http-profile/src/block/artifact_binding/unchecked.rs",
+  "mcp-re-http-profile/src/block/artifact_binding/vocabulary.rs",
   "mcp-re-http-profile/src/policy.rs",
   "mcp-re-http-profile/src/verified_request/floor.rs",
 ]
@@ -263,6 +262,16 @@ beyond = "Whether the parser faithfully reports what the certificate bytes actua
 max_class_without_assumption = "V0"
 
 [[boundary]]
+id = "boundary.base64_encoding"
+description = "Base64url encoding, as implemented by the `base64` dependency's `URL_SAFE_NO_PAD` engine."
+kind = "foreign-dependency"
+paths = [
+  "mcp-re-core/src/encoding.rs",
+]
+beyond = "Whether the engine's output is the RFC 4648 §5 encoding of its input without padding — and so, because that encoding is injective, whether two equal encodings came from equal bytes."
+max_class_without_assumption = "V0"
+
+[[boundary]]
 id = "boundary.tls_mechanism"
 description = "The TLS establishment mechanism, as implemented by rustls: what it accepts, what it reports about a relationship, and the trait contracts it imposes on a signer."
 kind = "foreign-dependency"
@@ -270,6 +279,10 @@ paths = [
   "mcp-re-proxy/src/tls_listener_state/**/*.rs",
   "mcp-re-proxy/src/delegated_tls.rs",
   "mcp-re-proxy/src/delegated_tls/**/*.rs",
+  # The CLIENT side of the same mechanism: the client transport builds rustls'
+  # `WebPkiServerVerifier` here, and every server-authentication verdict it reports is
+  # rustls'. ASM-0070 is the premise a unit crossing it rests on.
+  "mcp-re-transport/src/tls_config.rs",
 ]
 beyond = "Whether a handshake that reports success proved what the protocol says it proves, whether the reported chain is the peer's in the order claimed, and whether a resumed session continues an earlier authenticated one."
 max_class_without_assumption = "V0"
@@ -279,8 +292,6 @@ id = "boundary.shared_state_store"
 description = "The external stores a fleet's cross-replica state is kept in — Redis and etcd — and what an acknowledged write to one durably established."
 kind = "external-service"
 paths = [
-  "mcp-re-proxy/src/redis_store.rs",
-  "mcp-re-proxy/src/etcd_store.rs",
   "mcp-re-proxy/src/async_redis_store.rs",
   "mcp-re-proxy/src/async_etcd_store.rs",
   "mcp-re-proxy/src/shared_replay.rs",
@@ -332,6 +343,33 @@ paths = [
 beyond = "That the monotonic clock advances, and that it advances at a rate which makes an elapsed measurement a duration. It is not comparable to any peer's clock, which is why it is not boundary.clock."
 max_class_without_assumption = "V0"
 
+[[boundary]]
+id = "boundary.os_entropy"
+description = """
+ACQUISITION of randomness from the host operating system's CSPRNG. The authority this
+boundary names is the act of asking the OS for entropy and treating the bytes it returns as
+unpredictable — not the handling of bytes some caller already drew.
+"""
+kind = "environment"
+# Every production site that calls `getrandom::fill` directly, i.e. every place OS entropy
+# enters the system, named by the rule `boundary.clock` uses: the authority, not the callers
+# of a wrapper. `SystemNonceSource` in `nonce.rs` is the injected `NonceSource` seam the
+# request path reads its nonce through; its callers hold no entropy authority of their own
+# and are not listed. The other five draw directly: the audit stream's run identity
+# (`audit_sink/stream.rs`), the delegated response-signing key seed (`delegated_wiring.rs`),
+# the rotation backoff jitter (`signing_plane/mod.rs`), the OCSP request nonce (`ocsp.rs`) and
+# the trust-epoch advance generation (`trust_epoch/advance.rs`).
+paths = [
+  "mcp-re-host/src/nonce.rs",
+  "mcp-re-proxy/src/audit_sink/stream.rs",
+  "mcp-re-proxy/src/delegated_wiring.rs",
+  "mcp-re-proxy/src/ocsp.rs",
+  "mcp-re-proxy/src/signing_plane/mod.rs",
+  "mcp-re-proxy/src/trust_epoch/advance.rs",
+]
+beyond = "Whether the bytes the host CSPRNG returns are unpredictable to every party other than this process. `getrandom` reports an unavailable source as `Err`; it cannot report a predictable one."
+max_class_without_assumption = "V0"
+
 # ---------------------------------------------------------------------------
 # What is deliberately NOT a boundary
 # ---------------------------------------------------------------------------
@@ -355,4 +393,89 @@ paths = [
   "mcp-re-proxy/src/serving_capabilities.rs",
 ]
 beyond = "Who can write the channel. Every other boundary here is crossed by code — a library, a service, the kernel — and this one is crossed by a network topology nothing in the process can observe. The verified-context block carries no signature by design, so the inner server cannot distinguish a block this proxy wrote from one any other writer produced; the whole of the carrier's authentication weight rests on the listener being unreachable from anywhere but this proxy. ASM-0050 states it. The reserved-field guard bounds what a CALLER can seed and runs under every policy, which is a different question and is not evidence for this one."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.filesystem"
+description = "Durable storage of the evidence-retention directory: what an acknowledged `rename` and `fsync` establish across a process or host crash."
+kind = "environment"
+# The two places a retention record is made durable: the writer that renames a committed record
+# into place and syncs it, and the store whose directory barrier makes the renames durable.
+paths = [
+  "mcp-re-proxy/src/transparency/durable_writer.rs",
+  "mcp-re-proxy/src/retained_evidence/store.rs",
+]
+beyond = "Whether an `fsync` that returned success leaves the renamed file and its directory entry on stable storage. A filesystem mounted without write barriers, or a device that acknowledges a flush it did not perform, returns success and loses the record."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.http_client"
+description = "The outbound HTTP client, as implemented by `url` and `ureq`: how a destination string is parsed to a host and port, and where a request built on it is sent."
+kind = "foreign-dependency"
+# The endpoint rule decides admission by what `url::Url::parse` will read; the outbound
+# capability builds the `ureq` agent and issues every credential-bearing request.
+paths = [
+  "mcp-re-proxy/src/kms_endpoint_policy/mod.rs",
+  "mcp-re-proxy/src/outbound_fetch/binding.rs",
+  "mcp-re-proxy/src/outbound_fetch/credential_egress.rs",
+  "mcp-re-proxy/src/outbound_fetch/url.rs",
+]
+beyond = "Whether the host and port the parser reports are the ones the client connects to, whether a request goes to exactly the URL it was built on, and whether an agent configured without redirects follows none."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.json_parser"
+description = "JSON parsing of a request body and of the operator's trust document, as implemented by `serde_json`."
+kind = "foreign-dependency"
+paths = [
+  "mcp-re-http-profile/src/envelope/request.rs",
+  "mcp-re-proxy/src/trust_document.rs",
+]
+beyond = "Whether a byte string the parser accepts is an RFC 8259 JSON text and, for a text without duplicate member names, the value it returns represents the objects, arrays and scalars the text encodes."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.manifest_floor_filesystem"
+description = "Durable storage of the client's manifest-floor directory: what a successful `sync_all` on a marker file and on its directory establishes across a process or host failure."
+kind = "environment"
+paths = [
+  "mcp-re-client-proxy/src/manifest_floor.rs",
+]
+beyond = "Whether a `sync_all` that returned success leaves the marker file and its directory entry on stable storage. A filesystem mounted without write barriers, or a device that acknowledges a flush it did not perform, returns success and loses the marker."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.cose_cbor"
+description = "CBOR and COSE decoding of SCITT evidence, as implemented by the `ciborium` and `coset` dependencies, and the construction of the `Sig_structure` for a signature check."
+kind = "foreign-dependency"
+paths = [
+  "mcp-re-http-profile/src/scitt/cose_key/verify.rs",
+  "mcp-re-http-profile/src/scitt/receipt/parse.rs",
+  "mcp-re-http-profile/src/scitt/statement/parse.rs",
+]
+beyond = "Whether a successful decode returns the values, headers, payload and signature the input bytes encode, with the protected and unprotected headers kept distinct, and whether the `Sig_structure` handed to a signature check is the RFC 9052 section 4.4 encoding over the protected-header bytes exactly as received, the external AAD passed to the library and the payload passed to the library."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.napi_marshalling"
+description = "Delivery of JavaScript arguments to, and of the returned value from, an exported `#[napi]` function of the TypeScript native binding, as implemented by the `napi` and `napi-derive` dependencies."
+kind = "foreign-dependency"
+paths = [
+  "sdk/typescript/src/lib.rs",
+  "sdk/typescript/src/projection.rs",
+  "sdk/typescript/src/trust.rs",
+]
+beyond = "Whether the `Buffer`, string, number and array a JavaScript caller passed reach the function as passed, and whether the object the function returned, with an absent member kept absent, and an error it raised reach the caller as produced."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.pyo3_marshalling"
+description = "Delivery of Python arguments to, and of the returned value from, a `#[pyfunction]` of the Python native binding, as implemented by the `pyo3` dependency."
+kind = "foreign-dependency"
+paths = [
+  "sdk/python/src/lib.rs",
+  "sdk/python/src/projection.rs",
+  "sdk/python/src/trust.rs",
+]
+beyond = "Whether the `bytes`, `str`, `int` and `list` a Python caller passed reach the function as passed, and whether the `#[pyclass]` value the function returned, with a `None` member kept `None`, and an exception it raised reach the caller as produced."
 max_class_without_assumption = "V0"

@@ -623,6 +623,12 @@ def _peer_wire_code(message: str) -> Optional[str]:
     return token if _WIRE_CODE.match(token) else None
 
 
+# A verified rejection receipt that carried no (or an empty) wire code. The receipt is a
+# genuine refusal whose signature verified, so no `mcp-re.*` token may stand in for the one
+# the peer did not send; the condition is the SDK's own and carries its prefix.
+_NO_PEER_WIRE_CODE = "mcp-re-sdk: verified rejection carried no wire code"
+
+
 def _error_message(request_id, wire_code: str, data: Any = None) -> SessionMessage:
     """A JSON-RPC error correlated to the request, so the awaiting call raises.
 
@@ -764,7 +770,7 @@ async def _exchange(
                 outstanding.discard(correlation_id)
                 return _error_message(
                     request.id,
-                    verified.wire_code or "mcp-re.response_sig_invalid",
+                    verified.wire_code or _NO_PEER_WIRE_CODE,
                     data=_rejection_data(verified),
                 )
 

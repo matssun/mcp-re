@@ -28,6 +28,11 @@ mod verdict;
 /// Deriving the artifact from one completed attestation.
 mod derivation;
 
+/// The artifact read back.
+mod document;
+
+pub use document::AttestationDocument;
+pub use document::ClaimedRegistration;
 pub use verdict::ChainVerdict;
 pub use verdict::CorrespondenceVerdict;
 pub use verdict::IncompleteAt;
@@ -46,8 +51,7 @@ pub struct AttestedService {
 }
 
 /// The portable product of one audit.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AttestationArtifact {
     /// The schema token, so a reader knows what it is holding.
     schema: String,
@@ -74,7 +78,7 @@ pub struct AttestationArtifact {
     /// — a value that exists only on the far side of the verification. An artifact
     /// carrying a receipt is one whose receipt verified; an artifact without one says
     /// nothing about whether the statement reached a log.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     receipt: Option<String>,
     /// WHICH contract established the registration, present exactly when `receipt` is.
     ///
@@ -83,7 +87,7 @@ pub struct AttestationArtifact {
     /// Transparency Service interoperability, and a reader of this file has no other way to
     /// tell which one produced the receipt beside it. Set by the same method, from the same
     /// `RegisteredStatement`, so the two facts cannot disagree.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     registration_protocol: Option<String>,
 }
 
@@ -93,16 +97,22 @@ impl AttestationArtifact {
     /// The argument is the proof: a `RegisteredStatement` is constructible only by the
     /// function that put the service's answer through the offline verifier against the
     /// exact statement submitted and the operator's pin. There is no way to attach a
-    /// receipt that merely arrived.
+    /// receipt that merely arrived. It is refused unless this artifact carries the very
+    /// statement the receipt verified against.
     pub fn with_verified_receipt(
         mut self,
         registered: &crate::transparency::auditor::registration::RegisteredStatement,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        if self.signed_statement()? != registered.statement_bytes() {
+            return Err(
+                "attestation artifact: the receipt is about a different statement".to_owned(),
+            );
+        }
         self.receipt = Some(mcp_re_core::b64url_encode(registered.receipt_bytes()));
         // Set HERE, from the same value, so a receipt and the contract that produced it
         // arrive together or not at all.
         self.registration_protocol = Some(registered.protocol().to_owned());
-        self
+        Ok(self)
     }
 
     /// The contract that established the registration, if this attestation was registered.
@@ -116,25 +126,6 @@ impl AttestationArtifact {
             mcp_re_core::b64url_decode(encoded)
                 .map_err(|_| "attestation artifact: receipt is not base64url".to_owned())
         })
-    }
-
-    /// Read an artifact back, refusing anything this reader cannot use.
-    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
-        let artifact: AttestationArtifact =
-            serde_json::from_slice(bytes).map_err(|e| format!("attestation artifact: {e}"))?;
-        if artifact.schema != ATTESTATION_SCHEMA {
-            return Err(format!(
-                "attestation artifact: schema is {:?}, expected {ATTESTATION_SCHEMA:?}",
-                artifact.schema,
-            ));
-        }
-        // Decoded on the way in, so holding an artifact means its statement — and its
-        // receipt, when it has one — are recoverable rather than recoverable-if-asked.
-        artifact.signed_statement()?;
-        if let Some(receipt) = artifact.receipt() {
-            receipt?;
-        }
-        Ok(artifact)
     }
 
     /// The artifact as bytes an operator can keep beside the archive.
@@ -161,6 +152,28 @@ impl AttestationArtifact {
     /// Which binding the issuer's self-check established.
     pub fn correspondence(&self) -> CorrespondenceVerdict {
         self.correspondence
+    }
+}
+
+#[cfg(test)]
+impl AttestationArtifact {
+    /// An artifact around `signed_statement`, as a reader would hold it.
+    pub(in crate::transparency::auditor) fn carrying_statement(signed_statement: &[u8]) -> Self {
+        AttestationArtifact {
+            schema: ATTESTATION_SCHEMA.to_owned(),
+            issuer_kid: "auditor-1".to_owned(),
+            issued_at: 1_700_000_100,
+            signed_statement: mcp_re_core::b64url_encode(signed_statement),
+            hops: Vec::new(),
+            chain: ChainVerdict::Complete,
+            correspondence: CorrespondenceVerdict::BoundToVerifiedCall,
+            transparency_service: AttestedService {
+                service_identifier: "example-ts".to_owned(),
+                kid: "ts-1".to_owned(),
+            },
+            receipt: None,
+            registration_protocol: None,
+        }
     }
 }
 
@@ -201,17 +214,17 @@ mod tests {
             wire_code: Some("mcp-re.signature_invalid".to_owned()),
         });
         let bytes = written.to_json().expect("json");
-        let read = AttestationArtifact::parse(&bytes).expect("parses");
+        let read = AttestationDocument::parse(&bytes).expect("parses");
 
-        assert_eq!(read.chain(), written.chain());
-        assert!(!read.chain().is_complete());
+        assert_eq!(read.claimed_chain(), written.chain());
+        assert!(!read.claimed_chain().is_complete());
         assert_eq!(
-            read.correspondence(),
+            read.claimed_correspondence(),
             CorrespondenceVerdict::BoundToVerifiedCall
         );
         assert_eq!(read.transparency_service(), &service());
         assert_eq!(
-            read.signed_statement().expect("recoverable"),
+            read.signed_statement(),
             b"not a real statement",
             "registration submits the exact bytes, so they must survive verbatim",
         );
@@ -222,7 +235,7 @@ mod tests {
         let mut written = artifact(ChainVerdict::Complete);
         written.schema = "something-else/v1".to_owned();
         let bytes = written.to_json().expect("json");
-        assert!(AttestationArtifact::parse(&bytes).is_err());
+        assert!(AttestationDocument::parse(&bytes).is_err());
     }
 
     #[test]
@@ -230,6 +243,6 @@ mod tests {
         let mut written = artifact(ChainVerdict::Complete);
         written.signed_statement = "!!!".to_owned();
         let bytes = written.to_json().expect("json");
-        assert!(AttestationArtifact::parse(&bytes).is_err());
+        assert!(AttestationDocument::parse(&bytes).is_err());
     }
 }

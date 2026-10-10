@@ -17,6 +17,14 @@ use startup::now_unix;
 use startup::parse_invocation;
 use startup::serve_until_shutdown;
 
+/// The floor posture for the startup banner.
+///
+/// `bootstrap_version` is reported rather than elided. It is the only part of a durable
+/// floor an attacker cannot reach by unlinking the directory and the only part an
+/// ephemeral volume cannot lose, and it defaults to 0 — so "durable" on its own names
+/// the storage an operator chose while saying nothing about whether any of it is
+/// actually beyond reach. On the common sidecar deployment, where the floor directory
+/// is an emptyDir, a bootstrap of 0 means a restart resets the floor to whatever the
 /// (now empty) directory says and an older signed manifest is accepted again.
 fn floor_posture(floor: &mcp_re_client::config::FloorConfig) -> String {
     use mcp_re_client::config::FloorConfig;
@@ -81,7 +89,13 @@ fn main() -> ExitCode {
     };
     // The startup load is fail-closed: a client that cannot establish which roots it
     // trusts has no basis to verify anything.
-    let built = match mcp_re_client::build(&config, now_unix()) {
+    let Some(now) = now_unix() else {
+        eprintln!(
+            "mcp-re-client: the host clock does not read as a Unix time; refusing to load trust anchors at a time nobody read"
+        );
+        return ExitCode::FAILURE;
+    };
+    let built = match mcp_re_client::build(&config, now) {
         Ok(built) => built,
         Err(error) => {
             eprintln!("{error}");

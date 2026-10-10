@@ -4,18 +4,20 @@
 //! with a *different* revocation-propagation guarantee:
 //!
 //! - **Tier 1 — bounded-cache eventual.** A verifier may serve cached *active*
-//!   trust state for at most the trust-propagation window `T`; revocation is
-//!   enforced fleet-wide within `T`, then fails closed. This is the default
+//!   trust state for at most the trust-propagation window `T`; cached active
+//!   state lives at most `T`, then fails closed. This is the default
 //!   posture and is implemented by [`BoundedTrustCache`](crate::BoundedTrustCache).
 //! - **Tier 2 — live strong check.** The resolver consults the shared store on
-//!   *every* verification (no positive-trust caching) — near-zero propagation
-//!   window, at the cost of a store round-trip per request and a hard dependency
-//!   on trust-store availability. Implemented by
+//!   *every* verification (no positive-trust caching), at the cost of a store
+//!   round-trip per request and a hard dependency on trust-store availability. The
+//!   store learns of a removed key at the next `--trust` re-read, so the window is the
+//!   re-read cadence `R` while re-reads succeed and the reload failure budget times `R`
+//!   at worst. Implemented by
 //!   [`LiveTrustResolver`](crate::LiveTrustResolver).
 //! - **Tier 3 — push invalidation.** Caching is allowed (like Tier 1), but a
 //!   revocation event invalidates affected entries immediately via an injected
 //!   channel. CRITICAL: if the channel is unhealthy it MUST fall back to the
-//!   bounded `T` — so its honest guarantee is *near-zero with bounded-`T`
+//!   bounded `T` — so its honest guarantee is *the re-read bound plus a bounded-`T`
 //!   fallback*, NEVER "zero window" (an in-process reference channel does not
 //!   prove reliable ordering/delivery). Implemented by
 //!   [`PushInvalidationTrustCache`](crate::PushInvalidationTrustCache).
@@ -30,7 +32,7 @@
 //! Honesty rule (load-bearing): no tier's guarantee may be described as
 //! "zero-window" unless its mechanism proves reliable ordering/delivery. The
 //! reference Push channel does not, so [`RevocationTier::Push`] surfaces the
-//! near-zero+fallback string — guarded by a unit test.
+//! bounded-fallback string — guarded by a unit test.
 
 /// The declared revocation tier of a fleet's shared trust state (ADR-MCPS-021).
 ///
@@ -42,7 +44,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RevocationTier {
     /// **Tier 1.** Bounded-cache eventual trust: cached *active* state lives at
-    /// most `T` seconds; revocation enforced fleet-wide within `T`, then fail
+    /// most `T` seconds; cached active state lives at most `T`, then fail
     /// closed. The default posture.
     BoundedCache {
         /// The trust-propagation window `T` (seconds): the max age of cached
@@ -51,16 +53,16 @@ pub enum RevocationTier {
     },
 
     /// **Tier 2.** Live strong check: the store is consulted on every
-    /// verification (no positive-trust caching). Near-zero propagation window, at
-    /// the cost of a per-request store round-trip and a hard availability
-    /// dependency (store unavailability fails closed).
+    /// verification (no positive-trust caching). The window is bounded by the
+    /// `--trust` re-read cadence, at the cost of a per-request store round-trip and a
+    /// hard availability dependency (store unavailability fails closed).
     Live,
 
     /// **Tier 3.** Push invalidation: caching is allowed (bounded `T`), but a
     /// revocation event evicts affected entries immediately. On invalidation-
     /// channel failure it falls back to bounded `T`. NOT "zero window" — the
     /// reference channel does not prove reliable ordering/delivery, so the honest
-    /// guarantee is near-zero with bounded-`T` fallback.
+    /// guarantee is the re-read bound with a bounded-`T` fallback.
     Push {
         /// The bounded-`T` fallback window (seconds) used when the invalidation
         /// channel is healthy AND, critically, the *ceiling* an entry may live if
@@ -139,26 +141,35 @@ impl RevocationTier {
     ///
     /// CRITICAL honesty rule: [`RevocationTier::Push`] is NEVER described as
     /// "zero window" — the reference invalidation channel does not prove reliable
-    /// ordering/delivery, so its claim is "near-zero with bounded-`T` fallback".
+    /// ordering/delivery, so its claim is the re-read bound with bounded-`T` fallback.
     pub fn guarantee(&self) -> &'static str {
         match self {
             RevocationTier::BoundedCache { .. } => {
-                "revocation enforced fleet-wide within the bounded window T; on \
+                "cached trust state lives at most the bounded window T: T bounds CACHING, \
+                 not how fast --trust itself changes (see store-change-cadence); on \
                  store outage cached active state is usable only until T, then \
                  fail closed; NOT zero-window / NOT live / NOT push"
             }
             RevocationTier::Live => {
-                "near-zero revocation window: the store is consulted on every \
-                 verification with no positive-trust caching, at the cost of a \
-                 per-request store round-trip and a hard availability dependency \
-                 (store unavailability fails closed); NOT proven zero-window"
+                "revocation window bounded by the --trust re-read cadence R: the store \
+                 is consulted on every verification with no positive-trust caching, but \
+                 learns of a key removed from --trust only at the next re-read (see \
+                 store-change-cadence), so the window is R while every re-read succeeds \
+                 and 5 x R at worst (up to 300s at the 60s cadence ceiling), each plus the \
+                 durations of the re-reads involved; a per-request store round-trip and a \
+                 hard availability dependency (store unavailability fails closed); NOT \
+                 proven zero-window"
             }
             RevocationTier::Push { .. } => {
-                "near-zero revocation window with bounded-T fallback: a pushed \
-                 revocation evicts affected entries immediately, but on \
-                 invalidation-channel failure entries fall back to expiry within \
-                 the bounded window T; NOT zero-window (the reference channel does \
-                 not prove reliable ordering/delivery)"
+                "revocation window bounded by the --trust re-read cadence R with \
+                 bounded-T fallback: a pushed revocation evicts affected entries \
+                 immediately, but on invalidation-channel failure entries fall back to \
+                 expiry within the bounded window T, and an eviction re-resolves against \
+                 the store, which learns of a key removed from --trust only at the next \
+                 re-read (see store-change-cadence), so the window is R + T while every \
+                 re-read succeeds and 5 x R + T at worst, each plus the durations of the \
+                 re-reads involved; NOT zero-window (the reference channel does not prove \
+                 reliable ordering/delivery)"
             }
         }
     }
@@ -172,15 +183,6 @@ impl RevocationTier {
             self.wire_name(),
             self.guarantee()
         )
-    }
-
-    /// Whether this tier's surfaced guarantee claims a zero / instantaneous window.
-    /// ALWAYS `false`: ADR-MCPS-021's claim matrix forbids a zero-window claim in
-    /// v0.4's in-process reference implementation (no tier here proves reliable
-    /// ordering/delivery). Exposed so callers and tests can assert the honesty
-    /// boundary explicitly rather than re-parsing the guarantee string.
-    pub fn claims_zero_window(&self) -> bool {
-        false
     }
 }
 
@@ -259,6 +261,8 @@ mod tests {
         // Tier 1 explicitly disclaims the stronger postures.
         assert!(bounded.contains("NOT zero-window"));
         assert!(bounded.contains("NOT live"));
+        assert!(!bounded.contains("fleet-wide"));
+        assert!(bounded.contains("CACHING"));
     }
 
     #[test]
@@ -266,11 +270,6 @@ mod tests {
         // CRITICAL honesty rule (ADR-MCPS-021): no tier in the v0.4 in-process
         // reference implementation may claim a zero / instantaneous window.
         for tier in all_tiers() {
-            assert!(
-                !tier.claims_zero_window(),
-                "{} must not claim a zero window in the reference implementation",
-                tier.wire_name()
-            );
             let g = tier.guarantee().to_lowercase();
             // The literal phrase "zero-window" only ever appears negated.
             let negated_everywhere = g
@@ -285,21 +284,27 @@ mod tests {
     }
 
     #[test]
-    fn push_guarantee_is_near_zero_with_bounded_fallback_not_zero_window() {
-        // The load-bearing Push honesty assertion: the surfaced string is the
-        // near-zero+bounded-fallback claim, never the bare zero-window claim.
+    fn push_guarantee_states_the_re_read_bound_with_bounded_fallback_not_zero_window() {
+        // The load-bearing Push honesty assertion: the surfaced string is the re-read
+        // bound with bounded fallback, never the bare zero-window claim.
         let push = RevocationTier::Push { t_secs: 60 }.guarantee();
-        assert!(push.contains("near-zero"));
+        assert!(!push.contains("near-zero"));
+        assert!(push.contains("5 x R + T at worst"));
+        assert!(push.contains("durations of the re-reads involved"));
         assert!(push.contains("bounded-T fallback"));
         assert!(push.contains("NOT zero-window"));
+        assert!(push.contains("store-change-cadence"));
     }
 
     #[test]
-    fn live_guarantee_is_near_zero_with_hard_availability_dependency() {
+    fn live_guarantee_states_its_worst_case_and_hard_availability_dependency() {
         let live = RevocationTier::Live.guarantee();
-        assert!(live.contains("near-zero"));
+        assert!(!live.contains("near-zero"));
+        assert!(live.contains("5 x R at worst (up to 300s"));
+        assert!(live.contains("durations of the re-reads involved"));
         assert!(live.contains("every verification"));
         assert!(live.contains("fails closed"));
+        assert!(live.contains("store-change-cadence"));
     }
 
     #[test]

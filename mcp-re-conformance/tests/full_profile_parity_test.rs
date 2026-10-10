@@ -11,7 +11,7 @@
 //!
 //! The response leg is the PRE-052 root-signed emitter, retained as a fixture: this
 //! battery pins the body-evidence and continuation bytes, not the shipped emission
-//! mode, which is `sign_delegated_response_full`.
+//! mode, which is `sign_delegated_response_full_with_owned_key`.
 //!
 //! — and proves the `se.syncom/mcp-re.http.request` / `.response` body evidence
 //! blocks, the five-tuple replay key, and the MRTR continuation binding are
@@ -56,7 +56,8 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestEvidenceDigest;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
@@ -156,13 +157,16 @@ fn base_request() -> HttpRequest {
 /// material); RAR is caller-supplied, so this returns the committed details for
 /// a RAR binding and `None` otherwise.
 fn rar_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
-    move |b: &ArtifactBinding| match b.artifact_type {
+    move |b: &ArtifactBinding| match b.artifact_type() {
         ArtifactType::OauthRar => Some(RAR_DETAILS.to_vec()),
         _ => None,
     }
 }
 
-fn signed_request(block: &HttpRequestEvidenceBlock, nonce: &str) -> (HttpRequest, RequestEvidence) {
+fn signed_request(
+    block: &HttpRequestEvidenceBlock,
+    nonce: &str,
+) -> (HttpRequest, RequestRoleEvidence) {
     let mut req = base_request();
     let ev = sign_request_full(
         &mut req,
@@ -177,8 +181,33 @@ fn signed_request(block: &HttpRequestEvidenceBlock, nonce: &str) -> (HttpRequest
     (req, ev)
 }
 
+/// The correlation record the open leg retains for these bases: each handle minted under its
+/// own role label, as the proxy's store does.
+fn retained_over(
+    previous_request_base: &[u8],
+    input_required_response_base: &[u8],
+    request_state: &'static [u8],
+) -> RetainedContinuation<'static> {
+    let handle = |role: mcp_re_http_profile::evidence::EvidenceRole,
+                  base: &[u8]|
+     -> &'static RequestEvidenceDigest {
+        Box::leak(Box::new(RequestEvidenceDigest::over_labeled(role, base)))
+    };
+    RetainedContinuation::from_correlation(
+        handle(
+            mcp_re_http_profile::evidence::EvidenceRole::Request,
+            previous_request_base,
+        ),
+        handle(
+            mcp_re_http_profile::evidence::EvidenceRole::Response,
+            input_required_response_base,
+        ),
+        request_state,
+    )
+}
+
 fn matching_ctx() -> RetainedContinuation<'static> {
-    RetainedContinuation::from_correlation(PREV_BASE, IRR_BASE, REQ_STATE)
+    retained_over(PREV_BASE, IRR_BASE, REQ_STATE)
 }
 
 /// A shared/durable replay cache stand-in so the integrated path runs under the
@@ -202,7 +231,9 @@ impl ReplayCache for DurableCache {
     }
 }
 fn strict_cache() -> DurableCache {
-    DurableCache(InMemoryReplayCache::new(0))
+    DurableCache(InMemoryReplayCache::new(
+        mcp_re_core::MaxClockSkew::new(0).expect("0 s is inside the bound"),
+    ))
 }
 fn strict_cfg() -> DispatchConfig {
     DispatchConfig { fleet_strict: true }
@@ -257,12 +288,16 @@ fn full_exchange_activates_all_blocks() {
     let rv = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_bound_response(&rsp, &req, NOW)
         .expect("full response verifies");
-    assert_eq!(
-        rv.request_evidence_agreement.bound_request_evidence,
-        rv.request_evidence_agreement.body_request_evidence,
+    assert!(
+        rv.request_evidence_agreement()
+            .bound_request_evidence
+            .matches(&rv.request_evidence_agreement().body_request_evidence),
         "response binds request evidence"
     );
-    assert_eq!(rv.server_signer.keyid, "server-key-1");
+    assert_eq!(
+        rv.floor().resolved_server_actor().identity.keyid,
+        "server-key-1"
+    );
 }
 
 // ---------- #1 request body tamper -----------------------------------------
@@ -343,7 +378,7 @@ fn response_evidence_mismatch_emits_request_binding_mismatch() {
     // A different request's evidence handle, advertised by a response whose ;req
     // is still bound to req_a: the crypto floor passes, the body comparison trips.
     let (_req_b, ev_b) = signed_request(&block, "nonce-b");
-    assert_ne!(ev_b.digest_value, verified_a.evidence().digest_value);
+    assert_ne!(ev_b.digest_value(), verified_a.evidence().digest_value());
 
     let mut rsp = HttpResponse {
         status: 200,
@@ -375,7 +410,7 @@ fn artifact_mismatch_fails_in_integrated_path() {
     // different bytes: strict artifact enforcement rejects.
     let block = full_block();
     let (req, _ev) = signed_request(&block, "nonce-1");
-    let wrong_rar = |b: &ArtifactBinding| match b.artifact_type {
+    let wrong_rar = |b: &ArtifactBinding| match b.artifact_type() {
         ArtifactType::OauthRar => Some(b"a-different-rar-detail".to_vec()),
         _ => None,
     };
@@ -414,8 +449,7 @@ fn continuation_mismatch_fails_in_integrated_path() {
     let cache = strict_cache();
 
     // Tampered requestState against the retained bases.
-    let bad_ctx =
-        RetainedContinuation::from_correlation(PREV_BASE, IRR_BASE, b"tampered-request-state");
+    let bad_ctx = retained_over(PREV_BASE, IRR_BASE, b"tampered-request-state");
     let err = dispatch_request(&verified, &cache, Some(bad_ctx), &strict_cfg()).unwrap_err();
     assert_eq!(
         err,

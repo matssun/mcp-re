@@ -10,7 +10,64 @@
     "theorem_id": "THM-0020",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C3. APPROVED as prepared. The ruling records that THM-0020 is UNBOUND and is unaffected by the request/handle pairing repair, and ratifies the family discipline that the unbound propositions are not weaker bound propositions \u2014 the distinct types are the load-bearing separation.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G2.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0027": "sha256:67c173e4093e6b97f440c3ebcc1c1cbf1b68792677b61265c8d455c2ba890ed1",
+      "ASM-0029": "sha256:2dff1d4c9c81c910fdce1647797f7544de3522767a69b3de42f9202e08e74c19",
+      "ASM-0069": "sha256:7d9ea14fe59f0ea817ed4399c9c5bc49d6f36b6f2ba8383363cc19f07bb669ce"
+    },
+    "supporting_semantics": {
+      "http_profile.delegated_credential_chain": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:ade860a0dbb3caeae9698957c32ba0e004f83d01fe75cf640fd0aec67a779b21",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:a37582caa83f9f94d13db2a653308d85bba75f130ef1fdcadd57b907bae57c33",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:962f2eae6d5d78514dbf60316c546ab9015505b110049da234486667f672feb7",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:7ffc1f205b8c625daca3c7d9358ce73bc5ed5b40a4382b94061103b9f0e5caae",
+        "test_selection": "sha256:9a8c76f4eaec45d44470ee196a7d311ccc951e65b646c5e608618647a1d61c35",
+        "test_sources": "sha256:88acc0f5ec0f5566183b79a71139ff37778093c26aae8e250b79af63c9c23ae5",
+        "trusted_assumptions": "sha256:86a7cd3250c00a6f70ac424b60b2a99428079fd69870792d9a497fa967ee9511",
+        "unit_id": "sha256:c551021ed9679349f0785a9c93dee403e0227026446bc1a3ceb29c6b35b111a9"
+      },
+      "http_profile.delegated_unbound_result": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:ade860a0dbb3caeae9698957c32ba0e004f83d01fe75cf640fd0aec67a779b21",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:95c4d8b27f24cf808a513c918e5686df70f8632fbbfce33efaee425f58ef87c0",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:589a516ffb27ab92630b17e85c7f794506d582aa97abcbc88a7ca40a99640f86",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:4fe64d6492cf08c4f6668dce9091e92a0d23ab2f271f4e9b3932a48fc2dd9d65",
+        "test_selection": "sha256:a9b50cdf71364eae0a21105af8e1657c0b6ae10597b7ba9d7db80285f33ef032",
+        "test_sources": "sha256:88acc0f5ec0f5566183b79a71139ff37778093c26aae8e250b79af63c9c23ae5",
+        "trusted_assumptions": "sha256:14512817ad48256b84f8c644f1767e5a7a3b3a49896a0d5e288bed25c1c38b0f",
+        "unit_id": "sha256:ff9078c6ffafac0f302735029580bea5836ab2796488dc745e142f56cfebb0f0"
+      }
+    },
+    "theorem_claim": "sha256:7f630ee9ad02ca2137b43296c775cebab478498de18e2580b147c7ce6335a380",
+    "theorem_dependencies": {
+      "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868",
+      "THM-0022": "sha256:5a6ae3fc8d7e8da6cc64a01fd68effcf12734ed195160466e6eaede46794467e"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:cf7311d8eb22dc0e3d0e7c4b8207960c84480520b0457c5e846e01e8b232edea",
   "reviewed_fingerprint": "sha256:a176280bae758572695206bbce4e0f08e95b87034a45dbe7d4139c4001a7ef1f",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0020"

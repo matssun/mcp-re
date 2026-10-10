@@ -46,7 +46,7 @@ use supervision::supervise_trust_reload;
 /// promises a one-cadence window. Five consecutive failures is far longer than a
 /// ConfigMap remount or an editor's save and short enough that an incident-time
 /// revocation is not silently ignored.
-const TRUST_RELOAD_FAILURE_BUDGET: u32 = 5;
+pub(super) const TRUST_RELOAD_FAILURE_BUDGET: u32 = 5;
 /// Re-read `--trust` on a cadence and swap the snapshot atomically.
 ///
 /// The same shape as [`spawn_crl_reload_task`], and for the same reason: a
@@ -68,7 +68,14 @@ pub(super) fn spawn_trust_reload_task(
     response_kid: String,
     interval_secs: u64,
     freshness: Arc<TrustStoreFreshness>,
-) {
+) -> Result<(), String> {
+    // The budget in time, plus one cadence for the read in flight: a reloader that stops
+    // producing reads fails closed as one that keeps failing them does.
+    freshness.require_success_within(Duration::from_secs(
+        interval_secs
+            .max(1)
+            .saturating_mul(u64::from(TRUST_RELOAD_FAILURE_BUDGET).saturating_add(1)),
+    ));
     let halt = workers.halt();
     let loop_freshness = Arc::clone(&freshness);
     workers.spawn(
@@ -83,7 +90,7 @@ pub(super) fn spawn_trust_reload_task(
                 &halt,
             );
         }),
-    );
+    )
 }
 
 /// The reload loop proper. Split out so the supervisor above can catch a panic from
@@ -109,6 +116,12 @@ fn trust_reload_loop(
             // failing closed with `trust_resolver_unavailable` is the correct side of
             // the trade for a drain as well as for a retirement.
             freshness.mark_stale_permanently();
+            eprintln!(
+                "mcp-re-proxy: trust store reload STOPPED (the worker was halted); --trust is \
+                 no longer re-read on this replica, so request verification now FAILS CLOSED \
+                 (trust_resolver_unavailable) for the rest of this process. Expected during a \
+                 drain; otherwise restart the replica."
+            );
             return;
         }
         consecutive_failures = trust_reload_cycle(
@@ -202,14 +215,21 @@ mod reload_loop_tests {
             "mcp_re_trust_reload_{tag}_{}.json",
             std::process::id()
         ));
+        let tmp = path.with_extension("json.tmp");
         std::fs::write(
-            &path,
+            &tmp,
             format!(
                 r#"[{{"signer":"{SIGNER}","key_id":"{key_id}","public_key":"{}"}}]"#,
                 key.to_b64url()
             ),
         )
         .expect("write trust file");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644))
+                .expect("chmod trust file");
+        }
+        std::fs::rename(&tmp, &path).expect("publish trust file");
         path
     }
 
@@ -270,10 +290,9 @@ mod reload_loop_tests {
         done()
     }
 
-    /// The loop is one halt-aware sleep of exactly `R` followed by one read, until halted:
-    /// a key rotated in the file is served within one cadence, and the halt that ends the
-    /// loop freezes the store. This is the `R` in the printed `R + T`; without it the
-    /// arithmetic names a cadence nothing measures.
+    /// A key rotated in the file is swapped in by a running loop (resolver map and signer
+    /// directory together), and the halt that ends the loop freezes the store. The exact
+    /// cadence is pinned by `the_loop_sleeps_exactly_the_cadence_before_each_read`.
     #[test]
     fn the_reload_loop_reads_on_its_cadence_until_halted() {
         let path = trust_file("cadence", "kid-first");
@@ -295,13 +314,10 @@ mod reload_loop_tests {
 
         // The operator rotates the key. The next cycle, at most R = 1s away, must land it.
         let _ = trust_file("cadence", "kid-second");
-        let landed = wait_for(Duration::from_millis(2500), || {
+        let landed = wait_for(Duration::from_secs(10), || {
             store.signer_for("kid-second").is_some()
         });
-        assert!(
-            landed,
-            "the loop did not re-read --trust within its cadence"
-        );
+        assert!(landed, "the loop did not swap in the rotated key");
         assert!(
             store.signer_for("kid-first").is_none(),
             "the swap must retire the previous map in the same cycle"
@@ -346,6 +362,125 @@ mod reload_loop_tests {
             store.resolve(SIGNER, "kid-new").is_ok(),
             "the re-read map is the one the resolver now answers from"
         );
+    }
+
+    /// A replacement whose write posture is refused does not replace the snapshot: the cycle
+    /// counts a failure and the last known-good document keeps answering.
+    #[test]
+    fn a_replacement_with_a_refused_write_posture_keeps_the_last_good_document() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = trust_file("posture", "kid-good");
+        let trust_path = path.to_string_lossy().into_owned();
+        let store = load_trust_snapshot(&trust_path, "response-kid").expect("initial snapshot");
+
+        let _ = trust_file("posture", "kid-planted");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).expect("chmod");
+        let freshness = TrustStoreFreshness::default();
+        freshness.mark_fresh();
+        let failures = trust_reload_cycle(&store, &trust_path, "response-kid", &freshness, 0);
+
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(failures, 1, "a refused replacement is a failed reload");
+        assert!(
+            store.resolve(SIGNER, "kid-good").is_ok(),
+            "the last known-good document must keep answering"
+        );
+        assert!(
+            store.resolve(SIGNER, "kid-planted").is_err(),
+            "a key from a world-writable replacement must never resolve"
+        );
+    }
+
+    /// This is the `R` in the printed `R + T`, measured over BUDGET consecutive cycles so
+    /// the tolerance per cycle is narrower than `R`.
+    #[test]
+    fn the_loop_sleeps_exactly_the_cadence_before_each_read() {
+        let store = Arc::new(empty_store());
+        let freshness = Arc::new(TrustStoreFreshness::default());
+        freshness.mark_fresh();
+        let deployment = Arc::new(AtomicBool::new(false));
+        let workers = WorkerSet::new(Arc::clone(&deployment));
+        let halt = workers.halt();
+        let started = std::time::Instant::now();
+        let worker = {
+            let store = Arc::clone(&store);
+            let freshness = Arc::clone(&freshness);
+            std::thread::spawn(move || {
+                trust_reload_loop(
+                    &store,
+                    "/nonexistent/trust.json",
+                    "response-kid",
+                    1,
+                    &freshness,
+                    &halt,
+                );
+            })
+        };
+
+        assert!(
+            wait_for(Duration::from_secs(15), || freshness.is_stale()),
+            "the failure budget was never exhausted"
+        );
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_secs(u64::from(TRUST_RELOAD_FAILURE_BUDGET)),
+            "the budget was reached before BUDGET full sleeps of R: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(1500 * u64::from(TRUST_RELOAD_FAILURE_BUDGET)),
+            "the loop sleeps longer than R per cycle: {elapsed:?}"
+        );
+
+        deployment.store(true, Ordering::SeqCst);
+        worker.join().expect("the loop returns on halt");
+    }
+
+    /// The loop, not the test, must carry the consecutive count across cycles: bad reads
+    /// alone, with no halt, exhaust the budget and the resolver then refuses.
+    #[test]
+    fn the_reload_loop_carries_the_failure_budget_until_the_resolver_refuses() {
+        let path = trust_file("budget", "kid-removed");
+        let store = Arc::new(
+            load_trust_snapshot(&path.to_string_lossy(), "response-kid").expect("initial"),
+        );
+        let freshness = Arc::new(TrustStoreFreshness::default());
+        freshness.mark_fresh();
+        let resolver = crate::trust_plane::freshness::StaleFailsClosed {
+            inner: Arc::clone(&store) as Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
+            freshness: Arc::clone(&freshness),
+        };
+        assert!(resolver.resolve(SIGNER, "kid-removed").is_ok());
+
+        let deployment = Arc::new(AtomicBool::new(false));
+        let workers = WorkerSet::new(Arc::clone(&deployment));
+        let halt = workers.halt();
+        let worker = {
+            let store = Arc::clone(&store);
+            let freshness = Arc::clone(&freshness);
+            std::thread::spawn(move || {
+                trust_reload_loop(
+                    &store,
+                    "/nonexistent/trust.json",
+                    "response-kid",
+                    0,
+                    &freshness,
+                    &halt,
+                );
+            })
+        };
+
+        assert!(
+            wait_for(Duration::from_secs(10), || freshness.is_stale()),
+            "the loop never carried its failure count to the budget"
+        );
+        assert!(matches!(
+            resolver.resolve(SIGNER, "kid-removed"),
+            Err(mcp_re_core::TrustResolverError::Unavailable { .. })
+        ));
+
+        deployment.store(true, Ordering::SeqCst);
+        worker.join().expect("the loop returns on halt");
+        let _ = std::fs::remove_file(&path);
     }
 
     /// The keep-last-good tolerance is bounded, and the bound is exactly the budget.

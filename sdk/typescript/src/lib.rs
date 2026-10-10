@@ -30,15 +30,17 @@ use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::ProvidedAuthorization;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
+mod projection;
 mod trust;
-use trust::pinned_root_resolver;
+use projection::project_verdict;
+use trust::root_resolver;
+use trust::PinnedIssuer;
 
 use mcp_re_client_core::CompositeResponseTrust;
 use mcp_re_client_core::ContinuationHandles;
 use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_core::PROFILE_TAG;
 use mcp_re_core::SigningKey;
-use mcp_re_core::VerificationKey;
 use serde_json::Map;
 use serde_json::Value;
 
@@ -55,6 +57,17 @@ fn seed_to_key(seed: &[u8]) -> napi::Result<SigningKey> {
     let mut s = [0u8; 32];
     s.copy_from_slice(seed);
     Ok(SigningKey::from_seed_bytes(&s))
+}
+/// A JS number as whole seconds. A saturating `as i64` would turn Infinity into an
+/// unbounded expiry or skew and NaN into 0, so a non-finite, fractional or
+/// beyond-`Number.MAX_SAFE_INTEGER` value is refused instead.
+fn whole_seconds(v: f64, what: &str) -> napi::Result<i64> {
+    if !(v.is_finite() && v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0) {
+        return Err(napi::Error::from_reason(format!(
+            "{what} must be a whole number of seconds, got {v}"
+        )));
+    }
+    Ok(v as i64)
 }
 fn params_object(params_json: &str) -> napi::Result<Map<String, Value>> {
     match parse_json(params_json, "params")? {
@@ -109,8 +122,8 @@ fn signing_inputs(
         audience,
         bindings,
         nonce,
-        created as i64,
-        expires as i64,
+        whole_seconds(created, "created")?,
+        whole_seconds(expires, "expires")?,
     )
     .with_headers(vec![(
         "Authorization".to_owned(),
@@ -162,8 +175,8 @@ fn to_signed_request(signed: mcp_re_client_core::SignedRequest) -> SignedRequest
             })
             .collect(),
         body: Buffer::from(req.body.clone()),
-        evidence_digest_alg: signed.evidence().digest_alg.clone(),
-        evidence_digest_value: signed.evidence().digest_value.clone(),
+        evidence_digest_alg: signed.evidence().digest_alg().to_owned(),
+        evidence_digest_value: signed.evidence().digest_value().to_owned(),
     }
 }
 
@@ -210,8 +223,12 @@ pub fn profile_tag() -> String {
 #[napi]
 pub fn sign_preimage(seed: Buffer, preimage: Buffer) -> napi::Result<Buffer> {
     let key = seed_to_key(seed.as_ref())?;
-    let sig = mcp_re_core::b64url_decode(&key.sign(preimage.as_ref()))
-        .map_err(|_| napi::Error::from_reason("mcp-re: mcp-re.invalid_signature"))?;
+    let sig = mcp_re_core::b64url_decode(&key.sign(preimage.as_ref())).map_err(|_| {
+        napi::Error::from_reason(format!(
+            "mcp-re: {}",
+            HttpProfileError::InvalidSignature.wire_code()
+        ))
+    })?;
     Ok(Buffer::from(sig))
 }
 
@@ -488,6 +505,9 @@ pub struct AcceptedResultJs {
 /// `mcp-re-request-evidence`, the digest of the request's own signature base, which
 /// includes its nonce. An acknowledgement captured for one transmission therefore does
 /// not verify for a byte-identical retransmission.
+///
+/// Same trust inputs as `verifyResponse`: the root issuer anchor, the audience scope,
+/// the accepted trust epochs, and the client's static denylist.
 #[napi]
 #[allow(clippy::too_many_arguments)]
 pub fn verify_accepted_202(
@@ -509,16 +529,18 @@ pub fn verify_accepted_202(
     max_clock_skew: f64,
     revoked_identifiers: Vec<String>,
     now: f64,
+    issuer_retired_until: Option<f64>,
 ) -> napi::Result<AcceptedResultJs> {
-    let issuer_pub = VerificationKey::from_b64url(&issuer_pubkey_b64url)
-        .map_err(|_| napi::Error::from_reason("invalid issuer public key"))?;
-    let resolve = pinned_root_resolver(
-        issuer_key_id,
-        issuer_role,
-        issuer_trust_domain,
-        issuer_subject,
-        issuer_pub,
-    );
+    let max_clock_skew = whole_seconds(max_clock_skew, "maxClockSkew")?;
+    let now = whole_seconds(now, "now")?;
+    let resolve = root_resolver(PinnedIssuer {
+        key_id: issuer_key_id,
+        pubkey_b64url: issuer_pubkey_b64url,
+        role: issuer_role,
+        trust_domain: issuer_trust_domain,
+        subject: issuer_subject,
+        retired_until: issuer_retired_until,
+    })?;
     let to_pairs =
         |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
     let response = HttpResponse {
@@ -536,11 +558,11 @@ pub fn verify_accepted_202(
         verifier_audiences,
         &expected_audience_hash,
         accepted_epochs,
-        max_clock_skew as i64,
+        max_clock_skew,
     );
     let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
     let trust = CompositeResponseTrust::new(&resolve, &revocation);
-    let actor = verify_delegated_accepted_202(&response, &request, &trust, &policy, now as i64)
+    let actor = verify_delegated_accepted_202(&response, &request, &trust, &policy, now)
         .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     Ok(AcceptedResultJs {
         ok: true,
@@ -551,6 +573,8 @@ pub fn verify_accepted_202(
 /// The outcome of verifying a delegated-required RFC 9421 response.
 #[napi(object)]
 pub struct VerifyResultJs {
+    /// The evidence VERIFIED; this does NOT mean the request succeeded. A caller
+    /// decides acceptance on `outcome === "success"`.
     pub ok: bool,
     pub server_keyid: String,
     /// `"success"` for an accepted answer; `"rejection"` for a verified rejection
@@ -592,7 +616,12 @@ pub struct VerifyResultJs {
     pub request_state: Option<String>,
 }
 
-/// Verify a delegated-required RFC 9421 response bound to the request the client sent.
+/// Verify a delegated-required (the ONLY mode) RFC 9421 response bound to the request the
+/// client sent: the credential chains to the root issuer judged at `now` (a root retired
+/// with `issuerRetiredUntil` is trusted through that deadline) and is scoped to
+/// `expectedAudienceHash` at one of `acceptedEpochs`. Anything unsigned, direct-root,
+/// revoked, stale-epoch or wrongly bound throws. `revokedIdentifiers` is the client's
+/// static denylist; an empty list is the explicit TTL-only posture.
 #[napi]
 #[allow(clippy::too_many_arguments)]
 pub fn verify_response(
@@ -614,16 +643,18 @@ pub fn verify_response(
     max_clock_skew: f64,
     revoked_identifiers: Vec<String>,
     now: f64,
+    issuer_retired_until: Option<f64>,
 ) -> napi::Result<VerifyResultJs> {
-    let issuer_pub = VerificationKey::from_b64url(&issuer_pubkey_b64url)
-        .map_err(|_| napi::Error::from_reason("invalid issuer public key"))?;
-    let resolve = pinned_root_resolver(
-        issuer_key_id,
-        issuer_role,
-        issuer_trust_domain,
-        issuer_subject,
-        issuer_pub,
-    );
+    let max_clock_skew = whole_seconds(max_clock_skew, "maxClockSkew")?;
+    let now = whole_seconds(now, "now")?;
+    let resolve = root_resolver(PinnedIssuer {
+        key_id: issuer_key_id,
+        pubkey_b64url: issuer_pubkey_b64url,
+        role: issuer_role,
+        trust_domain: issuer_trust_domain,
+        subject: issuer_subject,
+        retired_until: issuer_retired_until,
+    })?;
     let to_pairs =
         |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
     let response = HttpResponse {
@@ -642,51 +673,58 @@ pub fn verify_response(
         verifier_audiences,
         &expected_audience_hash,
         accepted_epochs,
-        max_clock_skew as i64,
+        max_clock_skew,
     );
     let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
     let trust = CompositeResponseTrust::new(&resolve, &revocation);
-    let verified = verify_delegated_response(&response, &trust, &expectation, &policy, now as i64)
+    let verified = verify_delegated_response(&response, &trust, &expectation, &policy, now)
         .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
-    // A verified rejection receipt is genuine evidence but NOT an acceptance — surface
-    // the outcome so the caller does not read a signed replay/trust rejection as a
-    // success. (An unsigned / direct-root / forged answer never reaches here: it fails
-    // verify_delegated_response above and is raised as an error.)
-    let ev = &verified.verified;
-    let (outcome, wire_code, bound, execution) = match verified.outcome {
-        mcp_re_client_core::DelegatedOutcome::Success => (
-            "success".to_owned(),
-            None,
-            true,
-            mcp_re_client_core::ExecutionContract::default(),
-        ),
-        mcp_re_client_core::DelegatedOutcome::Rejection {
-            wire_code,
-            execution,
-        } => ("rejection".to_owned(), wire_code, ev.is_bound(), execution),
-    };
+    // `result.requestState` only if this is an InputRequiredResult — a terminal reply
+    // has none. The verified product derives it from the body verification covered and
+    // REFUSES, rather than reporting as terminal, both a reply that declares itself
+    // non-terminal without a usable state and one whose `resultType` is outside the set
+    // MCP 2026-07-28 defines (MCPRE-495).
+    let request_state = verified
+        .continuation_state()
+        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+    // A verified rejection receipt is genuine evidence but NOT an acceptance — the
+    // projection surfaces the outcome so the caller does not read a signed replay/trust
+    // rejection as a success. (An unsigned / direct-root / forged answer never reaches
+    // here: it fails verify_delegated_response above and is raised as an error.)
+    let ev = verified.verified();
     // The response evidence handle (D_irr): the answer leg binds to it. Read from the
     // VERIFIED response evidence, never from unverified bytes.
-    let resp_digest = ev.response_signature_base_digest().clone();
-    // `result.requestState` only if this is an InputRequiredResult — a terminal reply
-    // has none. Read after verification: content-digest covered the body. Classified
-    // by the audited core, which REFUSES rather than reporting as terminal both a reply
-    // that declares itself non-terminal without a usable state and one whose
-    // `resultType` is outside the set MCP 2026-07-28 defines (MCPRE-495).
-    let request_state = mcp_re_client_core::continuation_state(resp_body.as_ref())
-        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
-    Ok(VerifyResultJs {
-        ok: true,
-        server_keyid: ev.accepted_signer().identity.keyid.clone(),
-        outcome,
-        wire_code,
-        bound,
-        execution_status: execution.execution_status,
-        retry_safety: execution.retry_safety,
-        continuation_status: execution.continuation_status,
-        retention_status: execution.retention_status,
-        resp_evidence_digest_alg: resp_digest.digest_alg,
-        resp_evidence_digest_value: resp_digest.digest_value,
+    let resp_digest = ev.response_signature_base_digest();
+    Ok(project_verdict(
+        &ev.accepted_signer().identity.keyid,
+        verified.outcome(),
+        ev.is_bound(),
+        resp_digest.digest_alg(),
+        resp_digest.digest_value(),
         request_state,
-    })
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::whole_seconds;
+
+    #[test]
+    fn a_time_that_is_not_whole_seconds_is_refused() {
+        for bad in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            0.5,
+            9_007_199_254_740_992.0,
+            -9_007_199_254_740_992.0,
+        ] {
+            assert!(whole_seconds(bad, "now").is_err(), "{bad} must be refused");
+        }
+        assert_eq!(
+            whole_seconds(9_007_199_254_740_991.0, "now").ok(),
+            Some(9_007_199_254_740_991)
+        );
+        assert_eq!(whole_seconds(-3.0, "now").ok(), Some(-3));
+    }
 }

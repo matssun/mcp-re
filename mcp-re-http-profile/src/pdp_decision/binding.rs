@@ -29,10 +29,6 @@
 //! Each step earns the next proposition. A verifier that collapsed them would be unable to
 //! say which one failed, and every one of them is a different thing for an operator to do.
 
-use mcp_re_core::b64url_encode;
-use sha2::Digest;
-use sha2::Sha256;
-
 use crate::block::ArtifactBinding;
 use crate::block::ArtifactType;
 use crate::block::BindingType;
@@ -48,8 +44,6 @@ pub enum PdpBindingRefusal {
     /// letting it stand in for carried evidence would let a request claim an enforcement
     /// decision it never presented. Identical digest bytes do not make it the same claim.
     NotTheEvidenceForm,
-    /// The binding is structurally malformed.
-    Malformed,
     /// The digest does not equal the digest of the presented decision bytes.
     DigestMismatch,
 }
@@ -64,18 +58,13 @@ pub fn verify_pdp_decision_binding(
     binding: &ArtifactBinding,
     decision: &str,
 ) -> Result<(), PdpBindingRefusal> {
-    if binding.artifact_type != ArtifactType::PdpDecision
-        || binding.binding_type != BindingType::OpaqueDigest
+    if binding.artifact_type() != ArtifactType::PdpDecision
+        || binding.binding_type() != BindingType::OpaqueDigest
     {
         return Err(PdpBindingRefusal::NotTheEvidenceForm);
     }
-    binding
-        .validate()
-        .map_err(|_| PdpBindingRefusal::Malformed)?;
-    if b64url_encode(&Sha256::digest(decision.as_bytes())) != binding.digest_value {
-        return Err(PdpBindingRefusal::DigestMismatch);
-    }
-    Ok(())
+    crate::artifact::compare(binding, decision.as_bytes())
+        .map_err(|_| PdpBindingRefusal::DigestMismatch)
 }
 
 /// The inline decision this binding commits to, when the binding is the ADR-MCPRE-065
@@ -92,8 +81,8 @@ pub fn pdp_decision_evidence<'a>(
     binding: &ArtifactBinding,
     block: &'a HttpRequestEvidenceBlock,
 ) -> Option<&'a str> {
-    (binding.artifact_type == ArtifactType::PdpDecision
-        && binding.binding_type == BindingType::OpaqueDigest)
+    (binding.artifact_type() == ArtifactType::PdpDecision
+        && binding.binding_type() == BindingType::OpaqueDigest)
         .then_some(block.authorization_decision.as_deref())
         .flatten()
 }
@@ -104,7 +93,6 @@ mod tests {
     use super::PdpBindingRefusal;
     use crate::block::ArtifactBinding;
     use crate::block::ArtifactType;
-    use crate::block::BindingType;
     use mcp_re_core::b64url_encode;
     use sha2::Digest;
     use sha2::Sha256;
@@ -133,15 +121,14 @@ mod tests {
         // THE structural negative. A reference-digest entry carrying the very same digest
         // string as a valid opaque one must still be refused: the two forms are different
         // claims, and only the opaque one means "the decision travelled with this request".
-        let reference = ArtifactBinding {
-            artifact_type: ArtifactType::PdpDecision,
-            binding_type: BindingType::ReferenceDigest,
-            digest_alg: "sha256".into(),
-            digest_value: b64url_encode(&Sha256::digest(DECISION.as_bytes())),
-            authorization_system_id: Some("urn:example:pdp".into()),
-            reference_scheme_id: Some("urn:example:scheme".into()),
-            reference_value: Some("decision-1".into()),
-        };
+        let reference = ArtifactBinding::reference(
+            ArtifactType::PdpDecision,
+            &b64url_encode(&Sha256::digest(DECISION.as_bytes())),
+            "urn:example:pdp",
+            "urn:example:scheme",
+            "decision-1",
+        )
+        .expect("a legal binding");
         assert_eq!(
             verify_pdp_decision_binding(&reference, DECISION),
             Err(PdpBindingRefusal::NotTheEvidenceForm)

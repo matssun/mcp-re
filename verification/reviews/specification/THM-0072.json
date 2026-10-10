@@ -2,16 +2,49 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:f2e67d93555c28d7c6c4475f01d7de7a1e5e2f31f9d30badb2225060257b456f",
+    "theorem_claim": "sha256:784e9f57a62d334ab230874508900af2911c3689e3838aad3d35db12dbc0cee4",
     "theorem_dependencies": {
-      "THM-0041": "sha256:82b88990baab1f1198436ec725e2d6c631722ff33e86708f1059aac9e75907cc",
-      "THM-0068": "sha256:1cdf69a60aa56c5cf43915894dc704fc79df60decfe0d53045aa77008cb92c92"
+      "THM-0041": "sha256:234be5a9315db56f70c752641928ee64a07d190ed400e31b129ee6562069fdc6",
+      "THM-0068": "sha256:d2c41184f00a7169e61b21b84e97ec765546c92918d4032f0f029163bbae0423"
     },
     "theorem_id": "THM-0072",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Restated conditionally as ruled: when offline receipt verification runs through a resolver projected from a `ScittServiceTrustPin`, a successful verification establishes registration on the service that pin describes. It no longer claims every invocation of `verify_receipt_offline` is pin-backed, because the resolver is a seam and `stated` is a supported provenance.",
-  "reviewed_fingerprint": "sha256:cfbf5265b5ef33cf73e952ad02a8a07678ec027498782d08b0cf81e4e1500447",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G1_G10.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {},
+    "supporting_semantics": {
+      "http_profile.scitt_service_pin": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:bb5c0709919dc79dd092689e3e2d5bbbdfa06f88a4b8ae928507b184c0c1d44d",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:5eca9f01a38baf27c3c5008696452b865e472abfcea7bf42263dd86439bda9ca",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:8f6ac8f6a1fd61a418153c6d96cf940219eb853cd09144737bb402bcb5af2da3",
+        "test_selection": "sha256:1a8e53d30c80bb9762b34d510ac4b870363f69ba63de9eae2f6d0d288a667cee",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "unit_id": "sha256:8d40c26fbebbc2ae949f63381b8ef73f03bb1a97bdc6d0d90e81317ac0c7be1e"
+      }
+    },
+    "theorem_claim": "sha256:784e9f57a62d334ab230874508900af2911c3689e3838aad3d35db12dbc0cee4",
+    "theorem_dependencies": {
+      "THM-0041": "sha256:234be5a9315db56f70c752641928ee64a07d190ed400e31b129ee6562069fdc6",
+      "THM-0068": "sha256:d2c41184f00a7169e61b21b84e97ec765546c92918d4032f0f029163bbae0423"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:481d56e584a9dfc01b6fad2ca6037475c1943aad3fccf2d404936b413d38737f",
+  "reviewed_fingerprint": "sha256:198600eaae2fbff401cbd96b1bd5df67efb3ff69b80a92d84ffb8be8eb5333cd",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0072"
 }

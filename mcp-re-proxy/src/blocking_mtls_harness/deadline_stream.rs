@@ -23,7 +23,9 @@ use crate::tls::ServerLimits;
 /// (slow-loris below the per-read threshold), holding a serve thread. Routing all
 /// server-side reads through this wrapper caps the TOTAL read wall-clock: once
 /// `deadline` passes, the next read fails closed with `io::ErrorKind::TimedOut`
-/// and the connection is dropped. `None` deadline (the `request_deadline` knob
+/// and the connection is dropped. The deadline also bounds a read already in
+/// progress: each read caps the socket read timeout at the remaining budget, so a
+/// silent peer is cut off at the deadline rather than at the next read. `None` deadline (the `request_deadline` knob
 /// disabled) preserves the inner stream's own (per-read) semantics.
 ///
 /// Writes delegate straight to the inner socket (bounded by the per-socket
@@ -35,6 +37,18 @@ pub(super) struct DeadlineStream<S> {
     inner: S,
     deadline: Option<std::time::Instant>,
     timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
+}
+
+/// A stream whose per-read blocking bound can be set.
+pub(super) trait ReadTimeout {
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()>;
+}
+
+impl ReadTimeout for std::net::TcpStream {
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        std::net::TcpStream::set_read_timeout(self, timeout)
+    }
 }
 
 impl<S> DeadlineStream<S> {
@@ -58,6 +72,7 @@ impl<S> DeadlineStream<S> {
             inner,
             deadline,
             timeout: limits.request_deadline,
+            read_timeout: limits.read_timeout,
         }
     }
 
@@ -79,10 +94,21 @@ impl<S> DeadlineStream<S> {
     }
 }
 
-impl<S: Read> Read for DeadlineStream<S> {
+impl<S: Read + ReadTimeout> Read for DeadlineStream<S> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.check_deadline()?;
-        self.inner.read(buf)
+        if let Some(deadline) = self.deadline {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let bound = self.read_timeout.map_or(remaining, |t| t.min(remaining));
+            self.inner.set_read_timeout(Some(bound))?;
+        }
+        match self.inner.read(buf) {
+            Ok(n) => Ok(n),
+            Err(e) => {
+                self.check_deadline()?;
+                Err(e)
+            }
+        }
     }
 }
 
@@ -113,7 +139,20 @@ mod aggregate_deadline_tests {
     use std::time::Instant;
 
     use super::DeadlineStream;
+    use super::ReadTimeout;
     use crate::tls::ServerLimits;
+
+    impl ReadTimeout for TricklingReader {
+        fn set_read_timeout(&self, _timeout: Option<Duration>) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl ReadTimeout for io::Cursor<Vec<u8>> {
+        fn set_read_timeout(&self, _timeout: Option<Duration>) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     /// A reader that always returns exactly one byte per `read` (never 0, never an
     /// error) and never emits the `\r\n\r\n` header terminator — modelling a peer
@@ -195,5 +234,29 @@ mod aggregate_deadline_tests {
         let req = crate::blocking_mtls_harness::http1::read_http_request(&mut stream, &limits)
             .expect("a complete request must parse when the aggregate deadline is disabled");
         assert!(req.body.is_empty());
+    }
+
+    #[test]
+    fn a_silent_peer_is_cut_off_at_the_aggregate_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+        let addr = listener.local_addr().expect("local addr");
+        let _client = std::net::TcpStream::connect(addr).expect("connect");
+        let (server, _) = listener.accept().expect("accept");
+        let limits = ServerLimits {
+            read_timeout: None,
+            request_deadline: Some(Duration::from_millis(150)),
+            ..ServerLimits::default()
+        };
+        let mut stream = DeadlineStream::new(server, &limits);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 8];
+            let _ = tx.send(stream.read(&mut buf));
+        });
+        let result = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a silent peer must not block a read past the aggregate deadline");
+        let err = result.expect_err("a silent peer must fail closed");
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut, "got: {err}");
     }
 }

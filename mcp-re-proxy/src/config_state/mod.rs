@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The classified legal deployment state — layer A of `work/CONFIG-STATE-ATLAS.md`.
+//! The classified legal deployment state — layer A.
 //!
 //! `DeploymentRequest` describes a *requested* deployment. Not every combination of its fields
-//! describes a deployment that could exist, and the atlas is the closed model of the ones
+//! describes a deployment that could exist, and layer A is the closed model of the ones
 //! that can: twelve machines, each with its own states, a set of guard-only owners that
 //! have invariants without a mode choice, and a small set of relations between them. This
 //! module is that model as code — one classifier/validator per owner, and one value
@@ -30,7 +30,7 @@
 //! say `None`.
 //!
 //! So a semantic owner retains the facts that constitute its invariant. Two shapes, because
-//! the atlas has two kinds of owner:
+//! layer A has two kinds of owner:
 //!
 //! - A **state-owning machine** carries its classified state together with the witnesses
 //!   intrinsic to inhabiting it. A `Reloading` CRL state without its cadence does not
@@ -61,6 +61,7 @@ pub mod channel_credential_custody;
 pub mod channel_key_material;
 pub mod client_credential_window;
 pub mod continuation_control;
+pub(crate) mod coordinate;
 pub mod credential_currency_bound;
 pub(crate) mod cross_machine;
 pub mod custody;
@@ -72,6 +73,7 @@ pub mod key_file_access;
 pub(crate) mod kms_endpoint;
 pub mod mcp_transport_contract;
 pub mod replay;
+pub mod replica_clock;
 pub mod server_identity;
 pub mod topology;
 pub mod transport;
@@ -92,8 +94,10 @@ pub use evidence::{AuditState, RetentionState, VerifiedContextState};
 pub use freshness::FreshnessWindow;
 pub use in_flight_limit::{InFlightLimitBasis, InFlightLimitRequest};
 pub use key_file_access::KeyFileAccessPolicy;
+pub use key_file_access::{foreign_owner, FOREIGN_OWNER};
 pub use mcp_transport_contract::McpTransportContractState;
 pub use replay::ReplayState;
+pub use replica_clock::ReplicaClockDivergence;
 pub use topology::{DeploymentTopology, ShardTopologyRequest};
 pub use transport::{ChannelBindingState, CrlRevocationState};
 pub use trust_document::TrustDocumentSource;
@@ -101,11 +105,12 @@ pub use trust_revocation::TrustRevocationState;
 
 /// What layer A recognised: each machine's state, and each guard-only owner's facts.
 ///
-/// Built only by a successful validation, so holding one is evidence that every owner here
-/// was checked against its own required/optional/forbidden/guard columns and that the
-/// cross-machine relations hold between them.
+/// Constructible only inside `config_state`, and its only production producer is
+/// `validation::validate_configuration`, so holding one outside this module is evidence that
+/// every owner here was checked against its own required/optional/forbidden/guard columns
+/// and that the cross-machine relations hold between them.
 ///
-/// It grows one field per owner as the atlas is implemented; an owner that is not here yet
+/// It holds one field per owner; an owner that is not here yet
 /// is one whose legality still lives in the residual clause list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeploymentConfigState {
@@ -113,42 +118,42 @@ pub struct DeploymentConfigState {
     /// [`RecognisedStates`]: the two shapes were identical, and a state added to one had to
     /// be transcribed into the other twice — a per-machine cost that bought nothing, since
     /// the only difference between them was ever the claim attached, not the contents.
-    /// Private, so the `pub(crate)` fields of the inner value stay unreachable from here.
+    /// Private, as are the inner value's fields, so only `config_state` and its descendants can reach them.
     states: RecognisedStates,
 }
 
 /// The recognised states, as one argument, so adding a machine is a change in one place
 /// rather than in every signature between the validator and the value.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RecognisedStates {
-    pub(crate) admission: AdmissionState,
-    pub(crate) authorization: AuthorizationState,
-    pub(crate) audit: AuditState,
-    pub(crate) channel_binding: ChannelBindingState,
-    pub(crate) client_credential_window: ClientCredentialWindow,
-    pub(crate) continuation_control: ContinuationControlState,
-    pub(crate) crl_revocation: CrlRevocationState,
-    pub(crate) custody: CustodyState,
-    pub(crate) delegated_signing: DelegatedSigningFacts,
-    pub(crate) freshness: FreshnessWindow,
-    pub(crate) in_flight_limit: InFlightLimitBasis,
-    pub(crate) key_file_access: KeyFileAccessPolicy,
-    pub(crate) mcp_transport_contract: McpTransportContractState,
-    pub(crate) replay: ReplayState,
-    pub(crate) retention: RetentionState,
-    pub(crate) server_identity: server_identity::ServerIdentityFacts,
-    pub(crate) shard_topology: ShardTopologyRequest,
-    pub(crate) channel_credential_custody: ChannelCredentialCustodyState,
-    pub(crate) topology: DeploymentTopology,
-    pub(crate) trust_document: TrustDocumentSource,
-    pub(crate) trust_revocation: TrustRevocationState,
-    pub(crate) verified_context: VerifiedContextState,
+struct RecognisedStates {
+    admission: AdmissionState,
+    authorization: AuthorizationState,
+    audit: AuditState,
+    channel_binding: ChannelBindingState,
+    client_credential_window: ClientCredentialWindow,
+    continuation_control: ContinuationControlState,
+    crl_revocation: CrlRevocationState,
+    custody: CustodyState,
+    delegated_signing: DelegatedSigningFacts,
+    freshness: FreshnessWindow,
+    in_flight_limit: InFlightLimitBasis,
+    key_file_access: KeyFileAccessPolicy,
+    mcp_transport_contract: McpTransportContractState,
+    replay: ReplayState,
+    retention: RetentionState,
+    server_identity: server_identity::ServerIdentityFacts,
+    shard_topology: ShardTopologyRequest,
+    channel_credential_custody: ChannelCredentialCustodyState,
+    topology: DeploymentTopology,
+    trust_document: TrustDocumentSource,
+    trust_revocation: TrustRevocationState,
+    verified_context: VerifiedContextState,
 }
 
 impl DeploymentConfigState {
-    /// Assemble the classified state. Crate-private: the only legitimate producer is the
-    /// validation boundary, because the value's meaning is "these states were checked".
-    pub(crate) fn new(states: RecognisedStates) -> Self {
+    /// Assemble the classified state. Private to `config_state`: the only production producer is
+    /// `validation::validate_configuration`, because the value's meaning is "these states were checked".
+    fn new(states: RecognisedStates) -> Self {
         Self { states }
     }
 
@@ -340,9 +345,9 @@ pub(crate) mod test_support {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--tls-cert",
@@ -355,6 +360,8 @@ pub(crate) mod test_support {
             "http://127.0.0.1:8080/mcp",
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--delegated-trust-epoch",
             "epoch-min",
             "--replay-redis-url",
@@ -590,7 +597,9 @@ pub(crate) mod test_support {
         let mut config = legal_config();
         config.peer_revocation.lists.paths = paths.iter().map(|p| p.to_string()).collect();
         config.peer_revocation.lists.reload_secs = cadence_secs;
-        super::transport::classify_and_validate_crl(&config).0
+        super::transport::classify_and_validate_crl(&config)
+            .0
+            .expect("the fixture CRL posture is legal")
     }
 
     /// The client-revocation plan such a deployment projects.
@@ -657,9 +666,9 @@ pub(crate) mod test_support {
             "--bind",
             "127.0.0.1:8443",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "server-key-1",
             "--signing-key-seed",
@@ -676,6 +685,8 @@ pub(crate) mod test_support {
             "http://127.0.0.1:8080/mcp",
             "--target-uri",
             "https://mcp.example.com/mcp",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--delegated-trust-epoch",
             "epoch-min",
             "--trust-domain",
@@ -730,7 +741,8 @@ mod tests {
             continuation_control: continuation_control::classify_and_validate(
                 &test_support::shared_continuation_config(),
             )
-            .0,
+            .0
+            .expect("a legal locator names a state"),
             crl_revocation: test_support::crl_posture(&["/crl.pem"], Some(300)),
             client_credential_window: client_credential_window::classify_and_validate(
                 &test_support::legal_config(),
@@ -741,9 +753,11 @@ mod tests {
                 .0
                 .expect("the legal fixture names a trust document"),
             custody: test_support::custody_pkcs11(),
-            mcp_transport_contract: mcp_transport_contract::classify(
+            mcp_transport_contract: mcp_transport_contract::classify_and_validate(
                 &test_support::versioned_transport_config(),
-            ),
+            )
+            .0
+            .expect("the versioned fixture names an accepted version"),
             delegated_signing: delegated_signing::classify_and_validate(
                 &test_support::legal_config(),
             )
@@ -774,7 +788,7 @@ mod tests {
             crate::replay_tier::ReplayDurabilityTier::Linearizable
         );
         assert!(state.continuation_control().is_shared());
-        // Every machine the atlas names is represented exactly once, including the ones
+        // Every machine layer A names is represented exactly once, including the ones
         // that cannot be misconfigured: the value states the whole posture, not the part
         // that needed checking.
         assert!(state.admission().is_enforced());

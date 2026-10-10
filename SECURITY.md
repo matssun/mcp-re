@@ -75,7 +75,7 @@ scrubbing path). The Ed25519 signing seed is handled so that its raw bytes are w
 from memory as soon as they are no longer needed:
 
 - Every OWNED temporary that carries the raw 32-byte seed — the Base64URL-decoded
-  `Vec<u8>`, the `[u8; 32]` seed array, and the file/env seed text — is wrapped in
+  `Vec<u8>`, the `[u8; 32]` seed array, and the seed file's text — is wrapped in
   [`zeroize::Zeroizing`](https://docs.rs/zeroize), so its backing memory is
   scrubbed the instant the temporary drops.
 - The resulting `ed25519_dalek::SigningKey` (the expanded in-memory private key)
@@ -83,9 +83,10 @@ from memory as soon as they are no longer needed:
   secret scalar on drop. `SigningKey::from_seed_bytes` only BORROWS the seed, so
   the key is constructed and the `Zeroizing` seed temporaries then drop scrubbed.
 
-This is verified by `//mcp-re-proxy:dev_env_key_source_test` (the canonical
-`Zeroizing` heap-scrub sentinel check) and by the `KeyError`-no-leak tests (a
-malformed seed never appears in an error's `Display`/`Debug`).
+This is verified by `//mcp-re-proxy:key_source_test`: `zeroize_on_drop_invokes_zeroize`
+and `seed_temporaries_are_zeroizing_typed` (the `Zeroizing` scrub-on-drop check), and
+`key_errors_never_leak_secret_material` (a malformed seed never appears in an error's
+`Display`/`Debug`).
 
 ### Constant-time posture
 
@@ -107,23 +108,17 @@ malformed seed never appears in an error's `Display`/`Debug`).
   group/world-accessible, but does NOT yet *enforce* `0600` — perm enforcement and
   O_NOFOLLOW/non-inheriting open are documented FUTURE hardening, not a current
   guarantee.
-- **`EnvKeySource` — development / CI ONLY.** It is gated behind the non-default
-  `dev_env_key_source` cargo feature and is NOT compiled into a production build;
-  `--key-source env` still parses but fails closed at construction in a default
-  build. In a dev build the seed value is held in `Zeroizing`, so it is scrubbed
-  from the heap when dropped — but **the environment variable itself is NOT
-  removed, and stays readable in `/proc/<pid>/environ` for the life of the
-  process.** `std::env::remove_var` is unsound in a multi-threaded program (the
-  standard library documents it as `unsafe` for that reason: a concurrent
-  `getenv`/`setenv` in another thread is a data race), so it is deliberately not
-  called. Nothing depended on it: the inner server is launched inheriting NO
-  environment and receives only an explicit allowlist, so the seed is never
-  forwarded to a child regardless. Environment variables are visible to the whole
-  process tree and may leak via crash dumps, `ps e`, `/proc/<pid>/environ`, and
-  orchestrator inspection — never use this source in production.
+- **No environment key source.** Environment configuration carries no key
+  material. The signing seed is the response-signing root key — long-lived secret
+  material — and the TLS server key, certificate chain and client-CA anchors are
+  channel material, so all of them are read only from files (or stay on a
+  PKCS#11/KMS device). There is no `--key-source env`: the value is refused as an
+  unknown key source. Environment variables are visible to the whole process tree
+  and leak via crash dumps, `ps e`, `/proc/<pid>/environ`, and orchestrator
+  inspection.
 - **Future / high-assurance roadmap (NOT implemented here).**
   - stdin/fd injection of the seed (e.g. systemd `LoadCredential`, a Kubernetes
-    projected secret), so the seed never lands in a file or environment variable;
+    projected secret), so the seed never lands in a file;
   - a non-exporting HSM/KMS or remote signer, where the private key never enters
     the proxy process at all and signing is delegated.
 

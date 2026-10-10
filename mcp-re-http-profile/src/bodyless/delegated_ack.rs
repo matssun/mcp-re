@@ -22,8 +22,6 @@
 //! cannot fail. The SUBSTANTIVE cross-check is against a field the credential does not get
 //! to choose freely: the delegated kid the response actually signed under.
 
-use mcp_re_core::McpReError;
-
 use crate::block::ResolverOutcome;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
@@ -31,7 +29,7 @@ use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
 use crate::ids::STATUS_ACCEPTED;
 use crate::message::reject_content_encoding;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::ProfileAlgorithm;
@@ -42,6 +40,7 @@ use crate::verify::floor::components::require_components;
 use crate::verify::floor::params::check_params;
 use crate::verify::floor::signature::signature_value_b64url;
 use crate::verify::floor::signature::verify_under;
+use crate::verify::floor::signature::SignedMessage;
 use crate::verify::floor::signature_input::parse_signature_input_for;
 use crate::verify::floor::signature_input::ParsedSignatureInput;
 
@@ -73,8 +72,8 @@ fn check_envelope(response: &HttpResponse, request: &HttpRequest) -> Result<(), 
             "bodyless acknowledgement status",
         ));
     }
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    let digest_header = single_header(&response.headers, "content-digest")?
+        .ok_or(HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
     check_request_evidence(&response.headers, request)
 }
@@ -145,8 +144,8 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         &base,
         &sig,
         &verified.delegated_key,
-        McpReError::ResponseSigInvalid,
+        SignedMessage::Response,
     )
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
-    Ok(AcknowledgedDelegation::established(verified))
+    Ok(AcknowledgedDelegation::established(verified, server_signer))
 }

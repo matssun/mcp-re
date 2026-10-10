@@ -21,8 +21,9 @@
 //!
 //! The trait is the injection point (mirrors the brief §9 abstract resolver):
 //! Core stays pure (no networking / async / filesystem); a production resolver
-//! lives outside this crate. [`InMemoryTrustResolver`] is the deterministic
-//! reference implementation used for tests and conformance vectors.
+//! lives outside this crate. [`InMemoryTrustResolver`] is the in-memory trust
+//! snapshot that production trust stores build, and the deterministic
+//! reference implementation for tests and conformance vectors.
 
 use std::collections::BTreeMap;
 
@@ -109,17 +110,26 @@ pub trait TrustResolver {
 ///
 /// Active vs revoked is modelled explicitly so the not-found-vs-revoked paths
 /// are distinct internally, even though both surface as
-/// [`McpReError::ActorBindingFailed`].
+/// [`McpReError::ActorBindingFailed`]. Not found means the pair has no entry
+/// at all: neither enrolled nor declared revoked.
 #[derive(Debug, Clone)]
 enum Binding {
     /// An active mapping carrying its verification key.
     Active(VerificationKey),
-    /// A mapping that once existed but has been revoked/disabled.
+    /// The pair is declared revoked/disabled in this snapshot, whether or not
+    /// this instance ever held an active key for it.
     Revoked,
 }
 
-/// Deterministic, [`BTreeMap`]-backed reference [`TrustResolver`] for tests and
-/// conformance vectors (MCP_RE_SPEC §6).
+/// Deterministic, [`BTreeMap`]-backed [`TrustResolver`] (MCP_RE_SPEC §6).
+///
+/// It is the in-memory trust snapshot that production trust stores build (the
+/// proxy's trust document materializes into it, and `ReloadingTrustStore` holds
+/// it behind `Arc`), and also the reference resolver for tests and conformance
+/// vectors. It is not feature-gated because production constructs it. It can
+/// only be mutated through `insert`/`revoke` on `&mut`, so a snapshot shared
+/// behind `Arc` is immutable and a deployment changes trust by swapping in a
+/// whole new snapshot.
 ///
 /// Keyed by a collision-safe, length-prefixed encoding of the `(signer, key_id)`
 /// pair (see `compose_key`) — NOT a naive `"signer#key_id"` join, which is not
@@ -165,11 +175,13 @@ impl InMemoryTrustResolver {
             .insert(Self::compose_key(signer, key_id), Binding::Active(key));
     }
 
-    /// Mark the `(signer, key_id)` binding revoked/disabled.
+    /// Declare the `(signer, key_id)` binding revoked/disabled.
     ///
-    /// A subsequent [`resolve`](TrustResolver::resolve) returns
-    /// [`TrustResolverError::Revoked`] (→ [`McpReError::ActorBindingFailed`]),
-    /// distinct internally from a never-present binding.
+    /// Records [`TrustResolverError::Revoked`] for the pair whether or not the
+    /// pair was enrolled. A subsequent [`resolve`](TrustResolver::resolve)
+    /// returns Revoked instead of [`TrustResolverError::NotFound`], and both
+    /// still map to [`McpReError::ActorBindingFailed`]. Each call adds at most
+    /// one entry.
     pub fn revoke(&mut self, signer: &str, key_id: &str) {
         self.bindings
             .insert(Self::compose_key(signer, key_id), Binding::Revoked);

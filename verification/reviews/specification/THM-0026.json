@@ -4,13 +4,67 @@
     "encoding_version": 1,
     "theorem_claim": "sha256:120750929aa1f77dd3432379326cf55c92a72da3986378a9df5663d5a2e0d585",
     "theorem_dependencies": {
-      "THM-0025": "sha256:842f2d7c83658f810f1beaa1e5feac028eedab8234b8f418c5fe9e64129ca54e"
+      "THM-0025": "sha256:4e0aaacbf4e1f4333bf8926c5f2cdaf8a8effdb67bbcfbb25c79db3540cf6cdc"
     },
     "theorem_id": "THM-0026",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C4. APPROVED as prepared. As with THM-0025, the structural rewrite makes the same proposition load-bearing by type and conversion; it does not strengthen the claim.",
-  "reviewed_fingerprint": "sha256:6211e20ea644e4d0856663bb4ee533a1fbc1c8676e1e10c8b20f14e8771c7507",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G5.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "review_components": {
+    "encoding_version": 1,
+    "premises": {
+      "ASM-0032": "sha256:7ce0fda924c910b8864a20e11b69300f17dbed660fe93a8faa9e931544a931b6"
+    },
+    "supporting_semantics": {
+      "proxy.credential_key_correspondence": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:13acfde1dc2cbabe6d3d7c7130bf0f50ba815401720cd0be6a4c95877df0d853",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:ee64b5e5aa6964dcd823323fa9af08d5b3d3f99b01adebb486ba69dcc942794f",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:ce9c7c4c8c152a18df0d33551e4793629b9e24aceac0075523ff85d8e2bda60e",
+        "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_evidence_definition": "sha256:7d89158236974eae7153660c66e0809e34b2f790174a5c9af6a499fc8535f759",
+        "test_selection": "sha256:3dc89ef8ab9b43a5dddd1713c523a83ab0b6018b6ffa6e4a54423fe046b240fc",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:58e017356283317672e7fff943ab5bbe00390617c0945c538ad1826e1b25ad14",
+        "unit_id": "sha256:867aba4a5493f73ad727c22a6074f3f0f79f4b7a7254ac92127d2234dc44774b"
+      },
+      "proxy.credential_key_correspondence_sole_producer": {
+        "class": "sha256:6de76db082a219838941610e045c1428b2ce429618547205c079996254818d3a",
+        "consumed_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "enabled_features": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "exported_contracts": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "extracted_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "governing_boundaries": "sha256:4d71bd9e5724a7a98cdc1f189f197c6fe0b1257a95b7333acc062836c557dd71",
+        "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "mutation_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_inputs": "sha256:be361b0bf890d5ab80d594c4209cb12d0711b4eaf2030d3698ed9ddd01213e81",
+        "structural_probes": "sha256:2485a2d7293c21701b35d453c210e41a9b1537803fe67e844032f414e9843f32",
+        "test_evidence_definition": "sha256:51796a08f8c20ba68987f676004bd3920c1c13e61cb3926f1df44a2a7d5c5a16",
+        "test_selection": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "unit_id": "sha256:72a9f09231b5f485cdb3ca65cf726f955c4c0dea41f53c01bfa4c0031c07d2c6"
+      }
+    },
+    "theorem_claim": "sha256:120750929aa1f77dd3432379326cf55c92a72da3986378a9df5663d5a2e0d585",
+    "theorem_dependencies": {
+      "THM-0025": "sha256:4e0aaacbf4e1f4333bf8926c5f2cdaf8a8effdb67bbcfbb25c79db3540cf6cdc"
+    },
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "review_digest": "sha256:7106a926bb1e168223195f00bc76768be6e845ec0707ce3862f572a77d8c1805",
+  "reviewed_fingerprint": "sha256:fc7c6804aca29d3e8a24b1dfd31ff1e19f7f0085420584b26ada532d5e160362",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0026"
 }

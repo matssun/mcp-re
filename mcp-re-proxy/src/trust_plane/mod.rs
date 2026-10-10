@@ -61,7 +61,10 @@ use snapshot::load_trust_snapshot;
 /// What revocation window this deployment actually DELIVERS, as the operator is told it at
 /// startup.
 pub(in crate::trust_plane) mod delivered_window;
+use delivered_window::cached_trust_window;
 use delivered_window::delivered_revocation_window;
+use delivered_window::reload_off_line;
+use delivered_window::response_slot_posture;
 use delivered_window::store_change_cadence;
 use freshness::StaleFailsClosed;
 use freshness::TrustStoreFreshness;
@@ -161,9 +164,11 @@ impl TrustPlane {
         ));
         let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
         let halt = workers.halt();
-        workers.spawn("test trust reload", move || body(halt));
+        workers
+            .spawn("test trust reload", move || body(halt))
+            .expect("spawn test worker");
         let inner: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> =
-            Arc::new(crate::reloading_trust::SharedTrustStore(Arc::clone(&store)));
+            Arc::new(store.shared_resolver());
         TrustPlane {
             resolver: Arc::new(StaleFailsClosed {
                 inner,
@@ -231,7 +236,7 @@ impl TrustPlane {
         // re-resolve against it — and none of those descriptions was a true statement
         // about the deployment while the store could not change: revoking a client
         // signing key meant editing the file and restarting every replica, so the
-        // exposure window was unbounded while the startup line advertised near-zero.
+        // exposure window was unbounded while the startup line advertised a re-read bound.
         // `response_kid` is the deployment's own issuer key id, passed in rather than
         // derived here: it is excluded from the request-signer set so the root can never be
         // presented as a client credential.
@@ -247,9 +252,11 @@ impl TrustPlane {
         // tier line itself: as a separate line further down it was routinely read as being
         // about something else, and the tier line was quoted on its own.
         eprintln!(
-            "mcp-re-proxy: {} store-change-cadence={}",
+            "mcp-re-proxy: {} {} store-change-cadence={}{}",
             plan.revocation().tier().startup_audit_line("trust-store"),
-            store_change_cadence(plan.reload())
+            cached_trust_window(&plan.revocation().tier()),
+            store_change_cadence(plan.reload()),
+            window_policy::long_window_advisory(&plan.revocation().tier()).unwrap_or_default()
         );
         // ADR-MCPS-021 Axis 2: APPLY the declared tier to the resolver so the runtime
         // behavior actually matches the surfaced guarantee (Tier 1 bounds cached active
@@ -263,7 +270,7 @@ impl TrustPlane {
             // Honesty (Tier 3): with no networked source wired, the in-process
             // reference channel is inert — Tier 3 runs at its bounded-`T` fallback
             // (already reflected in the tier's `guarantee()` string above), NOT an
-            // active near-zero push channel. Configure --trust-epoch-redis-url to
+            // active push channel. Configure --trust-epoch-redis-url to
             // activate the networked source (MCPS-84).
             //
             // Read off the classification rather than off `push_channel.is_none()`: the
@@ -277,9 +284,7 @@ impl TrustPlane {
         }
         let resolver = crate::trust_plane::revocation_resolver::build_revocation_resolver(
             &plan.revocation().tier(),
-            Box::new(crate::reloading_trust::SharedTrustStore(Arc::clone(
-                &trust_store,
-            ))),
+            Box::new(trust_store.shared_resolver()),
             trust_clock(),
             push_channel,
         );
@@ -300,21 +305,20 @@ impl TrustPlane {
                 response_kid.to_string(),
                 interval_secs.get(),
                 Arc::clone(&trust_freshness),
-            );
+            )?;
             // The window is stated as the SUM, not as the cadence. The cadence alone is
             // true only where the tier caches no positive trust; under bounded-cache and
             // push an entry cached just before the swap survives it by a further T, and
             // this is the line an operator greps for after removing a key.
             eprintln!(
-                "mcp-re-proxy: trust store reload ACTIVE every {interval_secs}s: a key removed \
-                 from {} stops resolving within {}, with no restart.",
+                "mcp-re-proxy: trust store reload ACTIVE every {interval_secs}s: a request-signer \
+                 key removed from {} stops resolving within {}, with no restart. {}",
                 plan.document_path(),
-                delivered_revocation_window(&plan.revocation().tier(), plan.reload())
+                delivered_revocation_window(&plan.revocation().tier(), plan.reload()),
+                response_slot_posture(response_kid)
             );
         } else {
-            eprintln!(
-                "mcp-re-proxy: trust store reload OFF: --trust is read once at startup, so              revoking a request-signer key requires restarting every replica. The              revocation-tier guarantee above bounds CACHING, not the store itself. Set              --trust-reload-secs to bound it."
-            );
+            eprintln!("{}", reload_off_line(response_kid));
         }
 
         // Build the RFC 9421 serving PEP (ADR-MCPRE-050 sole carrier). The trust file
@@ -336,7 +340,7 @@ impl TrustPlane {
         // the plane's documented post-owner transition would not exist for a deployment
         // that configured no cadence, which is the default tier's accepted shape. Where no
         // reload runs the flag is only ever set by `Drop`, so the standing cost is one
-        // relaxed atomic load per verification.
+        // atomic load per verification.
         let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> =
             Arc::new(StaleFailsClosed {
                 inner: resolver,
@@ -395,12 +399,13 @@ fn build_trust_epoch_channel(
             TRUST_EPOCH_POLL_SECS,
             move || halt.requested(),
         ),
-    );
+    )?;
     eprintln!(
         "mcp-re-proxy: revocation-tier PUSH: networked trust-epoch source ACTIVE (redis, \
          epoch key {key:?}, polled every {TRUST_EPOCH_POLL_SECS}s off the request path); \
-         the trust cache flushes within one poll interval of an epoch advance and \
-         reverts to the bounded-T guarantee on a read outage."
+         cached trust re-resolves against the store within one poll interval of an epoch \
+         advance (a removed --trust key still waits for the re-read) and reverts to the \
+         bounded-T guarantee on a read outage."
     );
     Ok(Some(Box::new(crate::trust_epoch::SharedEpochChannel(
         source,
@@ -569,8 +574,8 @@ mod store_cadence_tests {
     }
 
     /// R7-C129: `bounded-cache` is the tier a deployment gets by omission, and it is
-    /// accepted with no `--trust-reload-secs` while still printing "revocation enforced
-    /// fleet-wide within T". Without a reload the base store is frozen for the process
+    /// accepted with no `--trust-reload-secs` while its tier line states only a window T.
+    /// Without a reload the base store is frozen for the process
     /// lifetime, so the qualifier has to be ON that line — not a separate one further
     /// down that an operator quoting the tier line never reads.
     #[test]
@@ -891,9 +896,9 @@ mod handle_lifetime_tests {
             "--bind",
             "127.0.0.1:0",
             "--audience",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-signer",
-            "did:example:server-1",
+            "did:web:server-1.mcp.example.com",
             "--server-key-id",
             "response-kid",
             "--delegated-trust-epoch",
@@ -908,6 +913,8 @@ mod handle_lifetime_tests {
             "/nonexistent/ca",
             "--target-uri",
             "https://localhost/",
+            "--mcp-protocol-version",
+            "2026-07-28",
             "--trust-domain",
             "example.org",
             "--replay-redis-url",

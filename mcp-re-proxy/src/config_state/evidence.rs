@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `Audit`, `Retention` and `VerifiedContext` machines —
-//! `work/CONFIG-STATE-ATLAS.md` §C.6.
+//! The `Audit`, `Retention` and `VerifiedContext` machines — unit
+//! `proxy.evidence_retention_state`.
 //!
 //! Three two-state machines over what a deployment records and what it asserts. They share
 //! a file because each is a single selector with no guards; giving each its own file would
@@ -31,7 +31,7 @@ pub enum AuditState {
 /// a verdict whose evidence was thrown away: establishing retention would have to ask
 /// `retained_evidence_dir.is_some()` a second time, from a representation still able to
 /// say `None`, having already been told the answer.
-/// The representation is private to this module and [`classify`] is the only producer, so
+/// The representation is private to this module and [`classify`] is the only production producer, so
 /// a consumer cannot name a retention directory this deployment did not configure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetentionState {
@@ -55,8 +55,9 @@ impl RetentionState {
         self.directory.is_some()
     }
 
-    /// The non-retaining state, for a consumer that must name the posture it is testing.
-    pub fn off() -> Self {
+    /// The non-retaining state, for a unit test that must name the posture it is testing.
+    #[cfg(test)]
+    pub(crate) fn off() -> Self {
         RetentionState { directory: None }
     }
 }
@@ -90,7 +91,7 @@ pub fn classify(config: &DeploymentRequest) -> (AuditState, RetentionState, Veri
         Some(directory) => RetentionState {
             directory: Some(directory.clone()),
         },
-        None => RetentionState::off(),
+        None => RetentionState { directory: None },
     };
     let verified_context = match config.verified_context {
         VerifiedContextKind::Disabled => VerifiedContextState::Disabled,

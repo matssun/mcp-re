@@ -123,10 +123,10 @@ pub struct AdmissionStateCurrentness {
 /// `iat + max_record_age + skew`**, whatever window its issuer asked for. A publisher may
 /// choose a shorter life; it cannot choose a longer one.
 ///
-/// SATURATING throughout, matching every other freshness gate on this path: these operands
-/// come straight out of a JWS payload, so an extreme `iat` would wrap in a release build —
-/// silently passing the very cap the expression exists to enforce — and panic in any build
-/// with overflow checks.
+/// These operands come straight out of a JWS payload, so an extreme `iat` would wrap in a
+/// release build — silently passing the very cap the expression exists to enforce — and panic
+/// in any build with overflow checks. The window-edge comparisons saturate; the window width
+/// against the budget is compared exactly, because a saturating width clamps at the budget.
 pub(super) fn check_currentness(
     claims: &AdmissionStateClaims,
     currentness: &AdmissionStateCurrentness,
@@ -144,10 +144,24 @@ pub(super) fn check_currentness(
     // Together with the window clause above, this is what bounds a RESTORED record: its
     // signature is valid and nothing detected the substitution, and it stops being read
     // anyway.
-    if claims.exp.saturating_sub(claims.iat) > currentness.max_record_age {
+    if window_exceeds_budget(claims, currentness) {
         return Err(AdmissionRecordRefusal::WindowExceedsBudget);
     }
     Ok(())
+}
+
+/// Whether the issuer's own window `[iat, exp]` is wider than the deployment's record budget,
+/// compared exactly.
+///
+/// Widened to `i128` so the width does not clamp: a saturating width stops at `i64::MAX`, and
+/// against a budget at that clamp a window wider than the budget would pass.
+// Two widened `i64` operands: the difference lies within [-2^64, 2^64], far inside `i128`.
+#[allow(clippy::arithmetic_side_effects)]
+fn window_exceeds_budget(
+    claims: &AdmissionStateClaims,
+    currentness: &AdmissionStateCurrentness,
+) -> bool {
+    (claims.exp as i128) - (claims.iat as i128) > (currentness.max_record_age as i128)
 }
 
 #[cfg(test)]
@@ -307,6 +321,22 @@ mod tests {
         assert_eq!(
             check_currentness(&c, &budget(60, 5), 1_030),
             Err(AdmissionRecordRefusal::Expired)
+        );
+    }
+
+    /// The budget ceiling holds at the end of the `i64` range. `--admission-max-record-age`
+    /// takes any positive `i64`; with the budget at `i64::MAX` a window one second wider than
+    /// it has the exact width `i64::MAX + 10`, which a saturating width would clamp to the
+    /// budget and accept.
+    #[test]
+    fn a_window_wider_than_the_budget_is_refused_at_the_end_of_the_range() {
+        let mut c = claims("wl", 7, 1);
+        c.iat = -10;
+        c.nbf = 0;
+        c.exp = i64::MAX;
+        assert_eq!(
+            check_currentness(&c, &budget(i64::MAX, 0), i64::MAX - 1),
+            Err(AdmissionRecordRefusal::WindowExceedsBudget)
         );
     }
 

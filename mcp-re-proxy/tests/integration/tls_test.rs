@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use mcp_re_proxy::config_state::ClientCredentialWindow;
 use mcp_re_proxy::extract_identity;
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
@@ -57,6 +58,19 @@ use rustls_pki_types::UnixTime;
 // ---------------------------------------------------------------------------
 // Test certificate authority + leaves (rcgen).
 // ---------------------------------------------------------------------------
+
+/// The credential window every served test deployment states.
+fn window() -> ClientCredentialWindow {
+    ClientCredentialWindow::new(Duration::from_secs(3600), Duration::from_secs(300))
+        .expect("a legal credential window")
+}
+
+/// Validity `[now - 60s, now + 1800s]`: inside the window, so a served request finds the
+/// leaf current.
+fn short_lived(params: &mut CertificateParams) {
+    params.not_before = (std::time::SystemTime::now() - Duration::from_secs(60)).into();
+    params.not_after = (std::time::SystemTime::now() + Duration::from_secs(1800)).into();
+}
 
 struct Ca {
     cert: rcgen::Certificate,
@@ -103,6 +117,9 @@ fn make_leaf(
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    if client_auth {
+        short_lived(&mut params);
+    }
     let cert = params
         .signed_by(&key, &ca.issuer())
         .expect("leaf signed by ca");
@@ -148,6 +165,7 @@ fn make_client_leaf_with_serial(
     params.subject_alt_names = vec![uri(san)];
     params.serial_number = Some(SerialNumber::from(serial));
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    short_lived(&mut params);
     let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     let der = cert.der().clone();
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
@@ -239,15 +257,6 @@ fn dns_san_policy_reads_the_dns_san() {
     let id = extract_identity(leaf.as_ref(), IdentityPolicy::DnsSan).expect("identity");
     assert_eq!(id.value(), "agent.example.org");
     assert_eq!(id.source(), IdentitySource::DnsSan);
-}
-
-#[test]
-fn cn_legacy_policy_reads_the_common_name() {
-    let ca = make_ca();
-    let (leaf, _key) = make_leaf(&ca, vec![], Some("agent-cn"), true);
-    let id = extract_identity(leaf.as_ref(), IdentityPolicy::CnLegacy).expect("identity");
-    assert_eq!(id.value(), "agent-cn");
-    assert_eq!(id.source(), IdentitySource::CommonName);
 }
 
 #[test]
@@ -358,20 +367,16 @@ fn uri_san_with_nul_control_char_fails_closed() {
 }
 
 #[test]
-fn crlf_in_dns_san_and_cn_fails_closed_like_the_header_path() {
-    // The log-injection/smuggling shape the header path already rejects, asserted
-    // for BOTH remaining policies so the fix is not URI-SAN-specific.
+fn crlf_in_dns_san_fails_closed_like_the_header_path() {
+    // The log-injection/smuggling shape the header path already rejects, asserted for the
+    // DNS SAN policy so the fix is not URI-SAN-specific.
     let ca = make_ca();
     let smuggle = "host.example.org\r\nX-Spoof: evil";
     let san: SanType = SanType::DnsName(smuggle.try_into().expect("CRLF is valid IA5"));
-    let (leaf, _key) = make_leaf(&ca, vec![san], Some("cn\r\ninjected"), true);
+    let (leaf, _key) = make_leaf(&ca, vec![san], None, true);
     assert!(
         extract_identity(leaf.as_ref(), IdentityPolicy::DnsSan).is_none(),
         "a DNS SAN carrying CRLF must fail closed"
-    );
-    assert!(
-        extract_identity(leaf.as_ref(), IdentityPolicy::CnLegacy).is_none(),
-        "a CN carrying CRLF must fail closed"
     );
 }
 
@@ -442,9 +447,9 @@ fn non_ia5_unicode_uri_san_is_rejected_at_mint_time() {
 }
 
 #[test]
-fn no_san_fails_closed_for_san_policies_cn_only_for_legacy() {
-    // Empty SAN list. URI-SAN and DNS-SAN policies must both fail closed (None);
-    // CnLegacy returns the CN only when present.
+fn no_san_fails_closed_for_every_san_policy() {
+    // Empty SAN list: both policies fail closed (None), and the present Common Name is
+    // never read in their place.
     let ca = make_ca();
     let (leaf, _key) = make_leaf(&ca, vec![], Some("legacy-cn"), true);
     assert!(
@@ -455,16 +460,6 @@ fn no_san_fails_closed_for_san_policies_cn_only_for_legacy() {
         extract_identity(leaf.as_ref(), IdentityPolicy::DnsSan).is_none(),
         "DnsSan must fail closed with no SAN"
     );
-    let cn = extract_identity(leaf.as_ref(), IdentityPolicy::CnLegacy).expect("cn identity");
-    assert_eq!(cn.value(), "legacy-cn");
-    assert_eq!(cn.source(), IdentitySource::CommonName);
-    // NOTE: a truly CN-less leaf is not mintable via these rcgen 0.14 helpers —
-    // `self_signed`/`signed_by` inject a default CN ("rcgen self signed cert")
-    // when no DN is supplied, so CnLegacy would read THAT, not None. That is a
-    // fixture artifact (rcgen always emits a subject), not a fault in
-    // `extract_identity`, which returns whatever well-formed CN the cert carries.
-    // The fail-closed contract for CnLegacy is therefore exercised by the
-    // genuinely-absent SAN policies above (UriSan/DnsSan → None).
 }
 
 // ---------------------------------------------------------------------------
@@ -596,9 +591,12 @@ fn server_config_for(ca: &Ca) -> Arc<rustls::ServerConfig> {
     let server_ca = make_ca();
     let (server_cert, server_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
-    let config = TlsListenerSecurityState::new(vec![ca.cert.der().clone()])
-        .build_exported_key_config(vec![server_cert], server_key, Vec::new())
-        .expect("server config");
+    let config = TlsListenerSecurityState::new(
+        vec![ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_exported_key_config(vec![server_cert], server_key, Vec::new())
+    .expect("server config");
     Arc::new(config)
 }
 
@@ -612,9 +610,12 @@ fn server_config_with_crls_for(
     let server_ca = make_ca();
     let (server_cert, server_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
-    let config = TlsListenerSecurityState::new(vec![ca.cert.der().clone()])
-        .build_exported_key_config(vec![server_cert], server_key, crls)
-        .expect("server config with crls");
+    let config = TlsListenerSecurityState::new(
+        vec![ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_exported_key_config(vec![server_cert], server_key, crls)
+    .expect("server config with crls");
     Arc::new(config)
 }
 
@@ -636,7 +637,7 @@ fn mtls_round_trip_extracts_client_identity_and_serves_request() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, identity| {
                 // Echo the request body back; the identity is asserted via the join.
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
@@ -754,19 +755,17 @@ fn delegated_ed25519_tls_handshake_round_trip() {
     // credential (ADR-MCPRE-063 Slice 3: the certificate and the delegated signer must
     // present the same public key) AND binds the resolver to this listener's own signing
     // budget — the fourth of the four things THM-0048 says are established together.
-    //
-    // This used to assemble the resolver itself and hand it to a `pub` escape hatch with a
-    // hand-made `TlsHandshakeSignBudget::default()`, which is precisely the shape the
-    // theorem says cannot happen: the terms supplied to the listener independently. The
-    // escape hatch is gone and the test is stronger for losing it.
     let config = std::sync::Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_delegated_config(
-                vec![server_cert],
-                std::sync::Arc::new(delegated_signer),
-                Vec::new(),
-            )
-            .expect("delegated server config"),
+        TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_delegated_config(
+            vec![server_cert],
+            std::sync::Arc::new(delegated_signer),
+            Vec::new(),
+        )
+        .expect("delegated server config"),
     );
 
     let (client_cert, client_key) = make_leaf(
@@ -782,7 +781,7 @@ fn delegated_ed25519_tls_handshake_round_trip() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 let _ = identity;
@@ -865,13 +864,16 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
     let (server_cert, delegated_signer) = make_ed25519_server_leaf(&server_ca);
 
     let config = std::sync::Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_delegated_config(
-                vec![server_cert],
-                std::sync::Arc::new(delegated_signer),
-                Vec::new(),
-            )
-            .expect("validated delegated server config (matching key) must build"),
+        TlsListenerSecurityState::new(
+            vec![client_ca.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_delegated_config(
+            vec![server_cert],
+            std::sync::Arc::new(delegated_signer),
+            Vec::new(),
+        )
+        .expect("validated delegated server config (matching key) must build"),
     );
 
     let (client_cert, client_key) = make_leaf(
@@ -887,7 +889,7 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, _identity| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()
@@ -930,13 +932,16 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
     let (server_cert2, honest_signer) = make_ed25519_server_leaf(&server_ca2);
     let corrupting = CorruptingEd25519Tls(honest_signer);
     let config2 = std::sync::Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca2.cert.der().clone()])
-            .build_delegated_config(
-                vec![server_cert2],
-                std::sync::Arc::new(corrupting),
-                Vec::new(),
-            )
-            .expect("build still succeeds: the public key matches; the BREAK is the bad signature"),
+        TlsListenerSecurityState::new(
+            vec![client_ca2.cert.der().clone()],
+            mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+        )
+        .build_delegated_config(
+            vec![server_cert2],
+            std::sync::Arc::new(corrupting),
+            Vec::new(),
+        )
+        .expect("build still succeeds: the public key matches; the BREAK is the bad signature"),
     );
 
     let (client_cert2, client_key2) = make_leaf(
@@ -951,7 +956,7 @@ fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
         serve_once(
             &listener2,
             config2,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |_req, _id| b"{\"ok\":true}".to_vec(),
         )
     });
@@ -981,13 +986,16 @@ fn validated_delegated_build_rejects_cert_signer_key_mismatch() {
     // leaf's.
     let mismatched = MismatchedEd25519Tls(mcp_re_core::SigningKey::from_seed_bytes(&[0xAAu8; 32]));
 
-    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_delegated_config(
-            vec![server_cert],
-            std::sync::Arc::new(mismatched),
-            Vec::new(),
-        )
-        .expect_err("a cert↔signer key mismatch must fail closed at config construction");
+    let err = TlsListenerSecurityState::new(
+        vec![client_ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
+    .build_delegated_config(
+        vec![server_cert],
+        std::sync::Arc::new(mismatched),
+        Vec::new(),
+    )
+    .expect_err("a cert↔signer key mismatch must fail closed at config construction");
     assert!(
         matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
         "expected DelegatedKeyMismatch, got {err:?}"
@@ -1004,363 +1012,12 @@ fn validated_delegated_build_rejects_non_ed25519_leaf() {
     let ecdsa_leaf = make_ecdsa_server_leaf(&server_ca);
     let signer = LocalEd25519Tls(mcp_re_core::SigningKey::from_seed_bytes(&[3u8; 32]));
 
-    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_delegated_config(vec![ecdsa_leaf], std::sync::Arc::new(signer), Vec::new())
-        .expect_err("a non-Ed25519 leaf must fail closed under delegated mode");
-    assert!(
-        matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
-        "expected DelegatedKeyMismatch (Ed25519-only), got {err:?}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// ADR-MCPS-028 §G / issue #60: AWS KMS delegated TLS handshake signing. The
-// server's TLS key is a SECOND, DISTINCT KMS key; an `AwsKmsEd25519Backend` (over
-// an in-memory FAKE KMS transport backed by a local Ed25519 key — no network, no
-// AWS credentials) signs each handshake via the RAW-Ed25519 KMS `Sign` path. A real
-// full-WebPKI client completing the mTLS handshake PROVES the delegated KMS
-// signature is wire-correct. These tests run only under `--features
-// aws_kms_keysource`.
-// ---------------------------------------------------------------------------
-
-/// Mint an Ed25519 server leaf signed by `ca` from a FIXED 32-byte seed, so a cloud
-/// KMS backend constructed from the SAME seed advertises the leaf's public key
-/// (cert↔signer match). Mirrors `make_ed25519_server_leaf` but with a deterministic
-/// key so the KMS-side key and the certificate key are guaranteed identical.
-#[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
-fn make_ed25519_server_leaf_from_seed(ca: &Ca, seed: &[u8; 32]) -> CertificateDer<'static> {
-    // RFC 8410 PKCS#8 v1 for an Ed25519 private key carrying exactly this seed:
-    // SEQUENCE { version 0, AlgorithmIdentifier { id-Ed25519 }, OCTET STRING {
-    // OCTET STRING(32) seed } }. 16-byte fixed header + 32-byte seed = 48 bytes.
-    let mut pkcs8 = vec![
-        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04,
-        0x20,
-    ];
-    pkcs8.extend_from_slice(seed);
-    let key = KeyPair::from_pkcs8_der_and_sign_algo(
-        &PrivatePkcs8KeyDer::from(pkcs8),
-        &rcgen::PKCS_ED25519,
+    let err = TlsListenerSecurityState::new(
+        vec![client_ca.cert.der().clone()],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
     )
-    .expect("ed25519 key from seed");
-    let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
-    params.subject_alt_names = vec![dns("localhost")];
-    params
-        .distinguished_name
-        .push(DnType::CommonName, "localhost");
-    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-    let cert = params
-        .signed_by(&key, &ca.issuer())
-        .expect("ed25519 leaf signed");
-    cert.der().clone()
-}
-
-/// (c) #60: a full-WebPKI in-process mTLS handshake whose delegated signer is an AWS
-/// KMS backend (over a fake transport) keyed to MATCH the server leaf cert. The
-/// validating client completes the handshake only if the KMS-signed
-/// `CertificateVerify` is cryptographically valid — proving the AWS RAW-Ed25519 sign
-/// is wire-correct end to end. Corrupting the fake KMS signature breaks the handshake.
-#[cfg(feature = "aws_kms_keysource")]
-#[test]
-fn aws_kms_delegated_tls_handshake_round_trip_and_corruption_fails() {
-    let seed = [0x42u8; 32];
-    let client_ca = make_ca();
-    let server_ca = make_ca();
-    let server_cert = make_ed25519_server_leaf_from_seed(&server_ca, &seed);
-    let backend =
-        mcp_re_proxy::AwsKmsEd25519Backend::for_test_with_local_seed(&seed, "alias/mcp-re-tls")
-            .expect("aws kms backend over fake transport");
-
-    let config = std::sync::Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_delegated_config(vec![server_cert], std::sync::Arc::new(backend), Vec::new())
-            .expect("validated delegated config with the matching KMS TLS key must build"),
-    );
-
-    let (client_cert, client_key) = make_leaf(
-        &client_ca,
-        vec![uri("spiffe://example.org/agent-1")],
-        None,
-        true,
-    );
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::default(),
-            |request, _id| {
-                assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
-                b"{\"ok\":true}".to_vec()
-            },
-        )
-    });
-    let response = client_round_trip(
-        addr,
-        client_config_validating(
-            server_ca.cert.der().clone(),
-            (vec![client_cert], client_key),
-        ),
-        b"{\"jsonrpc\":\"2.0\"}",
-    )
-    .expect("client round trip over an AWS-KMS-delegated handshake");
-    assert_eq!(response, b"{\"ok\":true}");
-    let _ = server.join().expect("join").expect("serve ok");
-
-    // Corrupt the KMS signature → the validating client's CertificateVerify check
-    // fails the handshake. The wrapper keeps the SAME public key (so the cert↔signer
-    // build check passes; the BREAK is the bad signature on the wire).
-    struct CorruptingAwsKms(mcp_re_proxy::AwsKmsEd25519Backend);
-    impl mcp_re_proxy::RawEd25519TlsSigner for CorruptingAwsKms {
-        fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, mcp_re_proxy::KeyError> {
-            let mut sig = self.0.sign_tls_ed25519(message)?;
-            sig[0] ^= 0x01;
-            Ok(sig)
-        }
-        fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, mcp_re_proxy::KeyError> {
-            self.0.tls_public_key_spki_der()
-        }
-    }
-
-    let seed2 = [0x7Eu8; 32];
-    let client_ca2 = make_ca();
-    let server_ca2 = make_ca();
-    let server_cert2 = make_ed25519_server_leaf_from_seed(&server_ca2, &seed2);
-    let backend2 =
-        mcp_re_proxy::AwsKmsEd25519Backend::for_test_with_local_seed(&seed2, "alias/mcp-re-tls")
-            .expect("aws kms backend 2");
-    let config2 = std::sync::Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca2.cert.der().clone()])
-            .build_delegated_config(
-                vec![server_cert2],
-                std::sync::Arc::new(CorruptingAwsKms(backend2)),
-                Vec::new(),
-            )
-            .expect("build succeeds: public key matches; the BREAK is the corrupted signature"),
-    );
-    let (client_cert2, client_key2) = make_leaf(
-        &client_ca2,
-        vec![uri("spiffe://example.org/agent-1")],
-        None,
-        true,
-    );
-    let listener2 = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr2 = listener2.local_addr().expect("addr");
-    let server2 = thread::spawn(move || {
-        serve_once(
-            &listener2,
-            config2,
-            &ServerOptions::default(),
-            |_req, _id| b"{\"ok\":true}".to_vec(),
-        )
-    });
-    let result = client_round_trip(
-        addr2,
-        client_config_validating(
-            server_ca2.cert.der().clone(),
-            (vec![client_cert2], client_key2),
-        ),
-        b"{\"jsonrpc\":\"2.0\"}",
-    );
-    assert!(
-        result.is_err(),
-        "a corrupted AWS-KMS delegated signature MUST fail the validating handshake"
-    );
-    let _ = server2.join();
-}
-
-/// (d) #60: an AWS KMS backend whose key does NOT match the leaf cert must FAIL
-/// CLOSED at config construction (cert↔signer mismatch), and a non-Ed25519 (ECDSA)
-/// leaf under the AWS-delegated path is likewise rejected (Ed25519-only).
-#[cfg(feature = "aws_kms_keysource")]
-#[test]
-fn aws_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
-    let client_ca = make_ca();
-    let server_ca = make_ca();
-
-    // Mismatch: leaf minted from one seed, KMS backend keyed to a DIFFERENT seed.
-    let leaf = make_ed25519_server_leaf_from_seed(&server_ca, &[0x11u8; 32]);
-    let mismatched = mcp_re_proxy::AwsKmsEd25519Backend::for_test_with_local_seed(
-        &[0x22u8; 32],
-        "alias/mcp-re-tls",
-    )
-    .expect("aws kms backend");
-    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_delegated_config(vec![leaf], std::sync::Arc::new(mismatched), Vec::new())
-        .expect_err("a cert↔KMS-key mismatch must fail closed at config construction");
-    assert!(
-        matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
-        "expected DelegatedKeyMismatch, got {err:?}"
-    );
-
-    // Non-Ed25519 leaf (ECDSA P-256): the leaf SPKI is rejected first (Ed25519-only).
-    let ecdsa_leaf = make_ecdsa_server_leaf(&server_ca);
-    let backend = mcp_re_proxy::AwsKmsEd25519Backend::for_test_with_local_seed(
-        &[0x33u8; 32],
-        "alias/mcp-re-tls",
-    )
-    .expect("aws kms backend");
-    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_delegated_config(vec![ecdsa_leaf], std::sync::Arc::new(backend), Vec::new())
-        .expect_err("a non-Ed25519 leaf must fail closed under AWS-delegated mode");
-    assert!(
-        matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
-        "expected DelegatedKeyMismatch (Ed25519-only), got {err:?}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// ADR-MCPS-028 §G / issue #61: GCP Cloud KMS delegated TLS handshake signing. The
-// server's TLS key is a SECOND, DISTINCT Cloud KMS key version; a
-// `GcpKmsEd25519Backend` (over an in-memory FAKE Cloud KMS transport backed by a
-// local Ed25519 key — no network, no GCP credentials) signs each handshake via the
-// RAW-Ed25519 `asymmetricSign` path. A real full-WebPKI client completing the mTLS
-// handshake PROVES the delegated KMS signature is wire-correct. These tests run only
-// under `--features gcp_kms_keysource`.
-// ---------------------------------------------------------------------------
-
-/// (c) #61: a full-WebPKI in-process mTLS handshake whose delegated signer is a GCP
-/// Cloud KMS backend (over a fake transport) keyed to MATCH the server leaf cert.
-/// The validating client completes the handshake only if the KMS-signed
-/// `CertificateVerify` is cryptographically valid — proving the GCP RAW-Ed25519
-/// `asymmetricSign` is wire-correct end to end. Corrupting the fake KMS signature
-/// breaks the handshake.
-#[cfg(feature = "gcp_kms_keysource")]
-#[test]
-fn gcp_kms_delegated_tls_handshake_round_trip_and_corruption_fails() {
-    let seed = [0x42u8; 32];
-    let client_ca = make_ca();
-    let server_ca = make_ca();
-    let server_cert = make_ed25519_server_leaf_from_seed(&server_ca, &seed);
-    let backend = mcp_re_proxy::GcpKmsEd25519Backend::for_test_with_local_seed(&seed)
-        .expect("gcp kms backend over fake transport");
-
-    let config = std::sync::Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_delegated_config(vec![server_cert], std::sync::Arc::new(backend), Vec::new())
-            .expect("validated delegated config with the matching KMS TLS key must build"),
-    );
-
-    let (client_cert, client_key) = make_leaf(
-        &client_ca,
-        vec![uri("spiffe://example.org/agent-1")],
-        None,
-        true,
-    );
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let server = thread::spawn(move || {
-        serve_once(
-            &listener,
-            config,
-            &ServerOptions::default(),
-            |request, _id| {
-                assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
-                b"{\"ok\":true}".to_vec()
-            },
-        )
-    });
-    let response = client_round_trip(
-        addr,
-        client_config_validating(
-            server_ca.cert.der().clone(),
-            (vec![client_cert], client_key),
-        ),
-        b"{\"jsonrpc\":\"2.0\"}",
-    )
-    .expect("client round trip over a GCP-KMS-delegated handshake");
-    assert_eq!(response, b"{\"ok\":true}");
-    let _ = server.join().expect("join").expect("serve ok");
-
-    // Corrupt the KMS signature → the validating client's CertificateVerify check
-    // fails the handshake. The wrapper keeps the SAME public key (so the cert↔signer
-    // build check passes; the BREAK is the bad signature on the wire).
-    struct CorruptingGcpKms(mcp_re_proxy::GcpKmsEd25519Backend);
-    impl mcp_re_proxy::RawEd25519TlsSigner for CorruptingGcpKms {
-        fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, mcp_re_proxy::KeyError> {
-            let mut sig = self.0.sign_tls_ed25519(message)?;
-            sig[0] ^= 0x01;
-            Ok(sig)
-        }
-        fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, mcp_re_proxy::KeyError> {
-            self.0.tls_public_key_spki_der()
-        }
-    }
-
-    let seed2 = [0x7Eu8; 32];
-    let client_ca2 = make_ca();
-    let server_ca2 = make_ca();
-    let server_cert2 = make_ed25519_server_leaf_from_seed(&server_ca2, &seed2);
-    let backend2 = mcp_re_proxy::GcpKmsEd25519Backend::for_test_with_local_seed(&seed2)
-        .expect("gcp kms backend 2");
-    let config2 = std::sync::Arc::new(
-        TlsListenerSecurityState::new(vec![client_ca2.cert.der().clone()])
-            .build_delegated_config(
-                vec![server_cert2],
-                std::sync::Arc::new(CorruptingGcpKms(backend2)),
-                Vec::new(),
-            )
-            .expect("build succeeds: public key matches; the BREAK is the corrupted signature"),
-    );
-    let (client_cert2, client_key2) = make_leaf(
-        &client_ca2,
-        vec![uri("spiffe://example.org/agent-1")],
-        None,
-        true,
-    );
-    let listener2 = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr2 = listener2.local_addr().expect("addr");
-    let server2 = thread::spawn(move || {
-        serve_once(
-            &listener2,
-            config2,
-            &ServerOptions::default(),
-            |_req, _id| b"{\"ok\":true}".to_vec(),
-        )
-    });
-    let result = client_round_trip(
-        addr2,
-        client_config_validating(
-            server_ca2.cert.der().clone(),
-            (vec![client_cert2], client_key2),
-        ),
-        b"{\"jsonrpc\":\"2.0\"}",
-    );
-    assert!(
-        result.is_err(),
-        "a corrupted GCP-KMS delegated signature MUST fail the validating handshake"
-    );
-    let _ = server2.join();
-}
-
-/// (d) #61: a GCP KMS backend whose key does NOT match the leaf cert must FAIL
-/// CLOSED at config construction (cert↔signer mismatch), and a non-Ed25519 (ECDSA)
-/// leaf under the GCP-delegated path is likewise rejected (Ed25519-only).
-#[cfg(feature = "gcp_kms_keysource")]
-#[test]
-fn gcp_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
-    let client_ca = make_ca();
-    let server_ca = make_ca();
-
-    // Mismatch: leaf minted from one seed, KMS backend keyed to a DIFFERENT seed.
-    let leaf = make_ed25519_server_leaf_from_seed(&server_ca, &[0x11u8; 32]);
-    let mismatched = mcp_re_proxy::GcpKmsEd25519Backend::for_test_with_local_seed(&[0x22u8; 32])
-        .expect("gcp kms backend");
-    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_delegated_config(vec![leaf], std::sync::Arc::new(mismatched), Vec::new())
-        .expect_err("a cert↔KMS-key mismatch must fail closed at config construction");
-    assert!(
-        matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
-        "expected DelegatedKeyMismatch, got {err:?}"
-    );
-
-    // Non-Ed25519 leaf (ECDSA P-256): the leaf SPKI is rejected first (Ed25519-only).
-    let ecdsa_leaf = make_ecdsa_server_leaf(&server_ca);
-    let backend = mcp_re_proxy::GcpKmsEd25519Backend::for_test_with_local_seed(&[0x33u8; 32])
-        .expect("gcp kms backend");
-    let err = TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-        .build_delegated_config(vec![ecdsa_leaf], std::sync::Arc::new(backend), Vec::new())
-        .expect_err("a non-Ed25519 leaf must fail closed under GCP-delegated mode");
+    .build_delegated_config(vec![ecdsa_leaf], std::sync::Arc::new(signer), Vec::new())
+    .expect_err("a non-Ed25519 leaf must fail closed under delegated mode");
     assert!(
         matches!(err, mcp_re_proxy::TlsError::DelegatedKeyMismatch(_)),
         "expected DelegatedKeyMismatch (Ed25519-only), got {err:?}"
@@ -1376,9 +1033,12 @@ fn missing_client_certificate_is_rejected() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     // Client presents NO certificate; the server requires one → fail closed.
@@ -1404,9 +1064,12 @@ fn untrusted_client_certificate_is_rejected() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     let _ = client_round_trip(
@@ -1444,10 +1107,7 @@ fn over_long_client_cert_is_rejected() {
     );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let options = ServerOptions {
-        max_client_cert_lifetime: Some(Duration::from_secs(3600)), // 1h
-        ..ServerOptions::default()
-    };
+    let options = ServerOptions::new(window());
 
     let server = thread::spawn(move || {
         serve_once(&listener, config, &options, |_req, _id| {
@@ -1472,20 +1132,16 @@ fn over_long_client_cert_is_rejected() {
 fn within_limit_client_cert_is_served() {
     let client_ca = make_ca();
     let config = server_config_for(&client_ca);
-    // Same 15y cert, but the configured max is generous (≈20y) → served.
-    let (client_cert, client_key) = make_leaf_with_validity(
+    // A now-relative 1860s cert, well inside the 1h ceiling → served.
+    let (client_cert, client_key) = make_leaf(
         &client_ca,
         vec![uri("spiffe://example.org/agent-1")],
+        None,
         true,
-        (2020, 1, 1),
-        (2035, 1, 1),
     );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let options = ServerOptions {
-        max_client_cert_lifetime: Some(Duration::from_secs(20 * 365 * 24 * 3600)),
-        ..ServerOptions::default()
-    };
+    let options = ServerOptions::new(window());
 
     let server = thread::spawn(move || {
         serve_once(&listener, config, &options, |_req, _id| {
@@ -1532,7 +1188,7 @@ fn non_revoked_client_cert_completes_handshake_with_crl_configured() {
         serve_once(
             &listener,
             config,
-            &ServerOptions::default(),
+            &ServerOptions::new(window()),
             |request, _id| {
                 assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
                 b"{\"ok\":true}".to_vec()
@@ -1570,9 +1226,12 @@ fn revoked_client_cert_handshake_is_rejected() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     // The handshake must fail closed: a revoked client cert is rejected by the
@@ -1609,9 +1268,12 @@ fn stale_crl_fails_client_handshake_closed() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     let _ = client_round_trip(
@@ -1651,10 +1313,13 @@ fn a_client_whose_revocation_status_cannot_be_determined_is_denied() {
     let server_ca = make_ca();
     let (server_cert, server_key) =
         make_leaf(&server_ca, vec![dns("localhost")], Some("localhost"), false);
-    let config = TlsListenerSecurityState::new(vec![
-        covered_ca.cert.der().clone(),
-        uncovered_ca.cert.der().clone(),
-    ])
+    let config = TlsListenerSecurityState::new(
+        vec![
+            covered_ca.cert.der().clone(),
+            uncovered_ca.cert.der().clone(),
+        ],
+        mcp_re_proxy::delegated_tls::HandshakeSignCapacity::default(),
+    )
     .build_exported_key_config(vec![server_cert], server_key, vec![crl])
     .expect("server config trusting both client CAs");
     let config = Arc::new(config);
@@ -1669,9 +1334,12 @@ fn a_client_whose_revocation_status_cannot_be_determined_is_denied() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::new(window()),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
     });
 
     let _ = client_round_trip(

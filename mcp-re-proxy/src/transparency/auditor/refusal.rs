@@ -4,11 +4,12 @@
 //! One fact: **which stage of an audit did not complete, and whether an attestation
 //! exists anyway.**
 //!
-//! Its own owner because that second clause is not decoration. Four of these variants mean
-//! no artifact was written and the operator has nothing; the fifth means the attestation
-//! is on disk and durable, and only the submission failed. Collapsing the two into "the
-//! audit failed" would have an operator discard a portable, offline-verifiable record
-//! because a network was down.
+//! Its own owner because that second clause is not decoration. `Input`, `Archive`, `Attest`
+//! and `Output` mean no artifact was written and the operator has nothing. `Registration`
+//! means the artifact is durable and the submission did not succeed. `ReceiptNotRecorded`
+//! means the artifact is durable AND the statement is registered. Collapsing these into
+//! "the audit failed" would have an operator discard a portable, offline-verifiable record
+//! because a network was down, or re-submit a statement that is already registered.
 
 use crate::transparency::auditor::registration::RegistrationError;
 use crate::transparency::AttestError;
@@ -31,6 +32,9 @@ pub enum AuditError {
     /// is whether a transparency service holds it — which the error itself answers with
     /// its own certainty.
     Registration(RegistrationError),
+    /// The statement IS registered and its receipt verified; the artifact on disk is the
+    /// attestation without its receipt and could not be updated. Do not re-submit.
+    ReceiptNotRecorded(String),
 }
 
 impl std::fmt::Display for AuditError {
@@ -43,6 +47,10 @@ impl std::fmt::Display for AuditError {
             AuditError::Registration(e) => write!(
                 f,
                 "the attestation was written; registering it did not succeed — {e}"
+            ),
+            AuditError::ReceiptNotRecorded(e) => write!(
+                f,
+                "the statement IS registered and its receipt verified, but the artifact could not be updated with it (the artifact on disk carries no receipt; do not re-submit): {e}"
             ),
         }
     }

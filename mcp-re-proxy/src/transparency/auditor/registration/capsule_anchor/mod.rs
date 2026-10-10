@@ -51,6 +51,8 @@ use super::capability::RegistrationResponse;
 use super::capability::TransparencyRegistration;
 use super::exchange::HttpExchange;
 use super::exchange::HttpRequest;
+use super::policy::RegistrationPolicy;
+use std::time::Instant;
 
 use fault::fault_for_status;
 use fault::fault_to_error;
@@ -68,30 +70,29 @@ pub struct CapsuleAnchorRegistrationClient<E> {
     exchange: E,
     /// The operator-configured service base URL, without a trailing separator.
     base_url: String,
+    policy: RegistrationPolicy,
 }
 
 impl<E: HttpExchange> CapsuleAnchorRegistrationClient<E> {
-    /// A client for the service at `base_url`.
+    /// A client for the service at `base_url`, bounded by `policy`.
     ///
-    /// No budget: this contract has no `202` and no polling, so there is nothing for a
-    /// deadline to bound beyond the one the transport already holds. A policy taken and
-    /// unused would be a knob that selects nothing.
-    pub fn new(exchange: E, base_url: &str) -> Self {
+    /// This contract has no `202` and no polling, so its single exchange is bounded by the
+    /// registration's deadline, which is the policy's timeout from the start of `register`.
+    pub fn new(exchange: E, base_url: &str, policy: RegistrationPolicy) -> Self {
         CapsuleAnchorRegistrationClient {
             exchange,
             base_url: base_url.trim_end_matches('/').to_owned(),
+            policy,
         }
     }
 
     /// POST the statement, and read what the service made of it.
-    fn submit(&self, signed_statement: &[u8]) -> Result<Vec<u8>, CapsuleAnchorFault> {
-        let body = serde_json::to_vec(&wire::RegisterStatementRequest {
-            signed_statement_b64: base64::engine::general_purpose::STANDARD
-                .encode(signed_statement),
-        })
-        .map_err(|_| CapsuleAnchorFault::Transport {
-            detail: "the submission could not be encoded".to_owned(),
-        })?;
+    fn submit(
+        &self,
+        signed_statement: &[u8],
+        deadline: Instant,
+    ) -> Result<Vec<u8>, CapsuleAnchorFault> {
+        let body = wire::register_statement_body(signed_statement);
         let response = self
             .exchange
             .send(HttpRequest {
@@ -102,6 +103,7 @@ impl<E: HttpExchange> CapsuleAnchorRegistrationClient<E> {
                     ("accept".to_owned(), wire::JSON_MEDIA_TYPE.to_owned()),
                 ],
                 body,
+                deadline,
             })
             .map_err(|detail| CapsuleAnchorFault::Transport { detail })?;
         if response.status != 200 {
@@ -113,9 +115,10 @@ impl<E: HttpExchange> CapsuleAnchorRegistrationClient<E> {
 
 /// The receipt octets out of an accepted answer.
 ///
-/// Every failure here is [`CapsuleAnchorFault::UnreadableAnswer`], and that is the whole
-/// point of the separate variant: the service has already said `200`, so the statement is
-/// in the log whatever this function makes of the body.
+/// Every failure here is [`CapsuleAnchorFault::UnreadableAnswer`], which is indeterminate
+/// rather than a refusal because something answered `200` — it may be the service having
+/// logged the statement, or a peer that is not the service — and only a readable, verified
+/// receipt settles it.
 fn receipt_bytes(body: &[u8]) -> Result<Vec<u8>, CapsuleAnchorFault> {
     let answer: wire::RegisterStatementResponse =
         serde_json::from_slice(body).map_err(|_| CapsuleAnchorFault::UnreadableAnswer {
@@ -134,7 +137,17 @@ impl<E: HttpExchange> TransparencyRegistration for CapsuleAnchorRegistrationClie
     }
 
     fn register(&self, signed_statement: &[u8]) -> Result<RegistrationResponse, RegistrationError> {
-        self.submit(signed_statement)
+        // Before anything is sent. A budget whose end is not representable is a run with
+        // no bound, and refusing here is a definitive negative: nothing went out.
+        let deadline = Instant::now()
+            .checked_add(self.policy.timeout())
+            .ok_or_else(|| {
+                RegistrationError::Refused(
+                    "the registration deadline is not representable on this host's clock"
+                        .to_owned(),
+                )
+            })?;
+        self.submit(signed_statement, deadline)
             .map(RegistrationResponse::of)
             .map_err(fault_to_error)
     }
@@ -147,6 +160,12 @@ mod tests {
     use super::super::fixtures::*;
     use super::*;
     use std::cell::RefCell;
+    use std::time::Duration;
+
+    fn policy() -> RegistrationPolicy {
+        RegistrationPolicy::new(Duration::from_secs(5), Duration::from_secs(1))
+            .expect("a bounded budget")
+    }
 
     /// A service that answers whatever it was built with, and records what it was asked.
     struct Canned {
@@ -201,7 +220,8 @@ mod tests {
     fn the_statement_is_submitted_verbatim_to_this_contracts_resource() {
         let statement = a_statement();
         let service = Canned::answering(200, answer_with(&receipt_for(&statement)));
-        let client = CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test/");
+        let client =
+            CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test/", policy());
 
         client
             .register(statement.to_cose())
@@ -232,10 +252,18 @@ mod tests {
     fn a_receipt_this_leaf_brings_back_is_accepted_only_after_it_verifies() {
         let statement = a_statement();
         let service = Canned::answering(200, answer_with(&receipt_for(&statement)));
-        let client = CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test");
+        let client =
+            CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test", policy());
 
-        let registered = register_and_verify(&client, &statement, &issuer().public_key(), &pin())
-            .expect("the receipt verifies");
+        let registered = register_and_verify(
+            &client,
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_lifecycle,
+            &|| NOW,
+        )
+        .expect("the receipt verifies");
 
         assert_eq!(registered.protocol(), CAPSULE_ANCHOR_CONTRACT);
     }
@@ -246,10 +274,18 @@ mod tests {
     fn a_receipt_about_another_statement_is_refused() {
         let statement = a_statement();
         let service = Canned::answering(200, answer_with(&receipt_for(&another_statement())));
-        let client = CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test");
+        let client =
+            CapsuleAnchorRegistrationClient::new(service, "https://ts.example.test", policy());
 
-        let refused = register_and_verify(&client, &statement, &issuer().public_key(), &pin())
-            .expect_err("a receipt about another statement is not this one's");
+        let refused = register_and_verify(
+            &client,
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_lifecycle,
+            &|| NOW,
+        )
+        .expect_err("a receipt about another statement is not this one's");
 
         assert!(
             matches!(refused, RegistrationError::ReceiptUnverified(_)),
@@ -257,14 +293,14 @@ mod tests {
         );
     }
 
-    /// An ACCEPTED submission whose answer cannot be read is indeterminate, never a
-    /// failure to register.
+    /// A `200` whose answer cannot be read is indeterminate, never a failure to register.
     #[test]
     fn an_accepted_submission_with_an_unreadable_answer_does_not_report_a_failure() {
         let statement = a_statement();
         let client = CapsuleAnchorRegistrationClient::new(
             Canned::answering(200, b"not the JSON this contract defines".to_vec()),
             "https://ts.example.test",
+            policy(),
         );
 
         let refused = client
@@ -272,7 +308,8 @@ mod tests {
             .expect_err("the receipt cannot be read");
 
         assert!(matches!(refused, RegistrationError::Indeterminate(_)));
-        assert!(refused.to_string().contains("ACCEPTED"), "{refused}");
+        assert!(refused.to_string().contains("answered 200"), "{refused}");
+        assert!(!refused.to_string().contains("is registered"), "{refused}");
     }
 
     /// The service's log coordinates are NOT read: an answer carrying none still works,
@@ -288,17 +325,26 @@ mod tests {
         let client = CapsuleAnchorRegistrationClient::new(
             Canned::answering(200, body),
             "https://ts.example.test",
+            policy(),
         );
 
-        register_and_verify(&client, &statement, &issuer().public_key(), &pin())
-            .expect("the receipt is what establishes the registration");
+        register_and_verify(
+            &client,
+            &statement,
+            &issuer().public_key(),
+            &pin(),
+            &ts_lifecycle,
+            &|| NOW,
+        )
+        .expect("the receipt is what establishes the registration");
     }
 
     /// A transport failure while submitting leaves the outcome unknown.
     #[test]
     fn a_submission_that_never_went_out_is_indeterminate() {
         let statement = a_statement();
-        let client = CapsuleAnchorRegistrationClient::new(Dead, "https://ts.example.test");
+        let client =
+            CapsuleAnchorRegistrationClient::new(Dead, "https://ts.example.test", policy());
 
         let refused = client
             .register(statement.to_cose())

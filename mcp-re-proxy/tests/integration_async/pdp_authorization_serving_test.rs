@@ -37,7 +37,6 @@ use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::Audience;
 use mcp_re_http_profile::AudienceTuple;
-use mcp_re_http_profile::BindingType;
 use mcp_re_http_profile::CustodyConfig;
 use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
@@ -53,6 +52,7 @@ use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
+use mcp_re_proxy::authorization::pdp::AuthorizationAuthorityResolver;
 use mcp_re_proxy::authorization::AuthorizationFacet;
 use mcp_re_proxy::authorization::AuthorizationRefusalFacet;
 use mcp_re_proxy::authorization::EnrolledAuthority;
@@ -226,6 +226,64 @@ fn signed_call_bound_by(
     req
 }
 
+/// Re-sign `req` with `block` in place of the block it carries, as a FOREIGN signer would.
+/// The profile's own signers refuse a block that does not validate, so the proxy meets one
+/// only from a signer outside this workspace. The covered components are the ones the
+/// profile signer emitted for `req`, so the block is the only difference.
+fn resign_as_foreign(req: &mut HttpRequest, body: &[u8], block: &HttpRequestEvidenceBlock) {
+    use base64::Engine;
+    use mcp_re_http_profile::sigbase::signature_base;
+    use mcp_re_http_profile::sigbase::CoveredComponent;
+    use mcp_re_http_profile::sigbase::SignatureParams;
+    use mcp_re_http_profile::sigbase::SourceMessage;
+
+    let input = req
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("signature-input"))
+        .map(|(_, v)| v.clone())
+        .expect("signature-input");
+    let inner = &input[input.find('(').expect("(") + 1..input.find(')').expect(")")];
+    let comps: Vec<CoveredComponent> = inner
+        .split_whitespace()
+        .map(|c| CoveredComponent::new(Box::leak(c.trim_matches('"').into())))
+        .collect();
+    let nonce = input
+        .split(";nonce=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("nonce")
+        .to_owned();
+    req.body = mcp_re_http_profile::body::insert_meta_block(
+        body,
+        mcp_re_http_profile::REQUEST_EVIDENCE_BLOCK_KEY,
+        block,
+    )
+    .expect("insert");
+    req.headers.retain(|(k, _)| {
+        !["content-digest", "signature"]
+            .iter()
+            .any(|n| k.eq_ignore_ascii_case(n))
+    });
+    req.headers.push((
+        "Content-Digest".into(),
+        mcp_re_http_profile::content_digest_sha256(&req.body),
+    ));
+    let params = SignatureParams {
+        created: Some(CREATED),
+        expires: Some(EXPIRES),
+        nonce: Some(nonce),
+        keyid: Some(CLIENT_KEY_ID.into()),
+        alg: Some(mcp_re_http_profile::ALG_ED25519.into()),
+        tag: Some(PROFILE_TAG.into()),
+    };
+    let base = signature_base(&comps, &params, &SourceMessage::Request(req)).expect("base");
+    let sig = b64url_decode(&client_key().sign(&base)).expect("sig");
+    let sig = base64::engine::general_purpose::STANDARD.encode(sig);
+    req.headers
+        .push(("Signature".into(), format!("mcp-re=:{sig}:")));
+}
+
 /// Sign an arbitrary JSON-RPC body carrying `decision` in evidence form.
 fn signed_body(body: &str, nonce: &str, decision: &str) -> HttpRequest {
     let mut req = HttpRequest {
@@ -263,14 +321,16 @@ fn signed_body(body: &str, nonce: &str, decision: &str) -> HttpRequest {
 }
 
 fn counting_inner(calls: Arc<AtomicUsize>) -> Box<dyn AsyncInnerServer> {
-    Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
-        calls.fetch_add(1, Ordering::SeqCst);
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        move |_forwarded: &[u8]| -> Vec<u8> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 fn ready_signer() -> Arc<DelegatedServerSigner> {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue_cred = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -280,25 +340,24 @@ fn ready_signer() -> Arc<DelegatedServerSigner> {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(
-            CustodyConfig {
-                issuer_kid: ROOT_KID.into(),
-                iss: "did:example:server".into(),
-                profile: PROFILE_TAG.into(),
-                aud: VERIFIER_AUD.into(),
-                audience_hash: "aud-scope-1".into(),
-                trust_epoch: "epoch-1".into(),
-                server_role: "server".into(),
-                server_trust_domain: TRUST_DOMAIN.into(),
-                server_subject: "did:example:server".into(),
-                window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
-            },
-            issue_cred,
-            factory,
-        ),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        CustodyConfig {
+            issuer_kid: ROOT_KID.into(),
+            iss: "did:example:server".into(),
+            profile: PROFILE_TAG.into(),
+            aud: VERIFIER_AUD.into(),
+            audience_hash: "aud-scope-1".into(),
+            trust_epoch: "epoch-1".parse().expect("epoch base"),
+            server_role: "server".into(),
+            server_trust_domain: TRUST_DOMAIN.into(),
+            server_subject: "did:example:server".into(),
+            window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
+        },
+        root_key().public_key(),
+        issue_cred,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue first delegated key");
     std::mem::forget(rotor);
     signer
@@ -310,12 +369,25 @@ fn proxy_with(
     trusted_kid: &'static str,
     calls: Arc<AtomicUsize>,
 ) -> HttpProfileProxy {
+    proxy_resolving(
+        scope,
+        Arc::new(move |kid: &str| {
+            (kid == trusted_kid)
+                .then(|| EnrolledAuthority::enrolled(PDP_ENROLLED_NAME, pdp_key().public_key()))
+        }),
+        calls,
+    )
+}
+
+/// A proxy enforcing the PDP profile, resolving authorities through `resolve_authority`.
+fn proxy_resolving(
+    scope: DecisionScope,
+    resolve_authority: AuthorizationAuthorityResolver,
+    calls: Arc<AtomicUsize>,
+) -> HttpProfileProxy {
     let evaluator = PdpDecisionEvaluator::new(
         PdpDecisionPolicy {
-            resolve_authority: Arc::new(move |kid: &str| {
-                (kid == trusted_kid)
-                    .then(|| EnrolledAuthority::enrolled(PDP_ENROLLED_NAME, pdp_key().public_key()))
-            }),
+            resolve_authority,
             accepted_scope: scope,
             freshness: PdpDecisionFreshness {
                 max_clock_skew: 30,
@@ -573,13 +645,40 @@ async fn a_reference_binding_can_never_satisfy_the_enforcement_profile() {
     // it never presented.
     let calls = Arc::new(AtomicUsize::new(0));
     let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
-    let req = signed_call_bound_by("read", "n-reference", Some(&d), |doc| ArtifactBinding {
-        binding_type: BindingType::ReferenceDigest,
-        authorization_system_id: Some("urn:example:pdp".into()),
-        reference_scheme_id: Some("urn:example:scheme".into()),
-        reference_value: Some("decision-1".into()),
-        ..ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, doc.as_bytes())
-    });
+    let reference = ArtifactBinding::reference(
+        ArtifactType::PdpDecision,
+        ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, d.as_bytes()).digest_value(),
+        "urn:example:pdp",
+        "urn:example:scheme",
+        "decision-1",
+    )
+    .expect("a legal reference binding");
+    // The request that succeeds, with its opaque-digest binding swapped for the reference.
+    let mut req = signed_call("read", "n-reference", Some(&d));
+    let block = HttpRequestEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        audience: audience(),
+        artifact_bindings: vec![
+            ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok"),
+            reference,
+        ],
+        continuation: None,
+        admission: None,
+        admission_assertion: None,
+        authorization_decision: Some(d.clone()),
+    };
+    assert_eq!(
+        block.validate(PROFILE_TAG).unwrap_err(),
+        HttpProfileError::MalformedEvidence(
+            "authorization decision without a pdp-decision opaque-digest binding"
+        ),
+        "the profile's own signer refuses this block"
+    );
+    resign_as_foreign(
+        &mut req,
+        br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
+        &block,
+    );
     let (status, body) = serve(&proxy(Arc::clone(&calls)), req).await;
     assert_eq!(status, 403, "{body}");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -861,7 +960,7 @@ async fn an_authorized_request_records_which_policy_permitted_what() {
 
     let accepted = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.accepted")
+        .find(|r| r.event().event_type() == "mcp-re.request.accepted")
         .expect("the admitted request is recorded");
     let Some(authorization) = accepted.subject.authorization() else {
         panic!("a request record carries the authorization coordinate");
@@ -877,7 +976,7 @@ async fn an_authorized_request_records_which_policy_permitted_what() {
     assert_eq!(a.action.operation(), "tools/call");
     assert_eq!(a.action.target().named(), Some("read"));
     assert!(
-        !a.attributable_to.digest_value.is_empty(),
+        !a.attributable_to.digest_value().is_empty(),
         "the record names the exchange the decision was taken for"
     );
     // Decision provenance, through the real serving path: WHICH decision the authority
@@ -886,8 +985,8 @@ async fn an_authorized_request_records_which_policy_permitted_what() {
     // and neither stands in for the other.
     assert_eq!(a.authority_decision_id, "decision-1");
     let bound = ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, d.as_bytes());
-    assert_eq!(a.decision_evidence.alg(), bound.digest_alg);
-    assert_eq!(a.decision_evidence.value(), bound.digest_value);
+    assert_eq!(a.decision_evidence.alg(), bound.digest_alg());
+    assert_eq!(a.decision_evidence.value(), bound.digest_value());
     assert_ne!(
         a.decision_evidence.rendered(),
         a.authority_decision_id,
@@ -928,7 +1027,7 @@ async fn the_record_names_the_enrolled_authority_and_not_the_one_the_decision_cl
 
     let accepted = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.accepted")
+        .find(|r| r.event().event_type() == "mcp-re.request.accepted")
         .expect("the admitted request is recorded");
     let Some(authorization) = accepted.subject.authorization() else {
         panic!("a request record carries the authorization coordinate");
@@ -941,6 +1040,43 @@ async fn the_record_names_the_enrolled_authority_and_not_the_one_the_decision_cl
         "the record must attribute to the enrolment, never to the decision's own `iss`"
     );
     assert_ne!(a.authority, "did:example:some-other-authority");
+}
+
+/// The key that authenticates a decision and the name its record attributes come from ONE
+/// resolver answer: a resolver whose answer changes between calls cannot split them.
+#[tokio::test]
+async fn a_resolver_answering_differently_between_calls_cannot_split_the_key_from_the_name() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let resolutions = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&resolutions);
+    let resolver: AuthorizationAuthorityResolver = Arc::new(move |kid: &str| {
+        if kid != PDP_KID {
+            return None;
+        }
+        let name = if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+            "did:example:first-answer"
+        } else {
+            "did:example:second-answer"
+        };
+        Some(EnrolledAuthority::enrolled(name, pdp_key().public_key()))
+    });
+    let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+
+    let (status, records) = serve_recorded(
+        proxy_resolving(DecisionScope::Principal, resolver, Arc::clone(&calls)),
+        signed_call("read", "n-single-answer", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let accepted = records
+        .iter()
+        .find(|r| r.event().event_type() == "mcp-re.request.accepted")
+        .expect("the admitted request is recorded");
+    let Some(AuthorizationFacet::Authorized(a)) = accepted.subject.authorization() else {
+        panic!("a policy permitted this, and the record must say so");
+    };
+    assert_eq!(a.authority, "did:example:first-answer");
+    assert_eq!(resolutions.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -962,7 +1098,7 @@ async fn a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_reje
 
     let rejected = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.rejected")
+        .find(|r| r.event().event_type() == "mcp-re.request.rejected")
         .expect("the denial is recorded");
     let Some(authorization) = rejected.subject.authorization() else {
         panic!("a request record carries the authorization coordinate");
@@ -979,11 +1115,11 @@ async fn a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_reje
     // verdict. This is the end of #637 — the policy's token is in the authorization
     // coordinate and nowhere else, so a reader can no longer mistake it for a Core one.
     assert_eq!(
-        rejected.event().reason,
+        rejected.event().reason(),
         None,
         "a policy denial is not a Core verdict, so Core must state none"
     );
-    assert_eq!(rejected.event().event_type, "mcp-re.request.rejected");
+    assert_eq!(rejected.event().event_type(), "mcp-re.request.rejected");
 }
 
 #[tokio::test]
@@ -1003,7 +1139,7 @@ async fn a_request_refused_before_any_policy_ran_is_not_attributed_to_one() {
 
     let rejected = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.rejected")
+        .find(|r| r.event().event_type() == "mcp-re.request.rejected")
         .expect("the refusal is recorded");
     let Some(authorization) = rejected.subject.authorization() else {
         panic!("a request record carries the authorization coordinate");
@@ -1013,7 +1149,7 @@ async fn a_request_refused_before_any_policy_ran_is_not_attributed_to_one() {
         &AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
         "the configured profile reached a verdict; the record must not say none did"
     );
-    assert_eq!(rejected.event().reason, None, "still not a Core verdict");
+    assert_eq!(rejected.event().reason(), None, "still not a Core verdict");
 }
 
 #[tokio::test]
@@ -1031,10 +1167,10 @@ async fn a_core_verification_failure_still_records_its_frozen_core_reason() {
 
     let rejected = records
         .iter()
-        .find(|r| r.event().event_type == "mcp-re.request.rejected")
+        .find(|r| r.event().event_type() == "mcp-re.request.rejected")
         .expect("the refusal is recorded");
     assert_eq!(
-        rejected.event().reason,
+        rejected.event().reason(),
         Some("mcp-re.digest_mismatch"),
         "Core reached this verdict and the record says which one"
     );

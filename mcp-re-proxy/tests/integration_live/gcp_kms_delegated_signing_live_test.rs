@@ -22,7 +22,7 @@
 //!
 //! Two entry points share one lane body:
 //!   * `*_offline_local_seed` — NOT ignored: runs in the blocking feature-gated
-//!     CI job via `GcpKmsEd25519Backend::for_test_with_local_seed` (no network),
+//!     CI job via a local-key `KmsEd25519Backend` (no network),
 //!     guarding the KMS-backend → custody-issuer wiring on every push.
 //!   * `*_live` — `#[ignore]`: the real Cloud KMS backend; run from the cloud
 //!     script / nightly lane with `-- --ignored` and `MCP_RE_GCP_*` set. FAILS
@@ -56,7 +56,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -116,14 +116,7 @@ fn live_signer() -> KmsResponseSigner {
     KmsResponseSigner::new(Box::new(backend))
 }
 
-/// An offline signer over the SAME backend adapter, using a local seed instead of
-/// a network round-trip — exercises the KMS-backend → custody-issuer wiring
-/// hermetically.
-fn offline_signer() -> KmsResponseSigner {
-    let backend =
-        GcpKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32]).expect("local-seed KMS backend");
-    KmsResponseSigner::new(Box::new(backend))
-}
+use crate::local_seed_backend::offline_signer;
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)
@@ -181,7 +174,7 @@ fn resolver(
     }
 }
 
-fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
+fn signed_request() -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
     let mut req = base_request();
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
@@ -237,7 +230,7 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: VERIFIER_AUD.into(),
         audience_hash: AUD_SCOPE.into(),
-        trust_epoch: EPOCH.into(),
+        trust_epoch: EPOCH.parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
@@ -267,7 +260,7 @@ fn fresh_response() -> HttpResponse {
 /// attestation chain to the KMS root, rotation overlap (no verification gap), and a
 /// fail-closed body tamper.
 fn run_delegated_custody_lane(signer: KmsResponseSigner) {
-    let (req, ev, _verified_req) = signed_request();
+    let (req, _, _verified_req) = signed_request();
     let root_pub = signer.response_public_key().expect("KMS root public key");
 
     // Count REAL KMS invocations: the issuer closure is the ONLY place the KMS is
@@ -296,20 +289,21 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
         SigningKey::from_seed_bytes(&[seed; 32])
     };
 
-    let mut custody = DelegatedSigningCustody::new(custody_cfg(), issue, factory);
+    let mut custody = DelegatedSigningCustody::new(custody_cfg(), root_pub.clone(), issue, factory);
 
     // --- Batch 1: N per-request signs under one delegated key -----------------
     // Keep one predecessor-signed response to re-verify across the rotation.
     let mut predecessor_rsp = fresh_response();
     custody
-        .sign_response(NOW, &mut predecessor_rsp, &req, &ev)
+        .sign_response(NOW, &mut predecessor_rsp, &req)
         .expect("custody signs (issuance)");
     let first_kid = custody.active_kid().expect("a key is active").to_owned();
+    let mut lifecycle = custody.step_events().to_vec();
 
     for _ in 1..RESPONSES_PER_KEY {
         let mut rsp = fresh_response();
         custody
-            .sign_response(NOW, &mut rsp, &req, &ev)
+            .sign_response(NOW, &mut rsp, &req)
             .expect("custody signs (hot path)");
         Verifier::new(&VerifierPolicy::default(), &resolver(root_pub.clone()))
             .verify_delegated_bound_response(&rsp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
@@ -349,8 +343,9 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
     let after = NOW + TTL - OVERLAP + 10;
     let mut successor_rsp = fresh_response();
     custody
-        .sign_response(after, &mut successor_rsp, &req, &ev)
+        .sign_response(after, &mut successor_rsp, &req)
         .expect("custody signs (rotation)");
+    lifecycle.extend_from_slice(custody.step_events());
     let second_kid = custody
         .active_kid()
         .expect("a successor key is active")
@@ -389,18 +384,18 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
         .expect("predecessor response still verifies during the overlap window (no gap)");
 
     // --- Audited lifecycle: issue then rotate ---------------------------------
-    let audit = custody.audit();
+    let audit = &lifecycle;
     assert_eq!(audit.len(), 2, "one issuance + one rotation audited");
-    assert_eq!(audit[0].event_type, "mcp-re.delegated_key.issued");
-    assert_eq!(audit[0].delegated_kid, first_kid);
-    assert_eq!(audit[0].issuer_kid, ROOT_KID);
-    assert_eq!(audit[1].event_type, "mcp-re.delegated_key.rotated");
-    assert_eq!(audit[1].delegated_kid, second_kid);
+    assert_eq!(audit[0].event_type(), "mcp-re.delegated_key.issued");
+    assert_eq!(audit[0].delegated_kid(), first_kid);
+    assert_eq!(audit[0].issuer_kid(), ROOT_KID);
+    assert_eq!(audit[1].event_type(), "mcp-re.delegated_key.rotated");
+    assert_eq!(audit[1].delegated_kid(), second_kid);
 
     // --- Negative: a body tamper on a delegated response fails closed ---------
     let mut tampered = fresh_response();
     custody
-        .sign_response(after, &mut tampered, &req, &ev)
+        .sign_response(after, &mut tampered, &req)
         .expect("custody signs");
     let last = tampered.body.len() - 2;
     tampered.body[last] ^= 0x01;

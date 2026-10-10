@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+load("//bazel/verus:defs.bzl", "verus_verify")
+
+# The artifact verifiers' non-vacuity probe (r12 Ruling 38 §7): the crate verified with the
+# probe module compiled in. Its two negative probes MUST fail and its positive control must
+# verify; `tools/verification/verify-verus` reads this report and refuses the lane otherwise.
+# A package of its own so the crate's package keeps exactly one `verus_verify` target, the one
+# its units name; never a dependency of anything.
+verus_verify(
+    name = "nonvacuity_probe",
+    crate = "//mcp-re-http-profile:mcp_re_http_profile",
+    spec_features = [
+        "verify",
+        "verus_nonvacuity_probe",
+    ],
+    tags = ["manual"],
+    verus_deps = ["//mcp-re-core:mcp_re_core_verus"],
+)

@@ -230,7 +230,8 @@ describe("the store is bounded", () => {
 });
 
 describe("an input-required result associates without consuming", () => {
-  const irr = { responseDigestAlg: "sha-256", responseDigestValue: "aXJyLWhhbmRsZQ", requestState: "opaque-state-xyz" };
+  // A well-formed response-role handle: the signer refuses a continuation whose handles are not.
+  const irr = { responseDigestAlg: "sha256", responseDigestValue: "CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA", requestState: "opaque-state-xyz" };
 
   it("leaves the open leg outstanding", () => {
     const store = new CorrelationStore();
@@ -242,7 +243,7 @@ describe("an input-required result associates without consuming", () => {
     expect(store.peek(cid)).toBeDefined();
     expect(h.prevAlg).toBe(signed.evidenceDigestAlg);
     expect(h.prevValue).toBe(signed.evidenceDigestValue);
-    expect(h.irrValue).toBe("aXJyLWhhbmRsZQ");
+    expect(h.irrValue).toBe("CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA");
     expect(h.requestState).toBe("opaque-state-xyz");
   });
 
@@ -281,7 +282,7 @@ describe("an input-required result associates without consuming", () => {
     // did not fire, the request was signed and returned carrying NO continuation and
     // NO error, and a server processed it as an unrelated new call — so a caller bug
     // silently converted an approved-continuation flow into an UNapproved fresh request.
-    const full = ["sha-256", "cHJldg", "sha-256", "aXJy", "opaque-state"];
+    const full = ["sha256", "Imp8EIIBTYo1GafV0toSPuMJpP40j5pH5x7VDVU1il8", "sha256", "CQybwHow5Uec0w7Tb6kcd7vWOEhRNCCGhfvkNUGvIIA", "opaque-state"];
     const answer = (handles: (string | null)[]): void => {
       signRequest(
         SEED,

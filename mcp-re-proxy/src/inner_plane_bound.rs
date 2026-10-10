@@ -33,6 +33,7 @@ pub(crate) fn raised_to_fleet_ceiling(
     );
     let Some(raised) =
         crate::startup_plan::inner_plane_raise(ceiling, crate::http_inner::DEFAULT_MAX_IN_FLIGHT)
+            .and_then(std::num::NonZeroUsize::new)
     else {
         return pool;
     };
@@ -48,34 +49,55 @@ pub(crate) fn raised_to_fleet_ceiling(
 // region `scripts/module_size_gate.py` reads.
 #[cfg(test)]
 mod tests {
+    use super::raised_to_fleet_ceiling;
+    use crate::config_state::topology::ShardTopologyRequest;
     use crate::config_state::InFlightLimitBasis;
+    use crate::http_inner::{HttpInnerPool, DEFAULT_MAX_IN_FLIGHT};
 
-    /// The rule this wiring applies, asked of the pure decision it defers to.
-    ///
-    /// The wiring itself builds an `HttpInnerPool`, which needs a URL and a runtime; what
-    /// is worth pinning here is that the ceiling and the raise are read from the basis
-    /// rather than recomputed, and that is observable through the plan's own functions.
+    fn requests(n: usize) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(n).expect("the fixture count is not zero")
+    }
+
+    fn pool() -> HttpInnerPool {
+        HttpInnerPool::from_url_strs(
+            vec!["http://127.0.0.1:1".to_string()],
+            std::time::Duration::from_secs(1),
+        )
+        .expect("a loopback URL builds a pool")
+    }
+
+    /// The topology of a four-core deployment, independent of the host's CPU count.
+    fn four_cores() -> ShardTopologyRequest {
+        let mut config = crate::config_state::test_support::legal_config();
+        config.cores = 4;
+        crate::config_state::topology::classify(&config).1
+    }
+
     #[test]
-    fn the_ceiling_comes_from_the_basis_and_the_core_count_together() {
-        let basis = InFlightLimitBasis::PerCore {
-            requests: std::num::NonZeroUsize::new(8).expect("8 is not zero"),
+    fn a_fleet_ceiling_above_the_default_raises_the_pool_to_it() {
+        let per_core = InFlightLimitBasis::PerCore {
+            requests: requests(2048),
         };
-        let ceiling =
-            crate::startup_plan::inner_plane_ceiling(basis.per_core(), basis.fleet_total(), 4);
+        let raised = raised_to_fleet_ceiling(pool(), per_core, four_cores());
+        assert_eq!(raised.max_in_flight(), 8192, "2048 per core across 4 cores");
+
+        let fleet = InFlightLimitBasis::FleetTotal {
+            requests: requests(8192),
+        };
+        let raised = raised_to_fleet_ceiling(pool(), fleet, four_cores());
+        assert_eq!(raised.max_in_flight(), 8192, "a fleet total is the ceiling");
+    }
+
+    #[test]
+    fn a_fleet_ceiling_below_the_default_never_lowers_the_pool() {
+        let basis = InFlightLimitBasis::PerCore {
+            requests: requests(1),
+        };
+        let kept = raised_to_fleet_ceiling(pool(), basis, four_cores());
         assert_eq!(
-            ceiling,
-            crate::startup_plan::inner_plane_ceiling(basis.per_core(), basis.fleet_total(), 4),
-            "the ceiling is a function of its inputs, not of when it is asked"
-        );
-        let bound = ceiling.expect("a per-core basis always yields a ceiling");
-        assert!(
-            crate::startup_plan::inner_plane_raise(ceiling, bound).is_none(),
-            "a pool already at the ceiling is not raised"
-        );
-        assert_eq!(
-            crate::startup_plan::inner_plane_raise(ceiling, bound - 1),
-            Some(bound),
-            "a pool below the fleet ceiling is raised to it, not past it"
+            kept.max_in_flight(),
+            DEFAULT_MAX_IN_FLIGHT,
+            "the wiring raises the shared pool and never shrinks it"
         );
     }
 }

@@ -12,10 +12,10 @@
 //! - [`VerifiedMcpRequest`] — all of the above, **and** audience equality and artifact
 //!   binding under the full profile.
 //!
-//! Neither is sealed, and [`floor`] carries the argument for why. What the types DO
-//! establish is the assurance split, which is not a seal question: the two propositions are
-//! different types, so no consumer requiring the full one can be handed the floor one, by
-//! the compiler.
+//! Both keep `pub` fields for Verus and are `#[non_exhaustive]`, so outside this crate the
+//! verifier is their only producer; [`floor`] carries the argument. The assurance split is a
+//! separate fact: the two propositions are different types, so no consumer requiring the
+//! full one can be handed the floor one, by the compiler.
 
 pub mod floor;
 
@@ -24,7 +24,7 @@ pub use floor::CryptographicFloorVerifiedRequest;
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::ResolvedActor;
 use crate::AudienceTuple;
-use crate::RequestEvidence;
+use crate::RequestRoleEvidence;
 
 /// A request verified under the **full MCP-RE profile**.
 ///
@@ -44,7 +44,18 @@ use crate::RequestEvidence;
 ///     needs_full(floor);
 /// }
 /// ```
+///
+/// Nor can another crate write one, every field supplied, so the subject a consumer reads
+/// from it is the one the verifier resolved:
+///
+/// ```compile_fail
+/// use mcp_re_http_profile::{AudienceTuple, CryptographicFloorVerifiedRequest, HttpRequestEvidenceBlock, VerifiedMcpRequest};
+/// fn forge(floor: CryptographicFloorVerifiedRequest, audience: AudienceTuple, request_block: HttpRequestEvidenceBlock) -> VerifiedMcpRequest {
+///     VerifiedMcpRequest { floor, audience, audience_hash: String::new(), request_block }
+/// }
+/// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct VerifiedMcpRequest {
     /// The floor proposition this product also establishes.
     ///
@@ -97,7 +108,7 @@ impl VerifiedMcpRequest {
         self.floor.resolved_actor()
     }
     /// See [`CryptographicFloorVerifiedRequest::evidence`].
-    pub fn evidence(&self) -> &RequestEvidence {
+    pub fn evidence(&self) -> &RequestRoleEvidence {
         self.floor.evidence()
     }
     /// See [`CryptographicFloorVerifiedRequest::request_signature_base`].
@@ -148,7 +159,7 @@ mod tests {
                 verification_key: key.public_key(),
                 slot: SignerSlot::Request,
             },
-            evidence: RequestEvidence::from_signature_base(b"base"),
+            evidence: RequestRoleEvidence::from_signature_base(b"base"),
             request_signature_base: b"base".to_vec(),
             content_digest: "sha-256=:x:".into(),
             created: 1,

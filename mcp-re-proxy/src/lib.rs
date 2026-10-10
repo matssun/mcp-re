@@ -12,9 +12,9 @@
 //!
 //! # Security posture
 //!
-//! Fleet serving is supported: [`SharedReplayCache`] over an [`AtomicReplayStore`]
-//! gives cross-replica replay rejection, and [`redis_store`] is the shared backend
-//! that ships for it. Key custody reaches an HSM/KMS through [`key_source`].
+//! Fleet serving is supported: an [`async_replay::AsyncReplayTier`] over a shared
+//! Redis or etcd backend (`async_redis_store`, `async_etcd_store`, each behind its own
+//! feature) gives cross-replica replay rejection. Key custody reaches an HSM/KMS through [`key_source`].
 //! Client-certificate revocation is a **short-lived-credential** posture plus an
 //! in-process CRL: the proxy enforces a maximum client-certificate lifetime, and
 //! online OCSP is compiled only under its own feature.
@@ -51,7 +51,7 @@ pub mod cli;
 /// Wall-clock acquisition — the one place the OS clock enters the proxy, and the module
 /// `boundary.clock` names.
 pub mod clock;
-/// The classified legal deployment state (layer A of the configuration state atlas).
+/// The classified legal deployment state (layer A).
 pub mod config_state;
 /// The CLI-neutral request model: what a deployment asks for, before anything judges it.
 ///
@@ -135,23 +135,12 @@ pub mod pkcs11_keysource;
 // under the same non-default `pkcs11_keysource` feature.
 #[cfg(feature = "pkcs11_keysource")]
 pub mod pkcs11_native;
-// Issue #69 (epic #68 v0.4 Axis 1): the etcd-backed CP / LINEARIZABLE shared
-// replay backend that makes `--replay-durability-tier linearizable` declarable
-// with a real durable-linearizable store (ADR-MCPS-020). Compiled ONLY under the
-// non-default `cpstore_etcd` feature so the default build is unchanged.
-#[cfg(feature = "cpstore_etcd")]
-pub mod etcd_store;
 // ADR-MCPRE-051 §4: the ASYNC etcd authoritative replay backend (hyper over the
-// v3 JSON gateway; reuses etcd_store's pure helpers). The linearizable durable
-// tier the async serving fleet awaits. Same `cpstore_etcd` gate.
+// v3 JSON gateway). The linearizable durable tier the async serving fleet awaits,
+// which makes `--replay-durability-tier linearizable` declarable (ADR-MCPS-020).
+// Compiled ONLY under the non-default `cpstore_etcd` feature.
 #[cfg(feature = "cpstore_etcd")]
 pub mod async_etcd_store;
-// Issue #4028: the Redis-backed shared replay backend that makes
-// `--replay-cache shared` give real horizontally-scaled replay safety. Compiled
-// ONLY under the non-default `redis_replay` feature so the default build is
-// unchanged.
-#[cfg(feature = "redis_replay")]
-pub mod redis_store;
 // ADR-MCPS-020: the declared replay-store durability tier (deployment assertion,
 // semantic names, honest per-tier guarantee, tier-claim ceiling). Pure type — in
 // the default build.
@@ -315,6 +304,7 @@ pub use aws_kms_keysource::AwsKmsEd25519Backend;
 pub use delegated_response_signer::DelegatedResponseSigner;
 pub use delegated_server_signer::DelegatedRotor;
 pub use delegated_server_signer::DelegatedServerSigner;
+pub use delegated_server_signer::SigningRetirement;
 pub use delegated_wiring::build_delegated_signing;
 pub use delegated_wiring::DelegatedSigningWiring;
 pub use delegated_wiring::ProdDelegatedRotor;
@@ -326,16 +316,11 @@ pub use audit_record::AuditRecord;
 pub use audit_record::AuditSubject;
 pub use audit_sink::AuditSink;
 pub use audit_sink::CollectingAuditSink;
-pub use audit_sink::NoAuditSink;
 pub use audit_sink::StderrAuditSink;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsConfig;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsEd25519Backend;
-// MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only and exists only when the
-// non-default `dev_env_key_source` feature is enabled.
-#[cfg(feature = "dev_env_key_source")]
-pub use key_source::EnvKeySource;
 pub use key_source::FileKeySource;
 pub use key_source::KeyError;
 pub use key_source::KeySource;
@@ -361,10 +346,6 @@ pub use pkcs11_keysource::Pkcs11KeySource;
 // Issue #4028: the Redis shared replay backend (feature-gated).
 #[cfg(feature = "redis_replay")]
 pub use async_redis_store::RedisAsyncAtomicReplayStore;
-#[cfg(feature = "cpstore_etcd")]
-pub use etcd_store::EtcdAtomicReplayStore;
-#[cfg(feature = "redis_replay")]
-pub use redis_store::RedisAtomicReplayStore;
 pub use replay_tier::ReplayDurabilityTier;
 pub use revocation_tier::RevocationTier;
 pub use shared_replay::AtomicReplayStore;
@@ -386,9 +367,7 @@ pub use transport::ingress::AttestedCertVerification;
 pub use transport::ingress::AttestedIngressVerified;
 pub use transport::ingress::AttestedRevocation;
 pub use transport::ingress::LbAssertionV2;
-pub use transport::ingress::LbAssertionV2Binding;
 pub use transport::ingress::LbAssertionV2Rejection;
-pub use transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
 pub use transport::validate_routing_headers;
 pub use transport::ExactMatchBinding;
 pub use transport::IdentityPolicy;

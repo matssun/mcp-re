@@ -142,10 +142,10 @@ mod serving_path {
     use mcp_re_core::TrustResolverError;
     use mcp_re_core::VerificationKey;
 
+    use super::server_identity;
     use mcp_re_http_profile::custody::DelegatedKeyWindow;
     use mcp_re_http_profile::issue_delegation_credential;
     use mcp_re_http_profile::sign_request_full;
-    use mcp_re_http_profile::ActorIdentity;
     use mcp_re_http_profile::ArtifactBinding;
     use mcp_re_http_profile::ArtifactType;
     use mcp_re_http_profile::AudienceTuple;
@@ -167,7 +167,6 @@ mod serving_path {
     use mcp_re_proxy::trust_epoch::SharedEpochChannel;
     use mcp_re_proxy::trust_epoch::TrustEpochSource;
     use mcp_re_proxy::DelegatedRotor;
-    use mcp_re_proxy::DelegatedServerSigner;
     use mcp_re_proxy::HttpProfileProxy;
     use mcp_re_proxy::PushInvalidationTrustCache;
 
@@ -255,18 +254,10 @@ mod serving_path {
         let resolve_actor = build_actor_resolver(
             trust_store.signer_directory(),
             Arc::new(cache),
-            "example.com".to_string(),
-            ROOT_KID.to_string(),
-            ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: ROOT_KID.into(),
-            },
+            server_identity("did:example:server", ROOT_KID),
             root_key().public_key(),
         );
 
-        let signer = Arc::new(DelegatedServerSigner::new());
         let root = root_key();
         let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
             Some(issue_delegation_credential(&root, h, c))
@@ -282,16 +273,19 @@ mod serving_path {
             profile: PROFILE_TAG.into(),
             aud: VERIFIER_AUD.into(),
             audience_hash: VERIFIER_AUD.into(),
-            trust_epoch: "epoch-1".into(),
+            trust_epoch: "epoch-1".parse().expect("epoch base"),
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
             server_subject: "did:example:server".into(),
             window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
         };
-        let mut rotor = DelegatedRotor::new(
-            DelegatedSigningCustody::new(custody, issue, factory),
-            Arc::clone(&signer),
-        );
+        let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+            custody,
+            root_key().public_key(),
+            issue,
+            factory,
+        ));
+        let signer = rotor.signer();
         rotor.rotate(now()).expect("issue the first delegated key");
 
         Replica {
@@ -306,9 +300,14 @@ mod serving_path {
                     fleet_strict: false,
                     tier: None,
                 },
-                Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-                    br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-                }),
+                Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+                    |_forwarded: &[u8]| -> Vec<u8> {
+                        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+                    },
+                    mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                        std::time::Duration::ZERO,
+                    ),
+                )),
                 300,
                 signer,
             ),
@@ -444,4 +443,55 @@ mod serving_path {
             .query(&mut admin)
             .expect("DEL epoch key");
     }
+}
+
+/// The server identity the actor seam answers the Response slot with, as the validated
+/// deployment holds it: `subject` signing under the issuer kid `kid`.
+fn server_identity(
+    subject: &str,
+    kid: &str,
+) -> mcp_re_proxy::config_state::server_identity::ServerIdentityFacts {
+    let args: Vec<String> = [
+        "--bind",
+        "127.0.0.1:8443",
+        "--audience",
+        "verifier-1",
+        "--server-signer",
+        subject,
+        "--server-key-id",
+        kid,
+        "--signing-key-seed",
+        "/dev/null",
+        "--tls-cert",
+        "/dev/null",
+        "--tls-key",
+        "/dev/null",
+        "--client-ca",
+        "/dev/null",
+        "--trust",
+        "/dev/null",
+        "--inner-http-url",
+        "http://127.0.0.1:9",
+        "--target-uri",
+        "https://mcp.example.com/mcp",
+        "--mcp-protocol-version",
+        "2026-07-28",
+        "--replay-redis-url",
+        "redis://127.0.0.1:6379",
+        "--replay-durability-tier",
+        "redis-wait-quorum:1:100",
+        "--delegated-trust-epoch",
+        "epoch-1",
+        "--trust-domain",
+        "example.com",
+        "--allow-example-fixtures",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let config = mcp_re_proxy::cli::parse_args(&args).expect("a legal deployment");
+    mcp_re_proxy::config_state::validation::validate_configuration(&config)
+        .expect("a legal deployment")
+        .server_identity()
+        .clone()
 }

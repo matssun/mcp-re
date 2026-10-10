@@ -49,12 +49,38 @@ mod tests {
                 "pub struct SystemClock;",
             ),
         ] {
-            let gated = source.matches(GATE).count();
+            let heads = gated_item_heads(source, name);
+            let expected: [String; 3] = [
+                format!("pub struct {name}"),
+                format!("impl {name} {{"),
+                if name == "SeededNonceSource" {
+                    format!("impl NonceSource for {name} {{")
+                } else {
+                    format!("impl Clock for {name} {{")
+                },
+            ];
+            for want in &expected {
+                assert!(
+                    heads
+                        .iter()
+                        .any(|(head, gated)| *gated && head.starts_with(want.as_str())),
+                    "{name}: `{want}` is absent or not under the gate"
+                );
+            }
+            for (head, gated) in &heads {
+                assert!(
+                    *gated,
+                    "{name}: `{head}` is not gated. A fixture reachable from a production \
+                     build is a predictable value a deployment can be given."
+                );
+            }
+            let gate_lines = source.matches(GATE).count();
             assert_eq!(
-                gated, 3,
-                "{name}: expected the gate on the struct, its inherent impl and its trait \
-                 impl; found {gated}. A fixture reachable from a production build is a \
-                 predictable value a deployment can be given."
+                gate_lines,
+                heads.len(),
+                "{name}: the gate appears {gate_lines} times but {} fixture items carry it; a \
+                 gate sits on an item that is not the fixture",
+                heads.len()
             );
             // Positive control on the scan: the PRODUCTION type in the same file is not
             // gated, so a source that matched everything would fail here.
@@ -63,6 +89,45 @@ mod tests {
                 "the scan is not reading the file it names for {name}"
             );
         }
+        // Negative control: the gate moved onto an unrelated item, total count unchanged.
+        let moved = format!("{GATE}\npub struct Other;\n/// doc\npub struct SeededNonceSource;\n");
+        assert_eq!(
+            gated_item_heads(&moved, "SeededNonceSource"),
+            vec![("pub struct SeededNonceSource;", false)],
+            "a gate moved off the fixture item must be reported ungated"
+        );
+    }
+
+    /// Every column-0 `struct`/`impl` head naming `fixture` as a whole identifier, with
+    /// whether the `#[...]` attribute run directly above it carries the gate.
+    fn gated_item_heads<'a>(source: &'a str, fixture: &str) -> Vec<(&'a str, bool)> {
+        const GATE: &str = "#[cfg(any(test, feature = \"test-fixtures\"))]";
+        let lines: Vec<&str> = source.lines().collect();
+        let mut heads = Vec::new();
+        for (at, line) in lines.iter().enumerate() {
+            let is_head = ["pub struct ", "struct ", "impl"]
+                .iter()
+                .any(|prefix| line.starts_with(prefix));
+            if !is_head {
+                continue;
+            }
+            let names_fixture = line.match_indices(fixture).any(|(i, _)| {
+                let before = line[..i].chars().next_back();
+                let after = line[i + fixture.len()..].chars().next();
+                let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+                !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+            });
+            if !names_fixture {
+                continue;
+            }
+            let gated = lines[..at]
+                .iter()
+                .rev()
+                .take_while(|above| above.trim_start().starts_with("#["))
+                .any(|above| above.trim() == GATE);
+            heads.push((*line, gated));
+        }
+        heads
     }
 
     /// The target block `name` declares in this crate's BUILD file.

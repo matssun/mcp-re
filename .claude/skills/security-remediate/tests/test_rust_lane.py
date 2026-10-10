@@ -9,10 +9,14 @@ What is pinned here, each refusal beside its positive control:
   rust_gate.py
     2. a lint diagnostic and a failed test are `new-failures` (naming the
        test); a Bazel failure with no diagnostic is `infra`; a selection that ran
-       0 tests is `infra` when the file HAS tests and `ok` when it has none
+       0 tests is `infra` when the file HAS tests and `ok` when it has none;
+       a rustfmt diff in a touched file is `new-failures`, one only in an
+       untouched file is `infra`
   check.py
     3. a red change is saved as a patch and reverted — tracked edits and new
        files — so the next writer starts clean
+       and each touched .rs file is formatted, through stdin so no `mod` child
+       the writer did not touch is rewritten
   finalize.py
     4. commit only what review accepted: `anchor`/`scope` rejections leave no
        diff and commit; `wrong-fix`, an unordered change or a reject revert
@@ -113,8 +117,11 @@ if cmd == "query":
             break
     sys.exit(0)
 if cmd == "build":
-    print(cfg["build"]["out"])
-    sys.exit(cfg["build"]["rc"])
+    fmt = "--config=rustfmt" in rest
+    assert not fmt or "--output_groups=rustfmt_checks" in rest, "the format lane must not compile"
+    lane = cfg.get("rustfmt", {"out": "", "rc": 0}) if fmt else cfg["build"]
+    print(lane["out"])
+    sys.exit(lane["rc"])
 if cmd == "test":
     for label, text in cfg["test"].get("logs", {}).items():
         pkg, name = label[2:].split(":", 1)
@@ -129,12 +136,17 @@ UNIT = "//alpha:alpha_test"
 ALPHA_BUILD = 'nt_rust_library(\n    name = "alpha",\n    crate_name = "alpha",\n)\n'
 
 
-def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int) -> list[dict]:
+def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int,
+          fmt: tuple[str, int] = ("", 0)) -> list[dict]:
     root = os.path.join(td, "ws")
     _write(root, "alpha/BUILD.bazel", ALPHA_BUILD)
     _write(root, "alpha/src/lib.rs", "pub mod keys;\n")
     _write(root, "alpha/src/keys.rs", src)
-    _write(root, "scripts/module_size_gate.py", "import sys; sys.exit(0)\n")
+    # Run as the size gate AND imported by `size_debt.encountered` for its line count, so
+    # the exit belongs under `__main__`: at import it would end this suite with status 0.
+    _write(root, "scripts/module_size_gate.py",
+           "def production_lines(text):\n    return len(text.splitlines())\n\n\n"
+           "if __name__ == '__main__':\n    raise SystemExit(0)\n")
     if not os.path.isdir(os.path.join(root, ".git")):
         _git_repo(root)
     fake = os.path.join(td, "bazel")
@@ -145,6 +157,7 @@ def _gate(td: str, src: str, lint_out: str, lint_rc: int, log: str, test_rc: int
         json.dump({"query": [["rdeps(", ["//alpha:alpha"]], ["attr(crate", [UNIT]],
                              ['kind("^rust_test rule$", set(', []], ["attr(tags", []]],
                    "build": {"out": lint_out, "rc": lint_rc},
+                   "rustfmt": {"out": fmt[0], "rc": fmt[1]},
                    "test": {"out": "", "rc": test_rc, "logs": {UNIT: log}}}, fh)
     orig, cwd, env = rust_gate.bazel, os.getcwd(), os.environ.get("FAKE_BAZEL_CONFIG")
     rust_gate.bazel = lambda: [sys.executable, fake]  # type: ignore[assignment]
@@ -171,7 +184,8 @@ def test_rust_gate_verdicts() -> None:
     has_tests = "pub struct S;\n#[cfg(test)]\nmod tests { #[test] fn t() {} }\n"
     with tempfile.TemporaryDirectory() as td:
         ok = _gate(td, has_tests, "", 0, passed, 0)
-        assert _verdicts(ok) == {"clippy": "ok", "module-size": "ok", "test": "ok"}, ok
+        assert _verdicts(ok) == {"clippy": "ok", "rustfmt": "ok", "module-size": "ok",
+                                 "test": "ok"}, ok
         lint = _gate(td, "pub struct S;\n", "error: unused variable", 1, passed, 0)
         assert _verdicts(lint)["clippy"] == "new-failures" and "test" not in _verdicts(lint), lint
         red = _gate(td, has_tests, "", 0,
@@ -187,6 +201,91 @@ def test_rust_gate_verdicts() -> None:
         empty_none = _gate(td, "pub struct S;\n", "", 0, none, 0)
         assert _verdicts(empty_none)["test"] == "ok", empty_none
     print("  rust gate: lint/test failures blamed, a silent build = infra, 0 tests judged by the file  OK")
+
+
+def test_rust_gate_rustfmt_blames_only_touched_files() -> None:
+    passed = "running 3 tests\ntest result: ok. 3 passed; 0 failed; 0 ignored"
+    has_tests = "pub struct S;\n#[cfg(test)]\nmod tests { #[test] fn t() {} }\n"
+    with tempfile.TemporaryDirectory() as td:
+        root = os.path.realpath(os.path.join(td, "ws"))
+        mine = _gate(td, has_tests, "", 0, passed, 0,
+                     ("Diff in %s/alpha/src/keys.rs:3:\n-fn  x(){}\n+fn x() {}" % root, 1))
+        f = [p for p in mine if p["gate"] == "rustfmt"][0]
+        assert f["verdict"] == "new-failures" and f["unformatted"] == ["alpha/src/keys.rs"], f
+        assert "test" not in _verdicts(mine), mine
+        other = _gate(td, has_tests, "", 0, passed, 0,
+                      ("Diff in %s/alpha/src/lib.rs:1:\n" % root, 1))
+        assert _verdicts(other)["rustfmt"] == "infra", other
+        broken = _gate(td, has_tests, "", 0, passed, 0,
+                       ("error: unexpected closing delimiter: `}`\n   --> %s/alpha/src/keys.rs:9:1"
+                        % root, 1))
+        assert _verdicts(broken)["rustfmt"] == "new-failures", broken
+        silent = _gate(td, has_tests, "", 0, passed, 0, ("ERROR: analysis failed", 1))
+        assert _verdicts(silent)["rustfmt"] == "infra", silent
+    print("  rust gate: a rustfmt diff in the touched file is blamed; elsewhere or silent = infra  OK")
+
+
+def test_the_lint_covers_every_touched_files_targets() -> None:
+    """A writer that edits a caller in another crate is linted there by its own gate, not
+    first by the batch gate after five more writers have landed on top of it."""
+    seen: dict[str, list[str]] = {}
+    saved = (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+             rust_gate._rustfmt, rust_gate._run)
+    rust_gate.compiling_targets = lambda files: sorted(  # type: ignore[assignment]
+        {"//%s:lib" % f.split("/")[0] for f in files})
+    rust_gate.unit_test_targets = lambda targets: []  # type: ignore[assignment]
+    rust_gate._lint = lambda t, log: seen.setdefault("lint", t) and {"verdict": "new-failures"}  # type: ignore[assignment]
+    rust_gate._rustfmt = lambda t, e, log: seen.setdefault("fmt", t) and {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._run = lambda cmd, log: (0, "")  # type: ignore[assignment]
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            rust_gate.gate("alpha/src/keys.rs", [], [], td, RustResolver(td),
+                           touched=["beta/src/caller.rs", "verification/x.toml"])
+    finally:
+        (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+         rust_gate._rustfmt, rust_gate._run) = saved
+    assert seen["lint"] == ["//alpha:lib", "//beta:lib"], seen
+    assert seen["fmt"] == ["//alpha:lib", "//beta:lib"], seen
+    print("  rust gate: lint and rustfmt cover the targets of every touched .rs file  OK")
+
+
+def test_the_pyo3_binding_is_gated_by_its_python_lane() -> None:
+    """`sdk/python/src` is a `rust_shared_library` no `rust_test` compiles. Its tests are the
+    `py_test` over the extension it builds, and unittest's count is a count of tests run."""
+    seen: dict[str, list[str]] = {}
+    saved = (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+             rust_gate._rustfmt, rust_gate._run, rust_gate._test)
+    rust_gate.compiling_targets = lambda files: ["//sdk/python:_core_shared"] if files else []  # type: ignore[assignment]
+    rust_gate.unit_test_targets = lambda targets: []  # type: ignore[assignment]
+    rust_gate._lint = lambda t, log: {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._rustfmt = lambda t, e, log: {"verdict": "ok"}  # type: ignore[assignment]
+    rust_gate._run = lambda cmd, log: (0, "")  # type: ignore[assignment]
+    rust_gate._test = lambda t, f, log: seen.setdefault("it", t) and {"verdict": "ok"}  # type: ignore[assignment]
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            rust_gate.gate("sdk/python/src/trust.rs", [], [], td, RustResolver(td))
+    finally:
+        (rust_gate.compiling_targets, rust_gate.unit_test_targets, rust_gate._lint,
+         rust_gate._rustfmt, rust_gate._run, rust_gate._test) = saved
+    assert seen.get("it") == ["//sdk/python:core_lane_test"], seen
+    assert rust_gate._RUNNING.findall("Ran 4 tests in 0.010s\n") == ["4"]
+    assert rust_gate._RUNNING.findall("Ran 0 tests in 0.000s\n") == ["0"]
+    print("  rust gate: the PyO3 binding runs its py_test lane, and unittest's count is read  OK")
+
+
+def test_every_rust_gate_part_has_a_journal_line() -> None:
+    """check.py journals one line per part. A part the summary does not name fell through to
+    the Python-tree branch and crashed on `new_failures` — every writer's gate event was lost
+    and a whole batch was rejected for missing evidence."""
+    parts = [{"gate": "clippy", "verdict": "ok"},
+             {"gate": "rustfmt", "verdict": "new-failures", "unformatted": ["alpha/src/keys.rs"]},
+             {"gate": "module-size", "verdict": "ok"},
+             {"gate": "test", "target": "unit", "verdict": "ok", "ran": 3},
+             {"gate": "targets", "verdict": "infra", "why": "no target"}]
+    lines = [check.gate_summary(p) for p in parts]
+    assert lines[1] == "rustfmt new-failures — ['alpha/src/keys.rs']", lines
+    assert check.gate_summary({"gate": "bazel", "tree": "t", "verdict": "ok"}) == "bazel t ok"
+    print("  check: every Rust gate part, rustfmt included, journals a line  OK")
 
 
 def test_revert_on_fail_restores_tree() -> None:
@@ -345,6 +444,29 @@ def test_prepare_finds_integration_tests_through_root_reexports() -> None:
         assert got == ["alpha/tests/live.rs [every test #[ignore]d — measures nothing in a local gate]",
                        "alpha/tests/suite/signer_test.rs [--it //alpha:suite]"], got
     print("  prepare: integration tests found through root re-exports, target named, all-ignored flagged  OK")
+
+
+def test_check_formats_only_the_touched_files() -> None:
+    """A writer is not failed for formatting: check.py post formats each touched .rs file.
+    The file goes through stdin, so a `mod child;` it declares is never reformatted, and a
+    file rustfmt cannot parse is left for the rustfmt gate part to blame."""
+    with tempfile.TemporaryDirectory() as td:
+        def write(name: str, body: str) -> str:
+            p = os.path.join(td, name)
+            open(p, "w").write(body)
+            return p
+        parent = write("lib.rs", "mod child;\nfn  f( ){let x=1;}\n")
+        child = write("child.rs", "fn  g( ){}\n")
+        broken = write("broken.rs", "fn f( {\n")
+        clean = write("clean.rs", "fn h() {}\n")
+        python = write("tool.py", "x  =  1\n")
+        changed = check._format([parent, broken, clean, python])
+        assert changed == [parent], changed
+        assert open(parent).read() == "mod child;\nfn f() {\n    let x = 1;\n}\n", open(parent).read()
+        assert open(child).read() == "fn  g( ){}\n", "an untouched child module was reformatted"
+        assert open(broken).read() == "fn f( {\n"
+        assert open(python).read() == "x  =  1\n"
+    print("  check: touched .rs files formatted, children / unparsable / non-Rust untouched  OK")
 
 
 def main() -> int:

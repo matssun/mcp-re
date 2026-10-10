@@ -12,7 +12,7 @@
 //! refusal in this subtree is stated there once.
 
 use crate::error::HttpProfileError;
-use crate::message::required_header;
+use crate::message::single_header;
 use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
 
@@ -33,7 +33,6 @@ pub(crate) struct ParsedSignatureInput {
 /// the drift would be silent — both copies would still fail closed while disagreeing about
 /// which wire forms are the same message.
 pub(crate) fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfileError> {
-    let value = value.trim();
     if !value.starts_with('(') {
         return Err(HttpProfileError::MalformedEvidence("inner list"));
     }
@@ -62,8 +61,8 @@ pub(crate) fn parse_signature_input_for(
     label: &str,
     what: &'static str,
 ) -> Result<ParsedSignatureInput, HttpProfileError> {
-    let input_header = required_header(headers, "signature-input")
-        .map_err(|_| HttpProfileError::MissingEvidence(what))?;
+    let input_header = single_header(headers, "signature-input")?
+        .ok_or(HttpProfileError::MissingEvidence(what))?;
     parse_signature_input(member_value(input_header, label)?)
 }
 
@@ -84,19 +83,57 @@ mod tests {
 
         let alternates = [
             // Inner-list whitespace.
-            r#"("@method"  "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
-            "(\"@method\"\t\"@target-uri\" \"content-digest\");created=1700000000;expires=1700000300;nonce=\"n\";keyid=\"k\";alg=\"ed25519\"",
-            r#"( "@method" "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
-            r#"("@method" "@target-uri" "content-digest" );created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+            (
+                r#"("@method"  "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+                HttpProfileError::MalformedEvidence("inner list spacing"),
+            ),
+            (
+                "(\"@method\"\t\"@target-uri\" \"content-digest\");created=1700000000;expires=1700000300;nonce=\"n\";keyid=\"k\";alg=\"ed25519\"",
+                HttpProfileError::MalformedEvidence("inner list spacing"),
+            ),
+            (
+                r#"( "@method" "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+                HttpProfileError::MalformedEvidence("inner list spacing"),
+            ),
+            (
+                r#"("@method" "@target-uri" "content-digest" );created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+                HttpProfileError::MalformedEvidence("inner list spacing"),
+            ),
             // Parameter spacing and empty slots.
-            r#"("@method" "@target-uri" "content-digest") ;created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
-            r#"("@method" "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519";"#,
-            r#"("@method" "@target-uri" "content-digest");created=1700000000;;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
-            r#"("@method" "@target-uri" "content-digest");created=1700000000; expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+            (
+                r#"("@method" "@target-uri" "content-digest") ;created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+                HttpProfileError::MalformedEvidence("signature parameter spacing"),
+            ),
+            (
+                r#"("@method" "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519";"#,
+                HttpProfileError::MalformedEvidence("signature parameter spacing"),
+            ),
+            (
+                r#"("@method" "@target-uri" "content-digest");created=1700000000;;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+                HttpProfileError::MalformedEvidence("signature parameter spacing"),
+            ),
+            (
+                r#"("@method" "@target-uri" "content-digest");created=1700000000; expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+                HttpProfileError::MalformedEvidence("signature parameter spacing"),
+            ),
+            (
+                "(\"@method\" \"@target-uri\" \"content-digest\");created=1700000000;\texpires=1700000300;nonce=\"n\";keyid=\"k\";alg=\"ed25519\"",
+                HttpProfileError::MalformedEvidence("signature parameter spacing"),
+            ),
+            // Surrounding whitespace is not trimmed.
+            (
+                r#" ("@method" "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+                HttpProfileError::MalformedEvidence("inner list"),
+            ),
+            (
+                r#"("@method" "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519" "#,
+                HttpProfileError::MalformedEvidence("signature parameter spacing"),
+            ),
         ];
-        for alternate in alternates {
-            assert!(
-                parse_signature_input(alternate).is_err(),
+        for (alternate, expected) in alternates {
+            assert_eq!(
+                parse_signature_input(alternate).err(),
+                Some(expected),
                 "must be refused rather than normalised: {alternate}"
             );
         }

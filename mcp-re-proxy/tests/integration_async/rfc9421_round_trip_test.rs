@@ -28,7 +28,7 @@ use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedMcpRequest;
@@ -42,7 +42,6 @@ use mcp_re_proxy::async_serve::ServedHttpRequest;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::DelegatedRotor;
-use mcp_re_proxy::DelegatedServerSigner;
 use mcp_re_proxy::HttpProfileProxy;
 
 use std::sync::Arc;
@@ -109,7 +108,7 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: VERIFIER_AUD.into(),
         audience_hash: VERIFIER_AUD.into(),
-        trust_epoch: "epoch-1".into(),
+        trust_epoch: "epoch-1".parse().expect("epoch base"),
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
@@ -119,7 +118,6 @@ fn custody_cfg() -> CustodyConfig {
 
 /// A delegated-signing proxy with its first key already published.
 fn build_proxy() -> HttpProfileProxy {
-    let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         Some(issue_delegation_credential(&root, h, c))
@@ -129,14 +127,20 @@ fn build_proxy() -> HttpProfileProxy {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(
-        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
-        Arc::clone(&signer),
-    );
+    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(
+        custody_cfg(),
+        root_key().public_key(),
+        issue,
+        factory,
+    ));
+    let signer = rotor.signer();
     rotor.rotate(NOW).expect("issue the first delegated key");
-    let inner = Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-    });
+    let inner = Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        |_forwarded: &[u8]| -> Vec<u8> {
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ));
     HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
@@ -165,7 +169,7 @@ fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
 
 /// Sign an RFC 9421 request carrying a DPoP artifact binding (its credential is the
 /// covered `Authorization` header), and verify it for the response binding.
-fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
+fn signed_request(nonce: &str) -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
@@ -285,7 +289,8 @@ async fn rfc9421_round_trip_zero_object_evidence() {
     // just established; the kid is an RFC 7638 thumbprint (#415 rev 2 §1.5), so what
     // it asserts here is that a delegated key — not the root — signed.
     assert_ne!(
-        verified.signature_facts.accepted_signer.identity.keyid, ROOT_KID,
+        verified.signature_facts().accepted_signer.identity.keyid,
+        ROOT_KID,
         "response signed by the delegated key (chaining to the trusted root)"
     );
 }

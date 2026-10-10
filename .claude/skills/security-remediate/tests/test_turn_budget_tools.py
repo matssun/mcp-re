@@ -169,13 +169,28 @@ def test_dispose_refuses_and_writes_nothing() -> None:
         ("escalation without its question", dict(disposed=[
             {"id": "f1", "status": "escalated", "reason": ""},
             {"id": "f2", "status": "false-positive", "reason": "r"},
-            {"id": "f3", "status": "wontfix"}]), "senior", "escalated needs a one-line `reason`"),
+            {"id": "f3", "status": "superseded"}]), "senior", "escalated needs a one-line `reason`"),
         ("closure without its trace", dict(disposed=[
             {"id": "f1", "status": "escalated", "reason": "A or B?"},
             {"id": "f2", "status": "false-positive"},
-            {"id": "f3", "status": "wontfix"}]), "senior", "false-positive needs a one-line `reason`"),
+            {"id": "f3", "status": "superseded"}]), "senior", "false-positive needs a one-line `reason`"),
         ("terminal already", dict(disposed=[
-            {"id": "done", "status": "wontfix", "reason": "r"}]), "senior", "not an actionable"),
+            {"id": "done", "status": "superseded", "reason": "r"}]), "senior", "not an actionable"),
+        ("accepted risk is not a disposition", dict(disposed=[
+            {"id": "f1", "status": "escalated", "reason": "A or B?"},
+            {"id": "f2", "status": "accepted-risk", "reason": "intentional"},
+            {"id": "f3", "status": "duplicate", "duplicate_of": "f2"}]), "senior",
+         "'accepted-risk' is not a disposition"),
+        ("wontfix is not a disposition", dict(disposed=[
+            {"id": "f1", "status": "escalated", "reason": "A or B?"},
+            {"id": "f2", "status": "false-positive", "reason": "r"},
+            {"id": "f3", "status": "wontfix", "reason": "later"}]), "senior",
+         "'wontfix' is not a disposition"),
+        ("premise naming no ASM", dict(disposed=[
+            {"id": "f1", "status": "escalated", "reason": "A or B?"},
+            {"id": "f2", "status": "premise", "reason": "the store is trusted"},
+            {"id": "f3", "status": "duplicate", "duplicate_of": "f2"}]), "senior",
+         "premise names no ASM id"),
     ]
     for name, over, tier, needle in cases:
         with tempfile.TemporaryDirectory() as td:

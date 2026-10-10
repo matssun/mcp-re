@@ -67,3 +67,15 @@ pub(super) const fn write_queue_capacity(max_reservations: usize) -> usize {
 /// exactly as durable as B calls after one rename each. Bounding the batch bounds the
 /// latency the last job in it waits, not its durability.
 pub(super) const MAX_WRITE_BATCH: usize = 64;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_queue_is_exactly_twice_the_ceiling_and_saturates_at_the_top() {
+        assert_eq!(write_queue_capacity(MAX_RESERVATIONS), 2048);
+        assert_eq!(write_queue_capacity(1), 2);
+        assert_eq!(write_queue_capacity(0), 0);
+        assert_eq!(write_queue_capacity(usize::MAX), usize::MAX);
+    }
+}

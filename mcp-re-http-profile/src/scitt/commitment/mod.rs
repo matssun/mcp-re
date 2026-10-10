@@ -109,16 +109,16 @@ impl EvidenceCommitment {
         // way.
         let (request_evidence, response_evidence) = match reconstruction.hop_evidence().first() {
             Some(h) => (
-                h.request_evidence.digest_value.clone(),
-                h.response_evidence.digest_value.clone(),
+                h.request_evidence.digest_value().to_owned(),
+                h.response_evidence.digest_value().to_owned(),
             ),
             None => (String::new(), String::new()),
         };
         let mut shape = Sha256::new();
         for h in reconstruction.hop_evidence() {
-            shape.update(h.request_evidence.digest_value.as_bytes());
+            shape.update(h.request_evidence.digest_value().as_bytes());
             shape.update([0x00]);
-            shape.update(h.response_evidence.digest_value.as_bytes());
+            shape.update(h.response_evidence.digest_value().as_bytes());
             shape.update([0x00]);
         }
         EvidenceCommitment {
@@ -210,7 +210,7 @@ impl EvidenceCommitment {
 fn label_token(label: &ChainLabel) -> String {
     match label {
         ChainLabel::Complete => "complete".to_owned(),
-        ChainLabel::Incomplete { hop, reason } => format!("incomplete:{hop}:{reason:?}"),
+        ChainLabel::Incomplete { hop, reason } => format!("incomplete:{hop}:{}", reason.token()),
     }
 }
 
@@ -219,9 +219,53 @@ mod tests {
     use super::*;
     use crate::chain::HopEvidence;
     use crate::chain::IncompleteReason;
-    use crate::evidence::RequestEvidence;
+    use crate::evidence::RequestRoleEvidence;
+    use crate::evidence::ResponseRoleEvidence;
     use crate::scitt::fixtures::*;
     use crate::scitt::retained::verify_retained_evidence;
+
+    #[test]
+    fn incomplete_label_tokens_are_a_frozen_vocabulary() {
+        let diag = || crate::error::HttpProfileError::MalformedEvidence("internal diagnostic");
+        let cases = [
+            (
+                IncompleteReason::RequestUnverifiable(diag()),
+                "request_unverifiable",
+            ),
+            (
+                IncompleteReason::ResponseUnverifiable(diag()),
+                "response_unverifiable",
+            ),
+            (
+                IncompleteReason::MissingContinuation,
+                "missing_continuation",
+            ),
+            (
+                IncompleteReason::ContinuationDoesNotLink,
+                "continuation_does_not_link",
+            ),
+            (
+                IncompleteReason::NonTerminalExpected,
+                "non_terminal_expected",
+            ),
+            (IncompleteReason::TerminalExpected, "terminal_expected"),
+            (
+                IncompleteReason::UnrecognizedResultType,
+                "unrecognized_result_type",
+            ),
+            (IncompleteReason::EmptyChain, "empty_chain"),
+            (
+                IncompleteReason::HopAfterAuditInstant,
+                "hop_after_audit_instant",
+            ),
+        ];
+        for (reason, token) in cases {
+            let label = label_token(&ChainLabel::Incomplete { hop: 2, reason });
+            assert_eq!(label, format!("incomplete:2:{token}"));
+            assert!(!label.contains("internal diagnostic"));
+        }
+        assert_eq!(label_token(&ChainLabel::Complete), "complete");
+    }
 
     /// A chain that broke at hop 0 has no verified prefix, so all three identity
     /// fields degenerate to constants: two empty handles and SHA-256 over zero bytes.
@@ -275,8 +319,8 @@ mod tests {
         let retained = ChainReconstruction::with_authored_submission_identity(
             ChainLabel::Complete,
             vec![HopEvidence {
-                request_evidence: RequestEvidence::from_signature_base(same),
-                response_evidence: RequestEvidence::from_response_signature_base(same),
+                request_evidence: RequestRoleEvidence::from_signature_base(same),
+                response_evidence: ResponseRoleEvidence::from_signature_base(same),
             }],
             "test-submitted".to_owned(),
         );

@@ -3,8 +3,7 @@
 //!
 //! Each answers with the state it recognised, or with `None` and the refusal that explains
 //! it — so a `None` here is never an absence, it is a decision already made and already
-//! reported. Two of them always name a state and can still refuse a column of it; their
-//! refusals travel beside the value.
+//! reported.
 //!
 //! Kept apart from [`super::total_machines`] because the two are different in kind, not
 //! just in length: a total machine has nothing to say because its illegal combinations are
@@ -29,6 +28,7 @@ pub(super) struct Refusals {
     custody: Vec<String>,
     delegated_signing: Vec<String>,
     freshness: Vec<String>,
+    mcp_transport_contract: Vec<String>,
     replay: Vec<String>,
     trust_document: Vec<String>,
     client_credential_window: Vec<String>,
@@ -49,6 +49,7 @@ impl Refusals {
             custody: self.custody,
             delegated_signing: self.delegated_signing,
             freshness: self.freshness,
+            mcp_transport_contract: self.mcp_transport_contract,
             replay: self.replay,
             trust_document: self.trust_document,
             client_credential_window: self.client_credential_window,
@@ -62,19 +63,18 @@ impl Refusals {
 
 /// What the machines that CAN refuse recognised.
 ///
-/// `None` is a refusal already made, never an absence. Two of these — the continuation
-/// control and the CRL revocation posture — always name a state and can still refuse a
-/// column of it, which is why they are values here and their refusals travel beside them.
+/// `None` is a refusal already made, never an absence.
 pub(super) struct RefusableStates {
     pub(super) admission: Option<crate::config_state::AdmissionState>,
     pub(super) authorization: Option<crate::config_state::AuthorizationState>,
     pub(super) channel_binding: Option<crate::config_state::ChannelBindingState>,
     pub(super) client_credential_window: Option<crate::config_state::ClientCredentialWindow>,
     pub(super) freshness: Option<crate::config_state::FreshnessWindow>,
-    pub(super) continuation_control: crate::config_state::ContinuationControlState,
-    pub(super) crl_revocation: crate::config_state::CrlRevocationState,
+    pub(super) continuation_control: Option<crate::config_state::ContinuationControlState>,
+    pub(super) crl_revocation: Option<crate::config_state::CrlRevocationState>,
     pub(super) custody: Option<crate::config_state::CustodyState>,
     pub(super) delegated_signing: Option<crate::config_state::DelegatedSigningFacts>,
+    pub(super) mcp_transport_contract: Option<crate::config_state::McpTransportContractState>,
     pub(super) replay: Option<crate::config_state::ReplayState>,
     pub(super) server_identity: Option<crate::config_state::server_identity::ServerIdentityFacts>,
     pub(super) channel_credential_custody:
@@ -101,6 +101,8 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
     let (channel_binding, binding_violations) = m::transport::classify_and_validate_binding(config);
     let (crl_revocation, crl_violations) = m::transport::classify_and_validate_crl(config);
     let (freshness, freshness_violations) = m::freshness::classify_and_validate(config);
+    let (mcp_transport_contract, mcp_transport_contract_violations) =
+        m::mcp_transport_contract::classify_and_validate(config);
     let (trust_document, trust_document_violations) =
         m::trust_document::classify_and_validate(config);
     let (client_credential_window, credential_window_violations) =
@@ -121,6 +123,7 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
             crl_revocation,
             custody,
             delegated_signing,
+            mcp_transport_contract,
             replay,
             server_identity,
             channel_credential_custody,
@@ -136,6 +139,7 @@ pub(super) fn classify_refusable(config: &DeploymentRequest) -> (RefusableStates
             custody: custody_violations,
             delegated_signing: delegated_signing_violations,
             freshness: freshness_violations,
+            mcp_transport_contract: mcp_transport_contract_violations,
             replay: replay_violations,
             trust_document: trust_document_violations,
             client_credential_window: credential_window_violations,

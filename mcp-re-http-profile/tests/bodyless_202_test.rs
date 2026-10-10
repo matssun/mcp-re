@@ -425,8 +425,9 @@ fn bodyless_request_round_trips() {
             .any(|(k, _)| k.eq_ignore_ascii_case("content-type")),
         "no content-type on a bodyless request"
     );
-    let (actor, verified) = verify_bodyless_request(&req, &resolver(), &policy(), NOW)
-        .expect("a bodyless request verifies");
+    let (actor, verified) =
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW)
+            .expect("a bodyless request verifies");
     assert_eq!(actor.identity.keyid, CLIENT_KEY_ID);
     assert_eq!(verified, evidence, "the handle is the signer's");
 }
@@ -449,7 +450,7 @@ fn bodyless_get_request_round_trips() {
         "n-get",
     )
     .expect("signs");
-    verify_bodyless_request(&req, &resolver(), &policy(), NOW).expect("verifies");
+    verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).expect("verifies");
 }
 
 #[test]
@@ -472,7 +473,7 @@ fn content_type_on_a_bodyless_request_is_rejected() {
     req.headers
         .push(("Content-Type".into(), "application/json".into()));
     assert_eq!(
-        verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
         HttpProfileError::MalformedEvidence("content-type on a bodyless message"),
     );
 }
@@ -529,7 +530,7 @@ fn a_bodyless_request_covers_a_present_authorization_header() {
         "the signer must cover a present authorization header: {}",
         signature_input_of(&req)
     );
-    verify_bodyless_request(&req, &resolver(), &policy(), NOW)
+    verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW)
         .expect("a bodyless request with a covered credential verifies");
 }
 
@@ -559,7 +560,7 @@ fn swapping_a_covered_bearer_token_on_a_bodyless_request_is_caught() {
         }
     }
     assert!(
-        verify_bodyless_request(&req, &resolver(), &policy(), NOW).is_err(),
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).is_err(),
         "a swapped bearer token must invalidate the signature"
     );
 }
@@ -588,7 +589,7 @@ fn an_uncovered_authorization_header_on_a_bodyless_request_is_rejected() {
     req.headers
         .push(("Authorization".into(), "Bearer token-INJECTED".into()));
     assert_eq!(
-        verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
         HttpProfileError::MissingCoveredComponent("authorization"),
         "a present-but-uncovered credential must fail closed, not ride along"
     );
@@ -596,13 +597,21 @@ fn an_uncovered_authorization_header_on_a_bodyless_request_is_rejected() {
 
 /// Same rule for `dpop` and for the MCP transport headers, so the fix is not
 /// authorization-specific.
+///
+/// The signer always states and covers `Mcp-Protocol-Version`, so an injected one arrives
+/// as a second value and is refused as a duplicate rather than as an uncovered header.
 #[test]
 fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected() {
+    use HttpProfileError::DuplicateHeader;
+    use HttpProfileError::MissingCoveredComponent as Uncovered;
     for (header, expected) in [
-        ("DPoP", "dpop"),
-        ("Mcp-Method", "mcp-method"),
-        ("Mcp-Name", "mcp-name"),
-        ("Mcp-Protocol-Version", "mcp-protocol-version"),
+        ("DPoP", Uncovered("dpop")),
+        ("Mcp-Method", Uncovered("mcp-method")),
+        ("Mcp-Name", Uncovered("mcp-name")),
+        (
+            "Mcp-Protocol-Version",
+            DuplicateHeader("mcp-protocol-version"),
+        ),
     ] {
         let mut req = HttpRequest {
             method: "DELETE".into(),
@@ -621,16 +630,16 @@ fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected()
         .expect("signs");
         req.headers.push((header.into(), "injected".into()));
         assert_eq!(
-            verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
-            HttpProfileError::MissingCoveredComponent(expected),
-            "an uncovered {header} must fail closed on the bodyless path"
+            verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+            expected,
+            "an injected {header} must fail closed on the bodyless path"
         );
     }
 }
 
-/// And the signer covers each of them when present, so a legitimately-signed bodyless
-/// request carrying them still round-trips. Without this half the fix would simply make
-/// those requests unsignable.
+/// And the signer covers each of them when present. Covered is not admitted: the routing
+/// headers describe a body this message does not have, so the transport contract refuses
+/// them after the signature, while the same request without them verifies.
 #[test]
 fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
     let mut req = HttpRequest {
@@ -667,7 +676,32 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
             "{name} must be covered: {input}"
         );
     }
-    verify_bodyless_request(&req, &resolver(), &policy(), NOW).expect("verifies");
+    assert_eq!(
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        HttpProfileError::McpTransportDivergence("mcp-method"),
+    );
+
+    let mut unrouted = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![
+            ("Authorization".into(), "Bearer t".into()),
+            ("DPoP".into(), "proof".into()),
+        ],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(
+        &mut unrouted,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-unrouted",
+    )
+    .expect("signs");
+    assert!(signature_input_of(&unrouted).contains("\"mcp-protocol-version\""));
+    verify_bodyless_request(&unrouted, &Verifier::new(&policy(), &resolver()), NOW)
+        .expect("the signer states the version, and nothing else needs a body");
 }
 
 /// A deployment's MCP transport contract must not be silently exempt on one request
@@ -680,8 +714,8 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
 /// deployment configured for `2026-07-28` got no supported-version gate on this shape
 /// while believing it had one.
 ///
-/// The arm that survives the loss of a body is the one that never needed it: a version
-/// header that is present must name a version the deployment accepts. That is what
+/// The arm that survives the loss of a body is the one that never needed it: the version
+/// header is required and must name a version the deployment accepts. That is what
 /// `enforce_bodyless` applies, and it runs after the signature, so the header it reads
 /// is covered.
 #[test]
@@ -711,7 +745,7 @@ fn a_configured_transport_contract_is_refused_rather_than_ignored() {
         mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]),
     );
     assert_eq!(
-        verify_bodyless_request(&req, &resolver(), &strict, NOW).unwrap_err(),
+        verify_bodyless_request(&req, &Verifier::new(&strict, &resolver()), NOW).unwrap_err(),
         HttpProfileError::McpProtocolVersionUnsupported,
         "the deployment's supported-version set must gate this shape too",
     );
@@ -733,11 +767,40 @@ fn a_configured_transport_contract_is_refused_rather_than_ignored() {
         "n-transport-ok",
     )
     .expect("signs");
-    verify_bodyless_request(&ok_req, &resolver(), &strict, NOW)
+    verify_bodyless_request(&ok_req, &Verifier::new(&strict, &resolver()), NOW)
         .expect("a supported version must verify under the same contract");
 
-    // Without a transport contract there is nothing to enforce, and the message
-    // verifies exactly as before.
-    verify_bodyless_request(&req, &resolver(), &policy(), NOW)
-        .expect("no transport contract configured, so nothing is bypassed");
+    // There is no policy without a contract: the default carries this profile's own
+    // version, so the same message is refused there too.
+    assert_eq!(
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        HttpProfileError::McpProtocolVersionUnsupported,
+        "a policy that names no versions still has a contract",
+    );
+}
+
+/// THM-0001's window property on the bodyless REQUEST path: it holds for the parameter sets
+/// this path admits only because the path asks `check_params`, and this is the witness.
+#[test]
+fn a_bodyless_request_outside_its_signature_window_is_refused() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-stale",
+    )
+    .expect("a bodyless request signs");
+    let stale = EXPIRES + policy().max_clock_skew() + 1;
+    assert_eq!(
+        verify_bodyless_request(&req, &Verifier::new(&policy(), &resolver()), stale).unwrap_err(),
+        HttpProfileError::StaleWindow,
+    );
 }

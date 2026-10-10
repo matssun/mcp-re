@@ -113,7 +113,7 @@ fn no_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
 const CALL: &[u8] = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#;
 
 /// Sign a request and return (request, evidence).
-fn signed(nonce: &str, body: &[u8]) -> (HttpRequest, mcp_re_http_profile::RequestEvidence) {
+fn signed(nonce: &str, body: &[u8]) -> (HttpRequest, mcp_re_http_profile::RequestRoleEvidence) {
     let mut req = base_request(body);
     let ev = sign_request_full(
         &mut req,
@@ -191,7 +191,7 @@ fn authorization_artifact_binding_is_bound_and_verified() {
         !bindings.is_empty(),
         "the request carries a bound authorization artifact"
     );
-    assert_eq!(bindings[0].artifact_type, ArtifactType::OauthDpop);
+    assert_eq!(bindings[0].artifact_type(), ArtifactType::OauthDpop);
 }
 
 // ---- §A: Freshness -----------------------------------------------------------
@@ -276,32 +276,24 @@ fn strict_tier_policy_restores_exact_freshness() {
 #[test]
 fn replayed_request_is_rejected_by_the_replay_tier() {
     use mcp_re_core::InMemoryReplayCache;
-    use mcp_re_core::ReplayCache;
-    use mcp_re_core::ReplayDecision;
+    use mcp_re_http_profile::dispatch_request;
+    use mcp_re_http_profile::DispatchError;
     let (req, _) = signed("n-replay", CALL);
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("verifies");
-    let cache = InMemoryReplayCache::new(0);
-    // The posture decision is a precondition of preparing a dispatch, not an optional
-    // extra: this vector is not a fleet-strict deployment, and saying so is what yields
-    // the witness the profile crate requires.
+    let cache = InMemoryReplayCache::new(
+        mcp_re_core::MaxClockSkew::new(0).expect("0 s is inside the bound"),
+    );
+    // The posture is stated, not defaulted: this vector is not a fleet-strict deployment,
+    // and the dispatcher decides the cache's durability class before it admits anything.
     let posture = mcp_re_http_profile::DispatchConfig {
         fleet_strict: false,
     };
-    let key = posture
-        .admit_replay_tier(cache.durability_class())
-        .expect("the reference cache's class is not load-bearing outside fleet-strict")
-        .prepare(&verified, None)
-        .expect("dispatch prep");
-    let key = key.replay_key();
+    dispatch_request(&verified, &cache, None, &posture).expect("the first submission is fresh");
     assert_eq!(
-        key.check_and_insert(&cache, EXPIRES).unwrap(),
-        ReplayDecision::Fresh
-    );
-    assert_eq!(
-        key.check_and_insert(&cache, EXPIRES).unwrap(),
-        ReplayDecision::Replay,
+        dispatch_request(&verified, &cache, None, &posture).unwrap_err(),
+        DispatchError::ReplayDetected,
         "a second submission of the same nonce is a replay"
     );
 }

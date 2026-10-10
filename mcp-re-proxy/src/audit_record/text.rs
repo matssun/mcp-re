@@ -195,11 +195,13 @@ fn push_verbatim_or_escaped(out: &mut String, text: &str) {
 mod tests {
     use super::*;
     use crate::admission_enforcer::AdmissionFacet;
+    use crate::admission_enforcer::AdmissionRefusalClass;
     use crate::audit_record::scalar::unescape_scalar;
     use crate::audit_record::AuditRecord;
     use crate::audit_record::AuditSubject;
     use crate::authorization::AuthorizationFacet;
     use crate::authorization::AuthorizationRefusalFacet;
+    use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal;
     use mcp_re_policy::PolicyError;
 
     /// The tokens a rendered record splits into, one per field.
@@ -444,13 +446,23 @@ mod tests {
             for admission in admissions {
                 for authorization in &authorizations {
                     for subject in [
-                        AuditSubject::request_accepted(authorization.clone(), admission),
+                        AuditSubject::request_accepted(
+                            &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
+                            admission,
+                        ),
                         AuditSubject::request_rejected(
                             Some(&mcp_re_core::McpReError::DigestMismatch),
                             authorization.clone(),
                             admission,
                         ),
                         AuditSubject::request_rejected(None, authorization.clone(), admission),
+                        AuditSubject::request_refused_at_admission(
+                            None,
+                            authorization.clone(),
+                            AdmissionRefusalClass::RecordRefused(
+                                AdmissionRecordRefusal::SignatureInvalid,
+                            ),
+                        ),
                     ] {
                         records.push(AuditRecord {
                             subject,
@@ -509,6 +521,7 @@ mod tests {
             "at",
             "authz",
             "admission",
+            "admission_refusal",
         ] {
             assert!(seen.contains(&expected), "{expected} was never rendered");
         }

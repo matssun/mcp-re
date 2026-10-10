@@ -26,6 +26,9 @@ const MAX_TIMEOUT: Duration = Duration::from_secs(3_600);
 /// The interval is non-zero, the timeout is at least one interval, and the timeout is
 /// bounded. A zero interval is not "poll as fast as possible" — it is a loop with no
 /// progress condition, and the whole point of this value is that the run terminates.
+///
+/// A single-exchange budget (a contract with no polling) proves the timeout is non-zero and
+/// bounded; its interval is the whole budget, so no poll fits before the deadline.
 #[derive(Debug, Clone, Copy)]
 // Read only by the transport. Without `scitt_registration` the policy is still built, so
 // an unusable budget is refused in every build, but nothing polls under it.
@@ -58,6 +61,30 @@ impl RegistrationPolicy {
             ));
         }
         Ok(RegistrationPolicy { timeout, interval })
+    }
+
+    /// A budget for a contract with no polling, or the first rule it breaks.
+    ///
+    /// The interval equals the whole budget, so the budget admits no poll before its
+    /// deadline.
+    pub(super) fn single_exchange(timeout: Duration) -> Result<Self, String> {
+        if timeout.is_zero() {
+            return Err(
+                "registration timeout must be greater than zero: a zero budget completes no \
+                 exchange"
+                    .to_owned(),
+            );
+        }
+        if timeout > MAX_TIMEOUT {
+            return Err(format!(
+                "registration timeout {timeout:?} exceeds {MAX_TIMEOUT:?}; a run that can \
+                 block indefinitely has no failure mode an operator can observe",
+            ));
+        }
+        Ok(RegistrationPolicy {
+            timeout,
+            interval: timeout,
+        })
     }
 
     /// The whole budget for one registration, submission included.
@@ -105,6 +132,19 @@ mod tests {
             RegistrationPolicy::new(Duration::from_secs(3_601), Duration::from_secs(2)).is_err(),
         );
         assert!(RegistrationPolicy::new(MAX_TIMEOUT, Duration::from_secs(2)).is_ok());
+    }
+
+    #[test]
+    fn a_single_exchange_budget_is_bounded_but_needs_no_interval() {
+        let policy = RegistrationPolicy::single_exchange(Duration::from_secs(1))
+            .expect("a legal single-exchange budget");
+        assert_eq!(policy.timeout(), Duration::from_secs(1));
+        assert!(RegistrationPolicy::single_exchange(MAX_TIMEOUT).is_ok());
+        assert!(RegistrationPolicy::single_exchange(Duration::from_secs(3_601)).is_err());
+        let refused = RegistrationPolicy::single_exchange(Duration::ZERO)
+            .expect_err("a zero budget completes no exchange");
+        assert!(refused.contains("timeout"), "{refused}");
+        assert!(!refused.contains("poll interval"), "{refused}");
     }
 
     /// A sub-second interval is legal. It is an aggressive operator choice, not an illegal

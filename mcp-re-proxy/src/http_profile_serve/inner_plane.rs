@@ -90,7 +90,7 @@ impl InnerPlane {
         self.inner
             .prepare(forwarded.bytes())
             .map(|prepared| Established::new(prepared, ExchangeEvent::InnerPlaneAccepted))
-            .map_err(|_| Refusal::after_admission(McpReError::InnerPlaneUnavailable, 503))
+            .map_err(|_| Refusal::new(McpReError::InnerPlaneUnavailable, 503))
     }
 
     /// RESPONSE-OBSERVED — what did the inner plane actually manage to do?
@@ -116,15 +116,15 @@ impl InnerPlane {
             }
             DispatchedOutcome::Indeterminate(_) => {
                 progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
-                Err(Refusal::after_admission(
-                    McpReError::InnerDispatchIndeterminate,
-                    504,
+                Err(Refusal::new(McpReError::InnerDispatchIndeterminate, 504))
+            }
+            DispatchedOutcome::InvalidUpstream(clause) => {
+                progress.observe_origin(ResponseOrigin::BackendReplied);
+                Err(Refusal::new(
+                    HttpProfileError::UpstreamResponseInvalid(clause),
+                    502,
                 ))
             }
-            DispatchedOutcome::InvalidUpstream(clause) => Err(Refusal::after_admission(
-                HttpProfileError::UpstreamResponseInvalid(clause),
-                502,
-            )),
         }
     }
 
@@ -168,10 +168,7 @@ impl InnerPlane {
             }
             DispatchedOutcome::Indeterminate(_) => {
                 progress.observe_origin(ResponseOrigin::DispatchIndeterminate);
-                Err(Refusal::after_admission(
-                    McpReError::InnerDispatchIndeterminate,
-                    504,
-                ))
+                Err(Refusal::new(McpReError::InnerDispatchIndeterminate, 504))
             }
         }
     }
@@ -240,6 +237,20 @@ mod tests {
                 &DispatchedOutcome::InvalidUpstream("content-type")
             )
             .is_ok());
+    }
+
+    #[test]
+    fn an_unusable_answer_to_a_request_still_says_the_backend_was_reached() {
+        let plane = InnerPlane::over(Box::new(PreparesNothing));
+        let mut progress = ExchangeProgress::new();
+        let Err(refused) = plane.observe_reply(
+            &mut progress,
+            DispatchedOutcome::InvalidUpstream("content-type"),
+        ) else {
+            panic!("an unusable answer is not a reply");
+        };
+        assert_eq!(refused.status, 502);
+        assert_eq!(progress.origin(), ResponseOrigin::BackendReplied);
     }
 
     /// A notification the backend may not have received is not acknowledged.

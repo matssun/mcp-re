@@ -1,0 +1,25 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "security_consequence",
+      "id": "C1",
+      "new": "An issuer or peer cannot choose which identity the proxy binds to by controlling a field\nthe deployment did not configure, and cannot choose it by making the authoritative value\nunusable: neither a present DNS SAN under a URI-SAN policy nor a valid second URI SAN\nbehind a malformed first one is ever read. Only URI and DNS SANs are identity fields: the\nsubject Common Name is not one, no policy selects it, and the adapter does not read it.\n",
+      "old": "An issuer or peer cannot choose which identity the proxy binds to by controlling a field\nthe deployment did not configure, and cannot choose it by making the authoritative value\nunusable: neither a present DNS SAN under a URI-SAN policy nor a valid second URI SAN\nbehind a malformed first one is ever read. A deployment that configured URI SANs cannot be\nsilently downgraded to a legacy Common Name.\n",
+      "reason": "THM-0024 security_consequence, replaced by the owner's Ruling 34 \u00a74 text."
+    }
+  ],
+  "from_fingerprint": "sha256:ca59453ec43b6db551686eecc0f16272dccde38863a507e62633ae1c60ebb0c2",
+  "packet": "docs/security/owner-approvals-2026-10-07.jsonl",
+  "product_behavior_unchanged": true,
+  "reason": "OWN-CLAIM CORRECTION, owner-ratified (Ruling 34 \u00a74). The Common-Name identity path was deleted in f354921c (Ruling 31.1); the consequence still named a downgrade to it. It now describes the current surface: only URI and DNS SANs are identity fields.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5. The authority covering this record is the owner's Ruling 34 \u00a74 (2026-10-07), recorded in docs/security/owner-approvals-2026-10-07.jsonl. A correction record is not an approval: it does not make the specification-review axis fresh.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0024",
+  "to_fingerprint": "sha256:49de376b15e2eccb2dc8cba1c7b31a9c56fdd623ecc92731152b6ce03ce79893"
+}

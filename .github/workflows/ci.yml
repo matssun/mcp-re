@@ -122,6 +122,24 @@ jobs:
           python3 scripts/slo_invocation_gate.py --selftest
           python3 scripts/slo_invocation_gate.py
 
+      # OS-entropy census gate: `boundary.os_entropy` names exactly the production files
+      # that acquire OS entropy through `getrandom`. ASM-0068 states that count and requires
+      # owner review of a new site; the count was kept by hand and went stale once. Fast,
+      # python-only.
+      - name: OS-entropy census gate (boundary.os_entropy names every acquisition site)
+        run: |
+          python3 scripts/os_entropy_census_gate.py --selftest
+          python3 scripts/os_entropy_census_gate.py
+
+      # Finding-ledger gate: every ledger row carries a disposition the taxonomy can
+      # close, or it is counted open. `accepted-risk` / `wontfix` are refused, a premise
+      # names a registered ASM, a constraint names the owner ruling that accepted it.
+      # 187 uncounted accepted-risk rows once hid eight live defects. Fast, python-only.
+      - name: Finding-ledger gate (no accepted-risk; open count is every row not validly closed)
+        run: |
+          python3 scripts/finding_ledger_gate.py --selftest
+          python3 scripts/finding_ledger_gate.py
+
       # Doc-path gate: refuses a path-like token in current text that does not resolve
       # to a file of this repository, and — the rule the whole class turns on — one that
       # resolves ONLY to a gitignored path. Fifteen citations of a `work/`-local design
@@ -260,6 +278,19 @@ jobs:
         run: |
           python3 scripts/test_inventory_gate.py --selftest
           python3 scripts/test_inventory_gate.py
+
+      # The audit scalar refuses every Unicode format control (Cf); the Rust range table that
+      # says which codepoints those are is compared with `unicodedata`, which needs the
+      # interpreter whose Unicode version the table declares.
+      - name: Set up Python for the format-control table
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Format-control table gate
+        run: |
+          python3 scripts/format_control_table_gate.py --selftest
+          python3 scripts/format_control_table_gate.py
 
       # Rust build and test execution is Bazel's. A workflow step, script, hook, lane,
       # harness or maintained command that invokes `cargo` — directly, or through a
@@ -538,6 +569,9 @@ jobs:
           # reason the comment above gives: `merge_path_gate.py` reads literal paths,
           # so a suite a workflow assembles at run time is one it cannot see.
           python3 tools/verification/test_evidence_class.py
+          # A cited control must be compiled by the target that cites it: a unit naming a
+          # feature-gated module's test in a target built without the feature measures nothing.
+          python3 tools/verification/test_feature_lanes.py
           # ADR-MCPRE-068 Phase 0B. These two are not only self-tests of a lane's edges —
           # they ARE the two lanes' liveness, because the ratification requires each to
           # fail-close on zero execution and neither registry is yet large enough for a

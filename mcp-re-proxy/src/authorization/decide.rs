@@ -123,7 +123,9 @@ pub fn authorize(
 mod tests {
     use super::authorize;
     use super::AuthorizationRefusal;
+    use crate::authorization::action_harness::covering_unverifiable;
     use crate::authorization::action_harness::verified_over;
+    use crate::authorization::action_harness::Signed;
     use crate::authorization::audit::AuthorizationFacet;
     use crate::authorization::audit::AuthorizationRefusalFacet;
     use crate::authorization::decision_evidence::DecisionEvidenceIdentity;
@@ -150,11 +152,14 @@ mod tests {
 
     const READ: &[u8] =
         br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#;
+    /// A body with no coordinate to authorize. The verifier covers no such body; see
+    /// [`covering_unverifiable`].
+    const JUNK: &[u8] = b"not json";
 
     #[test]
     fn no_evaluator_yields_no_policy_configured_and_never_a_grant() {
-        let verified = verified_over(READ);
-        let posture = authorize(None, &verified, READ, None).expect("not a refusal");
+        let Signed { verified, body } = verified_over(READ);
+        let posture = authorize(None, &verified, &body, None).expect("not a refusal");
         assert!(
             posture.authorized().is_none(),
             "an unconfigured deployment must not report an authorization it never made"
@@ -163,9 +168,9 @@ mod tests {
 
     #[test]
     fn a_granting_evaluator_yields_an_attributed_authorization() {
-        let verified = verified_over(READ);
+        let Signed { verified, body } = verified_over(READ);
         let posture =
-            authorize(Some(&Always(Ok("conformance"))), &verified, READ, None).expect("granted");
+            authorize(Some(&Always(Ok("conformance"))), &verified, &body, None).expect("granted");
         let facts = posture.authorized().expect("a policy permitted this");
         assert_eq!(facts.granted().authority(), "conformance");
         assert_eq!(facts.request().action().target().named(), Some("read"));
@@ -174,11 +179,11 @@ mod tests {
 
     #[test]
     fn a_denying_evaluator_refuses_with_its_own_token() {
-        let verified = verified_over(READ);
+        let Signed { verified, body } = verified_over(READ);
         let refusal = authorize(
             Some(&Always(Err(PolicyError::AuthorizationScopeDenied))),
             &verified,
-            READ,
+            &body,
             None,
         )
         .expect_err("denied");
@@ -190,13 +195,13 @@ mod tests {
         // Fail-closed is not in doubt; being able to TELL an outage from a denial is. The
         // frozen taxonomy already carries the split, so the boundary neither invents a
         // token nor flattens the two into one.
-        let verified = verified_over(READ);
+        let Signed { verified, body } = verified_over(READ);
         let refusal = authorize(
             Some(&Always(Err(
                 PolicyError::AuthorizationRevocationUnavailable,
             ))),
             &verified,
-            READ,
+            &body,
             None,
         )
         .expect_err("could not decide");
@@ -210,9 +215,8 @@ mod tests {
     fn a_request_with_no_readable_action_is_refused_before_any_policy_is_consulted() {
         // The evaluator here would grant anything. The refusal must still happen, and must
         // not be reported as a policy denial — nothing was asked of the policy.
-        let junk = b"not json";
-        let verified = verified_over(junk);
-        let refusal = authorize(Some(&Always(Ok("conformance"))), &verified, junk, None)
+        let verified = covering_unverifiable(JUNK);
+        let refusal = authorize(Some(&Always(Ok("conformance"))), &verified, JUNK, None)
             .expect_err("no coordinate");
         assert_eq!(
             refusal,
@@ -226,11 +230,11 @@ mod tests {
         // The facet's reason for existing. Both of these render a `mcp-re.*` token, so the
         // rendered string cannot tell them apart; the projection can, and says which
         // authority — if any — actually decided.
-        let verified = verified_over(READ);
+        let Signed { verified, body } = verified_over(READ);
         let denied = authorize(
             Some(&Always(Err(PolicyError::AuthorizationScopeDenied))),
             &verified,
-            READ,
+            &body,
             None,
         )
         .expect_err("denied");
@@ -241,11 +245,10 @@ mod tests {
             ))
         );
 
-        let junk = b"not json";
         let unreadable = authorize(
             Some(&Always(Ok("conformance"))),
-            &verified_over(junk),
-            junk,
+            &covering_unverifiable(JUNK),
+            JUNK,
             None,
         )
         .expect_err("no coordinate");
@@ -258,9 +261,9 @@ mod tests {
 
     #[test]
     fn an_authorized_request_projects_the_grant_and_the_coordinate_it_was_taken_over() {
-        let verified = verified_over(READ);
+        let Signed { verified, body } = verified_over(READ);
         let posture =
-            authorize(Some(&Always(Ok("conformance"))), &verified, READ, None).expect("granted");
+            authorize(Some(&Always(Ok("conformance"))), &verified, &body, None).expect("granted");
         let AuthorizationFacet::Authorized(a) = posture.audit_facet() else {
             panic!("a policy permitted this");
         };
@@ -278,8 +281,6 @@ mod tests {
         // Otherwise enabling a policy would start refusing requests for reasons that have
         // nothing to do with the policy — the same class of hidden coupling Law A-1 rules
         // out for the transport contract.
-        let junk = b"not json";
-        let verified = verified_over(junk);
-        assert!(authorize(None, &verified, junk, None).is_err());
+        assert!(authorize(None, &covering_unverifiable(JUNK), JUNK, None).is_err());
     }
 }

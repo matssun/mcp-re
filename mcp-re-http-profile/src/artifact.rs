@@ -20,14 +20,16 @@
 //! A mismatch is [`HttpProfileError::ArtifactBindingFailed`]
 //! (`mcp-re.artifact_binding_failed`).
 
-use mcp_re_core::b64url_encode;
-use sha2::Digest;
-use sha2::Sha256;
-
 use crate::block::ArtifactBinding;
 use crate::block::ArtifactType;
 use crate::block::BindingType;
 use crate::error::HttpProfileError;
+#[cfg(all(feature = "verify", feature = "verus_nonvacuity_probe"))]
+mod nonvacuity_probe;
+mod thumbprint;
+
+use thumbprint::sha256_b64url;
+
 #[cfg(feature = "verify")]
 use verus_builtin_macros::{verus_spec, verus_verify};
 #[cfg(feature = "verify")]
@@ -35,10 +37,14 @@ use verus_builtin_macros::{verus_spec, verus_verify};
 use vstd::prelude::*;
 
 /// Extract the bearer credential from an `Authorization` header value. Only the
-/// `Bearer` scheme is recognized; the token bytes are the ASCII characters
-/// after the single space. Returns `None` for any other scheme/shape.
+/// `Bearer` scheme is recognized, matched ASCII-case-insensitively; the token
+/// bytes are the ASCII characters after the scheme's space. Returns `None` for
+/// any other scheme/shape.
 pub fn bearer_token(authorization_header: &str) -> Option<&str> {
-    let rest = authorization_header.strip_prefix("Bearer ")?;
+    let (scheme, rest) = authorization_header.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("Bearer") {
+        return None;
+    }
     let token = rest.trim();
     if token.is_empty() {
         None
@@ -47,20 +53,14 @@ pub fn bearer_token(authorization_header: &str) -> Option<&str> {
     }
 }
 
-/// `base64url-no-pad(SHA-256(bytes))` — the shared thumbprint primitive.
-// ADR-MCPRE-059 ASM-0018: below `boundary.crypto_primitives`.
-#[cfg_attr(feature = "verify", verus_verify(external_body))]
-fn sha256_b64url(bytes: &[u8]) -> String {
-    b64url_encode(&Sha256::digest(bytes))
-}
-
 /// Verify a DPoP `ath` binding (RFC 9449): the binding digest must equal the
 /// SHA-256 thumbprint of `access_token`.
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) ==> {
-            &&& binding.artifact_type == ArtifactType::OauthDpop
-            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthDpop
+            &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
+            &&& binding.spec_digest_value() == thumbprint::thumbprint_of(access_token@)
         },
 ))]
 pub fn verify_dpop_ath(
@@ -76,8 +76,9 @@ pub fn verify_dpop_ath(
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) ==> {
-            &&& binding.artifact_type == ArtifactType::OauthMtls
-            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthMtls
+            &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
+            &&& binding.spec_digest_value() == thumbprint::thumbprint_of(cert_der@)
         },
 ))]
 pub fn verify_mtls_x5t_s256(
@@ -94,8 +95,9 @@ pub fn verify_mtls_x5t_s256(
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) ==> {
-            &&& binding.artifact_type == ArtifactType::OauthRar
-            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthRar
+            &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
+            &&& binding.spec_digest_value() == thumbprint::thumbprint_of(authorization_details_canonical@)
         },
 ))]
 pub fn verify_rar_details(
@@ -119,19 +121,20 @@ pub fn verify_rar_details(
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) ==> {
-            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
             &&& {
-                ||| binding.artifact_type == ArtifactType::OauthDpop
-                ||| binding.artifact_type == ArtifactType::OauthMtls
-                ||| binding.artifact_type == ArtifactType::OauthRar
+                ||| crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthDpop
+                ||| crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthMtls
+                ||| crate::verus_std_specs::artifact_type_of(binding) == ArtifactType::OauthRar
             }
+            &&& binding.spec_digest_value() == thumbprint::thumbprint_of(credential@)
         },
 ))]
 pub fn verify_artifact_binding(
     binding: &ArtifactBinding,
     credential: &[u8],
 ) -> Result<(), HttpProfileError> {
-    match binding.artifact_type {
+    match binding.artifact_type() {
         ArtifactType::OauthDpop => verify_dpop_ath(binding, credential),
         ArtifactType::OauthMtls => verify_mtls_x5t_s256(binding, credential),
         ArtifactType::OauthRar => verify_rar_details(binding, credential),
@@ -147,24 +150,35 @@ pub fn verify_artifact_binding(
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
         out matches Ok(()) ==> {
-            &&& binding.artifact_type == want
-            &&& binding.binding_type == BindingType::OpaqueDigest
+            &&& crate::verus_std_specs::artifact_type_of(binding) == want
+            &&& crate::verus_std_specs::binding_type_of(binding) == BindingType::OpaqueDigest
         },
 ))]
 fn expect_type(binding: &ArtifactBinding, want: ArtifactType) -> Result<(), HttpProfileError> {
     // The typed OAuth proofs are always the opaque-digest form (the digest is
     // over the presented credential bytes, not an external reference).
-    if binding.artifact_type != want || binding.binding_type != BindingType::OpaqueDigest {
+    if binding.artifact_type() != want || binding.binding_type() != BindingType::OpaqueDigest {
         return Err(HttpProfileError::ArtifactBindingFailed);
     }
-    binding.validate()
+    Ok(())
 }
 
-// ADR-MCPRE-059 ASM-0018: the digest comparison's MEANING is a statement about SHA-256,
-// so the typed-verifier theorem takes it as an opaque decision and claims nothing here.
-#[cfg_attr(feature = "verify", verus_verify(external_body))]
-fn compare(binding: &ArtifactBinding, credential: &[u8]) -> Result<(), HttpProfileError> {
-    if sha256_b64url(credential) == binding.digest_value {
+// Proved: `Ok` exactly when the binding's digest is, character for character, the thumbprint of
+// the presented credential. What that thumbprint means rests on ASM-0018 and ASM-0073.
+//
+// `pub(crate)`: the `pdp-decision` evidence verifier commits to the same relation over the
+// decision bytes, and stating it here once is what puts that commitment under this proof.
+#[cfg_attr(feature = "verify", verus_verify)]
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out matches Ok(()) <==> binding.spec_digest_value()
+            == thumbprint::thumbprint_of(credential@),
+))]
+pub(crate) fn compare(
+    binding: &ArtifactBinding,
+    credential: &[u8],
+) -> Result<(), HttpProfileError> {
+    if binding.digest_is(&sha256_b64url(credential)) {
         Ok(())
     } else {
         Err(HttpProfileError::ArtifactBindingFailed)
@@ -176,15 +190,7 @@ mod tests {
     use super::*;
 
     fn opaque(artifact_type: ArtifactType, digest_value: &str) -> ArtifactBinding {
-        ArtifactBinding {
-            artifact_type,
-            binding_type: BindingType::OpaqueDigest,
-            digest_alg: "sha256".into(),
-            digest_value: digest_value.into(),
-            authorization_system_id: None,
-            reference_scheme_id: None,
-            reference_value: None,
-        }
+        ArtifactBinding::opaque_from_digest(artifact_type, digest_value).expect("a legal binding")
     }
 
     fn bind_over(artifact_type: ArtifactType, credential: &[u8]) -> ArtifactBinding {
@@ -252,7 +258,9 @@ mod tests {
     #[test]
     fn bearer_token_extraction() {
         assert_eq!(bearer_token("Bearer abc123"), Some("abc123"));
-        assert_eq!(bearer_token("bearer abc123"), None); // scheme is case-sensitive here
+        assert_eq!(bearer_token("bearer abc123"), Some("abc123"));
+        assert_eq!(bearer_token("BEARER abc123"), Some("abc123"));
+        assert_eq!(bearer_token("BearerX abc123"), None);
         assert_eq!(bearer_token("Basic Zm9v"), None);
         assert_eq!(bearer_token("Bearer   "), None);
     }

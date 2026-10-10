@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `Replay` configuration machine — `work/CONFIG-STATE-ATLAS.md` §C.1.
+//! The `Replay` configuration machine — unit `proxy.replay_configuration_state`.
 //!
 //! Where admitted nonces live, and therefore what replay guarantee the deployment can
 //! claim. **Two states**, both shared:
@@ -223,26 +223,26 @@ enum RequestedState {
 /// `REDIS_WAIT_QUORUM` with a fail-closed guarantee. The guard belongs beside the other
 /// column checks rather than only in [`ReplayDurabilityTier::parse`], which a request built
 /// in process never passes through, and which `meets_strict_production_minimum` cannot stand
-/// in for because it reads the variant and not its parameters.
+/// in for because it reads the variant and not its parameters. A timeout past
+/// [`MAX_WAIT_QUORUM_TIMEOUT_MS`] is refused, never clamped.
 fn wait_quorum_guards(quorum: u32, timeout_ms: u64) -> Result<(), String> {
-    if quorum == 0 {
-        return Err(
-            "--replay-durability-tier redis-wait-quorum requires a quorum of at least 1: \
-             WAIT 0 asks no replica to acknowledge the nonce, which is the REDIS_ASYNC \
-             replay window carrying the REDIS_WAIT_QUORUM claim"
-                .to_string(),
-        );
-    }
-    if timeout_ms == 0 {
-        return Err(
-            "--replay-durability-tier redis-wait-quorum requires a timeout_ms of at least 1: \
-             WAIT with a zero timeout returns before any replica can acknowledge the nonce, \
-             which is the REDIS_ASYNC replay window carrying the REDIS_WAIT_QUORUM claim"
-                .to_string(),
-        );
-    }
-    Ok(())
+    let window = "which is the REDIS_ASYNC replay window carrying the REDIS_WAIT_QUORUM claim";
+    let refusal = if quorum == 0 {
+        format!("--replay-durability-tier redis-wait-quorum requires a quorum of at least 1: WAIT 0 asks no replica to acknowledge the nonce, {window}")
+    } else if timeout_ms == 0 {
+        format!("--replay-durability-tier redis-wait-quorum requires a timeout_ms of at least 1: WAIT with a zero timeout returns before any replica can acknowledge the nonce, {window}")
+    } else if timeout_ms > MAX_WAIT_QUORUM_TIMEOUT_MS {
+        format!("--replay-durability-tier redis-wait-quorum requires a timeout_ms of at most {MAX_WAIT_QUORUM_TIMEOUT_MS} (got {timeout_ms}): admission awaits the WAIT, so a longer one parks the request for as long as it says")
+    } else {
+        return Ok(());
+    };
+    Err(refusal)
 }
+
+/// The longest `WAIT` a `REDIS_WAIT_QUORUM` tier may declare: the replay plane's
+/// per-operation ceiling, the same thirty seconds `MAX_ETCD_OP_TIMEOUT` gives the
+/// linearizable store, so neither shared state lets admission wait longer than the other.
+pub(crate) const MAX_WAIT_QUORUM_TIMEOUT_MS: u64 = 30_000;
 
 /// Recognise which shared state the declared tier names, or why it names none.
 ///
@@ -322,7 +322,16 @@ fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
     // "has no effect" refusals that explained the pair have no configuration to examine
     // (ADR-MCPRE-067 §7). What a request CAN still say is a tier its store cannot serve,
     // because the tier is a claim a deployment makes and not a property read off the store.
-    if store.flag() != flag {
+    if !matches!(
+        (&state, store),
+        (
+            RequestedState::SharedRedis { .. },
+            ReplayStoreRequest::Redis(_)
+        ) | (
+            RequestedState::SharedLinearizable,
+            ReplayStoreRequest::Etcd(_)
+        )
+    ) {
         return vec![format!(
             "{} names the replay store, but the declared --replay-durability-tier needs \
              {flag}: the tier is the guarantee, and this store does not deliver it. If a \
@@ -341,12 +350,15 @@ fn locator_violations(state: RequestedState, config: &DeploymentRequest) -> Vec<
 /// `Err` means the request names no state at all — a rejected input form, or a tier this
 /// posture does not accept. There is nothing to put in `DeploymentConfigState` for those,
 /// which is the point: they are not deployments.
+///
+/// The state is `None` exactly when a violation was produced.
 pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<ReplayState>, Vec<String>) {
     match classify(config) {
         Err(refusal) => (None, vec![refusal]),
         Ok(requested) => {
             let violations = locator_violations(requested, config);
-            (build(requested, config), violations)
+            let state = build(requested, config).filter(|_| violations.is_empty());
+            (state, violations)
         }
     }
 }
@@ -489,10 +501,14 @@ mod tests {
             }),
         ];
         for (flag, mutate) in cases {
-            let (_, violations) = run(mutate);
+            let (state, violations) = run(mutate);
             assert!(
                 violations.iter().any(|v| v.contains(flag)),
                 "{flag}: not refused — {violations:?}"
+            );
+            assert!(
+                state.is_none(),
+                "{flag}: a refused locator still became a validated state"
             );
         }
     }
@@ -664,6 +680,40 @@ mod tests {
                 "redis-wait-quorum:{quorum}:{timeout_ms}: {violations:?}"
             );
         }
+    }
+
+    /// The ceiling is a refusal at one past it and an acceptance at it: the declared
+    /// timeout reaches the state unchanged or not at all, never clamped to the ceiling.
+    #[test]
+    fn a_wait_quorum_timeout_past_the_ceiling_names_no_state_and_the_ceiling_does() {
+        let at = |timeout_ms| {
+            run(move |c| {
+                redis(c);
+                c.replay.durability = Some(ReplayDurabilityTier::QuorumAcknowledged {
+                    quorum: 1,
+                    timeout_ms,
+                });
+            })
+        };
+        let (state, violations) = at(MAX_WAIT_QUORUM_TIMEOUT_MS + 1);
+        assert!(state.is_none(), "a timeout past the ceiling became a state");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("a timeout_ms of at most 30000")),
+            "{violations:?}"
+        );
+        let (state, violations) = at(MAX_WAIT_QUORUM_TIMEOUT_MS);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(
+            state
+                .expect("the ceiling itself is legal")
+                .durability_tier(),
+            ReplayDurabilityTier::QuorumAcknowledged {
+                quorum: 1,
+                timeout_ms: MAX_WAIT_QUORUM_TIMEOUT_MS,
+            }
+        );
     }
 
     /// The positive half: the smallest parameters that still ask a replica to acknowledge

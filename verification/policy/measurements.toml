@@ -42,6 +42,9 @@ protocol = [
   # the scanned crate set from the workspace manifest, which is what makes the number a
   # statement about the workspace instead of about a hand-list someone last edited.
   "--test_arg=the_scanned_crate_set_is_the_workspace",
+  # And the corpus reaches the example binaries the build graph compiles, not only the
+  # libraries: a runfiles tree that stopped carrying them would leave them scanned by nobody.
+  "--test_arg=the_scanned_corpus_includes_the_compiled_examples",
   # Without this the `MEASURED:` lines never reach the lane and the artifact is empty —
   # which the lane refuses as an apparatus that did not run, rather than reporting a green
   # measurement of nothing.
@@ -50,7 +53,8 @@ protocol = [
 scope = """
 Every first-party crate package the build graph compiles, both SDK bindings included, derived
 from the committed target table at compile time; the clippy activation probes are the one named
-exclusion. Production halves only, with test regions excluded by `rust_source::production_half`.
+exclusion. Each package's `src/` and `examples/` trees — every Rust source a compiled target is
+built from. Production halves only, with test regions excluded by `rust_source::production_half`.
 Measured on whatever host runs the lane, which does not bound the result: the corpus is the
 tree, not the machine.
 """

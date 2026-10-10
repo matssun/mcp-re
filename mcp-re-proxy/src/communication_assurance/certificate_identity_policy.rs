@@ -22,23 +22,18 @@ pub enum CertificateIdentityPolicy {
     /// DNS Subject Alternative Name — for deployments whose client identities genuinely
     /// are DNS names, as an explicit choice.
     DnsSan,
-    /// Subject Common Name. LEGACY ONLY: the CN is unstructured and deprecated for
-    /// identity by the CA/Browser Forum.
-    CommonNameLegacy,
 }
 
 /// The certificate field an interpretation actually read.
 ///
-/// Carried by the evidence product so a consumer can tell a SPIFFE URI apart from a legacy
-/// CN without reparsing the certificate. It is written only by the interpreter.
+/// Carried by the evidence product so a consumer can tell a URI SAN apart from a DNS SAN
+/// without reparsing the certificate. It is written only by the interpreter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CertificateIdentitySource {
     /// The value came from a URI SAN.
     UriSan,
     /// The value came from a DNS SAN.
     DnsSan,
-    /// The value came from the subject Common Name.
-    CommonName,
 }
 
 impl CertificateIdentityPolicy {
@@ -50,7 +45,6 @@ impl CertificateIdentityPolicy {
         match self {
             CertificateIdentityPolicy::UriSan => CertificateIdentitySource::UriSan,
             CertificateIdentityPolicy::DnsSan => CertificateIdentitySource::DnsSan,
-            CertificateIdentityPolicy::CommonNameLegacy => CertificateIdentitySource::CommonName,
         }
     }
 }
@@ -69,10 +63,6 @@ mod tests {
         assert_eq!(
             CertificateIdentityPolicy::DnsSan.selects(),
             CertificateIdentitySource::DnsSan
-        );
-        assert_eq!(
-            CertificateIdentityPolicy::CommonNameLegacy.selects(),
-            CertificateIdentitySource::CommonName
         );
     }
 

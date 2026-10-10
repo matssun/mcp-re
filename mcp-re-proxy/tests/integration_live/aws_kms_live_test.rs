@@ -18,7 +18,7 @@
 //!   * `MCP_RE_AWS_KMS_KEY_ID`   — an `ECC_NIST_EDWARDS25519` KMS key id/ARN/alias.
 //!   * `MCP_RE_AWS_KMS_REGION`   — the region.
 //!   * `MCP_RE_AWS_KMS_ENDPOINT` — OPTIONAL endpoint override (e.g. LocalStack
-//!     `http://localhost:4566`); default AWS endpoint when unset.
+//!     `http://127.0.0.1:4566`); default AWS endpoint when unset.
 #![cfg(feature = "aws_kms_keysource")]
 
 use mcp_re_core::verify_ed25519;

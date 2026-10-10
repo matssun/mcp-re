@@ -23,12 +23,6 @@ baseline_sha = "7e184961"
 status = "unreviewed"
 
 [[exclusion]]
-path = "mcp-re-proxy/src/async_replay/budget_report.rs"
-rule = "UC-1"
-baseline_sha = "7e184961"
-status = "unreviewed"
-
-[[exclusion]]
 path = "mcp-re-proxy/src/async_replay/l1_fast_reject.rs"
 rule = "UC-1"
 baseline_sha = "7e184961"
@@ -36,12 +30,6 @@ status = "unreviewed"
 
 [[exclusion]]
 path = "mcp-re-proxy/src/capability_materialization/key_source/aws.rs"
-rule = "UC-1"
-baseline_sha = "7e184961"
-status = "unreviewed"
-
-[[exclusion]]
-path = "mcp-re-proxy/src/capability_materialization/key_source/env.rs"
 rule = "UC-1"
 baseline_sha = "7e184961"
 status = "unreviewed"

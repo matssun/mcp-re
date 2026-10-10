@@ -46,7 +46,9 @@ pub enum HttpProfileError {
     MissingCoveredComponent(&'static str),
     /// The signature parameters carry an unknown/foreign profile tag.
     UnknownProfileTag,
-    /// The signature algorithm is not the profile's `ed25519`.
+    /// An algorithm token this verifier will not verify under: either a message's declared
+    /// `alg` is outside the local verifier policy's accepted set (verification), or a
+    /// policy names an algorithm with no implemented verifier (policy construction).
     UnsupportedAlgorithm,
     /// The Ed25519 signature does not verify over the reconstructed base.
     InvalidSignature,
@@ -123,9 +125,9 @@ pub enum HttpProfileError {
     /// accepted set (§4.1). Registration or a client's claim is not consent; the
     /// verifier's supported set is. Maps to `mcp-re.unsupported_version`.
     McpProtocolVersionUnsupported,
-    /// A covered transport header (`MCP-Protocol-Version` or `Mcp-Name`) disagrees
-    /// with the covered body it must match — the signer contradicting itself, as
-    /// with [`HttpProfileError::McpMethodDivergence`]. Names the header. Maps to
+    /// A covered transport header disagrees with the covered body it must match, or
+    /// has no body member to agree with — the signer contradicting itself, as with
+    /// [`HttpProfileError::McpMethodDivergence`]. Names the header. Maps to
     /// `mcp-re.malformed_envelope`.
     McpTransportDivergence(&'static str),
 
@@ -163,9 +165,12 @@ pub enum HttpProfileError {
     /// `mcp-re.request_binding_mismatch` — the statement is not bound into the log
     /// the receipt claims.
     ReceiptInclusionInvalid,
-    /// The Signed Statement issuer or transparency service key is not trusted. Maps
-    /// to `mcp-re.actor_binding_failed`.
+    /// The Signed Statement issuer key is not trusted. Maps to
+    /// `mcp-re.actor_binding_failed`.
     ReceiptIssuerUntrusted,
+    /// The receipt's transparency-service kid resolves to no service this verifier
+    /// trusts. Maps to `mcp-re.actor_binding_failed`.
+    ReceiptServiceUntrusted,
     /// The pinned transparency service issues position-bound receipts, and this one
     /// carries no position commitment. Refused rather than verified under the weaker
     /// contract: falling back on request would let an attacker strip the parameter.
@@ -213,6 +218,7 @@ mod core_projection;
 #[cfg(test)]
 mod tests {
     use super::HttpProfileError;
+    use mcp_re_core::McpReError;
 
     /// What this file owns is the taxonomy, and the taxonomy's job is to keep failures
     /// that mean different things apart. MCPRE-92 separated omission from tampering
@@ -224,16 +230,27 @@ mod tests {
             HttpProfileError::MissingEvidence("signature"),
             HttpProfileError::MalformedEvidence("signature")
         );
+        assert_eq!(
+            HttpProfileError::MissingEvidence("signature").wire_code(),
+            "mcp-re.missing_envelope"
+        );
+        assert_eq!(
+            HttpProfileError::MalformedEvidence("signature").wire_code(),
+            "mcp-re.malformed_envelope"
+        );
     }
 
     /// A context-carrying variant is distinguished BY its context: two missing components
     /// are two different facts about the request, not one repeated.
     #[test]
     fn a_context_carrying_failure_names_what_was_missing() {
-        assert_ne!(
-            HttpProfileError::MissingCoveredComponent("@method"),
-            HttpProfileError::MissingCoveredComponent("content-digest")
-        );
+        let method = HttpProfileError::MissingCoveredComponent("@method");
+        let digest = HttpProfileError::MissingCoveredComponent("content-digest");
+        assert_ne!(method, digest);
+        assert_eq!(McpReError::from(&method), McpReError::MissingEnvelope);
+        assert_eq!(McpReError::from(&digest), McpReError::MissingEnvelope);
+        assert!(format!("{method:?}").contains("@method"));
+        assert!(format!("{digest:?}").contains("content-digest"));
     }
 
     /// A store outage is not a verdict about the caller's key. The taxonomy keeps them as
@@ -244,6 +261,14 @@ mod tests {
         assert_ne!(
             HttpProfileError::TrustResolverUnavailable,
             HttpProfileError::UnresolvedKeyId
+        );
+        assert_eq!(
+            HttpProfileError::TrustResolverUnavailable.wire_code(),
+            "mcp-re.trust_resolver_unavailable"
+        );
+        assert_eq!(
+            HttpProfileError::UnresolvedKeyId.wire_code(),
+            "mcp-re.actor_binding_failed"
         );
     }
 }

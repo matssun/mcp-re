@@ -157,8 +157,8 @@ def test_a_refusal_by_a_DIFFERENT_error_is_not_evidence():
 _PRIVATE_CALL = "pub fn hostile() -> bool {\n    crate::rust_source::opens_test_region(\"\") // SITE\n}\n"
 _OPENS_IT = {
     "path": f"{FIXTURE_CRATE}/src/rust_source.rs",
-    "old": "\nfn opens_test_region(line: &str) -> bool {",
-    "new": "\npub fn opens_test_region(line: &str) -> bool {",
+    "old": "\nfn opens_test_region(code: &str) -> bool {",
+    "new": "\npub fn opens_test_region(code: &str) -> bool {",
 }
 
 

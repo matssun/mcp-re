@@ -15,7 +15,6 @@ use crate::async_serve::ServedHttpRequest;
 use crate::clock::now_unix;
 use crate::config_snapshot;
 use crate::config_state::ChannelBindingState;
-use crate::config_state::PrivateKeyExposure;
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
@@ -23,7 +22,6 @@ use crate::transport::IdentityPolicy;
 use crate::transport::TransportBinding;
 use crate::HttpProfileProxy;
 use crate::ServerOptions;
-use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
@@ -32,9 +30,12 @@ use mcp_re_http_profile::SignerSlot;
 /// Build the serving [`crate::ActorResolver`] — the trust seam the RFC 9421 PEP
 /// consults for every signature it verifies (slot discipline, MCPRE-100).
 ///
-/// The Response slot answers only for `response_kid`, from the root/issuer public key
-/// held at build time: that key is the deployment's trust anchor, revoked by root
-/// rotation rather than by a trust-store entry.
+/// The Response slot answers only for the server identity's own keyid — the resolved
+/// issuer kid — from the root/issuer public key held at build time: that key is the
+/// deployment's trust anchor, revoked by root rotation rather than by a trust-store entry.
+/// The identity is the `ServerIdentity` owner's fact, so the actor stamped on every
+/// Response slot, its keyid, and the trust domain of every client actor are read from the
+/// one value that owner derived, never supplied beside it.
 ///
 /// The Request slot resolves through `request_trust` — the ADR-MCPS-021
 /// revocation-tier resolver — on EVERY request. `trust_store` supplies only the
@@ -49,15 +50,13 @@ use mcp_re_http_profile::SignerSlot;
 pub fn build_actor_resolver(
     signers: crate::reloading_trust::SignerDirectory,
     request_trust: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
-    trust_domain: String,
-    response_kid: String,
-    server_identity: ActorIdentity,
+    server: crate::config_state::server_identity::ServerIdentityFacts,
     response_pub: mcp_re_core::VerificationKey,
 ) -> crate::ActorResolver {
     Box::new(move |kid: &str, slot: SignerSlot| match slot {
-        SignerSlot::Response if kid == response_kid => {
+        SignerSlot::Response if kid == server.actor().keyid => {
             ResolverOutcome::Resolved(Box::new(ResolvedActor {
-                identity: server_identity.clone(),
+                identity: server.actor().clone(),
                 verification_key: response_pub.clone(),
                 slot,
             }))
@@ -80,12 +79,7 @@ pub fn build_actor_resolver(
                 Err(_) => return ResolverOutcome::NotTrusted,
             };
             ResolverOutcome::Resolved(Box::new(ResolvedActor {
-                identity: ActorIdentity {
-                    role: "client".to_string(),
-                    trust_domain: trust_domain.clone(),
-                    subject: signer,
-                    keyid: kid.to_string(),
-                },
+                identity: server.client_actor(signer, kid),
                 verification_key: key,
                 slot,
             }))
@@ -174,9 +168,9 @@ struct ChannelBindingEffects {
 ///
 /// The state is the authority: `config_state::transport` decides whether a deployment is
 /// channel-bound and how, and this is the only place that answer becomes an effect. A
-/// request the owner refuses to classify — `cn_legacy` identity, or a binding kind no
-/// deployment can be in — reaches no state, so there is nothing here to derive from and
-/// no exact-match policy can be installed over an identity field the owner rejected.
+/// request the owner refuses to classify — a binding kind no deployment can be in —
+/// reaches no state, so there is nothing here to derive from and no exact-match policy
+/// can be installed over a binding the owner rejected.
 ///
 /// Every state in the model binds exactly, so the policy does not vary; what the state
 /// carries is which SAN the identity comes from. A second binding mode would appear here
@@ -267,23 +261,10 @@ fn run_validated(
         );
     }
 
-    // Security posture note. The hard guards (cn_legacy, memory/weak replay,
+    // Security posture note. The hard guards (memory/weak replay,
     // over-ceiling/disabled cert lifetime, lb-assertion, node-local replay under
     // --fleet) are ALL rejected at parse time by
-    // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them. Only
-    // the env key source (a dev/CI-only build, `dev_env_key_source`) is worth a
-    // runtime note, since that build deliberately permits it.
-    // Which custody state this deployment is in is the custody owner's answer, taken
-    // through its material projection rather than re-tested against the raw selector.
-    if matches!(
-        config.state().custody().material(),
-        crate::config_state::CustodyMaterial::EnvSeed { .. }
-    ) {
-        eprintln!(
-            "mcp-re-proxy: WARNING: --key-source env is a dev/CI-only build (dev_env_key_source); \
-             env key material is visible to the process tree. Never use in production."
-        );
-    }
+    // `config_state::validation::unsafe_config_violations` — the proxy never reaches here with them.
     // A group/world-readable key file is a HARD error (refuse startup). WHICH files those
     // are, what a mode means and which groups this process is in are all the key-file
     // custody owner's — this root names the two custody states and holds the evidence.
@@ -305,13 +286,13 @@ fn run_validated(
     // signs by delegation (`sign_response`), so a non-exporting HSM/KMS source would
     // never need to surrender its private key — there is deliberately no
     // `signing_key()` export call on the wiring path anymore.
-    let key_source = crate::capability_materialization::build_key_source(
+    let roots = crate::capability_materialization::build_key_source(
         admitted_key_files,
         &values.channel_credential.credential_chain,
         &values.peer_trust_anchors,
     )
-    .map_err(|e| e.to_string())?
-    .into_key_source();
+    .map_err(|e| e.to_string())?;
+    let key_source = roots.key_source();
     let server_chain = key_source
         .tls_server_cert_chain()
         .map_err(|e| e.to_string())?;
@@ -390,7 +371,7 @@ fn run_validated(
     building.install_trust(crate::trust_plane::TrustPlane::materialize(
         &trust_plan,
         Arc::clone(&shutdown),
-    )?);
+    )?)?;
     let resolver = building.trust()?.resolver();
     // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
     // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
@@ -402,17 +383,12 @@ fn run_validated(
     let response_pub = key_source
         .response_public_key()
         .map_err(|e| e.to_string())?;
-    // Derived once by the `ServerIdentity` owner. Assembling one here from the primitives
-    // is what this consumer used to do, and what `SigningPlan` did independently.
-    let server_identity = config.state().server_identity().actor().clone();
+    // Derived once by the `ServerIdentity` owner, and handed over whole: the resolver reads
+    // the server actor, its keyid and the trust domain through the owner's projections.
     let resolve_actor = build_actor_resolver(
         building.trust()?.signers(),
         Arc::clone(&resolver),
-        // r12 R12-629: the coordinate through its OWNER, not the raw request. The server
-        // actor already took it from here; the client one took the primitive beside it.
-        config.state().server_identity().trust_domain().to_owned(),
-        response_kid.clone(),
-        server_identity.clone(),
+        config.state().server_identity().clone(),
         response_pub,
     );
     let expected_audience = AudienceTuple {
@@ -474,7 +450,7 @@ fn run_validated(
     // because the replay tier was declared after it and therefore dropped first.
     building.install_control(crate::control_runtime::ControlRuntime::start(
         crate::startup_plan::control_runtime_requirement(config, &replay_plan),
-    )?);
+    )?)?;
     // The redis store's reconnect machinery binds to the runtime it is CREATED in, so the
     // substrate must outlive every USE of the tier — discharged by draining the fleet
     // before anything is reclaimed, not by drop order. See `replay_plane`.
@@ -499,9 +475,7 @@ fn run_validated(
         client_ca,
         startup_now_unix,
         Arc::clone(&shutdown),
-    )?);
-    let handshake_key_may_block =
-        building.tls()?.key_exposure() == PrivateKeyExposure::NonExporting;
+    )?)?;
     let client_revocation = building.tls()?.revocation();
     let config_snapshot = building.tls()?.snapshot();
 
@@ -538,7 +512,7 @@ fn run_validated(
     // The delegated-TLS custody paths sign the handshake through a KMS or a PKCS#11
     // token, synchronously, inside rustls' `Signer::sign` — so the serving runtime
     // shape has to account for a blocking signer (see `async_fleet`).
-    if handshake_key_may_block {
+    if config_snapshot.key_exposure() == crate::config_state::PrivateKeyExposure::NonExporting {
         eprintln!(
             "mcp-re-proxy: TLS custody = DELEGATED: the handshake signature is a blocking \
              KMS/PKCS#11 call inside rustls' synchronous signer, so each core serves on a \
@@ -567,31 +541,16 @@ fn run_validated(
     let in_flight_limit = config.state().in_flight_limit();
     let mut limits = values.limits.clone();
     limits.max_in_flight_requests = in_flight_limit.per_core();
-    // BOTH halves of the relation now come from the owner (r12 R12-625). The comment below
-    // said they were one fact while only the lifetime was: the socket-level bound reached
-    // enforcement as the raw request's copy, agreeing with the adjudicated one only because
-    // layer A had read the same field. `connection_age()` is `Duration` rather than
-    // `Option` because a deployment that disabled the bound is already refused.
-    //
-    // The WEAKER of the two forms the finding names, stated so it is not mistaken for the
-    // stronger: the serving path still reads through `ServerLimits`, so this makes the
-    // value the owner's rather than making `ServerLimits` stop being the source.
-    limits.max_connection_age = Some(config.state().client_credential_window().connection_age());
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
         limits,
-        // From the owner, not the request: the lifetime and the connection age are one
-        // fact, and reading either raw here would be the relation split back into its
-        // terms one layer further on.
-        max_client_cert_lifetime: Some(config.state().client_credential_window().cert_lifetime()),
+        // The owner's sealed window; serving reads both bounds from it, not from the request.
+        client_credential_window: config.state().client_credential_window(),
         client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
         target_uri: values.target_uri.clone(),
-        // The delegated-TLS custody paths sign the handshake through a KMS or a
-        // PKCS#11 token, synchronously, inside rustls' `Signer::sign`.
-        tls_signing_may_block: handshake_key_may_block,
     };
 
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
@@ -601,14 +560,12 @@ fn run_validated(
     // than defaulting, so dropping that clause is an outage, not a second opinion (R12-636).
     let configured = &values.limits;
     let inner_timeout = configured.read_timeout.ok_or("--read-timeout-secs unset")?;
-    let pool = HttpInnerPool::from_url_strs(values.inner_http_urls.clone(), inner_timeout)?;
+    let backends = &values.inner_http_urls;
+    let pool = HttpInnerPool::from_url_strs(backends.expose().to_vec(), inner_timeout)?;
     // Named where the pool that forwards to them is BUILT. Reporting them from the fleet
     // instead would mean carrying the URLs through serving purely to print them, and the
     // fleet does not forward — it accepts.
-    eprintln!(
-        "mcp-re-proxy: HTTP inner backends {}",
-        crate::deployment_request::RedactedBackendUrls::of(&values.inner_http_urls)
-    );
+    eprintln!("mcp-re-proxy: HTTP inner backends {backends}");
     let pool = crate::inner_plane_bound::raised_to_fleet_ceiling(
         pool,
         in_flight_limit,
@@ -617,17 +574,16 @@ fn run_validated(
 
     // Response-signing custody (ADR-MCPRE-056 §8; ADR-MCPRE-052). The plane owns the
     // root issuer, the delegated snapshot and the worker that maintains it; what comes
-    // back is the signer alone. `key_source` is MOVED in here — it was only borrowed
-    // above, for TLS material and the response public key.
+    // back is the signer alone. `roots` is MOVED in here — it was only borrowed above, for
+    // TLS material and the response public key.
     //
     // The plane must outlive the proxy that signs with it, and it does: both are locals
     // of this function, and `serve_fleet` returns before either is dropped.
     building.install_signing(crate::signing_plane::SigningPlane::materialize(
         &signing_plan,
-        key_source,
+        roots,
         startup_now_unix,
-        Arc::clone(&shutdown),
-    )?);
+    )?)?;
     // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner plane,
     // the authoritative replay tier, and the optional Mode-A channel binding.
     // Response-signature validity window: 300s.
@@ -661,11 +617,8 @@ fn run_validated(
     })?;
     let (mcp_transport, transport_state) = crate::serving_capabilities::mcp_transport_contract(
         config.state().mcp_transport_contract(),
-    )
-    .into_parts();
-    if let Some(policy) = mcp_transport {
-        verifier_policy = verifier_policy.with_mcp_transport(policy);
-    }
+    );
+    verifier_policy = verifier_policy.with_mcp_transport(mcp_transport);
     posture.declare(Seam::McpTransportContract, transport_state);
     eprintln!(
         "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",
@@ -674,11 +627,13 @@ fn run_validated(
     proxy = proxy.with_verifier_policy(verifier_policy);
     proxy = proxy.with_transport_binding(binding);
 
-    // ADR-MCPS-035: the per-request security record. Both arms install a sink — the OFF
-    // state is a real `NoAuditSink` — so this one is a pair rather than an `Established`.
+    // ADR-MCPS-035: the per-request security record. OFF installs nothing: the serving
+    // path's absent sink is the no-emission posture.
     let (audit_sink, audit_state) =
-        crate::serving_capabilities::security_audit_record(config.state().audit());
-    proxy = proxy.with_audit_sink(audit_sink);
+        crate::serving_capabilities::security_audit_record(config.state().audit())?.into_parts();
+    if let Some(sink) = audit_sink {
+        proxy = proxy.with_audit_sink(Arc::new(sink));
+    }
     posture.declare(Seam::SecurityAuditRecord, audit_state);
 
     // ADR-MCPRE-054: evidence retention. Opening the store is effectful and refuses
@@ -764,7 +719,7 @@ fn run_validated(
     // order it owns — the one thing that type is for.
     let fleet_cfg = fleet_config(values, config.state().shard_topology(), in_flight_limit)?;
 
-    building.install_proxy(proxy);
+    building.install_proxy(proxy)?;
     let (runtime, lifecycle) = building.finish()?;
 
     runtime.serve(
@@ -937,10 +892,12 @@ mod tests {
 
             // Attributed records, so the unattributed ceiling cannot drop any of them and
             // an absent seq means "lost at exit" rather than "refused by the queue".
+            let sink = crate::audit_sink::StderrAuditSink::open()
+                .expect("the OS CSPRNG yields an incarnation");
             for i in 0..BATCH {
-                crate::audit_sink::StderrAuditSink.record(&crate::audit_record::AuditRecord {
+                sink.record(&crate::audit_record::AuditRecord {
                     subject: crate::audit_record::AuditSubject::request_accepted(
-                        crate::authorization::AuthorizationFacet::NotConfigured,
+                        &crate::authorization::AuthorizationPosture::NoPolicyConfigured,
                         crate::admission_enforcer::AdmissionFacet::NotConfigured,
                     ),
                     actor_id: Some("teardown-actor".to_string()),
@@ -998,6 +955,21 @@ mod tests {
             "shutdown must STATE which of the two audit outcomes happened, and this run \
              drained: {stderr}"
         );
+        // The run's stream opens with a start line naming the run, and the records and the
+        // shutdown line carry that same run: a collector partitions on it, and a run with a
+        // start line and no shutdown line ended with an unknown tail.
+        let run = stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("mcp-re-proxy: audit stream started run="))
+            .unwrap_or_else(|| panic!("the stream never stated its start: {stderr}"));
+        assert!(
+            stderr.contains(&format!("audit seq=0 run={run} ")),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!("audit stream drained at shutdown run={run}:")),
+            "{stderr}"
+        );
     }
 
     /// C117: a faulted host clock is only a warning while it costs nothing but
@@ -1049,7 +1021,7 @@ mod tests {
     /// A verified request subject, through the one producer. The composition root's own
     /// controls need an operand, not a relation.
     fn binding_subject() -> crate::communication_assurance::VerifiedRequestSubject {
-        crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject(
+        crate::communication_assurance::request_peer_binding::http_profile_adapter::subject_for_test(
             &mcp_re_http_profile::ResolvedActor {
                 identity: mcp_re_http_profile::ActorIdentity {
                     role: "client".into(),
@@ -1064,13 +1036,7 @@ mod tests {
     }
 
     /// The two halves of one decision are checked together: which SAN the identity is read
-    /// from, and that the request signer is compared with it at all. The negative control
-    /// is the deprecated identity source, which reaches no state — so the projection has
-    /// nothing to map and the exact-match policy cannot end up running over a CN.
-    ///
-    /// The broken implementation this catches: reading `binding` and `identity_source` off
-    /// the request at the call site, which installs `ExactMatchBinding` over
-    /// `IdentityPolicy::CnLegacy` for a request this owner refuses outright.
+    /// from, and that the request signer is compared with it at all.
     ///
     /// The `expected_field` column is LOAD-BEARING (r11 R11-129): it used to be bound to
     /// `_` and asserted nothing, so the control read as covering which certificate field
@@ -1137,17 +1103,6 @@ mod tests {
                 "{expected_state:?} must refuse a request presenting no authenticated peer"
             );
         }
-
-        let mut config = config_with("file", "/seed", "/key");
-        config.peer_identity =
-            crate::deployment_request::PeerIdentityEvidenceRequest::channel_credential(
-                IdentityPolicy::CnLegacy,
-            );
-        assert!(
-            classify_and_validate_binding(&config).0.is_none(),
-            "a state for cn_legacy would let the serving path install an exact-match \
-             policy over the deprecated CN identity"
-        );
     }
 
     /// The fleet's input is the serving TOPOLOGY REQUEST, projected into the runtime's

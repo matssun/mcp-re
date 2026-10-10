@@ -116,10 +116,10 @@ source is wired.**
 
 ### Why the counter is always appended
 
-The epoch must be derived purely from shared state so that an operator `INCR` remains
-effective across a replica restart. The superseded design compared the counter against a
+The epoch must be derived purely from shared state so that an operator's advance
+(`mcp-re-proxy trust-epoch advance`) remains effective across a replica restart. The superseded design compared the counter against a
 baseline captured at *that process's* startup and emitted the bare label while they were
-equal; a replica restarting after an `INCR` therefore adopted the advanced value as its
+equal; a replica restarting after an advance therefore adopted the advanced value as its
 own baseline, never observed an advance, and resumed minting an epoch verifiers still
 accepted. The kill switch was process-relative rather than durable.
 
@@ -128,9 +128,9 @@ accepted. The kill switch was process-relative rather than durable.
 | # | invariant |
 |---|---|
 | E1 | The emitted epoch is a pure function of `(base label, shared counter)` — no per-process state contributes. Every replica at counter `N` mints `<base>#N`, whenever it started. |
-| E2 | An `INCR` survives a restart: a restarted replica resolves the same label as its long-lived peers, never the pre-`INCR` one. |
+| E2 | An advance survives a restart: a restarted replica resolves the same label as its long-lived peers, never the pre-advance one. The supported advance is `mcp-re-proxy trust-epoch advance`, which commits the incremented counter together with a fresh 128-bit generation in one server-side step; a raw `INCR` moves only the number and is not a supported advance. |
 | E3 | **Fail closed for minting.** A replica that cannot establish the shared epoch does not issue: no credential is minted without a comparable epoch. The current key keeps serving until its `exp`, after which the hot path fails closed on its own. Startup refuses outright rather than serving with the kill switch wired to nothing. |
-| E4 | The emitted epoch is monotone within a process. A counter that goes backwards (store reset, failover to a stale replica, a reconnect landing on the wrong instance) is **refused, never rebased** — minting under a lower epoch would resurrect credentials verifiers already reject. |
+| E4 | The emitted epoch is monotone within a process. A counter that goes backwards (store reset, failover to a stale replica, a reconnect landing on the wrong instance) is **refused, never rebased** — minting under a lower epoch would resurrect credentials verifiers already reject. The refusal repairs forward: the replica moves the shared counter to one past its high-water mark in one atomic step, written only while the counter is absent or below the mark, and mints again once a read is at or above it. A generation the replica has not seen on a counter at its mark is a fresh advance landing on an acknowledged label and is repaired the same way. |
 | E5 | Connectivity is lazy and retrying. A store briefly unreachable at boot or at runtime does not permanently disable the kill switch; reconnection observes increments missed during the outage (E4 still applies). |
 
 Across a restart the shared counter is the only authority, by construction: a store that
@@ -140,7 +140,7 @@ no local state with which to detect it. E4 bounds this within a process lifetime
 ### Operational consequence
 
 Revocation is undone by pointing verifiers at the **new** epoch, never by rewinding the
-counter — a rewind is refused by E4. The multi-replica proof harness
+counter — a rewind is refused by E4 and repaired forward by any live replica. The multi-replica proof harness
 (`docs/security/gke-multi-replica-validation.sh`) resolves the accepted epoch per call
 from the shared counter for exactly this reason.
 

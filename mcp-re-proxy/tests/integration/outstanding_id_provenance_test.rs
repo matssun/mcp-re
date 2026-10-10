@@ -14,12 +14,13 @@
 //! > The outstanding id is decided once, by envelope validation, ahead of every stage that
 //! > reads the body for meaning; and no production serving code reads it again.
 //!
-//! # Why a source scan and not a type
+//! # What the type holds, and what the scan holds
 //!
-//! `outstanding_id` is a published API with its own battery — the client side and the
-//! response-envelope validator legitimately call it — so it cannot be deleted to make a
-//! second read unavailable. What can be held is that the SERVING PATH does not take it
-//! twice. Evidence, never unconstructibility.
+//! `OutstandingId` has one producer, `validate_request_envelope`, and its representation is
+//! private to the profile, so a second answer cannot be constructed — only obtained by asking
+//! the validator again. That the serving path asks it ONCE, inside the decision, and carries
+//! the answer to its terminal is what this source scan holds. Evidence, not
+//! unconstructibility.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -27,12 +28,12 @@ use std::path::PathBuf;
 /// The one decision, and where the serving path makes it.
 const DECISION: &str = "validate_envelope";
 
-/// The published reader the serving path must NOT reach: asking the body again is what makes
-/// two answers possible.
-const SECOND_READ: &str = "outstanding_id(";
+/// The only producer of an outstanding id. The decision calls it once; any further call is a
+/// second answer to the same question.
+const PRODUCER: &str = "validate_request_envelope(";
 
 /// The value every downstream reader is given instead.
-const CARRIED: &str = "admitted.outstanding";
+const CARRIED: &str = "admitted.envelope.outstanding()";
 
 fn collect_rust_files(dir: &Path, into: &mut Vec<PathBuf>) {
     let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read dir {dir:?}: {e}"));
@@ -107,12 +108,13 @@ fn the_serving_path_decides_the_outstanding_id_exactly_once() {
 fn no_production_serving_code_reads_the_outstanding_id_a_second_time() {
     let source = serving_source();
     assert_eq!(
-        calls(&source, SECOND_READ),
-        0,
-        "the serving path reaches `{SECOND_READ}`. A second read of the same document can \
-         disagree with the first, and the disagreement that matters is a body dispatched as \
-         a request and acknowledged as a notification — the tool ran, and the caller was \
-         told nothing ran."
+        calls(&source, PRODUCER),
+        1,
+        "the serving path calls `{PRODUCER}` {} time(s); the decision is the one call. A second \
+         read of the same document can disagree with the first, and the disagreement that \
+         matters is a body dispatched as a request and acknowledged as a notification — the \
+         tool ran, and the caller was told nothing ran.",
+        calls(&source, PRODUCER)
     );
     assert!(
         source.contains(CARRIED),
@@ -137,15 +139,18 @@ fn the_rules_would_catch_each_regression() {
     assert_eq!(calls("// validate_envelope(r);", DECISION), 0);
     assert_eq!(calls("fn f() {}", DECISION), 0);
     assert_eq!(
-        calls("let id = outstanding_id(&body)?;", SECOND_READ),
-        1,
+        calls(
+            "let a = validate_request_envelope(&b)?;\nlet c = validate_request_envelope(&b)?;",
+            PRODUCER
+        ),
+        2,
         "a second read must be seen"
     );
 
     // Test regions are out of scope, and production below one is still production.
     let half = mcp_re_test_paths::rust_source::production_half(
-        "#[cfg(test)]\nmod tests {\n    outstanding_id(&b);\n}\nfn late() { validate_envelope(r); }\n",
+        "#[cfg(test)]\nmod tests {\n    validate_request_envelope(&b);\n}\nfn late() { validate_envelope(r); }\n",
     );
-    assert_eq!(calls(&half, SECOND_READ), 0);
+    assert_eq!(calls(&half, PRODUCER), 0);
     assert_eq!(calls(&half, DECISION), 1);
 }

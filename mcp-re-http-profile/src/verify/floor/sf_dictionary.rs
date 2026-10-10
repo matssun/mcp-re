@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! RFC 8941 dictionary reading, for the two headers that carry evidence.
 //!
-//! One authority: **a dictionary header has exactly one spelling, and exactly one value
-//! under a label.** This is the generic Structured-Fields layer; what a member's VALUE
+//! One authority: **the labelled member has exactly one spelling, and its label occurs
+//! exactly once in the dictionary.** This is the generic Structured-Fields layer; what a member's VALUE
 //! means is [`super::signature_input`]'s, and the two are separate because they are
 //! separate specifications with separate closed sets.
 //!
@@ -12,9 +12,17 @@
 //! canonically ([`crate::sigbase`]). Any spelling difference normalised away here therefore
 //! collapses into the canonical signature base and verifies under the same signature — so
 //! an on-path intermediary could rewrite the raw header bytes without invalidating
-//! anything, and every consumer that logs, hashes, caches or diffs the RAW header would
+//! anything, and every consumer that logs, hashes, caches or diffs the labelled member would
 //! hold bytes other than the ones that were signed. No forgery; the one-to-one
 //! correspondence the profile claims for itself simply stops holding.
+//!
+//! # Scope
+//!
+//! The field outside the labelled member is NOT pinned. Neighbouring members (RFC 9421
+//! lets other signatures share the field), their order, and OWS around the
+//! member-separating comma (RFC 8941 section 4.2) change the raw field bytes without
+//! changing the reconstructed base; a consumer that must hold exactly the signed bytes
+//! records the labelled member value or the signature base, never the raw field.
 //!
 //! This module is the SOLE reader of both `Signature-Input` and `Signature`, so every path
 //! inherits the rule rather than each remembering it.
@@ -128,21 +136,37 @@ pub(crate) fn member_value<'a>(
                 "empty dictionary member",
             ));
         }
-        if let Some(rest) = member.strip_prefix(label) {
-            if let Some(v) = rest.strip_prefix('=') {
-                if found.is_some() {
-                    return Err(HttpProfileError::MalformedEvidence(
-                        "duplicate signature label",
-                    ));
-                }
-                if v.trim() != v {
-                    return Err(HttpProfileError::MalformedEvidence(
-                        "dictionary member spacing",
-                    ));
-                }
-                found = Some(v);
-            }
+        let Some(rest) = member.strip_prefix(label) else {
+            continue;
+        };
+        // A longer key that merely shares the label as a prefix, e.g. `mcp-rex`, is a
+        // neighbour.
+        if rest.starts_with(|c: char| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.' | '*')
+        }) {
+            continue;
         }
+        // RFC 8941 reads `mcp-re` / `mcp-re;p=1` as boolean true and a conforming parser
+        // resolves a repeated key to its LAST instance, so skipping it would let
+        // `mcp-re=(..), mcp-re` verify here while meaning something else elsewhere.
+        let Some(v) = rest.strip_prefix('=') else {
+            return Err(HttpProfileError::MalformedEvidence(
+                "signature label without a value",
+            ));
+        };
+        if found.is_some() {
+            return Err(HttpProfileError::MalformedEvidence(
+                "duplicate signature label",
+            ));
+        }
+        // Trailing OWS belongs to the member separator (RFC 8941 section 4.2), is removed
+        // by `split_dictionary`, and is outside the pinned form.
+        if v.trim_start() != v {
+            return Err(HttpProfileError::MalformedEvidence(
+                "dictionary member spacing",
+            ));
+        }
+        found = Some(v);
     }
     found.ok_or(HttpProfileError::MissingEvidence("signature label"))
 }
@@ -222,6 +246,27 @@ mod tests {
         assert_eq!(
             member_value("other=1, mcp-re=:YWJj:", "mcp-re").expect("a neighbour is legal"),
             ":YWJj:"
+        );
+    }
+
+    #[test]
+    fn a_label_member_without_a_value_is_refused_not_skipped() {
+        for spelling in [
+            "mcp-re=:YWJj:, mcp-re",
+            "mcp-re, mcp-re=:YWJj:",
+            "mcp-re=:YWJj:, mcp-re;x=1",
+            "mcp-re;x=1",
+            "mcp-re =:YWJj:",
+        ] {
+            assert_eq!(
+                member_value(spelling, "mcp-re").unwrap_err(),
+                HttpProfileError::MalformedEvidence("signature label without a value"),
+                "{spelling:?} was skipped or read as the canonical dictionary",
+            );
+        }
+        assert_eq!(
+            member_value("mcp-rex=1, mcp-re=:YWJj:", "mcp-re"),
+            Ok(":YWJj:")
         );
     }
 }

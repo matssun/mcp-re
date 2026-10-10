@@ -35,8 +35,7 @@
 //!
 //! Entry points follow the offline/live pattern of the GCP sibling:
 //!   * `*_offline_local_seed` — NOT ignored: the feature-gated CI job runs it via
-//!     `AwsKmsEd25519Backend::for_test_with_local_seed` (no network, no AWS
-//!     credentials), guarding the KMS-root → serving/flip wiring on every push.
+//!     a local-key `KmsEd25519Backend` (no network, no AWS credentials), guarding the KMS-root → serving/flip wiring on every push.
 //!     This is wiring coverage, NOT AWS validation; only the live twin earns that.
 //!   * `*_live` — `#[ignore]`: the real AWS KMS backend. FAILS LOUDLY if
 //!     unconfigured; it never silently passes without verifying.
@@ -73,7 +72,7 @@ use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestRoleEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
@@ -110,8 +109,6 @@ const TTL: i64 = 300;
 const OVERLAP: i64 = 60;
 // A batch comfortably larger than 1, to prove the KMS is not touched per request.
 const RESPONSES_PER_KEY: usize = 8;
-// The key id the offline fake transport reports; never a real AWS resource.
-const OFFLINE_KEY_ID: &str = "offline-local-seed-key";
 
 // --- KMS signer construction (identical policy to the sibling live test) --------
 
@@ -141,13 +138,7 @@ fn live_signer() -> KmsResponseSigner {
     KmsResponseSigner::new(Box::new(backend))
 }
 
-/// An offline signer over the SAME backend adapter (local seed, no network) —
-/// exercises the KMS-root → serving/flip wiring hermetically in CI.
-fn offline_signer() -> KmsResponseSigner {
-    let backend = AwsKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32], OFFLINE_KEY_ID)
-        .expect("local-seed KMS backend");
-    KmsResponseSigner::new(Box::new(backend))
-}
+use crate::local_seed_backend::offline_signer;
 
 /// A `ResponseSigner` that wraps the KMS root and counts EVERY real signing call.
 /// Passing this as the root to `build_delegated_signing` lets the SERVING lane
@@ -197,7 +188,7 @@ fn resolver(
         Some(ResolvedActor {
             identity: ActorIdentity {
                 role: role.into(),
-                trust_domain: "example.com".into(),
+                trust_domain: "mcp.example.com".into(),
                 subject: format!("did:example:{role}"),
                 keyid: key_id.into(),
             },
@@ -223,9 +214,9 @@ fn custody_cfg() -> CustodyConfig {
         profile: PROFILE_TAG.into(),
         aud: VERIFIER_AUD.into(),
         audience_hash: VERIFIER_AUD.into(),
-        trust_epoch: EPOCH.into(),
+        trust_epoch: EPOCH.parse().expect("epoch base"),
         server_role: "server".into(),
-        server_trust_domain: "example.com".into(),
+        server_trust_domain: "mcp.example.com".into(),
         server_subject: "did:example:server".into(),
         window: DelegatedKeyWindow::of(TTL, OVERLAP).expect("0 < overlap < ttl"),
     }
@@ -240,6 +231,7 @@ fn delegated_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "127.0.0.1:8443",
         "--audience",
         VERIFIER_AUD,
+        "--allow-example-fixtures",
         "--server-signer",
         "did:example:server",
         "--server-key-id",
@@ -258,6 +250,8 @@ fn delegated_config() -> mcp_re_proxy::deployment_request::DeploymentRequest {
         "http://127.0.0.1:9",
         "--target-uri",
         TARGET,
+        "--mcp-protocol-version",
+        "2026-07-28",
         "--route",
         "a",
         "--replay-redis-url",
@@ -291,7 +285,7 @@ fn base_request() -> HttpRequest {
 /// A client-signed request whose freshness window brackets the serve instant `at`
 /// (so serving at `at` exercises the SIGNING step, not a freshness rejection),
 /// verified at `at` for the response binding. `nonce` distinguishes replays.
-fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestEvidence, VerifiedMcpRequest) {
+fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestRoleEvidence, VerifiedMcpRequest) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
@@ -362,9 +356,12 @@ fn http_response(served: ServedHttpResponse) -> HttpResponse {
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
-    Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
-    })
+    Box::new(mcp_re_proxy::async_inner::InProcessInner::new(
+        |_forwarded: &[u8]| -> Vec<u8> {
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        },
+        mcp_re_proxy::async_inner::DispatchCompletionBound::Within(std::time::Duration::ZERO),
+    ))
 }
 
 fn fresh_response() -> HttpResponse {
@@ -390,7 +387,8 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     // Build the serving proxy EXACTLY as `app::run` does in delegated-required mode:
     // `build_delegated_signing` off the KMS root, then `new_delegated`.
     let config = delegated_config();
-    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), counting);
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), counting)
+        .expect("the root states its key");
     let signer = Arc::clone(&wiring.signer);
     let mut rotor = wiring.rotor;
 
@@ -437,7 +435,7 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     let first_kid = snap.delegated_kid().to_owned();
     assert_eq!(
         first_kid,
-        mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key().public_key().to_b64url()),
+        mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.public_key().to_b64url()),
     );
 
     // Serve a batch under the one delegated key; each response verifies via the
@@ -451,7 +449,8 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
             .verify_delegated_bound_response(&resp, &req, &expectations(&[EPOCH]), &|_| false, NOW)
             .expect("served response verifies via the KMS-rooted attestation chain");
         assert_eq!(
-            verified.signature_facts.accepted_signer.identity.keyid, first_kid,
+            verified.signature_facts().accepted_signer.identity.keyid,
+            first_kid,
             "signed by the delegated key, not the KMS root"
         );
     }
@@ -521,7 +520,8 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
         .verify_delegated_bound_response(&resp2, &req2, &expectations(&[EPOCH]), &|_| false, after)
         .expect("post-rotation response verifies");
     assert_eq!(
-        verified2.signature_facts.accepted_signer.identity.keyid, second_kid,
+        verified2.signature_facts().accepted_signer.identity.keyid,
+        second_kid,
         "post-rotation responses are signed by the successor delegated key"
     );
 }
@@ -540,6 +540,7 @@ fn kms_custody(
     impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
     impl FnMut() -> SigningKey,
 > {
+    let root_pub = signer.response_public_key().expect("KMS root public key");
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| -> Option<String> {
         issue_delegation_credential_with_signer(h, c, |input| {
             kms_calls.fetch_add(1, Ordering::SeqCst);
@@ -555,12 +556,12 @@ fn kms_custody(
         seed = seed.wrapping_add(1);
         SigningKey::from_seed_bytes(&[seed; 32])
     };
-    DelegatedSigningCustody::new(custody_cfg(), issue, factory)
+    DelegatedSigningCustody::new(custody_cfg(), root_pub, issue, factory)
 }
 
 fn run_kms_authority_flip(root: KmsResponseSigner) {
     let root_pub = root.response_public_key().expect("KMS root public key");
-    let (req, ev, _verified_req) = signed_request("nonce-flip", NOW);
+    let (req, _, _verified_req) = signed_request("nonce-flip", NOW);
 
     // --- Flip 1: the PRE-052 authority (KMS signs the response DIRECTLY) is
     // rejected by a delegated-required verifier — no downgrade. The SAME KMS key
@@ -600,7 +601,7 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
 
     let mut delegated = fresh_response();
     custody
-        .sign_response(NOW, &mut delegated, &req, &ev)
+        .sign_response(NOW, &mut delegated, &req)
         .expect("KMS-rooted custody signs");
     let first_kid = custody.active_kid().expect("a key is active").to_owned();
     assert_eq!(
@@ -645,13 +646,13 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
     // both keys are simultaneously within their TTL at the overlap instant.
     let mut predecessor = fresh_response();
     custody
-        .sign_response(NOW, &mut predecessor, &req, &ev)
+        .sign_response(NOW, &mut predecessor, &req)
         .expect("predecessor signs");
 
     let after = NOW + TTL - OVERLAP + 10;
     let mut successor = fresh_response();
     custody
-        .sign_response(after, &mut successor, &req, &ev)
+        .sign_response(after, &mut successor, &req)
         .expect("KMS issues the successor");
     let second_kid = custody.active_kid().expect("successor active").to_owned();
     assert_ne!(

@@ -185,6 +185,8 @@ pub(crate) mod mechanism_harness {
     //! can take, and only a handshake answers it.
 
     use std::sync::Arc;
+    use std::time::Duration;
+    use std::time::SystemTime;
 
     use rcgen::BasicConstraints;
     use rcgen::CertificateParams;
@@ -351,6 +353,68 @@ pub(crate) mod mechanism_harness {
         pub(crate) client: Arc<ClientConfig>,
         pub(crate) server: Arc<ServerConfig>,
         pub(crate) client_leaf: CertificateDer<'static>,
+    }
+
+    /// Validity `[now - 60s, now + 1800s]`, inside any credential window a deployment can
+    /// state, so a verifier running at the real clock finds the leaf current.
+    fn short_lived(params: &mut CertificateParams) {
+        params.not_before = (SystemTime::now() - Duration::from_secs(60)).into();
+        params.not_after = (SystemTime::now() + Duration::from_secs(1800)).into();
+    }
+
+    /// [`make_uri_leaf`] with a validity window around the present moment.
+    pub(crate) fn make_short_lived_uri_leaf(
+        ca: &Ca,
+        uri_san: &str,
+    ) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
+        let key = KeyPair::generate().expect("leaf key");
+        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
+        params.subject_alt_names = vec![SanType::URI(uri_san.try_into().expect("uri san"))];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        short_lived(&mut params);
+        let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
+        (
+            cert.der().clone(),
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
+        )
+    }
+
+    /// [`mutually_authenticated_peers`] with both leaves valid around the present moment.
+    pub(crate) fn short_lived_peers() -> Peers {
+        let client_ca = make_ca("peer-client-ca");
+        let server_ca = make_ca("peer-server-ca");
+        let key = KeyPair::generate().expect("leaf key");
+        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
+        params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().expect("dns san"))];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        short_lived(&mut params);
+        let cert = params
+            .signed_by(&key, &server_ca.issuer())
+            .expect("leaf signed");
+        let server_leaf = cert.der().clone();
+        let server_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+
+        let key = KeyPair::generate().expect("leaf key");
+        let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
+        params.subject_alt_names = vec![SanType::DnsName("client".try_into().expect("dns san"))];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        short_lived(&mut params);
+        let cert = params
+            .signed_by(&key, &client_ca.issuer())
+            .expect("leaf signed");
+        let client_leaf = cert.der().clone();
+        let client_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+
+        let server = server_config(&[client_ca.der()], vec![server_leaf], server_key);
+        let client = client_config(
+            &server_ca.der(),
+            Some((vec![client_leaf.clone()], client_key)),
+        );
+        Peers {
+            client,
+            server,
+            client_leaf,
+        }
     }
 
     pub(crate) fn mutually_authenticated_peers() -> Peers {

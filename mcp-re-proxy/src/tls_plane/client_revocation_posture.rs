@@ -35,9 +35,12 @@ use super::ClientCrlEvidence;
 /// installed before the cutover, and a malformed CRL is a hard startup error.
 ///
 /// Freshness is checked before posture is read, so a stale CRL refuses startup with its own
-/// diagnostic rather than being reported as posture.
+/// diagnostic rather than being reported as posture. Each CRL must also be signed by a
+/// configured client CA key (`client_ca`): the per-request index is built from these bytes
+/// and nothing the handshake verifier does authenticates it.
 pub(super) fn load_and_check_crls(
     crl_paths: &[String],
+    client_ca: &[rustls_pki_types::CertificateDer<'static>],
     startup_now_unix: i64,
 ) -> Result<ClientCrlEvidence, String> {
     let client_crls = crate::client_crl_publication::load_client_crls(crl_paths)?;
@@ -53,26 +56,37 @@ pub(super) fn load_and_check_crls(
     // is the CONSEQUENCE: here a refusal means the deployment does not come up, because a
     // proxy that starts and then fails every handshake is an outage nobody attributes to a
     // CRL; on reload the same refusal keeps last-good, which still ages out on its own.
-    ClientCrlEvidence::from_checked(client_crls, startup_now_unix)
+    ClientCrlEvidence::from_checked(client_crls, client_ca, startup_now_unix)
         .map_err(|e| format!("mcp-re-proxy refuses to start with a bad client CRL: {e}"))
 }
 
 /// The PER-REQUEST revocation index, built from the gated evidence the handshake verifier
-/// is about to be given.
+/// is about to be given: the read handle the serving path takes, and the one capability to
+/// publish into it.
 ///
 /// Without it revocation reaches only NEW connections: rustls runs client authentication on
 /// a full handshake alone, so a peer added to a reloaded CRL keeps serving every request on
 /// the connection it already holds.
+///
+/// The publisher goes to the reload worker and nowhere else; the plane keeps and hands out
+/// only the read handle, so no holder of the plane's `Arc` can replace the index.
 pub(super) fn build_revocation_index(
     evidence: &ClientCrlEvidence,
-) -> Result<Option<Arc<client_revocation::SharedClientRevocation>>, String> {
+) -> Result<RevocationCell, String> {
     if evidence.is_empty() {
-        return Ok(None);
+        return Ok((None, None));
     }
-    Ok(Some(Arc::new(
-        client_revocation::SharedClientRevocation::new(evidence.revocation_index()?),
-    )))
+    let (reader, publisher) =
+        client_revocation::SharedClientRevocation::establish(evidence.revocation_index()?);
+    Ok((Some(Arc::new(reader)), Some(publisher)))
 }
+
+/// What [`build_revocation_index`] establishes: the read handle, and the publisher that is
+/// present exactly when the handle is.
+pub(super) type RevocationCell = (
+    Option<Arc<client_revocation::SharedClientRevocation>>,
+    Option<client_revocation::ClientRevocationPublisher>,
+);
 
 /// ADR-MCPS-023 §A1 (MCPS-58) — the operator-visible revocation posture, as lines.
 ///
@@ -107,8 +121,7 @@ pub(crate) fn revocation_posture_lines(
     plan: &crate::startup_plan::ChannelEstablishmentPlan,
     currency: &super::ClientRevocationCurrency,
 ) -> Vec<String> {
-    let crls = currency.evidence();
-    let maintenance = currency.maintenance();
+    let (crls, maintenance) = currency.in_force();
     // Both durations come from ONE owned window, so the exposure window is never reported
     // beside a connection age that outlives it. There is no `unbounded` arm because there
     // is no such deployment: disabling either bound is refused at layer A, and a window
@@ -131,7 +144,7 @@ pub(crate) fn revocation_posture_lines(
         } else {
             "enforced"
         },
-        maintenance.wire(plan.client_revocation.reload_cadence_secs()),
+        maintenance.wire(),
     )];
     if crls.is_empty() {
         let max_lifetime = plan.credential_window.cert_lifetime().as_secs();
@@ -185,11 +198,12 @@ mod revocation_posture_tests {
                 cert_lifetime_secs,
                 300,
             ),
+            handshake_signing: crate::delegated_tls::HandshakeSignCapacity::default(),
         }
     }
 
     fn no_crls() -> ClientCrlEvidence {
-        ClientCrlEvidence::default()
+        ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal")
     }
 
     /// Without a CRL the posture must say `per_request_crl_check=not_configured`.
@@ -200,10 +214,8 @@ mod revocation_posture_tests {
     /// loaded would describe a mechanism that is not running.
     #[test]
     fn with_no_crl_the_per_request_check_is_reported_as_not_configured() {
-        let lines = revocation_posture_lines(
-            &plan(3600),
-            &ClientRevocationCurrency::new(no_crls(), false),
-        );
+        let lines =
+            revocation_posture_lines(&plan(3600), &ClientRevocationCurrency::new(no_crls(), None));
         assert!(
             lines[0].contains("per_request_crl_check=not_configured"),
             "got: {}",
@@ -238,8 +250,10 @@ mod revocation_posture_tests {
                 next_update_unix: None,
             },
         ]);
-        let lines =
-            revocation_posture_lines(&plan(3600), &ClientRevocationCurrency::new(crls, true));
+        let lines = revocation_posture_lines(
+            &plan(3600),
+            &ClientRevocationCurrency::new(crls, Some(3600)),
+        );
         assert!(
             lines[0].contains("per_request_crl_check=enforced"),
             "got: {}",

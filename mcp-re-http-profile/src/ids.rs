@@ -223,3 +223,95 @@ pub const BODYLESS_DELEGATED_RESPONSE_COMPONENTS: [&str; 4] = [
 /// action was taken. Describing it as more would be precisely the overclaim this
 /// protocol exists to avoid.
 pub const STATUS_ACCEPTED: u16 = 202;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_signature_vocabulary_holds_its_published_values() {
+        assert_eq!(PROFILE_TAG, "mcp-re-http-v1");
+        assert_eq!(REQUEST_LABEL, "mcp-re");
+        assert_eq!(RESPONSE_LABEL, "mcp-re-response");
+        assert_eq!(ALG_ED25519, "ed25519");
+        assert_eq!(EVIDENCE_DIGEST_ALG, "sha256");
+    }
+
+    #[test]
+    fn the_evidence_role_labels_are_published_distinct_and_nul_free() {
+        assert_eq!(EVIDENCE_LABEL_REQUEST, "mcp-re-http-v1/request-evidence");
+        assert_eq!(EVIDENCE_LABEL_RESPONSE, "mcp-re-http-v1/response-evidence");
+        assert_eq!(EVIDENCE_LABEL_REQUEST_STATE, "mcp-re-http-v1/request-state");
+        assert_ne!(EVIDENCE_LABEL_REQUEST, EVIDENCE_LABEL_RESPONSE);
+        assert_ne!(EVIDENCE_LABEL_REQUEST, EVIDENCE_LABEL_REQUEST_STATE);
+        assert_ne!(EVIDENCE_LABEL_RESPONSE, EVIDENCE_LABEL_REQUEST_STATE);
+        for label in [
+            EVIDENCE_LABEL_REQUEST,
+            EVIDENCE_LABEL_RESPONSE,
+            EVIDENCE_LABEL_REQUEST_STATE,
+        ] {
+            assert!(label.is_ascii());
+            assert!(!label.contains('\0'));
+        }
+    }
+
+    #[test]
+    fn the_meta_block_keys_are_published_and_distinct() {
+        assert_eq!(REQUEST_EVIDENCE_BLOCK_KEY, "se.syncom/mcp-re.http.request");
+        assert_eq!(
+            VERIFIED_CONTEXT_BLOCK_KEY,
+            "se.syncom/mcp-re.verified-context"
+        );
+        assert_eq!(
+            RESPONSE_EVIDENCE_BLOCK_KEY,
+            "se.syncom/mcp-re.http.response"
+        );
+        assert_ne!(REQUEST_EVIDENCE_BLOCK_KEY, VERIFIED_CONTEXT_BLOCK_KEY);
+        assert_ne!(REQUEST_EVIDENCE_BLOCK_KEY, RESPONSE_EVIDENCE_BLOCK_KEY);
+        assert_ne!(VERIFIED_CONTEXT_BLOCK_KEY, RESPONSE_EVIDENCE_BLOCK_KEY);
+    }
+
+    #[test]
+    fn the_covered_component_sets_hold_their_published_members() {
+        assert_eq!(
+            REQUIRED_REQUEST_COMPONENTS,
+            ["@method", "@target-uri", "content-digest", "content-type"]
+        );
+        assert_eq!(
+            REQUIRED_RESPONSE_COMPONENTS,
+            ["@status", "content-digest", "content-type"]
+        );
+        assert_eq!(
+            REQUIRED_RESPONSE_REQ_COMPONENTS,
+            ["@method", "@target-uri", "content-digest", "content-type"]
+        );
+        assert_eq!(
+            BODYLESS_REQUEST_COMPONENTS,
+            ["@method", "@target-uri", "content-digest"]
+        );
+        assert_eq!(
+            BODYLESS_RESPONSE_COMPONENTS,
+            ["@status", "content-digest", "mcp-re-request-evidence"]
+        );
+        assert_eq!(
+            BODYLESS_DELEGATED_RESPONSE_COMPONENTS,
+            [
+                "@status",
+                "content-digest",
+                "mcp-re-delegation",
+                "mcp-re-request-evidence"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_header_names_bounds_and_status_hold_their_published_values() {
+        assert_eq!(MCP_METHOD_HEADER, "mcp-method");
+        assert_eq!(MCP_NAME_HEADER, "mcp-name");
+        assert_eq!(MCP_PROTOCOL_VERSION_HEADER, "mcp-protocol-version");
+        assert_eq!(MCP_RE_REQUEST_EVIDENCE_HEADER, "mcp-re-request-evidence");
+        assert_eq!(MCP_RE_DELEGATION_HEADER, "mcp-re-delegation");
+        assert_eq!(MAX_DELEGATION_HEADER_LEN, 8192);
+        assert_eq!(MAX_ADMISSION_ASSERTION_LEN, 8192);
+        assert_eq!(STATUS_ACCEPTED, 202);
+    }
+}

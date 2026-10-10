@@ -36,10 +36,13 @@ All paths below are relative to the repo root; scripts are in
 
 Ledger statuses — actionable (`open`, `provisional`, `confirmed`, `regression`,
 `needs-senior-eval`) are the worklist; `escalated` / `exhausted` block and wait
-for a human; everything else is terminal (`fixed`, `false-positive`,
-`accepted-risk`, `superseded`, `wontfix`, `duplicate`, `handled-prior-round`,
-`positive-control`, `informational`). A closure other than `fixed`/`superseded`/
-`duplicate` needs a one-line reason; `fixed` is written only by `finalize.py`,
+for a human; everything else is terminal (`fixed`, `false-positive`, `premise`,
+`constraint`, `superseded`, `duplicate`, `handled-prior-round`, `positive-control`,
+`informational`). A `premise` names its registered ASM in `premise`; a `constraint`
+names the owner ruling that accepted it in `owner_ruling`. `accepted-risk` and
+`wontfix` are not dispositions — `ledger.py` and `dispose.py` refuse them, and
+`scripts/finding_ledger_gate.py` fails the merge path on a row carrying one. A
+closure other than `fixed`/`superseded`/`duplicate` needs a one-line reason; `fixed` is written only by `finalize.py`,
 after a reviewer accepted a landed diff.
 
 ## Bootstrap a round (once)
@@ -117,8 +120,20 @@ clock. The gate is therefore split by what can be attributed to one writer:
 | when | what | why there |
 |---|---|---|
 | per file (`check.py post` → `rust_gate.py`) | `bazel build --config=lint` over every target that compiles the file (each library flavor is its own target, so every feature configuration; plus the related files' targets above `local`), the module-size ratchet, the file's own unit tests in the unit-test targets built from those libraries (`--test_arg=<module>::`), each `--it` test target the package named | attributable, and seconds-to-a-minute on a warm cache |
-| per batch (`batch_gate.py`) | clippy ratchet, module-size, bazel-srcs, unit-closure, verification-trigger, mutation-lane self-test, the ADR-MCPRE-069 control-census ratchet and `control-census --gate`; the touched closure — every Rust target that depends on a touched file, under `--config=lint`, and every non-manual test target in it |  minutes, and the same answer after one fix or six |
+| per batch (`batch_gate.py`) | clippy ratchet, module-size, bazel-srcs, unit-closure, verification-trigger, mutation-lane self-test, the ADR-MCPRE-069 control-census ratchet and `control-census --gate`, every `tools/verification/test_*.py` self-test suite, every Python gate `.github/workflows/ci.yml` invokes with bare flags (read from the workflow, so the two cannot drift; the clippy ratchet's compile probes and `--base` invocations stay CI's); the touched closure — every Rust target that depends on a touched file, under `--config=lint`, and every non-manual test target in it |  minutes, and the same answer after one fix or six |
 | pre-handover (`scripts/local_gate.sh`) | `bazel test //...` (the only lane that runs the `async_serve` drain tests), the SLO lane | not claimed by this skill |
+
+**Size is measured and recorded, never blocking** (owner direction, 2026-10-04: finish
+the security remediation, record structural debt, decompose in a separate campaign after
+the ledger closes). A module grown past its baseline, a new file past 200 lines or a
+`too_many_lines` count above its baseline is `size-debt` in both gates: the fix lands and
+is not refactored for room. `size_debt.py` records in
+`docs/security/remediation-size-debt.jsonl` every oversized production file a writer
+TOUCHES, grown or not: path, size before and after, delta, origin
+(`pre-existing-oversized` / `new-oversized`), the config/module-size-debt.toml entry, and
+the commits and findings that changed it — the machine-readable input to the decomposition
+run. Growth is charged only to files the writer touched. The repository size ratchets are
+unchanged outside this workflow. Nesting depth and every other lint stay hard.
 
 A red per-file gate saves the change as a patch and reverts it, so the next writer
 starts on a clean tree and its failures are its own. The `platform` tier (>50

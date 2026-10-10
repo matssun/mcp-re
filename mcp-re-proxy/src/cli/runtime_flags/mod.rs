@@ -2,12 +2,13 @@
 //! The serving runtime's shape and its DoS ceilings.
 //!
 //! One family, because an operator tunes these together and they are all inputs to how one
-//! process serves. Three subordinate authorities sit under it, and each answers a question
-//! the other two do not:
+//! process serves. Four subordinate authorities sit under it, and each answers a question
+//! the others do not:
 //!
 //! - [`connection_limits`] — what ONE connection is held to, and the windows it runs in.
 //! - [`admission_ceiling`] — how many requests may be in flight, in either spelling of the
 //!   one limit; it owns the refusal that makes them alternatives.
+//! - [`handshake_signing`] — how fast the listener's delegated TLS signer may be driven.
 //! - the thread topology below — how many runtimes and workers exist to be held to any of
 //!   it.
 //!
@@ -16,6 +17,7 @@
 
 mod admission_ceiling;
 mod connection_limits;
+mod handshake_signing;
 
 // The cap is `connection_limits`' own bound and production has no other reader; the
 // family's end-to-end refusal test in `cli` names it rather than restating the number.
@@ -47,6 +49,7 @@ impl RuntimeFlags {
     /// Whether this value-taking flag belongs to the family.
     pub(super) fn owns(flag: &str) -> bool {
         connection_limits::owns(flag)
+            || handshake_signing::owns(flag)
             || AdmissionCeiling::owns(flag)
             || matches!(flag, "--cores" | "--workers-per-shard")
     }
@@ -58,6 +61,8 @@ impl RuntimeFlags {
             self.admission.take(flag, value)
         } else if connection_limits::owns(flag) {
             connection_limits::take(&mut self.limits, flag, value)
+        } else if handshake_signing::owns(flag) {
+            handshake_signing::take(&mut self.limits, flag, value)
         } else {
             self.take_topology(flag, value)
         }

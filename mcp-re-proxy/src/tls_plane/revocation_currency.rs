@@ -32,7 +32,7 @@ pub(crate) enum CrlMaintenance {
     /// No reload cadence is configured. The posture is a static snapshot and always was.
     NotScheduled,
     /// The worker is running and its last reload succeeded.
-    Maintained,
+    Maintained { cadence_secs: u64 },
     /// The worker is running and its last reload failed; last-good is in force and the next
     /// reload may recover it.
     Degraded,
@@ -46,13 +46,10 @@ impl CrlMaintenance {
     ///
     /// `Maintained` renders as the cadence rather than as a word, because the cadence is
     /// what the startup line promises and the retraction has to be legible against it.
-    pub(crate) fn wire(self, cadence_secs: Option<u64>) -> String {
+    pub(crate) fn wire(self) -> String {
         match self {
             CrlMaintenance::NotScheduled => "not_scheduled".to_owned(),
-            CrlMaintenance::Maintained => cadence_secs.map_or_else(
-                || "not_scheduled".to_owned(),
-                |secs| format!("every_{secs}s"),
-            ),
+            CrlMaintenance::Maintained { cadence_secs } => format!("every_{cadence_secs}s"),
             CrlMaintenance::Degraded => "degraded".to_owned(),
             CrlMaintenance::Stopped => "stopped".to_owned(),
         }
@@ -68,61 +65,78 @@ impl CrlMaintenance {
 pub(crate) struct ClientRevocationCurrency {
     degraded: AtomicBool,
     stopped: AtomicBool,
-    scheduled: bool,
+    cadence_secs: Option<u64>,
     evidence: RwLock<ClientCrlEvidence>,
 }
 
 impl ClientRevocationCurrency {
-    /// Seed with what startup established, and whether a cadence was configured at all.
-    pub(super) fn new(initial: ClientCrlEvidence, scheduled: bool) -> Self {
+    /// Seed with what startup established, and the cadence if one was configured.
+    ///
+    /// Called by `start_reload_worker` in `crl_reload_worker`, a sibling module, so
+    /// `pub(super)` is the narrowest level that reaches it.
+    pub(super) fn new(initial: ClientCrlEvidence, cadence_secs: Option<u64>) -> Self {
         ClientRevocationCurrency {
             degraded: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
-            scheduled,
+            cadence_secs,
             evidence: RwLock::new(initial),
         }
     }
 
-    /// The CRLs currently enforced. A poisoned lock still yields the last value: a reader
-    /// of the posture must not panic because a writer did.
-    pub(crate) fn evidence(&self) -> ClientCrlEvidence {
+    /// The CRLs currently enforced and the maintenance verdict about them, read under one
+    /// acquisition of the evidence lock so the pair describes one instant. A poisoned lock
+    /// still yields the last value: a reader of the posture must not panic because a writer
+    /// did.
+    pub(crate) fn in_force(&self) -> (ClientCrlEvidence, CrlMaintenance) {
         match self.evidence.read() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
+            Ok(guard) => (guard.clone(), self.maintenance()),
+            Err(poisoned) => (poisoned.into_inner().clone(), self.maintenance()),
         }
     }
 
     /// A reload succeeded: these are the CRLs now in force, and the cadence is being kept.
+    ///
+    /// Called by the reload worker in `crl_reload_worker`, a sibling module, so `pub(super)`
+    /// is the narrowest level that reaches it. `degraded` clears while the write guard is
+    /// held, so a reader under the read guard never sees new evidence with the old verdict.
     pub(super) fn republish(&self, evidence: ClientCrlEvidence) {
-        match self.evidence.write() {
-            Ok(mut guard) => *guard = evidence,
-            Err(poisoned) => *poisoned.into_inner() = evidence,
-        }
+        let mut guard = match self.evidence.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *guard = evidence;
         self.degraded.store(false, Ordering::SeqCst);
+        drop(guard);
     }
 
     /// A reload failed and last-good is in force. Recoverable by the next one.
+    ///
+    /// Called by the reload worker in `crl_reload_worker`, a sibling module, so `pub(super)`
+    /// is the narrowest level that reaches it.
     pub(super) fn mark_degraded(&self) {
         self.degraded.store(true, Ordering::SeqCst);
     }
 
     /// Nothing will re-read again. No later reload may report the cadence as kept.
+    ///
+    /// Called by the reload worker's supervisor in `crl_reload_worker` and by `Drop for
+    /// TlsPlane` in tls_plane/mod.rs, so `pub(super)` is the narrowest level reaching both.
     pub(super) fn mark_stopped(&self) {
         self.stopped.store(true, Ordering::SeqCst);
     }
 
     /// What an operator may be told about this replica's CRL maintenance.
     pub(crate) fn maintenance(&self) -> CrlMaintenance {
-        if !self.scheduled {
+        let Some(cadence_secs) = self.cadence_secs else {
             return CrlMaintenance::NotScheduled;
-        }
-        if self.stopped.load(Ordering::Relaxed) {
+        };
+        if self.stopped.load(Ordering::SeqCst) {
             return CrlMaintenance::Stopped;
         }
-        if self.degraded.load(Ordering::Relaxed) {
+        if self.degraded.load(Ordering::SeqCst) {
             return CrlMaintenance::Degraded;
         }
-        CrlMaintenance::Maintained
+        CrlMaintenance::Maintained { cadence_secs }
     }
 }
 
@@ -132,14 +146,17 @@ impl ClientRevocationCurrency {
 mod tests {
     use super::*;
 
-    fn currency(scheduled: bool) -> ClientRevocationCurrency {
-        ClientRevocationCurrency::new(ClientCrlEvidence::default(), scheduled)
+    fn currency(cadence_secs: Option<u64>) -> ClientRevocationCurrency {
+        ClientRevocationCurrency::new(
+            ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"),
+            cadence_secs,
+        )
     }
 
     /// A deployment that never claimed a cadence is not one that stopped keeping it.
     #[test]
     fn an_unscheduled_reload_is_never_reported_as_stopped() {
-        let c = currency(false);
+        let c = currency(None);
         assert_eq!(c.maintenance(), CrlMaintenance::NotScheduled);
         c.mark_degraded();
         c.mark_stopped();
@@ -153,21 +170,24 @@ mod tests {
     /// A failed reload is recoverable; the next success clears it.
     #[test]
     fn a_degraded_reload_recovers_on_the_next_success() {
-        let c = currency(true);
+        let c = currency(Some(300));
         c.mark_degraded();
         assert_eq!(c.maintenance(), CrlMaintenance::Degraded);
-        c.republish(ClientCrlEvidence::default());
-        assert_eq!(c.maintenance(), CrlMaintenance::Maintained);
+        c.republish(ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"));
+        assert_eq!(
+            c.maintenance(),
+            CrlMaintenance::Maintained { cadence_secs: 300 }
+        );
     }
 
     /// THE latch. A straggler reload landing after the worker died must not report the
     /// cadence as kept — which is exactly what one flag would have allowed.
     #[test]
     fn a_stopped_worker_is_not_cleared_by_a_later_reload() {
-        let c = currency(true);
+        let c = currency(Some(300));
         c.mark_stopped();
         assert_eq!(c.maintenance(), CrlMaintenance::Stopped);
-        c.republish(ClientCrlEvidence::default());
+        c.republish(ClientCrlEvidence::from_checked(Vec::new(), &[], 0).expect("no CRLs is legal"));
         assert_eq!(
             c.maintenance(),
             CrlMaintenance::Stopped,
@@ -178,9 +198,12 @@ mod tests {
     /// The retraction is legible against the promise it retracts.
     #[test]
     fn the_maintenance_token_names_the_cadence_it_is_or_is_not_keeping() {
-        assert_eq!(CrlMaintenance::Maintained.wire(Some(300)), "every_300s");
-        assert_eq!(CrlMaintenance::Degraded.wire(Some(300)), "degraded");
-        assert_eq!(CrlMaintenance::Stopped.wire(Some(300)), "stopped");
-        assert_eq!(CrlMaintenance::NotScheduled.wire(None), "not_scheduled");
+        let c = currency(Some(300));
+        assert_eq!(c.maintenance().wire(), "every_300s");
+        c.mark_degraded();
+        assert_eq!(c.maintenance().wire(), "degraded");
+        c.mark_stopped();
+        assert_eq!(c.maintenance().wire(), "stopped");
+        assert_eq!(currency(None).maintenance().wire(), "not_scheduled");
     }
 }
