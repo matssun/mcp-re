@@ -7,7 +7,7 @@
     "theorem_id": "THM-0125",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): M257 weakening removes both carriers (client check and signers shared tail); control red. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -21,7 +21,7 @@
         "governing_boundaries": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:d840c9c7bd51eadd4eb44480b765a86317a0b8e1229343f58a08e3edbd4761db",
+        "mutation_probes": "sha256:062abcfa3cabe915ac058878dc31e13a02ba949c2313ece4ba79d941077bc49e",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "source_inputs": "sha256:9af1fb15dd14b4b0ec8604401c43096a167a8d0e65f2367312b6a7dda74da106",
@@ -57,7 +57,7 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:18a7c4fe681f6c056e653bddb984af8141420885366bfe2d4efe1003ffd0ee9c",
+  "review_digest": "sha256:310bbd453f499909b455ab547a100afb5d286e6143ce1546492c17fa74bf9e13",
   "reviewed_fingerprint": "sha256:c7bd2c205a20e0f2f91472ee390af7b0ac7c92ba3d3c8a8486ed9584d761550a",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0125"

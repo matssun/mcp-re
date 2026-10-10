@@ -18,7 +18,7 @@
     "theorem_id": "THM-0078",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-R2-REVIEW-4.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): M283 weakening substitutes a valid notification envelope for a body that fails envelope validation; both declared controls red, so the pre-dispatch refusal is genuinely weakened. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -52,7 +52,7 @@
         "governing_boundaries": "sha256:0a4219d8a19e20ff2960514e039965bd6cda62dff649ca56a5231c737a109ebc",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:d9fc83bed9ffc357eb9ebe99889d2837e2edd19010d6bf0f77cc30f28810106d",
+        "mutation_probes": "sha256:1774e2f53ecd2919b178a60cf5a647c7daee879cee3686f28072fc7c9ad85792",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "source_inputs": "sha256:7afdf93ec713a23a3786cc663911725443f575e58d91c8e60a69223a3010a18d",
@@ -99,7 +99,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:4b72a95a57f20bfd9c4a11d708680f192e0977afddad6689c15cdb3785dba785",
+  "review_digest": "sha256:d2e5abe396c71541ab512f8e68f747b4e19c8caf2552668a49c51276ffe620b4",
   "reviewed_fingerprint": "sha256:cff60d495309322415f35b64332c52faf3f9a416e58275230281f6c10ff6c6b4",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0078"

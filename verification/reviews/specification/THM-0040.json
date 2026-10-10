@@ -9,7 +9,7 @@
     "theorem_id": "THM-0040",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G8.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G8.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): M75 control moved to new direct unit controls on PdpDecisionEvaluator::action_matches (served path never reaches the Absent arm); weakening red, baseline green. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -43,13 +43,13 @@
         "governing_boundaries": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "lean_theorems": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "measurements": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "mutation_probes": "sha256:5cf22dac4539012be0505e52086c4f7cddef330d9c23b40138171061b8e89204",
+        "mutation_probes": "sha256:582354d9504e00a3aadd42c469cafcaea3ad77299a326528241d3a136eedaaa5",
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "source_inputs": "sha256:d6ddacf1d50168e761a5ea8dec93cddcd030c7b5321cb7e8988261210eb23a0a",
+        "source_inputs": "sha256:4ae8e93e301404970df97227a5b62094ffaa807b7daed020e42239723922b15a",
         "structural_probes": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_evidence_definition": "sha256:ae09f06387836973545175edc04919e4f83561712c0a0cf86cebc4c46e560d83",
-        "test_selection": "sha256:edd9b467b5296ad248d9a111d8089d139b08e0d3207653cdd2f0c7a7d85aa536",
+        "test_selection": "sha256:4e37a51023c03571907767ac221279038bdf6897507d1cd247c6b47df2e5ac09",
         "test_sources": "sha256:598bae3a2279b7805c8c451885acfc1f7f69684757cb23feeab4837eacf2452f",
         "trusted_assumptions": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "unit_id": "sha256:16e280bda0144bef3ba3f9e37006a6bc0b5d5f47dca51ebc52c8d7d640ace166"
@@ -61,7 +61,7 @@
     },
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:8b598500a128faa826258b76950fbf3caf09d2517db4483dc46f9298da5db50a",
+  "review_digest": "sha256:96de7d3306ff26c1fe0dc53f58bed404312fd6a6823d1aed4ce6af6a079f18e1",
   "reviewed_fingerprint": "sha256:4c5d90700148aa8e237985e63f5fef13b281746c45bbf1a33d51fafbab2f8fd3",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0040"

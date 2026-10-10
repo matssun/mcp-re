@@ -7,7 +7,7 @@
     "theorem_id": "THM-0091",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity.",
+  "notes": "Owner-authorized step 7 substantive re-review (Ruling 40 step 7; rulings of 2026-10-08 and 2026-10-09), read against the ratified theorem text and the code, tests, probes and proofs at HEAD 78c938b6. Review record: work/security-audit-2026-09-22-r12/STEP7-REVIEW-G11.md (CONFIRMED). This record binds the claim, its premise texts, its logical dependency claims, and the semantic components of its supporting units (review_digest); not toolchain, Bazel or policy identity. Re-read at HEAD 115b1e4b after the step 9 verification-platform repairs (work/security-audit-2026-09-22-r12/STEP9-REREVIEW.md): S23 hostile construction supplies every field, so the refusal is the private-field error E0451; structural lane 53/53. Claim, premises, dependencies and entry text unchanged.",
   "review_components": {
     "encoding_version": 1,
     "premises": {},
@@ -45,7 +45,7 @@
         "proof_dependencies": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "proved_symbols": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "source_inputs": "sha256:ac282be99e07d2a5a92129fd4db76b0a6a87af3e4f22f3c7982cc9076e6f0b96",
-        "structural_probes": "sha256:ea594464866a15d1170cacc489d89135cba81ce020ca76ce528a48ed22afe1dc",
+        "structural_probes": "sha256:75f02994cd928400adcba0289ab7660937580723f703b974adbb105f62cb324e",
         "test_evidence_definition": "sha256:455c0d323ff1ab16566d219acb6f545e303a39cce7a1f7dace4fa451a5a02ff7",
         "test_selection": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "test_sources": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
@@ -157,7 +157,7 @@
     "theorem_dependencies": {},
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "review_digest": "sha256:328b2d6e532a0c2a7af1cb747ac755001d21e1f41dea34b8453dbfbfae78d701",
+  "review_digest": "sha256:09841fe93046c5753e65bafc7044a3ef9914443531e2538a2b746959c01a1059",
   "reviewed_fingerprint": "sha256:20f89a291e53e454086014366d76597919e7bfb98eb509246e9a8c54a77ee6e6",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0091"
