@@ -772,6 +772,81 @@ def test_the_refusal_names_a_script_that_exists():
         assert (lane.REPO_ROOT / script).is_file(), (eco.name, script)
 
 
+_CONTROL = "http_profile_serve::retention::outcome::tests::a_failed_completion_is_not_accounted_for"
+_LABEL = "//mcp-re-proxy:proxy_unit_test"
+
+
+def _run_rust_battery(monkeypatch_run, stdout="", stderr="", logfile=None):
+    """`run_battery` over one Rust target with `subprocess.run` replaced.
+
+    `logfile` is what libtest's own record contains (None = the harness wrote none);
+    `stdout`/`stderr` are what Bazel printed, which the lane must not read results from.
+    """
+    import subprocess
+
+    def fake_run(argv, **_kwargs):
+        path = [a for a in argv if a.startswith("--test_arg=--logfile=")]
+        assert path, "the Rust battery must ask libtest for its own record"
+        if logfile is not None:
+            Path(path[0].split("=", 2)[2]).write_text(logfile)
+        return subprocess.CompletedProcess(argv, 0, stdout, stderr)
+
+    original = lane.subprocess.run
+    lane.subprocess.run = fake_run
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            tree = Path(scratch) / "tree"
+            tree.mkdir()
+            return lane.run_battery(tree, None, {_LABEL: [_CONTROL]}, lane.RUST)
+    finally:
+        lane.subprocess.run = original
+
+
+def test_a_failed_libtest_record_is_the_red_the_lane_reads():
+    ran, results = _run_rust_battery(None, logfile=f"failed {_CONTROL}\n")
+    assert ran and results == {f"{_LABEL}#{_CONTROL}": "FAILED"}
+
+
+def test_stdout_text_is_not_a_result_even_when_it_looks_like_one():
+    """Bazel's merged stream is not the source: a result-looking line there, whatever
+    stream it came from, does not satisfy a control the harness never recorded."""
+    looking = f"test {_CONTROL} ... FAILED\n"
+    for kwargs in ({"stdout": looking}, {"stderr": looking}):
+        ran, results = _run_rust_battery(None, logfile="", **kwargs)
+        assert ran and results == {}, kwargs
+
+
+def test_unrelated_stderr_does_not_count_as_the_control_having_run():
+    ran, results = _run_rust_battery(None, stderr="retained-evidence store: boom\n", logfile="")
+    assert ran and results == {}
+
+
+def test_a_different_test_name_does_not_satisfy_the_control():
+    ran, results = _run_rust_battery(None, logfile=f"failed {_CONTROL}_other\n")
+    assert f"{_LABEL}#{_CONTROL}" not in results
+
+
+def test_an_ok_record_does_not_read_as_red():
+    ran, results = _run_rust_battery(None, logfile=f"ok {_CONTROL}\n")
+    assert results == {f"{_LABEL}#{_CONTROL}": "ok"}
+
+
+def test_no_libtest_record_leaves_the_control_unreported():
+    ran, results = _run_rust_battery(None, stdout=f"test {_CONTROL} ... FAILED\n")
+    assert ran and results == {}
+
+
+def test_a_stderr_prefix_on_the_stream_line_cannot_hide_a_red_control():
+    """The measured M164 defect: unterminated stderr text prefixes the stream's result
+    line. The record is the harness's own, so the prefix is not in it."""
+    ran, results = _run_rust_battery(
+        None,
+        stdout=f"retained-evidence store: test {_CONTROL} ... FAILED\n",
+        logfile=f"failed {_CONTROL}\n",
+    )
+    assert results == {f"{_LABEL}#{_CONTROL}": "FAILED"}
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

@@ -392,6 +392,7 @@ def test_argv(
     target: str,
     selectors: list[str],
     runtime: str | None = None,
+    libtest_log: Path | None = None,
 ) -> list[str]:
     """The command that runs exactly `selectors` of `target` in `project`.
 
@@ -411,7 +412,18 @@ def test_argv(
         row = _rust_targets.target(target)
         if row is not None and row["kind"] == "rust_doc_test":
             return argv
-        return argv + ["--test_arg=--exact", *(f"--test_arg={s}" for s in selectors)]
+        argv += ["--test_arg=--exact", *(f"--test_arg={s}" for s in selectors)]
+        if libtest_log is not None:
+            # libtest's own record of each result, written by the harness to a file the
+            # test's stdout and stderr never reach. Bazel merges those two streams into one
+            # log, so a result line read from it can carry another thread's unterminated
+            # stderr text; this file cannot. Bazel's sandbox lets the test write only to
+            # its own directories, so the file's directory is named writable.
+            argv += [
+                f"--test_arg=--logfile={libtest_log}",
+                f"--sandbox_writable_path={libtest_log.parent}",
+            ]
+        return argv
     if eco is PYTHON:
         # A PREPARED environment, named by the pinned interpreter, and never `uv run`.
         # `uv run` resolves and syncs, so the lane would be building the thing it measures
@@ -494,23 +506,33 @@ _LIBTEST_STATUSES = ("ok", "FAILED", "ignored")
 #: cannot outrank a real `FAILED` — and if the interleave carries a newline the line does
 #: not match at all, which reads as `never ran` and fails loudly rather than quietly green.
 #:
-#: The same stray bytes can land BEFORE `test <name> ...` as well as between it and the
-#: status: a code path writing to the real fd 2 without a trailing newline leaves its text at
-#: the front of the next line libtest writes. A dev1 mutation run reported
-#:
-#:     retained-evidence store: test http_profile_serve::retention::outcome::tests::a_failed... ... FAILED
-#:
-#: and an anchored pattern read the red control as never having run. So the line is searched
-#: for `test <name> ... <status>` rather than required to begin with it; the `test ` token
-#: must begin at a word boundary, so a longer word ending in `test` cannot open a match.
-#:
 #: A `#[should_panic]` test is reported as `test <name> - should panic ... ok`: the suffix is
 #: libtest's annotation, not part of the name a selector names.
 _LIBTEST_RESULT = re.compile(
-    r"(?:^|(?<=\W))test (?P<name>\S+)(?: - should panic)? \.\.\. .*?(?P<status>"
+    r"^test (?P<name>\S+)(?: - should panic)? \.\.\. .*?(?P<status>"
     + "|".join(_LIBTEST_STATUSES)
     + r")$"
 )
+
+#: One line of libtest's `--logfile` record: `failed block::tests::round_trips`. The harness
+#: writes the file itself, so no test output can reach it; names never contain a space.
+_LIBTEST_LOGFILE_LINE = re.compile(r"^(?P<status>ok|failed|ignored) (?P<name>\S+)$")
+_LIBTEST_LOGFILE_STATUS = {"ok": "ok", "failed": "FAILED", "ignored": "ignored"}
+
+
+def parse_libtest_logfile(text: str) -> dict[str, str]:
+    """The lane's one vocabulary, read from libtest's `--logfile` record.
+
+    Only a line of exactly `<status> <name>` counts. The file is the harness's channel, so
+    there is no stream to disentangle and nothing to search for inside a line.
+    """
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        match = _LIBTEST_LOGFILE_LINE.match(line)
+        if match:
+            out[match.group("name")] = _LIBTEST_LOGFILE_STATUS[match.group("status")]
+    return out
+
 
 #: SGR/CSI escape sequences a runner emits when it decides to colour its output. Stripped
 #: before any line is matched: the lane reads a WORD at a known position, and an escape
@@ -571,7 +593,7 @@ def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
     stdout = _ANSI.sub("", stdout)
     if eco is RUST:
         for line in stdout.splitlines():
-            match = _LIBTEST_RESULT.search(line.strip())
+            match = _LIBTEST_RESULT.match(line.strip())
             if match:
                 out[match.group("name")] = match.group("status")
         return out
