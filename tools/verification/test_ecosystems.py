@@ -338,6 +338,14 @@ def test_every_runners_report_is_read_in_one_vocabulary():
     # The measured false RED: a child process writing to the real fd 2 lands its bytes
     # between the name and the status, and the status is still read from the end.
     assert parse_results(RUST, "test a::b ... mcp-re-proxy: noise ok") == {"a::b": "ok"}
+    # The same bytes landing BEFORE the line: unterminated stderr text becomes its prefix, and a
+    # red control must still be read as red rather than as never having run (a dev1 mutation run
+    # reported M164 as unmeasured for exactly this).
+    assert parse_results(
+        RUST, "store: test a::b ... FAILED\nnoise: test c::d ... ok\n"
+    ) == {"a::b": "FAILED", "c::d": "ok"}
+    # A longer word ending in `test` does not open a result line.
+    assert parse_results(RUST, "contest a::b ... ok") == {}
 
     pytest_out = (
         "tests/test_correlation.py::test_probe PASSED\n"

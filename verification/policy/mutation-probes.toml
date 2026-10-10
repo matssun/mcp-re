@@ -2226,7 +2226,9 @@ theorem = "THM-0040"
 conjunct = "an absent signed target matches neither a named decision target nor a not-applicable one"
 # `Absent` is a THIRD state and it matches nothing: a request that named no tool was not
 # decided. Collapsing it into the not-applicable arm authorizes a call whose target the
-# body never stated, under a decision that says the operation takes no target.
+# body never stated, under a decision that says the operation takes no target. The serving
+# path never presents `Absent` here (the transport contract refuses a `tools/call` naming no
+# tool first), so the control drives the relation directly rather than through a served call.
 path = "mcp-re-proxy/src/authorization/pdp/relation.rs"
 anchor = """
             (None, AuthorizationTarget::NotApplicable) => true,
@@ -2235,7 +2237,7 @@ weakening = """
             (None, _) => true,
 """
 expect_red = [
-  "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_call_naming_no_tool_is_not_authorized_by_a_targetless_decision",
+  "//mcp-re-proxy:proxy_unit_test#authorization::pdp::relation::tests::a_call_naming_no_tool_is_matched_by_no_decision_target",
 ]
 
 [[probe]]
@@ -3417,7 +3419,7 @@ weakening = """
         if halt.sleep(Duration::from_secs(interval_secs.saturating_mul(10))) {
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::the_reload_loop_reads_on_its_cadence_until_halted",
+  "//mcp-re-proxy:proxy_unit_test#trust_plane::reload::reload_loop_tests::the_loop_sleeps_exactly_the_cadence_before_each_read",
 ]
 
 [[probe]]
@@ -7150,6 +7152,11 @@ anchor = """
 weakening = """
     let _ = block.validate(PROFILE_TAG);
 """
+also = [
+  { path = "mcp-re-http-profile/src/sign/request.rs", anchor = """
+    super::request_block::validate_carried(&request.body)?;
+""", weakening = "" },
+]
 expect_red = [
   "//mcp-re-client-core:mcp_re_client_core_test#request::evidence_precondition_tests::signing_with_no_artifact_binding_is_refused_locally",
 ]
@@ -7165,6 +7172,10 @@ their own configuration.
 `validate` is reused rather than re-spelled here precisely so the two ends cannot drift, which
 also means this is not defence in depth: one rule, checked at two points in one exchange, and
 the client's is the only one that can name the cause.
+
+The request signers' shared tail (`sign_headers_as_given`) holds the same rule for every block it
+signs, so the proposition has two carriers and the weakening removes both: removing the client's
+check alone leaves the signer refusing locally.
 """
 
 [[probe]]
@@ -7226,11 +7237,20 @@ unit = "proxy.client_revocation_currency"
 theorem = "THM-0131"
 conjunct = "a set of CRLs is installable only when every one of them is inside its own nextUpdate window"
 path = "mcp-re-proxy/src/tls_plane/crl_evidence.rs"
-anchor = """
+anchor = '''
         CrlFreshness::Stale { next_update_unix } => Err(format!(
-"""
+            "client CRL #{index} is STALE (nextUpdate={next_update_unix} <= now={now_unix}): \
+             with CRL expiration enforced, every new client handshake fails closed. Install a \
+             CRL published within its nextUpdate window."
+        )),
+'''
 weakening = """
-        CrlFreshness::Stale { next_update_unix } => Ok(eprintln!(
+        CrlFreshness::Stale { next_update_unix } => {
+            eprintln!(
+                "client CRL #{index} is STALE (nextUpdate={next_update_unix} <= now={now_unix})"
+            );
+            Ok(None)
+        }
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#tls_plane::crl_evidence::tests::a_stale_crl_produces_no_evidence_to_install",
@@ -8488,7 +8508,12 @@ anchor = """
 """
 weakening = """
         let outstanding = mcp_re_http_profile::validate_request_envelope(&http_req.body)
-            .unwrap_or(OutstandingId::Notification);
+            .or_else(|_| {
+                mcp_re_http_profile::validate_request_envelope(
+                    br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                )
+            })
+            .map_err(|e| Refusal::new(e, 400))?;
 """
 expect_red = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::request_admission::tests::a_document_that_is_not_an_mcp_message_is_refused_at_400",
@@ -10055,7 +10080,7 @@ anchor = """    ) -> Result<RequestPeerBindingFacts, McpReError> {
 """
 weakening = """    ) -> Result<RequestPeerBindingFacts, McpReError> {
         let _ = subject;
-        let mirrored = crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject(
+        let mirrored = crate::communication_assurance::request_peer_binding::http_profile_adapter::subject_for_test(
             &mcp_re_http_profile::ResolvedActor {
                 identity: mcp_re_http_profile::ActorIdentity {
                     role: "client".into(),
@@ -13119,7 +13144,7 @@ anchor = """
 weakening = """
     let reparsed: TrustAnchorManifest = serde_json::from_str(signed.manifest.get())
         .map_err(|_| TrustManifestError::Malformed("manifest"))?;
-    let rebuilt = manifest_body(&reparsed).map_err(|_| TrustManifestError::Malformed("manifest"))?;
+    let rebuilt = preimage::manifest_body(&reparsed).map_err(|_| TrustManifestError::Malformed("manifest"))?;
     let bytes = manifest_signing_preimage(rebuilt.as_bytes(), &signed.signer_kid);
 """
 expect_red = [

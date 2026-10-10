@@ -494,10 +494,20 @@ _LIBTEST_STATUSES = ("ok", "FAILED", "ignored")
 #: cannot outrank a real `FAILED` — and if the interleave carries a newline the line does
 #: not match at all, which reads as `never ran` and fails loudly rather than quietly green.
 #:
+#: The same stray bytes can land BEFORE `test <name> ...` as well as between it and the
+#: status: a code path writing to the real fd 2 without a trailing newline leaves its text at
+#: the front of the next line libtest writes. A dev1 mutation run reported
+#:
+#:     retained-evidence store: test http_profile_serve::retention::outcome::tests::a_failed... ... FAILED
+#:
+#: and an anchored pattern read the red control as never having run. So the line is searched
+#: for `test <name> ... <status>` rather than required to begin with it; the `test ` token
+#: must begin at a word boundary, so a longer word ending in `test` cannot open a match.
+#:
 #: A `#[should_panic]` test is reported as `test <name> - should panic ... ok`: the suffix is
 #: libtest's annotation, not part of the name a selector names.
 _LIBTEST_RESULT = re.compile(
-    r"^test (?P<name>\S+)(?: - should panic)? \.\.\. .*?(?P<status>"
+    r"(?:^|(?<=\W))test (?P<name>\S+)(?: - should panic)? \.\.\. .*?(?P<status>"
     + "|".join(_LIBTEST_STATUSES)
     + r")$"
 )
@@ -561,7 +571,7 @@ def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
     stdout = _ANSI.sub("", stdout)
     if eco is RUST:
         for line in stdout.splitlines():
-            match = _LIBTEST_RESULT.match(line.strip())
+            match = _LIBTEST_RESULT.search(line.strip())
             if match:
                 out[match.group("name")] = match.group("status")
         return out

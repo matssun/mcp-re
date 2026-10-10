@@ -3636,6 +3636,8 @@ tested_symbols = [
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_decision_for_another_trust_domain_does_not_authorize_this_subject",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_decision_for_another_tool_does_not_authorize_this_call",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_call_naming_no_tool_is_not_authorized_by_a_targetless_decision",
+  "//mcp-re-proxy:proxy_unit_test#authorization::pdp::relation::tests::a_call_naming_no_tool_is_matched_by_no_decision_target",
+  "//mcp-re-proxy:proxy_unit_test#authorization::pdp::relation::tests::a_named_target_and_a_targetless_operation_each_match_their_own_decision",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_decision_for_another_operation_does_not_authorize_this_one",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_decision_from_an_authority_this_deployment_does_not_trust_is_refused",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_decision_signed_by_the_wrong_key_under_a_trusted_kid_is_refused",

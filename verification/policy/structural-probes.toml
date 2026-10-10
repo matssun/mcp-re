@@ -710,9 +710,7 @@ construction = """
 use crate::serve::AcceptedHttpAuthority;
 
 pub fn hostile() -> AcceptedHttpAuthority {
-    AcceptedHttpAuthority {
-        exposed: Some("198.51.100.7:8640".parse().expect("an address")), // STRUCTURAL-PROBE-SITE
-    }
+    AcceptedHttpAuthority { exposed: Some("198.51.100.7:8640".parse().expect("an address")), port: 8640 } // STRUCTURAL-PROBE-SITE
 }
 """
 [probe.producer_paths]
